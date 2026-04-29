@@ -176,6 +176,13 @@ jobs:
       - name: Run Claude Code
         if: ${{ !inputs.stub-claude }}
         id: claude_run
+        # Step-level env propagates to the action's process.env, which the
+        # action then spreads into the spawned `claude` subprocess. Belt-and-
+        # suspenders alongside `claude_env` below — some configurations of
+        # Claude Code's Bash tool only see env vars that were already on the
+        # parent process at spawn time.
+        env:
+          GH_TOKEN: ${{ github.token }}
         uses: anthropics/claude-code-base-action@e8132bc5e637a42c27763fc757faa37e1ee43b34  # v0.0.63
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
