@@ -126,6 +126,17 @@ out="$(render_only result-high-context.json exec-high-context.ndjson)"
 assert_contains "$out" 'ai:done,ctx:high'               "high-context → ai:done + ctx:high"
 assert_contains "$out" '165,000 / 200,000 (82%)'        "high-context → 82% of 200k"
 
+# Same data, presented as a JSON array (claude-code-base-action's shape).
+exec_array="$(mktemp)"
+jq -s '.' "$FIXTURES/exec-high-context.ndjson" > "$exec_array"
+out="$(RENDER_ONLY=1 RESULT_FILE="$FIXTURES/result-high-context.json" \
+       EXECUTION_FILE="$exec_array" \
+       ISSUE_NUMBER=42 WORKFLOW_RUN_URL=u \
+       bash "$SCRIPT")"
+rm -f "$exec_array"
+assert_contains "$out" 'ai:done,ctx:high'               "execution as JSON array → still ctx:high"
+assert_contains "$out" '165,000 / 200,000 (82%)'        "execution as JSON array → same 82% peak"
+
 section "context threshold knobs (vary CONTEXT_WINDOW_SIZE on same exec fixture)"
 
 threshold_run() {

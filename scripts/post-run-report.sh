@@ -122,7 +122,15 @@ HAS_EXECUTION_DATA=0
 MAX_PROMPT_TOKENS=0
 if [[ -n "$EXECUTION_FILE" && -r "$EXECUTION_FILE" ]]; then
   HAS_EXECUTION_DATA=1
-  MAX_PROMPT_TOKENS="$(jq -rs '
+  # Accept either a JSON array (claude-code-base-action's current shape) or
+  # NDJSON (the SDK's --output-format stream-json). Detect and slurp only when
+  # needed.
+  if jq -e 'type == "array"' "$EXECUTION_FILE" >/dev/null 2>&1; then
+    JQ_SLURP=()
+  else
+    JQ_SLURP=(-s)
+  fi
+  MAX_PROMPT_TOKENS="$(jq -r "${JQ_SLURP[@]}" '
     [ .[]
       | select(.type == "assistant")
       | (.message.usage // {})

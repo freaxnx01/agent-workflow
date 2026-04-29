@@ -170,8 +170,13 @@ jobs:
           EXECUTION_FILE: ${{ steps.claude_run.outputs.execution_file }}
         run: |
           out="${RUNNER_TEMP:-/tmp}/claude-result.json"
-          # execution_file is NDJSON of SDK messages — last `result`-typed one has totals.
-          jq -s 'map(select(.type == "result")) | last' "$EXECUTION_FILE" > "$out"
+          # execution_file may be a JSON array (current action behavior) or NDJSON
+          # (older). Detect and pick the right jq invocation either way.
+          if jq -e 'type == "array"' "$EXECUTION_FILE" >/dev/null 2>&1; then
+            jq    'map(select(.type == "result")) | last' "$EXECUTION_FILE" > "$out"
+          else
+            jq -s 'map(select(.type == "result")) | last' "$EXECUTION_FILE" > "$out"
+          fi
           echo "result-file=$out" >> "$GITHUB_OUTPUT"
           echo "execution-file=$EXECUTION_FILE" >> "$GITHUB_OUTPUT"
 
