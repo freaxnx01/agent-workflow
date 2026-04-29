@@ -1,0 +1,16 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "duration_ms": 218000,
+  "num_turns": 6,
+  "total_cost_usd": 0.847,
+  "session_id": "sess_highctx_01",
+  "result": "Done. Heads up: peak prompt size on the final turn approached 165k tokens. Consider trimming context.",
+  "usage": {
+    "input_tokens": 108000,
+    "output_tokens": 15700,
+    "cache_creation_input_tokens": 60500,
+    "cache_read_input_tokens": 201500
+  }
+}

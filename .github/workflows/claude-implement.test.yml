@@ -1,0 +1,59 @@
+name: claude-implement-test
+
+# Layer-2 test for the reusable workflow. Calls claude-implement.yml with
+# `dry-run: true` so the post-run-report step renders to stdout instead of
+# touching the GitHub API. Designed to be runnable both in CI on every PR
+# that touches the pipeline, and locally via `act`.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/claude-implement.yml
+      - .github/workflows/claude-implement.test.yml
+      - scripts/**
+      - tests/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claude-implement-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  call-reusable:
+    name: Reusable workflow (stub Claude, dry-run)
+    uses: ./.github/workflows/claude-implement.yml
+    with:
+      issue-number: 9999
+      default-model: claude-sonnet-4-6
+      timeout-minutes: 10
+      dry-run: true
+      # Self-test: skip the cross-repo checkout and mirror the consumer
+      # checkout instead. Works under act (uncommitted changes) and on
+      # fork PRs (where the SHA isn't on the canonical remote).
+      local-scripts: true
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
+
+  verify-outputs:
+    name: Assert reusable-workflow outputs
+    needs: call-reusable
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      OUTCOME:   ${{ needs.call-reusable.outputs.outcome }}
+      COST_USD:  ${{ needs.call-reusable.outputs.cost-usd }}
+      NUM_TURNS: ${{ needs.call-reusable.outputs.num-turns }}
+    steps:
+      - name: Assert stub produced expected outputs
+        run: |
+          fail=0
+          [[ "$OUTCOME"   == "success" ]] || { echo "::error::expected outcome=success, got '$OUTCOME'"; fail=1; }
+          [[ "$COST_USD"  == "0" ]]       || { echo "::error::expected cost-usd=0, got '$COST_USD'"; fail=1; }
+          [[ "$NUM_TURNS" == "1" ]]       || { echo "::error::expected num-turns=1, got '$NUM_TURNS'"; fail=1; }
+          (( fail == 0 )) || exit 1
+          echo "outputs OK: outcome=$OUTCOME cost-usd=$COST_USD num-turns=$NUM_TURNS"

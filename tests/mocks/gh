@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+#
+# gh — minimal stand-in for the GitHub CLI used by Layer-1 fixture tests.
+#
+# Appends each invocation's argv as a single space-joined line to $GH_MOCK_LOG.
+# Always exits 0. Knows nothing about subcommands; assertions live in the test
+# runner.
+set -euo pipefail
+IFS=$'\n\t'
+: "${GH_MOCK_LOG:?GH_MOCK_LOG must be set when using the gh mock}"
+( IFS=' '; printf '%s\n' "$*" >> "$GH_MOCK_LOG" )
+exit 0

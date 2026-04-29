@@ -1,0 +1,14 @@
+{"type":"system","subtype":"init","session_id":"sess_highctx_01","model":"claude-sonnet-4-6"}
+{"type":"user","content":"Refactor the auth middleware to use the new session-token storage scheme."}
+{"type":"assistant","message":{"id":"msg_01","model":"claude-sonnet-4-6","usage":{"input_tokens":3500,"cache_creation_input_tokens":12000,"cache_read_input_tokens":0,"output_tokens":1200}}}
+{"type":"user","content":"tool_result: read AuthMiddleware.cs"}
+{"type":"assistant","message":{"id":"msg_02","model":"claude-sonnet-4-6","usage":{"input_tokens":4000,"cache_creation_input_tokens":2500,"cache_read_input_tokens":12000,"output_tokens":1500}}}
+{"type":"user","content":"tool_result: ripgrep ISessionStore"}
+{"type":"assistant","message":{"id":"msg_03","model":"claude-sonnet-4-6","usage":{"input_tokens":5500,"cache_creation_input_tokens":3000,"cache_read_input_tokens":18500,"output_tokens":2200}}}
+{"type":"user","content":"tool_result: read 4 files"}
+{"type":"assistant","message":{"id":"msg_04","model":"claude-sonnet-4-6","usage":{"input_tokens":12000,"cache_creation_input_tokens":8000,"cache_read_input_tokens":27000,"output_tokens":3500}}}
+{"type":"user","content":"tool_result: read AuthMiddlewareTests.cs (large file)"}
+{"type":"assistant","message":{"id":"msg_05","model":"claude-sonnet-4-6","usage":{"input_tokens":35000,"cache_creation_input_tokens":15000,"cache_read_input_tokens":47000,"output_tokens":2800}}}
+{"type":"user","content":"tool_result: read SessionStoreSqlServer.cs (large file)"}
+{"type":"assistant","message":{"id":"msg_06","model":"claude-sonnet-4-6","usage":{"input_tokens":48000,"cache_creation_input_tokens":20000,"cache_read_input_tokens":97000,"output_tokens":4500}}}
+{"type":"result","subtype":"success","is_error":false,"session_id":"sess_highctx_01"}

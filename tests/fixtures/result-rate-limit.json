@@ -1,0 +1,16 @@
+{
+  "type": "result",
+  "subtype": "error_during_execution",
+  "is_error": true,
+  "duration_ms": 124000,
+  "num_turns": 11,
+  "total_cost_usd": 0.184,
+  "session_id": "sess_ratelimit_01",
+  "result": "API Error: 429 rate_limit_error — This request would exceed your account's rate limit (requests_per_minute). Please retry after 2026-04-28T20:30:00Z.",
+  "usage": {
+    "input_tokens": 2100,
+    "output_tokens": 4200,
+    "cache_creation_input_tokens": 8400,
+    "cache_read_input_tokens": 81000
+  }
+}

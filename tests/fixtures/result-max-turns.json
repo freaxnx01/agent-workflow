@@ -1,0 +1,16 @@
+{
+  "type": "result",
+  "subtype": "error_max_turns",
+  "is_error": true,
+  "duration_ms": 612000,
+  "num_turns": 60,
+  "total_cost_usd": 2.341,
+  "session_id": "sess_maxturns_01",
+  "result": "Reached the configured max_turns limit (60) before completing the task. Latest progress: implemented the auth middleware refactor up to step 4 of 7.",
+  "usage": {
+    "input_tokens": 12100,
+    "output_tokens": 35600,
+    "cache_creation_input_tokens": 45200,
+    "cache_read_input_tokens": 601000
+  }
+}

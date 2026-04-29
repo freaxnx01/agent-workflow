@@ -5,18 +5,18 @@ Mirrors the implementation order in [DESIGN.md](DESIGN.md). Strict order — don
 ## Phase 1: Foundations (Layer 0/1 testing)
 
 - [ ] 1. Create `claude-pipeline` repo (private at first; flip public when stable)
-- [ ] 2. Set up `actionlint` + `shellcheck` lint workflow
-- [ ] 3. Build `scripts/post-run-report.sh` with extracted bash, env-driven
-- [ ] 4. Build fixture set (~6 JSON files covering success/failure/edge cases)
-- [ ] 5. Build `tests/run-script-tests.sh` that runs scripts against fixtures with mocked `gh`
-- [ ] 6. Verify locally — should run in <5 seconds, exercise all branches
+- [x] 2. Set up `actionlint` + `shellcheck` lint workflow
+- [x] 3. Build `scripts/post-run-report.sh` with extracted bash, env-driven
+- [x] 4. Build fixture set (~6 JSON files covering success/failure/edge cases)
+- [x] 5. Build `tests/run-script-tests.sh` that runs scripts against fixtures with mocked `gh`
+- [x] 6. Verify locally — should run in <5 seconds, exercise all branches
 
 ## Phase 2: Workflow assembly
 
-- [ ] 7. Build `claude-implement.yml` reusable workflow with stubbed Claude step
-- [ ] 8. Add `ensure-toolchain.sh` step that installs ripgrep et al. on hosted runners (idempotent, conditional, cheap)
-- [ ] 9. Build `claude-implement.test.yml` for `act`-based local runs
-- [ ] 10. Verify with `act` — workflow logic correct end-to-end
+- [x] 7. Build `claude-implement.yml` reusable workflow with stubbed Claude step
+- [x] 8. Add `ensure-toolchain.sh` step that installs ripgrep et al. on hosted runners (idempotent, conditional, cheap)
+- [x] 9. Build `claude-implement.test.yml` for `act`-based local runs
+- [x] 10. Verify with `act` — workflow logic correct end-to-end
 
 ## Phase 3: First consumer integration
 

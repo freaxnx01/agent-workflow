@@ -1,0 +1,149 @@
+name: Claude Implement (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      issue-number:
+        description: GitHub issue number this run is implementing.
+        type: number
+        required: true
+      runner-labels:
+        description: JSON array of runner labels (e.g. '["ubuntu-latest"]').
+        type: string
+        default: '["ubuntu-latest"]'
+      default-model:
+        description: Model used when no `model:*` label is present on the issue.
+        type: string
+        default: claude-opus-4-7
+      timeout-minutes:
+        description: Hard cap on the implementation job runtime.
+        type: number
+        default: 30
+      pipeline-repo:
+        description: |
+          Owner/repo for the claude-pipeline checkout that supplies shared
+          scripts. Defaults to the canonical 'freaxnx01/claude-pipeline'.
+          Override only for self-tests (the test workflow points this at the
+          repo currently being PR-tested so it works on fork PRs and act).
+        type: string
+        default: freaxnx01/claude-pipeline
+      pipeline-ref:
+        description: |
+          Ref of `pipeline-repo` to check out for shared scripts. Defaults to
+          the SHA of this workflow file so scripts and workflow stay in
+          lockstep across versions.
+        type: string
+        default: ''
+      dry-run:
+        description: |
+          If true, skip GitHub API side effects in the report step (no issue
+          comment, no label changes). Used by `claude-implement.test.yml` under
+          act, and as a manual escape hatch for inspection-only runs.
+        type: boolean
+        default: false
+      local-scripts:
+        description: |
+          If true, skip the cross-repo checkout of `pipeline-repo` and instead
+          mirror the consumer checkout's `scripts/` and `tests/mocks/` into
+          `.claude-pipeline/`. Use for self-tests under act (where the SHA
+          isn't on the canonical remote yet) or for monorepo consumers where
+          pipeline scripts live in the same repo.
+        type: boolean
+        default: false
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: OAuth token for Claude Code (generated via `claude setup-token`).
+        required: true
+    outputs:
+      outcome:
+        description: '"success" or "failed".'
+        value: ${{ jobs.implement.outputs.outcome }}
+      cost-usd:
+        description: Total Claude API cost in USD for this run.
+        value: ${{ jobs.implement.outputs.cost-usd }}
+      num-turns:
+        description: Number of conversation turns the run took.
+        value: ${{ jobs.implement.outputs.num-turns }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claude-implement-${{ github.repository }}-${{ inputs.issue-number }}
+  cancel-in-progress: true
+
+jobs:
+  implement:
+    name: Implement issue #${{ inputs.issue-number }}
+    runs-on: ${{ fromJSON(inputs.runner-labels) }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    outputs:
+      outcome:   ${{ steps.outputs.outputs.outcome }}
+      cost-usd:  ${{ steps.outputs.outputs.cost-usd }}
+      num-turns: ${{ steps.outputs.outputs.num-turns }}
+    steps:
+      - name: Checkout consumer repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Checkout claude-pipeline scripts
+        if: ${{ !inputs.local-scripts }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ inputs.pipeline-ref || github.workflow_sha }}
+          path: .claude-pipeline
+          sparse-checkout: |
+            scripts
+            tests/mocks
+
+      - name: Mirror local scripts to .claude-pipeline (self-test mode)
+        if: ${{ inputs.local-scripts }}
+        run: |
+          mkdir -p .claude-pipeline/scripts .claude-pipeline/tests/mocks
+          cp -r scripts/. .claude-pipeline/scripts/
+          [[ -d tests/mocks ]] && cp -r tests/mocks/. .claude-pipeline/tests/mocks/ || true
+
+      - name: Ensure toolchain
+        run: bash .claude-pipeline/scripts/ensure-toolchain.sh
+
+      # NOTE: stubbed until Phase 3 wires in the real Claude Code action.
+      # Replace this step with the upstream `anthropics/claude-code-base-action`
+      # call once the consumer-integration sandbox is green.
+      - name: Stub Claude run
+        id: claude
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          DEFAULT_MODEL: ${{ inputs.default-model }}
+        run: |
+          out="${RUNNER_TEMP:-/tmp}/claude-result.json"
+          jq -nc \
+            --argjson issue "$ISSUE_NUMBER" \
+            --arg     model "$DEFAULT_MODEL" \
+            '{type:"result",subtype:"success",is_error:false,duration_ms:1500,num_turns:1,total_cost_usd:0,session_id:"stub",result:("Stub run for issue #" + ($issue|tostring) + " (model " + $model + ")."),usage:{input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0}}' > "$out"
+          echo "result-file=$out" >> "$GITHUB_OUTPUT"
+
+      - name: Extract job outputs from result.json
+        id: outputs
+        env:
+          RESULT_FILE: ${{ steps.claude.outputs.result-file }}
+        run: |
+          jq -r '
+            "cost-usd="  + (.total_cost_usd | tostring),
+            "num-turns=" + (.num_turns      | tostring),
+            "outcome="   + (if .is_error then "failed" else "success" end)
+          ' "$RESULT_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Post run report
+        if: always() && steps.claude.outputs.result-file != ''
+        env:
+          RESULT_FILE: ${{ steps.claude.outputs.result-file }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RENDER_ONLY: ${{ inputs.dry-run && '1' || '0' }}
+        run: bash .claude-pipeline/scripts/post-run-report.sh

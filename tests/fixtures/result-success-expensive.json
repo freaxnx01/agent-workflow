@@ -1,0 +1,16 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "duration_ms": 482000,
+  "num_turns": 31,
+  "total_cost_usd": 1.873,
+  "session_id": "sess_expensive_01",
+  "result": "Implemented the order-cancellation endpoint, added unit and integration tests, and updated the OpenAPI spec.",
+  "usage": {
+    "input_tokens": 8500,
+    "output_tokens": 22400,
+    "cache_creation_input_tokens": 28000,
+    "cache_read_input_tokens": 452000
+  }
+}

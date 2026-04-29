@@ -1,0 +1,16 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "duration_ms": 32000,
+  "num_turns": 4,
+  "total_cost_usd": 0.0042,
+  "session_id": "sess_cheap_01",
+  "result": "Added the requested hello.md file at the repo root.",
+  "usage": {
+    "input_tokens": 320,
+    "output_tokens": 850,
+    "cache_creation_input_tokens": 5200,
+    "cache_read_input_tokens": 18400
+  }
+}

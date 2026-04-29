@@ -1,0 +1,16 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "duration_ms": 244000,
+  "num_turns": 18,
+  "total_cost_usd": 1.452,
+  "session_id": "sess_lowcache_01",
+  "result": "Done. Note: cache hit rate was unusually low (CLAUDE.md or system prompt may be churning between turns).",
+  "usage": {
+    "input_tokens": 8000,
+    "output_tokens": 14200,
+    "cache_creation_input_tokens": 25000,
+    "cache_read_input_tokens": 12000
+  }
+}
