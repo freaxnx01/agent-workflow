@@ -105,7 +105,9 @@ jobs:
         run: |
           mkdir -p .claude-pipeline/scripts .claude-pipeline/tests/mocks
           cp -r scripts/. .claude-pipeline/scripts/
-          [[ -d tests/mocks ]] && cp -r tests/mocks/. .claude-pipeline/tests/mocks/ || true
+          if [[ -d tests/mocks ]]; then
+            cp -r tests/mocks/. .claude-pipeline/tests/mocks/
+          fi
 
       - name: Ensure toolchain
         run: bash .claude-pipeline/scripts/ensure-toolchain.sh
