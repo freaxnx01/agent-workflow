@@ -143,6 +143,13 @@ jobs:
             "outcome="   + (if .is_error then "failed" else "success" end)
           ' "$RESULT_FILE" >> "$GITHUB_OUTPUT"
 
+      - name: Ensure issue labels exist
+        if: always() && !inputs.dry-run
+        env:
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash .claude-pipeline/scripts/ensure-issue-labels.sh
+
       - name: Post run report
         if: always() && steps.claude.outputs.result-file != ''
         env:

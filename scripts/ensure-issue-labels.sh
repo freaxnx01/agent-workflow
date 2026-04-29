@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#
+# ensure-issue-labels.sh — Ensure the lifecycle labels that post-run-report.sh
+# applies (ai:running, ai:done, ai:failed, ctx:medium, ctx:high) exist on the
+# target repository. Idempotent: existing labels are preserved unchanged
+# (`gh label create` errors when the label exists; we ignore that error rather
+# than passing `--force`, so consumers who customized colors aren't overridden).
+#
+# Required environment variables:
+#   REPO      owner/repo (e.g. $GITHUB_REPOSITORY).
+#   GH_TOKEN  (or ambient `gh auth`).
+#
+# Exit codes:
+#   0   all 5 labels are present (created or pre-existing)
+#   2   REPO unset
+set -euo pipefail
+IFS=$'\n\t'
+
+if [[ -z "${REPO:-}" ]]; then
+  printf 'error: REPO must be set\n' >&2
+  exit 2
+fi
+
+create() {
+  local name="$1" color="$2" desc="$3"
+  if gh label create "$name" --repo "$REPO" --color "$color" --description "$desc" >/dev/null 2>&1; then
+    printf 'created: %s\n' "$name"
+  else
+    printf 'present: %s\n' "$name"
+  fi
+}
+
+create ai:running FBCA04 'Pipeline run in progress'
+create ai:done    0E8A16 'Pipeline run completed successfully'
+create ai:failed  D73A4A 'Pipeline run failed'
+create ctx:medium FBCA04 'Peak context utilization 50-74%'
+create ctx:high   D73A4A 'Peak context utilization 75%+ (consider trimming)'

@@ -166,6 +166,26 @@ ec="$(run_capture_ec env RENDER_ONLY=1 \
        WORKFLOW_RUN_URL=u bash "$SCRIPT")"
 assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 
+section "ensure-issue-labels — issues 5 label-create calls under gh mock"
+
+LABELS_LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" \
+GH_MOCK_LOG="$LABELS_LOG" \
+REPO=owner/repo \
+  bash "$ROOT/scripts/ensure-issue-labels.sh" >/dev/null
+
+log="$(cat "$LABELS_LOG")"
+rm -f "$LABELS_LOG"
+
+assert_contains "$log" 'label create ai:running --repo owner/repo' "creates ai:running"
+assert_contains "$log" 'label create ai:done --repo owner/repo'    "creates ai:done"
+assert_contains "$log" 'label create ai:failed --repo owner/repo'  "creates ai:failed"
+assert_contains "$log" 'label create ctx:medium --repo owner/repo' "creates ctx:medium"
+assert_contains "$log" 'label create ctx:high --repo owner/repo'   "creates ctx:high"
+
+ec="$(run_capture_ec env bash "$ROOT/scripts/ensure-issue-labels.sh")"
+assert_equals "$ec" "2" "missing REPO → exit 2"
+
 section "ensure-toolchain — happy path + dry-run"
 
 ENSURE="$ROOT/scripts/ensure-toolchain.sh"
