@@ -242,7 +242,7 @@ jobs:
           RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.stub_run.outputs.result-file }}
         run: bash .claude-pipeline/scripts/classify-failure.sh
 
-      - name: Plan retry (DRY_RUN)
+      - name: Plan retry
         id: retry
         if: always() && steps.classify_failure.outputs.class != '' && steps.classify_failure.outputs.class != 'success'
         env:
@@ -251,7 +251,11 @@ jobs:
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
-          DRY_RUN: '1'
+          # Stub runs are tests — never auto-redispatch. Real runs follow
+          # the classify+retry policy: rate_limit/transient/task_failure
+          # may trigger an actual `gh workflow run` against the consumer's
+          # claude.yml (which now accepts workflow_dispatch).
+          DRY_RUN: ${{ inputs.stub-claude && '1' || '0' }}
         run: bash .claude-pipeline/scripts/retry-dispatch.sh
 
       - name: Extract job outputs from result.json
