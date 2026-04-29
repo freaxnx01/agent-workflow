@@ -224,6 +224,73 @@ out="$(ISSUE_NUMBER=1 REPO=o/r \
        ISSUE_BODY='Refactor the auth middleware' bash "$CLASSIFY")"
 assert_contains "$out" 'claude-haiku-4-5 (label model:haiku)' "override label beats heuristic"
 
+section "classify-failure — buckets per fixture"
+
+CLASSIFY_FAIL="$ROOT/scripts/classify-failure.sh"
+
+out="$(RESULT_FILE="$FIXTURES/result-success-cheap.json"      bash "$CLASSIFY_FAIL")"
+assert_contains "$out" 'class=success'      "success fixture → success"
+
+out="$(RESULT_FILE="$FIXTURES/result-rate-limit.json"         bash "$CLASSIFY_FAIL")"
+assert_contains "$out" 'class=rate_limit'   "rate-limit fixture → rate_limit"
+
+out="$(RESULT_FILE="$FIXTURES/result-max-turns.json"          bash "$CLASSIFY_FAIL")"
+assert_contains "$out" 'class=task_failure' "max-turns fixture → task_failure"
+
+out="$(RESULT_FILE="$FIXTURES/result-api-auth.json"           bash "$CLASSIFY_FAIL")"
+assert_contains "$out" 'class=api_auth'     "api-auth fixture → api_auth"
+
+ec="$(run_capture_ec env bash "$CLASSIFY_FAIL")"
+assert_equals "$ec" "2" "missing RESULT_FILE → exit 2"
+
+ec="$(run_capture_ec env RESULT_FILE=/no/such/file bash "$CLASSIFY_FAIL")"
+assert_equals "$ec" "64" "unreadable RESULT_FILE → exit 64"
+
+section "retry-dispatch — policy decisions (DRY_RUN, no real dispatch)"
+
+RETRY="$ROOT/scripts/retry-dispatch.sh"
+
+# success → no retry regardless of attempt
+out="$(CLASS=success ATTEMPT=1 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 bash "$RETRY")"
+assert_contains "$out" 'decision=stop'  "class=success → stop"
+
+# rate_limit, attempt 1 → retry
+out="$(CLASS=rate_limit ATTEMPT=1 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 bash "$RETRY")"
+assert_contains "$out" 'decision=retry'  "rate_limit attempt=1 → retry"
+assert_contains "$out" 'delay-seconds=300' "rate_limit delay defaults to 300s"
+
+# rate_limit, attempt at cap → stop
+out="$(CLASS=rate_limit ATTEMPT=3 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 bash "$RETRY")"
+assert_contains "$out" 'decision=stop'  "rate_limit attempt=cap → stop"
+
+# transient, exponential backoff
+out="$(CLASS=transient ATTEMPT=1 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 bash "$RETRY")"
+assert_contains "$out" 'delay-seconds=10' "transient attempt=1 → 10s backoff"
+out="$(CLASS=transient ATTEMPT=2 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 bash "$RETRY")"
+assert_contains "$out" 'delay-seconds=20' "transient attempt=2 → 20s backoff"
+out="$(CLASS=transient ATTEMPT=3 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 bash "$RETRY")"
+assert_contains "$out" 'decision=stop'  "transient attempt=cap → stop"
+
+# task_failure: only retry once (default MAX_RETRIES_TASK=1)
+out="$(CLASS=task_failure ATTEMPT=1 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 bash "$RETRY")"
+assert_contains "$out" 'decision=retry' "task_failure attempt=1 → retry once"
+out="$(CLASS=task_failure ATTEMPT=2 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 bash "$RETRY")"
+assert_contains "$out" 'decision=stop'  "task_failure attempt=2 → stop"
+
+# operator-intervention classes never auto-retry
+out="$(CLASS=api_auth ATTEMPT=1 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 bash "$RETRY")"
+assert_contains "$out" 'decision=stop'  "api_auth → stop (operator intervention)"
+out="$(CLASS=bug ATTEMPT=1 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 bash "$RETRY")"
+assert_contains "$out" 'decision=stop'  "bug → stop (operator intervention)"
+
+# DRY_RUN actually skips dispatch (the retry path would otherwise sleep 300s)
+out="$(CLASS=rate_limit ATTEMPT=1 ISSUE_NUMBER=42 REPO=o/r DELAY_OVERRIDE_SEC=0 DRY_RUN=1 bash "$RETRY")"
+assert_contains "$out" 'DRY_RUN: would sleep'  "DRY_RUN prints would-dispatch message"
+
+# Missing required env
+ec="$(run_capture_ec env CLASS=success ATTEMPT=1 ISSUE_NUMBER=42 bash "$RETRY")"
+assert_equals "$ec" "2" "missing REPO → exit 2"
+
 section "ensure-issue-labels — issues 5 label-create calls under gh mock"
 
 LABELS_LOG="$(mktemp)"
