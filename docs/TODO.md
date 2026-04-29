@@ -35,8 +35,8 @@ Mirrors the implementation order in [DESIGN.md](DESIGN.md). Strict order — don
 
 ## Phase 5: FlowHub integration
 
-- [ ] 20. Add consumer stub to FlowHub
-- [ ] 21. Configure FlowHub-specific settings (concurrency, timeout, fork-PR protection)
+- [x] 20. Add consumer stub to FlowHub
+- [x] 21. Configure FlowHub-specific settings (concurrency, timeout, fork-PR protection)
 - [ ] 22. Run a real task end-to-end
 
 ## Phase 6: Self-hosted runner (later, only for private repos)
