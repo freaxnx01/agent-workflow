@@ -140,6 +140,16 @@ jobs:
           } > "$prompt_file"
           echo "prompt-file=$prompt_file" >> "$GITHUB_OUTPUT"
 
+      - name: Triage model
+        if: ${{ !inputs.stub-claude }}
+        id: triage
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          DEFAULT_MODEL: ${{ inputs.default-model }}
+        run: bash .claude-pipeline/scripts/classify-task.sh
+
       - name: Run Claude Code
         if: ${{ !inputs.stub-claude }}
         id: claude_run
@@ -147,7 +157,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt_file: ${{ steps.issue.outputs.prompt-file }}
-          model: ${{ inputs.default-model }}
+          model: ${{ steps.triage.outputs.model }}
           max_turns: '30'
           # Headless mode has no human in the loop to approve tool use, so
           # everything Claude needs to implement an issue must be allowlisted

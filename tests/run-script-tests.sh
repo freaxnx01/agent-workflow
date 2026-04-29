@@ -177,6 +177,53 @@ ec="$(run_capture_ec env RENDER_ONLY=1 \
        WORKFLOW_RUN_URL=u bash "$SCRIPT")"
 assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 
+section "classify-task — explicit override labels and heuristics"
+
+CLASSIFY="$ROOT/scripts/classify-task.sh"
+
+# Override: model:opus label
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement
+model:opus' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: claude-opus-4-7 (label model:opus)'   "label model:opus → opus"
+
+# Override: model:haiku
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='model:haiku' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: claude-haiku-4-5 (label model:haiku)' "label model:haiku → haiku"
+
+# Override: model:sonnet
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='model:sonnet' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: claude-sonnet-4-6 (label model:sonnet)' "label model:sonnet → sonnet"
+
+# Heuristic: refactor keyword → opus
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' \
+       ISSUE_BODY='Refactor the auth middleware' bash "$CLASSIFY")"
+assert_contains "$out" 'claude-opus-4-7 (heuristic: refactor/architecture keywords)' "refactor keyword → opus"
+
+# Heuristic: typo keyword → haiku
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' \
+       ISSUE_BODY='Fix typo in the README' bash "$CLASSIFY")"
+assert_contains "$out" 'claude-haiku-4-5 (heuristic: trivial-edit keywords)' "typo keyword → haiku"
+
+# Default: nothing matches
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' \
+       ISSUE_BODY='Add a hello.md file' bash "$CLASSIFY")"
+assert_contains "$out" 'claude-sonnet-4-6 (heuristic: default)' "no match → default sonnet"
+
+# Default override via DEFAULT_MODEL env
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' \
+       ISSUE_BODY='Add a hello.md file' DEFAULT_MODEL=claude-haiku-4-5 bash "$CLASSIFY")"
+assert_contains "$out" 'claude-haiku-4-5 (heuristic: default)' "DEFAULT_MODEL env override applied on default branch"
+
+# Missing ISSUE_NUMBER → exit 2
+ec="$(run_capture_ec env REPO=o/r bash "$CLASSIFY")"
+assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
+
+# Override label wins over heuristic keywords
+out="$(ISSUE_NUMBER=1 REPO=o/r \
+       ISSUE_LABELS=$'ai-implement\nmodel:haiku' \
+       ISSUE_BODY='Refactor the auth middleware' bash "$CLASSIFY")"
+assert_contains "$out" 'claude-haiku-4-5 (label model:haiku)' "override label beats heuristic"
+
 section "ensure-issue-labels — issues 5 label-create calls under gh mock"
 
 LABELS_LOG="$(mktemp)"

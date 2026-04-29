@@ -29,7 +29,7 @@ Mirrors the implementation order in [DESIGN.md](DESIGN.md). Strict order — don
 
 ## Phase 4: Triage + retry
 
-- [ ] 17. Add the Haiku `classify-task.sh` step for model selection
+- [x] 17. Add the Haiku `classify-task.sh` step for model selection
 - [ ] 18. Add `classify-failure.sh` and `retry-dispatch.sh`
 - [ ] 19. Test rate-limit path with fixtures + act (real rate limits are too slow to wait for)
 
