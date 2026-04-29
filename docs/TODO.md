@@ -31,7 +31,7 @@ Mirrors the implementation order in [DESIGN.md](DESIGN.md). Strict order — don
 
 - [x] 17. Add the Haiku `classify-task.sh` step for model selection
 - [x] 18. Add `classify-failure.sh` and `retry-dispatch.sh`
-- [ ] 19. Test rate-limit path with fixtures + act (real rate limits are too slow to wait for)
+- [x] 19. Test rate-limit path with fixtures + act (real rate limits are too slow to wait for)
 
 ## Phase 5: FlowHub integration
 

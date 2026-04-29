@@ -56,11 +56,26 @@ on:
         default: false
       stub-claude:
         description: |
-          If true, skip the real Claude action and synthesize a canned success
-          result. Used by claude-implement.test.yml under act (no valid token)
-          and as a manual diagnostic for the surrounding wiring.
+          If true, skip the real Claude action and synthesize a canned result
+          (see `stub-fixture`). Used by claude-implement.test.yml under act
+          (no valid token) and as a manual diagnostic for the surrounding wiring.
         type: boolean
         default: false
+      stub-fixture:
+        description: |
+          When `stub-claude: true`, picks which canned outcome the stub should
+          synthesize: success | rate_limit | task_failure. Used to exercise the
+          classify-failure + retry-dispatch branch under act without burning
+          real Claude API calls or waiting for real rate limits.
+        type: string
+        default: success
+      attempt:
+        description: |
+          1-based retry attempt counter. Reusable workflows callers pass this
+          on retry-dispatch (or always default to 1). Drives retry-policy caps
+          in retry-dispatch.sh.
+        type: number
+        default: 1
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         description: OAuth token for Claude Code (generated via `claude setup-token`).
@@ -75,6 +90,12 @@ on:
       num-turns:
         description: Number of conversation turns the run took.
         value: ${{ jobs.implement.outputs.num-turns }}
+      failure-class:
+        description: 'Failure bucket from classify-failure.sh (success | rate_limit | api_auth | transient | task_failure | bug).'
+        value: ${{ jobs.implement.outputs.failure-class }}
+      retry-decision:
+        description: '"retry" or "stop" from retry-dispatch.sh. Empty when class=success (retry-dispatch is skipped).'
+        value: ${{ jobs.implement.outputs.retry-decision }}
 
 permissions:
   contents: read
@@ -93,9 +114,11 @@ jobs:
       pull-requests: write
       issues: write
     outputs:
-      outcome:   ${{ steps.outputs.outputs.outcome }}
-      cost-usd:  ${{ steps.outputs.outputs.cost-usd }}
-      num-turns: ${{ steps.outputs.outputs.num-turns }}
+      outcome:        ${{ steps.outputs.outputs.outcome }}
+      cost-usd:       ${{ steps.outputs.outputs.cost-usd }}
+      num-turns:      ${{ steps.outputs.outputs.num-turns }}
+      failure-class:  ${{ steps.classify_failure.outputs.class }}
+      retry-decision: ${{ steps.retry.outputs.decision }}
     steps:
       - name: Checkout consumer repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -175,12 +198,24 @@ jobs:
         env:
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           DEFAULT_MODEL: ${{ inputs.default-model }}
+          STUB_FIXTURE: ${{ inputs.stub-fixture }}
         run: |
           out="${RUNNER_TEMP:-/tmp}/claude-result.json"
-          jq -nc \
-            --argjson issue "$ISSUE_NUMBER" \
-            --arg     model "$DEFAULT_MODEL" \
-            '{type:"result",subtype:"success",is_error:false,duration_ms:1500,num_turns:1,total_cost_usd:0,session_id:"stub",result:("Stub run for issue #" + ($issue|tostring) + " (model " + $model + ")."),usage:{input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0}}' > "$out"
+          case "$STUB_FIXTURE" in
+            success)
+              jq -nc --argjson issue "$ISSUE_NUMBER" --arg model "$DEFAULT_MODEL" \
+                '{type:"result",subtype:"success",is_error:false,duration_ms:1500,num_turns:1,total_cost_usd:0,session_id:"stub",result:("Stub success for issue #" + ($issue|tostring) + " (model " + $model + ")."),usage:{input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0}}' > "$out"
+              ;;
+            rate_limit)
+              jq -nc '{type:"result",subtype:"error_during_execution",is_error:true,duration_ms:5000,num_turns:2,total_cost_usd:0,session_id:"stub-rl",result:"API Error: 429 rate_limit_error — Please retry after 2026-04-29T20:00:00Z.",usage:{input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0}}' > "$out"
+              ;;
+            task_failure)
+              jq -nc '{type:"result",subtype:"error_max_turns",is_error:true,duration_ms:300000,num_turns:30,total_cost_usd:0,session_id:"stub-mt",result:"Reached max_turns before completion.",usage:{input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0}}' > "$out"
+              ;;
+            *)
+              echo "::error::unknown stub-fixture: $STUB_FIXTURE"; exit 2
+              ;;
+          esac
           echo "result-file=$out" >> "$GITHUB_OUTPUT"
 
       - name: Adapt execution_file -> result.json
@@ -199,6 +234,25 @@ jobs:
           fi
           echo "result-file=$out" >> "$GITHUB_OUTPUT"
           echo "execution-file=$EXECUTION_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Classify failure
+        id: classify_failure
+        if: always() && (steps.claude.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
+        env:
+          RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.stub_run.outputs.result-file }}
+        run: bash .claude-pipeline/scripts/classify-failure.sh
+
+      - name: Plan retry (DRY_RUN)
+        id: retry
+        if: always() && steps.classify_failure.outputs.class != '' && steps.classify_failure.outputs.class != 'success'
+        env:
+          CLASS: ${{ steps.classify_failure.outputs.class }}
+          ATTEMPT: ${{ inputs.attempt }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: '1'
+        run: bash .claude-pipeline/scripts/retry-dispatch.sh
 
       - name: Extract job outputs from result.json
         id: outputs

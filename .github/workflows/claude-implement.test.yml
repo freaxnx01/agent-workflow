@@ -22,41 +22,77 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  call-reusable:
-    name: Reusable workflow (stub Claude, dry-run)
+  call-success:
+    name: Reusable workflow — stub success
     uses: ./.github/workflows/claude-implement.yml
     with:
       issue-number: 9999
       default-model: claude-sonnet-4-6
       timeout-minutes: 10
       dry-run: true
-      # Self-test: skip the cross-repo checkout and mirror the consumer
-      # checkout instead. Works under act (uncommitted changes) and on
-      # fork PRs (where the SHA isn't on the canonical remote).
       local-scripts: true
-      # Self-test: skip the real Claude action (no valid token here, and we
-      # don't want to spend on a stub-equivalent run anyway).
       stub-claude: true
+      stub-fixture: success
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
 
-  verify-outputs:
-    name: Assert reusable-workflow outputs
-    needs: call-reusable
+  call-rate-limit:
+    name: Reusable workflow — stub rate-limit (retry path)
+    uses: ./.github/workflows/claude-implement.yml
+    with:
+      issue-number: 9999
+      default-model: claude-sonnet-4-6
+      timeout-minutes: 10
+      dry-run: true
+      local-scripts: true
+      stub-claude: true
+      stub-fixture: rate_limit
+      attempt: 1
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
+
+  verify-success:
+    name: Assert success path
+    needs: call-success
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     env:
-      OUTCOME:   ${{ needs.call-reusable.outputs.outcome }}
-      COST_USD:  ${{ needs.call-reusable.outputs.cost-usd }}
-      NUM_TURNS: ${{ needs.call-reusable.outputs.num-turns }}
+      OUTCOME:   ${{ needs.call-success.outputs.outcome }}
+      COST_USD:  ${{ needs.call-success.outputs.cost-usd }}
+      NUM_TURNS: ${{ needs.call-success.outputs.num-turns }}
+      FAILURE:   ${{ needs.call-success.outputs.failure-class }}
+      RETRY:     ${{ needs.call-success.outputs.retry-decision }}
     steps:
       - name: Assert stub produced expected outputs
         run: |
           fail=0
-          [[ "$OUTCOME"   == "success" ]] || { echo "::error::expected outcome=success, got '$OUTCOME'"; fail=1; }
-          [[ "$COST_USD"  == "0" ]]       || { echo "::error::expected cost-usd=0, got '$COST_USD'"; fail=1; }
-          [[ "$NUM_TURNS" == "1" ]]       || { echo "::error::expected num-turns=1, got '$NUM_TURNS'"; fail=1; }
+          [[ "$OUTCOME" == "success" ]]    || { echo "::error::outcome=$OUTCOME (want success)"; fail=1; }
+          [[ "$COST_USD" == "0" ]]         || { echo "::error::cost-usd=$COST_USD (want 0)"; fail=1; }
+          [[ "$NUM_TURNS" == "1" ]]        || { echo "::error::num-turns=$NUM_TURNS (want 1)"; fail=1; }
+          [[ "$FAILURE" == "success" ]]    || { echo "::error::failure-class=$FAILURE (want success)"; fail=1; }
+          [[ -z "$RETRY" ]]                || { echo "::error::retry-decision=$RETRY (want empty — no retry on success)"; fail=1; }
           (( fail == 0 )) || exit 1
-          echo "outputs OK: outcome=$OUTCOME cost-usd=$COST_USD num-turns=$NUM_TURNS"
+          echo "success path OK: failure=$FAILURE retry=$RETRY"
+
+  verify-rate-limit:
+    name: Assert rate-limit path
+    needs: call-rate-limit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      OUTCOME:  ${{ needs.call-rate-limit.outputs.outcome }}
+      FAILURE:  ${{ needs.call-rate-limit.outputs.failure-class }}
+      RETRY:    ${{ needs.call-rate-limit.outputs.retry-decision }}
+    steps:
+      - name: Assert rate-limit triggers retry decision
+        run: |
+          fail=0
+          [[ "$OUTCOME" == "failed" ]]      || { echo "::error::outcome=$OUTCOME (want failed)"; fail=1; }
+          [[ "$FAILURE" == "rate_limit" ]]  || { echo "::error::failure-class=$FAILURE (want rate_limit)"; fail=1; }
+          [[ "$RETRY" == "retry" ]]         || { echo "::error::retry-decision=$RETRY (want retry)"; fail=1; }
+          (( fail == 0 )) || exit 1
+          echo "rate-limit path OK: failure=$FAILURE retry=$RETRY"
