@@ -20,12 +20,12 @@ Mirrors the implementation order in [DESIGN.md](DESIGN.md). Strict order — don
 
 ## Phase 3: First consumer integration
 
-- [ ] 11. Create `claude-action-sandbox` repo (private, throwaway)
-- [ ] 12. Add CLAUDE.md and the consumer stub workflow
-- [ ] 13. Generate `CLAUDE_CODE_OAUTH_TOKEN` via `claude setup-token`
-- [ ] 14. Add token as repo secret
-- [ ] 15. Run a real `ai-implement` task on a trivial issue (e.g., "add a hello.md file")
-- [ ] 16. Iterate until clean
+- [x] 11. Create `claude-action-sandbox` repo (private, throwaway)
+- [x] 12. Add CLAUDE.md and the consumer stub workflow
+- [x] 13. Generate `CLAUDE_CODE_OAUTH_TOKEN` via `claude setup-token`
+- [x] 14. Add token as repo secret
+- [x] 15. Run a real `ai-implement` task on a trivial issue (e.g., "add a hello.md file")
+- [x] 16. Iterate until clean
 
 ## Phase 4: Triage + retry
 
