@@ -29,11 +29,15 @@ on:
         default: freaxnx01/claude-pipeline
       pipeline-ref:
         description: |
-          Ref of `pipeline-repo` to check out for shared scripts. Defaults to
-          the SHA of this workflow file so scripts and workflow stay in
-          lockstep across versions.
+          Ref of `pipeline-repo` to check out for shared scripts. Defaults
+          to `main`. NOTE: GitHub's `github.workflow_sha`/`workflow_ref`
+          context fields refer to the *caller's* workflow when running as
+          a reusable workflow, so we cannot auto-resolve to the same ref
+          the caller pinned in `uses:`. Consumers that pin to a tag (e.g.
+          `uses: ...@v1`) should also pass `pipeline-ref: v1` here to keep
+          workflow and scripts in lockstep.
         type: string
-        default: ''
+        default: main
       dry-run:
         description: |
           If true, skip GitHub API side effects in the report step (no issue
@@ -94,7 +98,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           repository: ${{ inputs.pipeline-repo }}
-          ref: ${{ inputs.pipeline-ref || github.workflow_sha }}
+          ref: ${{ inputs.pipeline-ref }}
           path: .claude-pipeline
           sparse-checkout: |
             scripts
