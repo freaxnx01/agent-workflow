@@ -153,6 +153,11 @@ jobs:
           # everything Claude needs to implement an issue must be allowlisted
           # up front: code changes, search, repo operations, branch + PR.
           allowed_tools: Edit,Write,Read,Glob,Grep,MultiEdit,TodoWrite,Bash
+          # Expose GH_TOKEN to the spawned `claude` subprocess so it can call
+          # `gh pr create` (the action only injects CLAUDE_CODE_OAUTH_TOKEN
+          # by default).
+          claude_env: |
+            GH_TOKEN=${{ github.token }}
 
       - name: Stub Claude run (diagnostic mode)
         if: ${{ inputs.stub-claude }}
