@@ -147,7 +147,8 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt_file: ${{ steps.issue.outputs.prompt-file }}
-          claude_args: --model ${{ inputs.default-model }} --max-turns 30
+          model: ${{ inputs.default-model }}
+          max_turns: '30'
 
       - name: Stub Claude run (diagnostic mode)
         if: ${{ inputs.stub-claude }}
