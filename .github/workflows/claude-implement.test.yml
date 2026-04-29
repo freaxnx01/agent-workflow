@@ -34,6 +34,9 @@ jobs:
       # checkout instead. Works under act (uncommitted changes) and on
       # fork PRs (where the SHA isn't on the canonical remote).
       local-scripts: true
+      # Self-test: skip the real Claude action (no valid token here, and we
+      # don't want to spend on a stub-equivalent run anyway).
+      stub-claude: true
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
 

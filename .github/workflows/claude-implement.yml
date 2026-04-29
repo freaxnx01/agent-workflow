@@ -54,6 +54,13 @@ on:
           pipeline scripts live in the same repo.
         type: boolean
         default: false
+      stub-claude:
+        description: |
+          If true, skip the real Claude action and synthesize a canned success
+          result. Used by claude-implement.test.yml under act (no valid token)
+          and as a manual diagnostic for the surrounding wiring.
+        type: boolean
+        default: false
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         description: OAuth token for Claude Code (generated via `claude setup-token`).
@@ -116,11 +123,35 @@ jobs:
       - name: Ensure toolchain
         run: bash .claude-pipeline/scripts/ensure-toolchain.sh
 
-      # NOTE: stubbed until Phase 3 wires in the real Claude Code action.
-      # Replace this step with the upstream `anthropics/claude-code-base-action`
-      # call once the consumer-integration sandbox is green.
-      - name: Stub Claude run
-        id: claude
+      - name: Fetch issue context
+        if: ${{ !inputs.stub-claude }}
+        id: issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+        run: |
+          prompt_file="${RUNNER_TEMP:-/tmp}/claude-prompt.md"
+          ctx=$(gh issue view "$ISSUE_NUMBER" --repo "$REPO" --json title,body --jq '"# " + .title + "\n\n" + .body')
+          {
+            printf '# Issue #%s\n\n%s\n\n---\n\n' "$ISSUE_NUMBER" "$ctx"
+            printf 'Read CLAUDE.md and follow the house rules.\n'
+            printf 'Implement the change on a new branch and open a DRAFT pull request.\n'
+          } > "$prompt_file"
+          echo "prompt-file=$prompt_file" >> "$GITHUB_OUTPUT"
+
+      - name: Run Claude Code
+        if: ${{ !inputs.stub-claude }}
+        id: claude_run
+        uses: anthropics/claude-code-base-action@e8132bc5e637a42c27763fc757faa37e1ee43b34  # v0.0.63
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt_file: ${{ steps.issue.outputs.prompt-file }}
+          claude_args: --model ${{ inputs.default-model }} --max-turns 30
+
+      - name: Stub Claude run (diagnostic mode)
+        if: ${{ inputs.stub-claude }}
+        id: stub_run
         env:
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           DEFAULT_MODEL: ${{ inputs.default-model }}
@@ -132,10 +163,23 @@ jobs:
             '{type:"result",subtype:"success",is_error:false,duration_ms:1500,num_turns:1,total_cost_usd:0,session_id:"stub",result:("Stub run for issue #" + ($issue|tostring) + " (model " + $model + ")."),usage:{input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0}}' > "$out"
           echo "result-file=$out" >> "$GITHUB_OUTPUT"
 
+      - name: Adapt execution_file -> result.json
+        if: ${{ !inputs.stub-claude && always() && steps.claude_run.outputs.execution_file != '' }}
+        id: claude
+        env:
+          EXECUTION_FILE: ${{ steps.claude_run.outputs.execution_file }}
+        run: |
+          out="${RUNNER_TEMP:-/tmp}/claude-result.json"
+          # execution_file is NDJSON of SDK messages — last `result`-typed one has totals.
+          jq -s 'map(select(.type == "result")) | last' "$EXECUTION_FILE" > "$out"
+          echo "result-file=$out" >> "$GITHUB_OUTPUT"
+          echo "execution-file=$EXECUTION_FILE" >> "$GITHUB_OUTPUT"
+
       - name: Extract job outputs from result.json
         id: outputs
+        if: always() && (steps.claude.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
         env:
-          RESULT_FILE: ${{ steps.claude.outputs.result-file }}
+          RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.stub_run.outputs.result-file }}
         run: |
           jq -r '
             "cost-usd="  + (.total_cost_usd | tostring),
@@ -151,9 +195,10 @@ jobs:
         run: bash .claude-pipeline/scripts/ensure-issue-labels.sh
 
       - name: Post run report
-        if: always() && steps.claude.outputs.result-file != ''
+        if: always() && (steps.claude.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
         env:
-          RESULT_FILE: ${{ steps.claude.outputs.result-file }}
+          RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.stub_run.outputs.result-file }}
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution-file }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           REPO: ${{ github.repository }}
