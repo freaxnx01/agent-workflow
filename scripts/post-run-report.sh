@@ -151,10 +151,12 @@ if [[ "$IS_ERROR" == "true" ]]; then
   STATUS_EMOJI=':x:'
   STATUS_TEXT="failed: ${SUBTYPE}"
   STATUS_LABEL='ai:failed'
+  STATUS_LABEL_OPPOSITE='ai:done'
 else
   STATUS_EMOJI=':white_check_mark:'
   STATUS_TEXT='success'
   STATUS_LABEL='ai:done'
+  STATUS_LABEL_OPPOSITE='ai:failed'
 fi
 
 CTX_LABEL=''
@@ -218,4 +220,7 @@ render_comment > "$tmpfile"
 
 gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body-file "$tmpfile"
 gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "$(labels_csv)"
-gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label 'ai:running' 2>/dev/null || true
+# Best-effort cleanup of stale lifecycle labels from prior runs. Each call
+# errors when the label isn't present; that's expected and ignored.
+gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label 'ai:running'         2>/dev/null || true
+gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label "$STATUS_LABEL_OPPOSITE" 2>/dev/null || true

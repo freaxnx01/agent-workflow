@@ -149,6 +149,10 @@ jobs:
           prompt_file: ${{ steps.issue.outputs.prompt-file }}
           model: ${{ inputs.default-model }}
           max_turns: '30'
+          # Headless mode has no human in the loop to approve tool use, so
+          # everything Claude needs to implement an issue must be allowlisted
+          # up front: code changes, search, repo operations, branch + PR.
+          allowed_tools: Edit,Write,Read,Glob,Grep,MultiEdit,TodoWrite,Bash
 
       - name: Stub Claude run (diagnostic mode)
         if: ${{ inputs.stub-claude }}
