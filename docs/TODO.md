@@ -4,7 +4,7 @@ Mirrors the implementation order in [DESIGN.md](DESIGN.md). Strict order — don
 
 ## Phase 1: Foundations (Layer 0/1 testing)
 
-- [ ] 1. Create `claude-pipeline` repo (private at first; flip public when stable)
+- [x] 1. Create `claude-pipeline` repo (private at first; flip public when stable)
 - [x] 2. Set up `actionlint` + `shellcheck` lint workflow
 - [x] 3. Build `scripts/post-run-report.sh` with extracted bash, env-driven
 - [x] 4. Build fixture set (~6 JSON files covering success/failure/edge cases)
