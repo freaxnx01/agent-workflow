@@ -131,3 +131,158 @@ the normalized JSON, not on agent identity.
 - The result-shape table above is now load-bearing. Any change to it is a
   breaking change to consumers' assumptions about the run-report. Such
   changes require a new ADR and a major-version bump.
+
+---
+
+## ADR-002 — Auto-review and auto-merge safety envelope (2026-05-23)
+
+**Status:** Accepted — supersedes constraint #4 ("Draft PRs only") in
+`docs/DESIGN.md`.
+**Tracking:** [#12](https://github.com/freaxnx01/claude-pipeline/issues/12) under epic [#3](https://github.com/freaxnx01/claude-pipeline/issues/3)
+
+### Context
+
+`docs/DESIGN.md` line 364 (April 2026) made it a non-negotiable rule that
+the pipeline only opens **draft** PRs and never promotes them. That rule
+was the right default when there was no review step between
+"agent finished" and "PR exists" — every diff needed human eyes before
+merge.
+
+Epic [#3](https://github.com/freaxnx01/claude-pipeline/issues/3) introduces
+an agent-driven review step that runs on the just-opened draft PR
+([#14](https://github.com/freaxnx01/claude-pipeline/issues/14)). With a
+review verdict in hand, there is a defensible path to promoting the draft
+to ready and enabling auto-merge — but only if a tight safety envelope is
+enforced. This ADR defines that envelope.
+
+### Decision
+
+#### 1. What the policy reversal allows
+
+When all hard-gates in §2 are satisfied, the pipeline may:
+
+- `gh pr ready <PR>` — promote the draft to ready-for-review.
+- `gh pr merge --auto --squash <PR>` — enable GitHub's native auto-merge,
+  which fires once all required status checks pass.
+
+Without all gates satisfied, the PR stays draft and a human is expected
+to take over. There is no partial-promotion (e.g. "ready but not
+auto-merge") because the only reason to promote in this flow is to enable
+auto-merge.
+
+#### 2. Hard-gates — ALL must be true
+
+Auto-merge is enabled iff every one of these holds at the moment the
+auto-review job runs:
+
+1. **Pipeline-authored PR.** `pr.user.login` equals the pipeline's commit
+   identity. Refuse to promote a human-authored or third-party-bot PR
+   even if the gating labels are present.
+2. **Per-issue opt-in.** The originating issue carries the
+   `ai-auto-review` label.
+3. **Per-repo opt-in.** The reusable workflow was called with
+   `auto-review: true`.
+4. **Review verdict = approve.** `scripts/review-pr.sh`
+   ([#14](https://github.com/freaxnx01/claude-pipeline/issues/14)) emits
+   `verdict=approve`. `request_changes` and `block` both leave the PR
+   draft.
+5. **All required status checks green.** Auto-merge will defer until
+   they are; if any required check is failing at the time of decision,
+   refuse to promote (don't bet on a flaky check turning green after the
+   fact).
+6. **Diff is inside the safety envelope.** The PR must not touch:
+   - Anything under `.github/` (workflows, actions, CODEOWNERS, branch
+     protection config). Touching CI from within an auto-merged change
+     is a self-modifying-pipeline footgun.
+   - `*.sops.yaml`, `*.enc.*`, `*.age`, `secrets.*` — any file matching
+     the canonical encrypted-secret naming conventions.
+   - Paths listed in a repo-local `.claude-auto-merge-blocklist` file
+     (one glob per line, comments with `#`). Optional; absent file =
+     empty blocklist. Consumers customize per-repo without needing a
+     workflow change.
+7. **Branch protection compatibility.** The target branch must have
+   squash-merge enabled. CODEOWNERS, if defined, must be satisfied by
+   the diff (we don't bypass review requirements — `gh pr merge --auto`
+   honors them, but we check first so we can post a clear reason in the
+   PR comment when we don't promote).
+
+If any gate fails, the auto-review job:
+- Posts a single PR review comment naming the failed gate(s).
+- Leaves the PR draft.
+- Applies the `ai:review-blocked` label to the originating issue (label
+  itself is out of scope for this ADR; created when needed).
+- Exits the job successfully — gate failure is a *decision*, not an
+  error.
+
+#### 3. Merge strategy
+
+**Squash only.** Rationale:
+
+- The pipeline produces multiple commits per branch (implementation,
+  test, fixup-from-review). The commit-by-commit history is uninteresting
+  to consumers; the PR-title-as-commit-subject squash gives a clean
+  `main` history.
+- Squash-merge plays well with Conventional Commits — the PR title is
+  already conventional (the pipeline enforces this when creating the PR),
+  so the squash commit is too.
+- Rebase-merge fans out N agent commits into `main`; merge-commit
+  pollutes `main` with merge bubbles. Both lose the "one decision per
+  merge" story that auto-merge needs to make sense in `git log`.
+
+#### 4. Failure modes & rollback
+
+- **Required check fails after promotion.** GitHub's auto-merge cancels
+  itself and notifies via PR. The pipeline does not retry. A human
+  takes over.
+- **Squash-merge succeeds, then a follow-up CI run (e.g. nightly) finds
+  a regression.** Revert is a normal `git revert` — no pipeline-specific
+  rollback. Worth a future ADR if reverts ever become common, but
+  out-of-scope today.
+- **Review verdict was wrong (approved a bad change).** Same as above —
+  revert in `main`, and post-mortem the review prompt
+  ([#14](https://github.com/freaxnx01/claude-pipeline/issues/14)) before
+  re-enabling `auto-review: true` for the issue category that produced
+  it.
+- **Gate-envelope bug** (e.g. a `.github/` file slipped through).
+  Disable feature repo-wide by flipping `auto-review: false` at the call
+  site; no code change to `claude-pipeline` needed for the kill-switch.
+  Add a fixture covering the missed path, then re-enable.
+
+#### 5. Update to `docs/DESIGN.md`
+
+Constraint #4 in the "Critical constraints — non-negotiable" section is
+**amended in this PR**, not deleted. The amendment preserves the
+default-draft posture and adds the conditions under which promotion is
+allowed:
+
+> 4. **Draft PRs by default; promotion allowed only inside ADR-002's
+>    safety envelope.** The pipeline opens drafts. Promotion to ready +
+>    auto-merge requires every gate in ADR-002 to be true; otherwise the
+>    PR stays draft.
+
+`CLAUDE.md` is not amended — the project's `CLAUDE.md` is the AI base
+instructions + CI-automation stack overlay and does not carry this
+specific rule. (The original issue
+[#12](https://github.com/freaxnx01/claude-pipeline/issues/12) body cited
+"CLAUDE.md line 361"; the rule is actually at `docs/DESIGN.md` line 364.
+Corrected here.)
+
+### Consequences
+
+- The `auto-review-enabled` workflow output added in
+  [#13](https://github.com/freaxnx01/claude-pipeline/issues/13) becomes
+  the first gate consulted by
+  [#15](https://github.com/freaxnx01/claude-pipeline/issues/15). It is
+  necessary but not sufficient — gates 1, 4, 5, 6, 7 above are all
+  evaluated after it.
+- The safety envelope is the **single source of truth** for "is this PR
+  auto-mergeable."
+  [#15](https://github.com/freaxnx01/claude-pipeline/issues/15)'s
+  `scripts/check-merge-envelope.sh` (to be written there) implements
+  exactly these checks — no extra, no fewer. Any divergence is a bug in
+  one place or the other, not a policy disagreement.
+- Issue [#17](https://github.com/freaxnx01/claude-pipeline/issues/17)
+  (chaining ADR) inherits the assumption that auto-merge is the only
+  trigger for chain-dispatch. If a human merges a chained issue's PR
+  manually, the chain does NOT auto-advance — this is intentional
+  (manual merge implies the human is steering).

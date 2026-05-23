@@ -361,7 +361,10 @@ These were considered and explicitly deferred:
    instead of API billing. Generated via `claude setup-token`, valid one year.
 3. **All quotes from sources must be paraphrased** in PRs and issue comments
    (CLAUDE.md should remind headless Claude of this).
-4. **Draft PRs only.** Never let the action open a non-draft PR.
+4. **Draft PRs by default; promotion allowed only inside ADR-002's safety
+   envelope.** The pipeline opens drafts. Promotion to ready + auto-merge
+   requires every gate in [DECISIONS.md](DECISIONS.md) ADR-002 to be true;
+   otherwise the PR stays draft.
 5. **Conventional Commits** for all auto-commits.
 6. **Mode #0 is a valid skill outcome.** The skill must support "don't delegate."
 
