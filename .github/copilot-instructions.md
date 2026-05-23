@@ -6,26 +6,7 @@ Follow all conventions below when generating or completing code.
 
 # AI Agent Base Instructions
 
-Canonical, **stack-agnostic** reference for all AI coding agents. Applies to every project regardless of language or framework. Stack-specific overlays live in `.ai/stacks/<stack>.md` and are loaded alongside this file.
-
-Tool-specific files (`CLAUDE.md`, `.github/copilot-instructions.md`, `SKILL.md`) derive from this file plus the chosen stack overlay.
-
----
-
-## How this file composes
-
-```
-.ai/
-  base-instructions.md        ← you are here (stack-agnostic)
-  stacks/
-    dotnet.md                 ← .NET / ASP.NET Core / Blazor
-    <other>.md                ← added as new stacks are adopted
-  skills/
-    commit.md · push.md
-    ui-brainstorm.md · ui-flow.md · ui-build.md · ui-review.md
-```
-
-A project loads **base + exactly one stack overlay**. Agents never need to see stacks they are not working in.
+Canonical, **stack-agnostic** reference for all AI coding agents. Applies to every project regardless of language or framework. Stack-specific overlays live in `.ai/stacks/<stack>.md` and are loaded alongside this file. A project loads **base + exactly one stack overlay**. Tool-specific files (`CLAUDE.md`, `.github/copilot-instructions.md`, `SKILL.md`) derive from base + the chosen stack.
 
 ---
 
@@ -88,28 +69,37 @@ Skill files live in `.ai/skills/`. The skills themselves are stack-neutral — U
 
 ---
 
+## Localization (i18n) & Regional Formatting
+
+User-facing apps must support **`de` and `en`**. CI tooling and developer-only utilities are exempt.
+
+### Language
+
+- Default language resolved from the OS / browser locale at first launch
+- User can override at runtime via an in-app language switcher
+- The user's choice is persisted (cookie, preferences store, or user profile — stack-specific)
+
+### Regional formatting (decoupled from language)
+
+Regional formatting (date, time, number, currency separators) is selected from the OS region — **not** dictated by the language.
+
+- Auto-detect any `de-*` OS region (`de-CH`, `de-DE`, `de-AT`, …) and use the matching culture
+- If the language is `de` but the OS region is missing or unrecognized: fall back to **`de-CH`**
+- For `en`: use the OS-provided region (typically `en-US` / `en-GB`) — do not force a default
+
+### Rules
+
+- All date / number / currency rendering goes through the platform's localization API — never hand-format with raw `string.Format` / `toString()` / template literals.
+- Do not couple regional formatting to the UI language. A user can read German text with US formatting, or English text with Swiss formatting; both must work.
+- Stack overlays specify the concrete API (`CultureInfo` + `RequestLocalization` for .NET, `flutter_localizations` + `intl` for Flutter, etc.).
+
+---
+
 ## Versioning (SemVer)
 
-All projects follow [Semantic Versioning 2.0.0](https://semver.org/):
+All projects follow [Semantic Versioning 2.0.0](https://semver.org/): `MAJOR.MINOR.PATCH` — `MAJOR` = breaking, `MINOR` = new feature (backwards-compatible), `PATCH` = bug fix.
 
-```
-MAJOR.MINOR.PATCH  →  e.g. 2.4.1
-```
-
-| Increment | When |
-|---|---|
-| `MAJOR` | Breaking change — incompatible API or behaviour change |
-| `MINOR` | New functionality, backwards-compatible |
-| `PATCH` | Bug fix, backwards-compatible |
-
-**Mapping from Conventional Commits:**
-
-| Commit type | Version bump |
-|---|---|
-| `BREAKING CHANGE:` footer or `!` after type | MAJOR |
-| `feat` | MINOR |
-| `fix`, `perf` | PATCH |
-| `chore`, `docs`, `ci`, `test`, `refactor` | no bump |
+Conventional Commits mapping: `BREAKING CHANGE:` footer or `!` after type → MAJOR; `feat` → MINOR; `fix`, `perf` → PATCH; `chore`, `docs`, `ci`, `test`, `refactor` → no bump.
 
 - Git tags follow `v<MAJOR>.<MINOR>.<PATCH>` (e.g. `v1.3.0`) — tag on `main` after merge
 - Pre-release: `v1.0.0-alpha.1`, `v1.0.0-beta.2`, `v1.0.0-rc.1`
@@ -120,58 +110,24 @@ MAJOR.MINOR.PATCH  →  e.g. 2.4.1
 
 ## Changelog
 
-All projects maintain a `CHANGELOG.md` in the repo root following [Keep a Changelog](https://keepachangelog.com) conventions.
-
-```markdown
-# Changelog
-
-All notable changes to this project will be documented in this file.
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
-
-## [1.1.0] - 2025-06-01
-### Added
-- Order cancellation endpoint
-
-### Fixed
-- Token refresh edge case on expiry boundary
-
-## [1.0.0] - 2025-04-15
-### Added
-- Initial release
-```
-
-**Sections per release:** `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`
+All projects maintain a `CHANGELOG.md` in the repo root following [Keep a Changelog](https://keepachangelog.com) conventions. **Sections per release:** `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`.
 
 - `[Unreleased]` section accumulates changes until a release is cut
 - Auto-generation: **git-cliff** with `cliff.toml` configured for Conventional Commits
 - CI integration: `orhun/git-cliff-action` in GitHub Actions generates release notes into GitHub Releases
 - CI can validate that `[Unreleased]` is not empty before allowing a release branch
 
+Example: [`.ai/references/base/changelog-example.md`](https://github.com/freaxnx01/ai-instructions/blob/main/.ai/references/base/changelog-example.md)
+
 ---
 
 ## 12-Factor App Compliance
 
-Projects follow the [12-Factor App](https://www.12factor.net/) methodology. Each factor stated neutrally:
+Projects follow the [12-Factor App](https://www.12factor.net/) methodology: one repo per service, all deps declared, env-var config, attached backing services, separate build/release/run stages, stateless processes, port binding, scale via replicas not threads, fast disposability, dev/prod parity, logs to stdout, admin processes as one-offs.
 
-| Factor | Rule |
-|---|---|
-| **I. Codebase** | One repo per service/app, tracked in Git |
-| **II. Dependencies** | All declared in the project's manifest/lockfile; nothing assumed from the environment |
-| **III. Config** | All environment-specific config via environment variables — nothing per-environment baked into config files |
-| **IV. Backing services** | DB, cache, message broker treated as attached resources via connection-string env vars |
-| **V. Build, release, run** | Multi-stage container build: build image ≠ run image. Never build inside a running container |
-| **VI. Processes** | Stateless processes — no sticky sessions, no local file state |
-| **VII. Port binding** | App is self-contained; exports HTTP on a configurable port |
-| **VIII. Concurrency** | Scale via multiple container replicas, not threads |
-| **IX. Disposability** | Fast startup, graceful shutdown on SIGTERM |
-| **X. Dev/prod parity** | Local override files mirror prod config as closely as possible |
-| **XI. Logs** | Treat logs as event streams — write to stdout, never to files in a container |
-| **XII. Admin processes** | Migrations and seed scripts run as one-off commands, not baked into app startup |
+Stack-specific enforcement details (logging library, migrations, etc.) live in the stack overlay.
 
-Stack-specific enforcement details (e.g. which logging library, how migrations are wired) live in the stack overlay.
+Full per-factor table: [`.ai/references/base/12-factor.md`](https://github.com/freaxnx01/ai-instructions/blob/main/.ai/references/base/12-factor.md)
 
 ---
 
@@ -240,27 +196,9 @@ Follow Conventional Commits format: `feat(orders): add cancellation endpoint`
 
 ### PR Description Template
 
-```markdown
-## Summary
-<!-- What does this PR do and why? -->
+Body sections: **Summary** · **Changes** · **Testing** (unit, component/integration, E2E, local) · **Checklist** (tests pass, no new vulnerable deps, no secrets, migrations included if schema changed, API/OpenAPI spec still valid).
 
-## Changes
--
--
-
-## Testing
-- [ ] Unit tests added/updated
-- [ ] Component/integration tests added if applicable
-- [ ] E2E test added/updated if user-facing flow changed
-- [ ] Tested locally
-
-## Checklist
-- [ ] Tests pass
-- [ ] No new vulnerable dependencies
-- [ ] No secrets committed
-- [ ] Migrations included if schema changed
-- [ ] API/OpenAPI spec still valid (if applicable)
-```
+Template: [`.ai/references/base/pr-description-template.md`](https://github.com/freaxnx01/ai-instructions/blob/main/.ai/references/base/pr-description-template.md)
 
 ### Review Guidelines
 
@@ -285,20 +223,18 @@ Concrete CI configuration (GitHub Actions YAML, commands, package scanners) live
 
 ## Documentation Structure
 
-```
-docs/
-├── design/                    ← UI wireframes & Mermaid flows per feature
-│   └── <feature-name>/
-│       ├── wireframe.md       ← Phase 1 output (ASCII wireframe)
-│       └── flow.md            ← Phase 2 output (Mermaid diagrams)
-├── adr/                       ← Architecture Decision Records
-└── ai-notes/                  ← AI agent working notes
-```
+Repo-root `docs/` contains:
+- `design/<feature-name>/` — UI wireframes (`wireframe.md`) & Mermaid flows (`flow.md`) per feature
+- `adr/` — Architecture Decision Records
+- `ai-notes/` — AI agent working notes
 
+Rules:
 - `README.md` and `CHANGELOG.md` live in the repo root
 - UI design artifacts are saved per feature during the UI workflow phases
 - AI agents write working notes to `docs/ai-notes/`, not `.ai/`
 - `.ai/` is reserved for agent instructions and skill files only
+
+Layout: [`.ai/references/base/documentation-structure.md`](https://github.com/freaxnx01/ai-instructions/blob/main/.ai/references/base/documentation-structure.md)
 
 ---
 
@@ -331,21 +267,7 @@ Stack-specific guardrails (e.g. "do not add NuGet packages") live in the stack o
 
 ## Project Scaffold Checklist (baseline)
 
-Every new project, regardless of stack:
-
-- [ ] `README.md` with setup + run commands
-- [ ] `CHANGELOG.md` with `[Unreleased]` section
-- [ ] `cliff.toml` for `git-cliff`
-- [ ] `.gitignore` appropriate to the stack
-- [ ] `CLAUDE.md` and `.github/copilot-instructions.md` generated from base + chosen stack overlay
-- [ ] `/health/live` and `/health/ready` endpoints wired (or stack equivalent)
-- [ ] CI workflow (build + test + security scan)
-- [ ] Branch protection on `main`
-
-Stack-specific additions (e.g. `Directory.Build.props`, `pubspec.yaml`, `package.json`) live in the stack overlay's scaffold checklist.
-
-
----
+Init-time checklist (every project, regardless of stack) — including baseline, .NET, and WebAPI layers — lives at [`.ai/references/scaffold-checklists.md`](https://github.com/freaxnx01/ai-instructions/blob/main/.ai/references/scaffold-checklists.md). Stack-specific additions are in the same file under their respective sections.
 
 [//]: # (Stack overlay — loaded together with .ai/base-instructions.md for CI / automation / pipeline projects)
 
@@ -540,9 +462,9 @@ jobs:
 
 ---
 
-## Essential Commands / Make Targets
+## Essential Commands / just Recipes
 
-Pipeline repos using this stack should ship a repo-root `Makefile` with these canonical targets. Recipe bodies are project-specific; target names are not.
+Pipeline repos using this stack should ship a repo-root `justfile` (using [casey/just](https://github.com/casey/just)) with these canonical recipes. Recipe bodies are project-specific; recipe names are not.
 
 ### Quality
 - `lint` — actionlint + shellcheck on workflows and scripts
@@ -555,15 +477,17 @@ Pipeline repos using this stack should ship a repo-root `Makefile` with these ca
 - `docs` — generate / verify docs (e.g. CHANGELOG via `git-cliff`)
 
 ### Release
-- `version` / `version-set V=X.Y.Z` / `bump-major` / `bump-minor` / `bump-patch` / `bump-auto`
+- `version` / `version-set 1.2.3` / `bump-major` / `bump-minor` / `bump-patch` / `bump-auto`
 - `changelog` — `git-cliff --output CHANGELOG.md`
-- `release` — tag `v$(VERSION)`, regenerate changelog, commit, tag (no auto-push)
-- `push-release` — `git push origin main "v$(VERSION)"`
+- `release` — tag `v$(just version)`, regenerate changelog, commit, tag (no auto-push)
+- `push-release` — `git push origin main "v$(just version)"`
 
 ### Cleanup
 - `clean` — remove generated artifacts (`.act/`, `coverage/`, etc.)
 
-Document each target with an inline `## <description>` and expose a `help` target that greps them.
+Document each recipe with a leading `# <description>` comment. Set a default recipe `default: @just --list --unsorted` so `just` with no args prints the documented set.
+
+Install (requires just ≥ 1.20): `cargo install just` / `brew install just` / `winget install Casey.Just` / `sudo apt install just`. CI: `extractions/setup-just@v2`.
 
 ---
 
@@ -583,7 +507,7 @@ Document each target with an inline `## <description>` and expose a `help` targe
 Base rules (SemVer, Conventional Commits → bump mapping, git-cliff) live in `base-instructions.md`. For this stack:
 
 - **Reusable workflows are versioned by git tag.** Consumers reference `freaxnx01/<repo>/.github/workflows/<name>.yml@v1` — so a `v1` major-version tag is moved forward as backward-compatible changes ship, and `v2` is cut for breaking changes. Document the breaking change in `CHANGELOG.md` and provide a migration note.
-- **Single source of truth for the version**: `VERSION` file at repo root, read by the Makefile.
+- **Single source of truth for the version**: `VERSION` file at repo root, read by the justfile.
 - **Tag format**: `vMAJOR.MINOR.PATCH` (e.g. `v1.4.2`); the major-version moving tag is `vMAJOR` (e.g. `v1`).
 
 ---
@@ -607,7 +531,7 @@ Every PR runs `lint` + `test`. `act-run` is opt-in (label-gated) to keep PR runt
 ## Project Scaffold Checklist (CI / automation)
 
 - [ ] `.editorconfig`
-- [ ] `Makefile` with the targets above
+- [ ] `justfile` with the recipes above
 - [ ] `VERSION` file
 - [ ] `CHANGELOG.md` with `[Unreleased]` section
 - [ ] `cliff.toml` for `git-cliff`

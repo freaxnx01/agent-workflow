@@ -191,9 +191,9 @@ jobs:
 
 ---
 
-## Essential Commands / Make Targets
+## Essential Commands / just Recipes
 
-Pipeline repos using this stack should ship a repo-root `Makefile` with these canonical targets. Recipe bodies are project-specific; target names are not.
+Pipeline repos using this stack should ship a repo-root `justfile` (using [casey/just](https://github.com/casey/just)) with these canonical recipes. Recipe bodies are project-specific; recipe names are not.
 
 ### Quality
 - `lint` — actionlint + shellcheck on workflows and scripts
@@ -206,15 +206,17 @@ Pipeline repos using this stack should ship a repo-root `Makefile` with these ca
 - `docs` — generate / verify docs (e.g. CHANGELOG via `git-cliff`)
 
 ### Release
-- `version` / `version-set V=X.Y.Z` / `bump-major` / `bump-minor` / `bump-patch` / `bump-auto`
+- `version` / `version-set 1.2.3` / `bump-major` / `bump-minor` / `bump-patch` / `bump-auto`
 - `changelog` — `git-cliff --output CHANGELOG.md`
-- `release` — tag `v$(VERSION)`, regenerate changelog, commit, tag (no auto-push)
-- `push-release` — `git push origin main "v$(VERSION)"`
+- `release` — tag `v$(just version)`, regenerate changelog, commit, tag (no auto-push)
+- `push-release` — `git push origin main "v$(just version)"`
 
 ### Cleanup
 - `clean` — remove generated artifacts (`.act/`, `coverage/`, etc.)
 
-Document each target with an inline `## <description>` and expose a `help` target that greps them.
+Document each recipe with a leading `# <description>` comment. Set a default recipe `default: @just --list --unsorted` so `just` with no args prints the documented set.
+
+Install (requires just ≥ 1.20): `cargo install just` / `brew install just` / `winget install Casey.Just` / `sudo apt install just`. CI: `extractions/setup-just@v2`.
 
 ---
 
@@ -234,7 +236,7 @@ Document each target with an inline `## <description>` and expose a `help` targe
 Base rules (SemVer, Conventional Commits → bump mapping, git-cliff) live in `base-instructions.md`. For this stack:
 
 - **Reusable workflows are versioned by git tag.** Consumers reference `freaxnx01/<repo>/.github/workflows/<name>.yml@v1` — so a `v1` major-version tag is moved forward as backward-compatible changes ship, and `v2` is cut for breaking changes. Document the breaking change in `CHANGELOG.md` and provide a migration note.
-- **Single source of truth for the version**: `VERSION` file at repo root, read by the Makefile.
+- **Single source of truth for the version**: `VERSION` file at repo root, read by the justfile.
 - **Tag format**: `vMAJOR.MINOR.PATCH` (e.g. `v1.4.2`); the major-version moving tag is `vMAJOR` (e.g. `v1`).
 
 ---
@@ -258,7 +260,7 @@ Every PR runs `lint` + `test`. `act-run` is opt-in (label-gated) to keep PR runt
 ## Project Scaffold Checklist (CI / automation)
 
 - [ ] `.editorconfig`
-- [ ] `Makefile` with the targets above
+- [ ] `justfile` with the recipes above
 - [ ] `VERSION` file
 - [ ] `CHANGELOG.md` with `[Unreleased]` section
 - [ ] `cliff.toml` for `git-cliff`
