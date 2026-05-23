@@ -224,6 +224,42 @@ out="$(ISSUE_NUMBER=1 REPO=o/r \
        ISSUE_BODY='Refactor the auth middleware' bash "$CLASSIFY")"
 assert_contains "$out" 'claude-haiku-4-5 (label model:haiku)' "override label beats heuristic"
 
+section "classify-agent — label override + input fallback (ADR-001)"
+
+CLASSIFY_AGENT="$ROOT/scripts/classify-agent.sh"
+
+# Override: agent:claude label
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='agent:claude' bash "$CLASSIFY_AGENT")"
+assert_contains "$out" 'chosen: claude (label agent:claude)'     "label agent:claude → claude"
+
+# Override: agent:opencode label
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='agent:opencode' bash "$CLASSIFY_AGENT")"
+assert_contains "$out" 'chosen: opencode (label agent:opencode)' "label agent:opencode → opencode"
+
+# Default input (no label, no DEFAULT_AGENT) → claude
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' bash "$CLASSIFY_AGENT")"
+assert_contains "$out" 'chosen: claude (workflow input default (claude))' "no label, no DEFAULT_AGENT → claude"
+
+# Input fallback: DEFAULT_AGENT=opencode
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' DEFAULT_AGENT=opencode bash "$CLASSIFY_AGENT")"
+assert_contains "$out" 'chosen: opencode (workflow input default (opencode))' "no label, DEFAULT_AGENT=opencode → opencode"
+
+# Label beats input
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='agent:claude' DEFAULT_AGENT=opencode bash "$CLASSIFY_AGENT")"
+assert_contains "$out" 'chosen: claude (label agent:claude)'     "label agent:claude beats DEFAULT_AGENT=opencode"
+
+# Invalid DEFAULT_AGENT → exit 2
+ec="$(run_capture_ec env ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' DEFAULT_AGENT=mistral bash "$CLASSIFY_AGENT")"
+assert_equals "$ec" "2" "invalid DEFAULT_AGENT → exit 2"
+
+# Missing ISSUE_NUMBER → exit 2
+ec="$(run_capture_ec env REPO=o/r bash "$CLASSIFY_AGENT")"
+assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
+
+# Missing REPO → exit 2
+ec="$(run_capture_ec env ISSUE_NUMBER=1 bash "$CLASSIFY_AGENT")"
+assert_equals "$ec" "2" "missing REPO → exit 2"
+
 section "classify-failure — buckets per fixture"
 
 CLASSIFY_FAIL="$ROOT/scripts/classify-failure.sh"
