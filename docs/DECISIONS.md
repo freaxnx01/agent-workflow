@@ -39,32 +39,40 @@ Introduce an **agent abstraction layer** with five elements:
 - New `agent` workflow input (string, default `claude`, validated to one
   of `claude | opencode`).
 - Per-issue override via `agent:claude` / `agent:opencode` label, parallel
-  to the existing `model:*` override convention. The label wins over the
-  workflow input; the input wins over an empty/missing label. This
-  mirrors `classify-task.sh`'s precedence order.
-- A new script `scripts/classify-agent.sh` performs the same two-stage
-  decision and emits `agent=...` and `reason=...` to `$GITHUB_OUTPUT`.
+  to the existing `model:*` override convention.
+- **Three-tier precedence: label > workflow input > script default.** This
+  *extends* the two-tier pattern in `classify-task.sh` (label > default),
+  which has no workflow-input tier today.
+- A new script `scripts/classify-agent.sh` performs the decision and
+  emits `agent=...` and `reason=...` to `$GITHUB_OUTPUT`.
 
 #### 2. Result-shape contract
 
 Every agent step normalizes its output to the existing
 `${RUNNER_TEMP}/claude-result.json` shape consumed by
-`classify-failure.sh` and `post-run-report.sh`. Required keys:
+`classify-failure.sh` and `post-run-report.sh`.
+
+**Required keys (read by downstream scripts):**
 
 | Key                                  | Type    | Notes                                                                                                |
 |--------------------------------------|---------|------------------------------------------------------------------------------------------------------|
-| `type`                               | string  | always `"result"`                                                                                    |
-| `subtype`                            | string  | `"success"` or an error tag (`"error_during_execution"`, `"error_max_turns"`, ...)                   |
-| `is_error`                           | bool    | `false` on success                                                                                   |
-| `duration_ms`                        | number  | wall time of the agent run                                                                           |
-| `num_turns`                          | number  | conversation turns                                                                                   |
-| `total_cost_usd`                     | number  | best-effort; `0` if the agent doesn't surface cost (document per-agent)                              |
-| `session_id`                         | string  | agent's own session id (or synthesized)                                                              |
-| `result`                             | string  | final assistant message / summary                                                                    |
-| `usage.input_tokens`                 | number  | totals across the run                                                                                |
-| `usage.output_tokens`                | number  | totals across the run                                                                                |
-| `usage.cache_creation_input_tokens`  | number  | `0` for agents without prompt caching                                                                |
-| `usage.cache_read_input_tokens`      | number  | `0` for agents without prompt caching                                                                |
+| `subtype`                            | string  | `"success"` or an error tag (`"error_during_execution"`, `"error_max_turns"`, ...). Read by `classify-failure.sh`. |
+| `is_error`                           | bool    | `false` on success. Read by `classify-failure.sh` and `post-run-report.sh`.                          |
+| `duration_ms`                        | number  | wall time of the agent run. Read by `post-run-report.sh`.                                            |
+| `num_turns`                          | number  | conversation turns. Read by `post-run-report.sh`.                                                    |
+| `total_cost_usd`                     | number  | best-effort; `0` if the agent doesn't surface cost (document per-agent). Read by `post-run-report.sh`. |
+| `result`                             | string  | **Load-bearing on failure**: `classify-failure.sh` pattern-matches this to bucket the failure (`rate_limit` / `api_auth` / `transient` / `task_failure` / `bug`). An empty / missing `result` on `is_error: true` falls through to `bug`. On success, surfaced in the run-report comment. New-agent adapters MUST populate this on errors so the regex hits its OpenRouter-flavored cases (added in #10) or its existing Claude-flavored ones. |
+| `usage.input_tokens`                 | number  | totals across the run. Read by `post-run-report.sh`.                                                 |
+| `usage.output_tokens`                | number  | totals across the run.                                                                               |
+| `usage.cache_creation_input_tokens`  | number  | `0` for agents without prompt caching.                                                               |
+| `usage.cache_read_input_tokens`      | number  | `0` for agents without prompt caching.                                                               |
+
+**Informational keys (written by current adapters but not read by any pipeline script):**
+
+| Key          | Type   | Notes |
+|--------------|--------|-------|
+| `type`       | string | Only meaningful in event-stream output filtered by the standard `Adapt execution_file -> result.json` step (it filters on `select(.type == "result")` to pick the final SDK message from a stream). Adapters that write `claude-result.json` directly (like the workflow's `Stub Claude run` step) may omit it. |
+| `session_id` | string | Agent's own session id (or a synthesized placeholder). Useful for traceability when reading the workflow log; not consumed by any script. New adapters MAY emit it. |
 
 New agents add an adapter step (e.g. `scripts/adapt-opencode-result.sh`)
 that translates their native output into this shape. The pipeline does
