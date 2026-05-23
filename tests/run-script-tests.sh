@@ -260,6 +260,42 @@ assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 ec="$(run_capture_ec env ISSUE_NUMBER=1 bash "$CLASSIFY_AGENT")"
 assert_equals "$ec" "2" "missing REPO → exit 2"
 
+section "check-auto-review-gate — input + label combinations"
+
+GATE="$ROOT/scripts/check-auto-review-gate.sh"
+
+# Both off → disabled
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AUTO_REVIEW=false ISSUE_LABELS='ai-implement' bash "$GATE")"
+assert_contains "$out" 'enabled=false (workflow input auto-review=false)' "input=false, no label → disabled"
+
+# Label only → still disabled (input gate not satisfied)
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AUTO_REVIEW=false ISSUE_LABELS=$'ai-implement\nai-auto-review' bash "$GATE")"
+assert_contains "$out" 'enabled=false (workflow input auto-review=false)' "input=false, label set → disabled (input wins)"
+
+# Input only → disabled (label gate not satisfied)
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AUTO_REVIEW=true ISSUE_LABELS='ai-implement' bash "$GATE")"
+assert_contains "$out" 'enabled=false (input=true but label ai-auto-review missing)' "input=true, no label → disabled"
+
+# Both on → enabled
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AUTO_REVIEW=true ISSUE_LABELS=$'ai-implement\nai-auto-review' bash "$GATE")"
+assert_contains "$out" 'enabled=true (input=true AND label ai-auto-review present)' "input=true, label set → enabled"
+
+# Default INPUT_AUTO_REVIEW (unset) → disabled
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-auto-review' bash "$GATE")"
+assert_contains "$out" 'enabled=false (workflow input auto-review=false)' "unset INPUT_AUTO_REVIEW defaults to false"
+
+# Invalid INPUT_AUTO_REVIEW → exit 2
+ec="$(run_capture_ec env ISSUE_NUMBER=1 REPO=o/r INPUT_AUTO_REVIEW=yes ISSUE_LABELS='' bash "$GATE")"
+assert_equals "$ec" "2" "invalid INPUT_AUTO_REVIEW → exit 2"
+
+# Missing ISSUE_NUMBER → exit 2
+ec="$(run_capture_ec env REPO=o/r INPUT_AUTO_REVIEW=true bash "$GATE")"
+assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
+
+# Missing REPO → exit 2
+ec="$(run_capture_ec env ISSUE_NUMBER=1 INPUT_AUTO_REVIEW=true bash "$GATE")"
+assert_equals "$ec" "2" "missing REPO → exit 2"
+
 section "classify-failure — buckets per fixture"
 
 CLASSIFY_FAIL="$ROOT/scripts/classify-failure.sh"
