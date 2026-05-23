@@ -15,6 +15,15 @@ on:
         description: Model used when no `model:*` label is present on the issue.
         type: string
         default: claude-opus-4-7
+      agent:
+        description: |
+          Which agent runs the implementation. One of `claude` or `opencode`.
+          Per-issue override via `agent:claude` / `agent:opencode` label.
+          See docs/DECISIONS.md ADR-001 for the contract. NOTE: the
+          `opencode` runner step is added in #10 — selecting it before then
+          produces a no-op job.
+        type: string
+        default: claude
       timeout-minutes:
         description: Hard cap on the implementation job runtime.
         type: number
@@ -163,6 +172,16 @@ jobs:
           } > "$prompt_file"
           echo "prompt-file=$prompt_file" >> "$GITHUB_OUTPUT"
 
+      - name: Classify agent
+        if: ${{ !inputs.stub-claude }}
+        id: classify_agent
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          DEFAULT_AGENT: ${{ inputs.agent }}
+        run: bash .claude-pipeline/scripts/classify-agent.sh
+
       - name: Triage model
         if: ${{ !inputs.stub-claude }}
         id: triage
@@ -174,7 +193,7 @@ jobs:
         run: bash .claude-pipeline/scripts/classify-task.sh
 
       - name: Run Claude Code
-        if: ${{ !inputs.stub-claude }}
+        if: ${{ !inputs.stub-claude && steps.classify_agent.outputs.agent == 'claude' }}
         id: claude_run
         # Step-level env propagates to the action's process.env, which the
         # action then spreads into the spawned `claude` subprocess. Belt-and-
