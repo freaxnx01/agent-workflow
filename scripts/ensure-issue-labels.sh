@@ -22,7 +22,7 @@
 #   GH_TOKEN  (or ambient `gh auth`).
 #
 # Exit codes:
-#   0   all 5 labels are present (created or pre-existing)
+#   0   all required labels are present (created or pre-existing)
 #   2   REPO unset
 set -euo pipefail
 IFS=$'\n\t'
