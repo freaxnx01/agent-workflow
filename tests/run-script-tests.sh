@@ -291,7 +291,7 @@ assert_contains "$out" 'DRY_RUN: would sleep'  "DRY_RUN prints would-dispatch me
 ec="$(run_capture_ec env CLASS=success ATTEMPT=1 ISSUE_NUMBER=42 bash "$RETRY")"
 assert_equals "$ec" "2" "missing REPO → exit 2"
 
-section "ensure-issue-labels — issues 5 label-create calls under gh mock"
+section "ensure-issue-labels — issues label-create calls under gh mock"
 
 LABELS_LOG="$(mktemp)"
 PATH="$MOCKS:$PATH" \
@@ -302,11 +302,21 @@ REPO=owner/repo \
 log="$(cat "$LABELS_LOG")"
 rm -f "$LABELS_LOG"
 
+# Lifecycle labels (written by post-run-report.sh)
 assert_contains "$log" 'label create ai:running --repo owner/repo' "creates ai:running"
 assert_contains "$log" 'label create ai:done --repo owner/repo'    "creates ai:done"
 assert_contains "$log" 'label create ai:failed --repo owner/repo'  "creates ai:failed"
 assert_contains "$log" 'label create ctx:medium --repo owner/repo' "creates ctx:medium"
 assert_contains "$log" 'label create ctx:high --repo owner/repo'   "creates ctx:high"
+
+# Selector labels (read by classify-agent.sh — ADR-001)
+assert_contains "$log" 'label create agent:claude --repo owner/repo'   "creates agent:claude"
+assert_contains "$log" 'label create agent:opencode --repo owner/repo' "creates agent:opencode"
+
+# Gate labels (auto-review epic #3, chaining epic #4)
+assert_contains "$log" 'label create ai-auto-review --repo owner/repo'  "creates ai-auto-review"
+assert_contains "$log" 'label create ai-chain --repo owner/repo'        "creates ai-chain"
+assert_contains "$log" 'label create ai:chain-paused --repo owner/repo' "creates ai:chain-paused"
 
 ec="$(run_capture_ec env bash "$ROOT/scripts/ensure-issue-labels.sh")"
 assert_equals "$ec" "2" "missing REPO → exit 2"
