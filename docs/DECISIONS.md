@@ -142,7 +142,8 @@ the normalized JSON, not on agent identity.
 
 ### Context
 
-`docs/DESIGN.md` line 364 (April 2026) made it a non-negotiable rule that
+`docs/DESIGN.md` "Critical constraints — non-negotiable" item 4
+(April 2026) made it a non-negotiable rule that
 the pipeline only opens **draft** PRs and never promotes them. That rule
 was the right default when there was no review step between
 "agent finished" and "PR exists" — every diff needed human eyes before
@@ -192,6 +193,12 @@ auto-review job runs:
    `ai-auto-review` label to its originating issue; gate 1 prevents the
    auto-merge step from acting on any PR the pipeline itself did not
    open.
+
+   *Interim behavior before #15 lands the allowlist input:* the gate
+   check MUST hard-fail (not silently default to "allowed") with a
+   clear error message naming this ADR and #15. Silent default to the
+   pinned `github-actions[bot]` value is acceptable; silent default to
+   "any author allowed" is not.
 2. **Per-issue opt-in.** The originating issue carries the
    `ai-auto-review` label.
 3. **Per-repo opt-in.** The reusable workflow was called with
@@ -204,10 +211,12 @@ auto-review job runs:
    The review prompt
    ([#14](https://github.com/freaxnx01/claude-pipeline/issues/14)) MUST
    flag the following as automatic `block` regardless of other findings:
-   - Net deletion of test files (heuristic: more than N test-file lines
-     removed than added, or any `tests/**` deletions when CI was
-     previously green on those tests).
-   - Test files renamed-to-skip or marked `@Ignore` / `xit(` / `@pytest.mark.skip`.
+   - **Any net deletion of test files** — i.e. test-file lines removed
+     strictly exceeds test-file lines added (N=0; any net deletion
+     blocks). Same rule for whole-file deletions in `tests/**`.
+   - Test files renamed-to-skip or marked `@Ignore` / `xit(` /
+     `@pytest.mark.skip` / `[Fact(Skip = …)]` / `t.Skip(…)` and
+     equivalents.
    - Changes to test fixtures that align expected outputs with newly-
      broken implementation behavior (heuristic; the reviewer flags
      suspect, human resolves).
@@ -223,8 +232,10 @@ auto-review job runs:
    - Anything under `.github/` (workflows, actions, CODEOWNERS, branch
      protection config). Touching CI from within an auto-merged change
      is a self-modifying-pipeline footgun.
-   - `*.sops.yaml`, `*.enc.*`, `*.age`, `secrets.*` — any file matching
-     the canonical encrypted-secret naming conventions.
+   - Encrypted-secret naming conventions: `*.sops.yaml`, `*.enc.*`,
+     `*.age`, `*.gpg`, `*.pem`, `*.key`, `*.kbx`, `*.p12`, `*.pfx`,
+     `secrets.*`. **Non-exhaustive.** Repos with their own conventions
+     extend coverage via the `.claude-auto-merge-blocklist` file below.
    - Paths listed in a repo-local `.claude-auto-merge-blocklist` file
      (one glob per line, comments with `#`). Optional; absent file =
      empty blocklist. Consumers customize per-repo without needing a
@@ -327,8 +338,9 @@ allowed:
 instructions + CI-automation stack overlay and does not carry this
 specific rule. (The original issue
 [#12](https://github.com/freaxnx01/claude-pipeline/issues/12) body cited
-"CLAUDE.md line 361"; the rule is actually at `docs/DESIGN.md` line 364.
-Corrected here.)
+`CLAUDE.md`; the rule is actually in `docs/DESIGN.md` under the
+"Critical constraints — non-negotiable" section, item 4. Corrected
+here.)
 
 ### Consequences
 
@@ -351,11 +363,13 @@ Corrected here.)
   (manual merge implies the human is steering).
 - **`ai:review-blocked` label provenance.** §2 names this label as a
   side effect of a failed gate, but the in-tree `ensure-issue-labels.sh`
-  does not create it today. Either #14 or #15 MUST extend
-  `scripts/ensure-issue-labels.sh` with `ai:review-blocked` (red,
-  description: "Auto-review left the PR draft; human action required")
-  before this ADR's behavior is realizable end-to-end. Tracked as a
-  dependency of whichever issue lands first.
+  does not create it today. **Whichever of #14 or #15 lands first MUST
+  extend `scripts/ensure-issue-labels.sh`** with `ai:review-blocked`
+  (red, description: "Auto-review left the PR draft; human action
+  required") AND add a `tests/run-script-tests.sh` assertion that the
+  label appears in the mock log — so the missing-label state fails CI
+  and the obligation cannot be silently dropped. The other issue
+  rebases over the change.
 - **Posture asymmetry with ADR-001 is principled, not accidental.**
   ADR-001 trusts the agent step to fail loudly on bad auth and lets
   `classify-failure.sh` bucket the error — blast radius is low (one
@@ -376,6 +390,12 @@ Corrected here.)
   self-modification risk surface that other consumer repos don't have:
   the pipeline's own `scripts/`, `tests/`, `docs/DECISIONS.md`, and
   `.github/` ARE the pipeline. A PR in this repo that changes any of
-  them could change the gates applied to itself. Tracked as a known gap
-  — explicitly out of scope here, but flagged so dogfooding doesn't
-  happen accidentally.
+  them could change the gates applied to itself.
+
+  To prevent accidental violation, #15 MUST implement a workflow-level
+  guard: refuse to promote (post a clear comment naming this ADR, leave
+  PR draft) when `github.repository == 'freaxnx01/claude-pipeline'`
+  regardless of input or label state. Hardcoding the repo string in the
+  guard is acceptable for this single-known-instance carve-out; if the
+  pipeline ever forks, the fork's first task is to update the guard.
+  Prose alone is insufficient — the guard MUST exist in code.
