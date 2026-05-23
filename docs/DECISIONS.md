@@ -175,9 +175,23 @@ auto-merge.
 Auto-merge is enabled iff every one of these holds at the moment the
 auto-review job runs:
 
-1. **Pipeline-authored PR.** `pr.user.login` equals the pipeline's commit
-   identity. Refuse to promote a human-authored or third-party-bot PR
-   even if the gating labels are present.
+1. **Pipeline-authored PR.** `pr.user.login` must be in the configured
+   allowlist. Default: the single-element list `["github-actions[bot]"]`
+   — the identity GitHub assigns to PRs opened via `GITHUB_TOKEN` (which
+   is how the workflow opens PRs in consumer repos today). Consumers
+   using a GitHub App or PAT have a different `pr.user.login` and MUST
+   either (a) pass the additional identity via a new
+   `pipeline-author-allowlist` workflow input (added in
+   [#15](https://github.com/freaxnx01/claude-pipeline/issues/15)), or
+   (b) leave `auto-review: false` until the allowlist is wired. Refuse
+   to promote a human-authored or third-party-bot PR even if the gating
+   labels are present.
+
+   *Why this is independent of gates 2 + 3:* defense in depth against
+   label injection. A human could open a PR by hand and then apply the
+   `ai-auto-review` label to its originating issue; gate 1 prevents the
+   auto-merge step from acting on any PR the pipeline itself did not
+   open.
 2. **Per-issue opt-in.** The originating issue carries the
    `ai-auto-review` label.
 3. **Per-repo opt-in.** The reusable workflow was called with
@@ -186,6 +200,21 @@ auto-review job runs:
    ([#14](https://github.com/freaxnx01/claude-pipeline/issues/14)) emits
    `verdict=approve`. `request_changes` and `block` both leave the PR
    draft.
+
+   The review prompt
+   ([#14](https://github.com/freaxnx01/claude-pipeline/issues/14)) MUST
+   flag the following as automatic `block` regardless of other findings:
+   - Net deletion of test files (heuristic: more than N test-file lines
+     removed than added, or any `tests/**` deletions when CI was
+     previously green on those tests).
+   - Test files renamed-to-skip or marked `@Ignore` / `xit(` / `@pytest.mark.skip`.
+   - Changes to test fixtures that align expected outputs with newly-
+     broken implementation behavior (heuristic; the reviewer flags
+     suspect, human resolves).
+
+   These are explicitly called out because gates 1, 2, 3, 5, 6, 7 do
+   not catch them and gate 5 ("all required checks green") can be
+   satisfied by deleting the failing checks.
 5. **All required status checks green.** Auto-merge will defer until
    they are; if any required check is failing at the time of decision,
    refuse to promote (don't bet on a flaky check turning green after the
@@ -200,6 +229,18 @@ auto-review job runs:
      (one glob per line, comments with `#`). Optional; absent file =
      empty blocklist. Consumers customize per-repo without needing a
      workflow change.
+
+   **Supply-chain risk** (PRs that add malicious dependencies via
+   `package.json`, `requirements.txt`, `pyproject.toml`, `Dockerfile`,
+   `Cargo.toml`, `*.csproj`, `pubspec.yaml`, `go.mod`, etc.) is NOT
+   handled by an in-envelope blocklist on manifest files — blocking
+   every dependency change would make auto-merge useless. Instead it is
+   delegated to gate 5: consumers MUST wire a dependency-vulnerability-
+   scanning check (e.g. `npm audit`, `pip-audit`, `dotnet list package
+   --vulnerable`, Dependabot's review action) as a **required status
+   check** on the target branch. Without one, supply-chain attacks pass.
+   `docs/CONSUMER-SETUP.md` MUST document this requirement before
+   `auto-review: true` is recommended.
 7. **Branch protection compatibility.** The target branch must have
    squash-merge enabled. CODEOWNERS, if defined, must be satisfied by
    the diff (we don't bypass review requirements — `gh pr merge --auto`
@@ -244,9 +285,31 @@ If any gate fails, the auto-review job:
   re-enabling `auto-review: true` for the issue category that produced
   it.
 - **Gate-envelope bug** (e.g. a `.github/` file slipped through).
-  Disable feature repo-wide by flipping `auto-review: false` at the call
-  site; no code change to `claude-pipeline` needed for the kill-switch.
-  Add a fixture covering the missed path, then re-enable.
+  Disable feature via either kill switch:
+  - **Per-repo:** flip `auto-review: false` at the call site. No code
+    change to `claude-pipeline` needed.
+  - **Per-issue:** remove the `ai-auto-review` label from the
+    originating issue. Symmetric with the two-tier opt-in in §2 (gates
+    2 + 3).
+
+  Then add a fixture covering the missed path, then re-enable.
+
+  **Propagation latency.** Both kill switches only take effect on the
+  NEXT workflow run. In-flight runs that have already passed gate 6 and
+  called `gh pr merge --auto` will still land their PRs once required
+  checks pass — there is no mechanism to revoke an armed auto-merge
+  short of `gh pr merge --disable-auto`. If the gate-envelope bug is
+  active enough to require immediate stopping, do that manually on
+  affected PRs.
+
+- **Indefinite auto-merge.** GitHub's `gh pr merge --auto` waits
+  forever for required checks to go green. A flaky or hung required
+  check leaves the PR in armed-but-not-merged state indefinitely. This
+  is acceptable today (the PR remains visible, draft-promoted, and a
+  human can take over by running `gh pr merge --disable-auto` or by
+  fixing the check). A future janitor job that cancels armed
+  auto-merges older than N hours is **out of scope** for this ADR and
+  should be revisited if it becomes a real operational problem.
 
 #### 5. Update to `docs/DESIGN.md`
 
@@ -286,3 +349,33 @@ Corrected here.)
   trigger for chain-dispatch. If a human merges a chained issue's PR
   manually, the chain does NOT auto-advance — this is intentional
   (manual merge implies the human is steering).
+- **`ai:review-blocked` label provenance.** §2 names this label as a
+  side effect of a failed gate, but the in-tree `ensure-issue-labels.sh`
+  does not create it today. Either #14 or #15 MUST extend
+  `scripts/ensure-issue-labels.sh` with `ai:review-blocked` (red,
+  description: "Auto-review left the PR draft; human action required")
+  before this ADR's behavior is realizable end-to-end. Tracked as a
+  dependency of whichever issue lands first.
+- **Posture asymmetry with ADR-001 is principled, not accidental.**
+  ADR-001 trusts the agent step to fail loudly on bad auth and lets
+  `classify-failure.sh` bucket the error — blast radius is low (one
+  failed run, retriable). ADR-002 validates seven gates pre-merge
+  because the blast radius of a bad auto-merge is a bad commit on
+  `main` — much more expensive to recover from. Different consequence
+  asymmetry justifies different posture. Future ADR readers should not
+  try to "harmonize" the two; the asymmetry is the point.
+- **Gate 6 trade-off cost.** The blanket `.github/` exclusion blocks
+  routine docs-only PRs to `.github/ISSUE_TEMPLATE/`,
+  `.github/PULL_REQUEST_TEMPLATE/`, `CODEOWNERS`, `dependabot.yml`,
+  etc. This is accepted as a conservative default. If it becomes
+  painful, a future ADR can carve out a `.github/` allowlist (purely-
+  declarative subpaths that cannot affect workflow execution) without
+  needing to revisit ADR-002's core decision.
+- **Self-modification / dogfooding.** `claude-pipeline` itself MUST NOT
+  enable `auto-review: true` until a follow-up ADR addresses the
+  self-modification risk surface that other consumer repos don't have:
+  the pipeline's own `scripts/`, `tests/`, `docs/DECISIONS.md`, and
+  `.github/` ARE the pipeline. A PR in this repo that changes any of
+  them could change the gates applied to itself. Tracked as a known gap
+  — explicitly out of scope here, but flagged so dogfooding doesn't
+  happen accidentally.
