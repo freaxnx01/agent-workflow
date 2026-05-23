@@ -5,6 +5,9 @@
 > or similar, and reference it from CLAUDE.md so future sessions stay aligned.
 >
 > Brainstorming transcript: https://claude.ai/share/3f06e2d3-2b65-4b64-87a6-81d6715005f7
+>
+> Architectural decisions made after this design landed are recorded in
+> [DECISIONS.md](DECISIONS.md).
 
 ## Goal
 
