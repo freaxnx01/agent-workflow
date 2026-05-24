@@ -461,9 +461,10 @@ section "find-next-blocked-issue — eligibility per ADR-003"
 FIND_NEXT="$ROOT/scripts/find-next-blocked-issue.sh"
 
 find_next_run() {
+  # Collect $GITHUB_OUTPUT and the script's stdout into one blob.
   local go
   go="$(mktemp)"
-  GITHUB_OUTPUT="$go" "$@" bash "$FIND_NEXT" >/dev/null
+  GITHUB_OUTPUT="$go" "$@" bash "$FIND_NEXT"
   cat "$go"
   rm -f "$go"
 }
@@ -517,6 +518,90 @@ out="$(find_next_run env \
         CANDIDATES_JSON='[{"number":106,"body":"Blocked by: #100","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]},{"number":107,"body":"Blocked by: #100","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]')"
 assert_contains "$out" 'successor-count=2' "two candidates both unblocked → 2 successors"
 assert_contains "$out" 'successors=106 107' "both successor numbers listed"
+
+# Depth cap engaged: CHAIN_DEPTH == MAX_CHAIN_DEPTH → capped, not dispatched
+out="$(find_next_run env \
+        CLOSED_ISSUE_NUMBER=100 REPO=o/r \
+        KILL_SWITCH_OPEN=false \
+        CHAIN_DEPTH=5 MAX_CHAIN_DEPTH=5 \
+        CANDIDATES_JSON='[{"number":108,"body":"Blocked by: #100","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]')"
+assert_contains "$out" 'successor-count=0'              "depth at cap → no dispatches"
+assert_contains "$out" 'capped=108'                     "depth at cap → candidate listed under capped="
+assert_contains "$out" 'candidate=108 decision=capped'  "per-candidate decision=capped emitted"
+assert_contains "$out" 'depth=5'                        "audit line carries the depth"
+
+# Depth one BELOW cap → dispatches
+out="$(find_next_run env \
+        CLOSED_ISSUE_NUMBER=100 REPO=o/r \
+        KILL_SWITCH_OPEN=false \
+        CHAIN_DEPTH=4 MAX_CHAIN_DEPTH=5 \
+        CANDIDATES_JSON='[{"number":109,"body":"Blocked by: #100","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]')"
+assert_contains "$out" 'successor-count=1'                  "depth below cap → dispatched"
+assert_contains "$out" 'candidate=109 decision=dispatched'  "per-candidate decision=dispatched emitted"
+
+# Kill switch open → paused regardless of depth
+out="$(find_next_run env \
+        CLOSED_ISSUE_NUMBER=100 REPO=o/r \
+        KILL_SWITCH_OPEN=true \
+        CHAIN_DEPTH=1 MAX_CHAIN_DEPTH=5 \
+        CANDIDATES_JSON='[{"number":110,"body":"Blocked by: #100","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]')"
+assert_contains "$out" 'successor-count=0'              "kill switch open → no dispatches"
+assert_contains "$out" 'paused=110'                     "candidate listed under paused="
+assert_contains "$out" 'candidate=110 decision=paused'  "per-candidate decision=paused emitted"
+
+# Kill switch precedence over depth cap: both would fail, paused wins
+out="$(find_next_run env \
+        CLOSED_ISSUE_NUMBER=100 REPO=o/r \
+        KILL_SWITCH_OPEN=true \
+        CHAIN_DEPTH=999 MAX_CHAIN_DEPTH=5 \
+        CANDIDATES_JSON='[{"number":111,"body":"Blocked by: #100","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]')"
+assert_contains     "$out" 'paused=111'   "kill switch precedence: paused not capped"
+assert_not_contains "$out" 'capped=111'   "kill switch wins over depth cap"
+
+# decision-summary aggregation across multiple candidates
+out="$(find_next_run env \
+        CLOSED_ISSUE_NUMBER=100 REPO=o/r \
+        KILL_SWITCH_OPEN=false \
+        CHAIN_DEPTH=4 MAX_CHAIN_DEPTH=5 \
+        CANDIDATES_JSON='[{"number":120,"body":"Blocked by: #100","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]},{"number":121,"body":"Blocked by: #100","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]')"
+assert_contains "$out" 'decision-summary=dispatched=2 capped=0 paused=0' "summary line counts decisions"
+
+section "post-chain-audit — template rendering + comment posting"
+
+POST_AUDIT="$ROOT/scripts/post-chain-audit.sh"
+
+# Dispatched decision posts an audit comment via --body-file
+LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
+REPO=o/r ISSUE_NUMBER=101 CLOSED_ISSUE=100 DECISION=dispatched DEPTH=2 MAX_DEPTH=5 \
+  bash "$POST_AUDIT" >/dev/null
+calls="$(cat "$LOG")"; rm -f "$LOG"
+assert_contains "$calls" 'issue comment 101 --repo o/r --body-file' "dispatched → posts audit via --body-file"
+
+# Capped decision posts a comment
+LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
+REPO=o/r ISSUE_NUMBER=102 CLOSED_ISSUE=100 DECISION=capped DEPTH=5 MAX_DEPTH=5 \
+  bash "$POST_AUDIT" >/dev/null
+calls="$(cat "$LOG")"; rm -f "$LOG"
+assert_contains "$calls" 'issue comment 102 --repo o/r --body-file' "capped → posts an audit comment"
+
+# Paused decision posts a comment
+LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
+REPO=o/r ISSUE_NUMBER=103 CLOSED_ISSUE=100 DECISION=paused DEPTH=1 MAX_DEPTH=5 \
+  bash "$POST_AUDIT" >/dev/null
+calls="$(cat "$LOG")"; rm -f "$LOG"
+assert_contains "$calls" 'issue comment 103 --repo o/r --body-file' "paused → posts an audit comment"
+
+# Invalid decision → exit 2
+ec="$(run_capture_ec env REPO=o/r ISSUE_NUMBER=1 CLOSED_ISSUE=1 DECISION=maybe DEPTH=1 MAX_DEPTH=5 \
+        bash "$POST_AUDIT")"
+assert_equals "$ec" "2" "invalid DECISION → exit 2"
+
+# Missing required env → exit 2
+ec="$(run_capture_ec env REPO=o/r bash "$POST_AUDIT")"
+assert_equals "$ec" "2" "missing ISSUE_NUMBER etc. → exit 2"
 
 # Error paths
 ec="$(run_capture_ec env REPO=o/r bash "$FIND_NEXT")"

@@ -16,6 +16,26 @@ on:
         description: PR number whose merge triggered the chain check.
         type: number
         required: true
+      max-chain-depth:
+        description: |
+          Refuse dispatch when the current chain depth reaches this
+          cap. Eligible candidates beyond the cap are commented on
+          with `decision=capped` and not dispatched. ADR-003 §5.
+        type: number
+        default: 5
+      chain-depth:
+        description: |
+          Current chain depth. Default 1 (the closed issue is the
+          first link). Future revisions will compute this from the
+          closed issue's `Blocked by:` predecessor chain.
+        type: number
+        default: 1
+      cooldown-seconds:
+        description: |
+          Defensive sleep before dispatching successors. Mostly a
+          runaway-loop brake. ADR-003 §5.
+        type: number
+        default: 60
       target-workflow:
         description: |
           The consumer's pipeline workflow file. Eligible successors are
@@ -135,7 +155,46 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           REPO: ${{ github.repository }}
           CLOSED_ISSUE_NUMBER: ${{ steps.closed_issue.outputs.closed-issue }}
+          MAX_CHAIN_DEPTH: ${{ inputs.max-chain-depth }}
+          CHAIN_DEPTH: ${{ inputs.chain-depth }}
         run: bash .claude-pipeline/scripts/find-next-blocked-issue.sh
+
+      - name: Post audit comments (every candidate, every decision)
+        # ADR-003: an audit comment goes on every candidate so the
+        # decision is visible on the PR/issue even when refused.
+        if: steps.closed_issue.outputs.closed-issue != ''
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          REPO: ${{ github.repository }}
+          CLOSED_ISSUE: ${{ steps.closed_issue.outputs.closed-issue }}
+          DEPTH: ${{ inputs.chain-depth }}
+          MAX_DEPTH: ${{ inputs.max-chain-depth }}
+          DISPATCHED: ${{ steps.find.outputs.successors }}
+          CAPPED: ${{ steps.find.outputs.capped }}
+          PAUSED: ${{ steps.find.outputs.paused }}
+        run: |
+          post() {
+            local decision="$1" n="$2"
+            if ! [[ "$n" =~ ^[0-9]+$ ]]; then
+              printf 'skip-audit: non-numeric candidate %q\n' "$n"
+              return 0
+            fi
+            ISSUE_NUMBER="$n" DECISION="$decision" \
+              bash .claude-pipeline/scripts/post-chain-audit.sh
+          }
+          for n in $DISPATCHED; do post dispatched "$n"; done
+          for n in $CAPPED;     do post capped     "$n"; done
+          for n in $PAUSED;     do post paused     "$n"; done
+
+      - name: Cooldown before dispatch
+        if: |
+          steps.closed_issue.outputs.closed-issue != ''
+          && steps.find.outputs.successor-count != '0'
+        env:
+          COOLDOWN: ${{ inputs.cooldown-seconds }}
+        run: |
+          printf 'cooldown: sleeping %s seconds before dispatch\n' "$COOLDOWN"
+          sleep "$COOLDOWN"
 
       - name: Dispatch successors
         if: |
