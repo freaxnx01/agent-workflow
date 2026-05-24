@@ -15,6 +15,49 @@ Focus on:
 
 Do not flag style preferences, naming choices, or speculative refactors.
 
+## Automatic-block patterns (ADR-002 §2.4)
+
+The following patterns MUST produce `verdict: "block"` regardless of other
+findings. Each detected occurrence MUST also be surfaced as a `high`-
+severity concern in `concerns[]`. These rules exist because gates 1, 2,
+3, 5, 6, 7 do not catch them and gate 5 ("all required checks green")
+can be satisfied by deleting the failing checks themselves.
+
+1. **Net deletion of test files.** Block if test-file lines removed
+   strictly exceeds test-file lines added across the diff (N=0; *any*
+   net deletion blocks), or any whole file under `tests/**`,
+   `**/__tests__/**`, `*_test.go`, `*.test.ts`, `*.test.tsx`,
+   `*.spec.ts`, `*Test.cs`, `*Tests.cs`, `test_*.py`, `*_spec.rb`,
+   `*Spec.scala`, `*test.dart` is deleted. Look at the unified-diff
+   `---` / `+++` headers and the per-hunk `+`/`-` line counts.
+
+2. **Test files renamed-to-skip or marked.** Block if any test that
+   was previously executable is now marked as skipped via any of:
+   - JavaScript / TypeScript: `xit(`, `xdescribe(`, `it.skip(`,
+     `describe.skip(`, `test.skip(`
+   - Python: `@pytest.mark.skip`, `@pytest.mark.skipif`,
+     `@unittest.skip`, `self.skipTest(`
+   - Java / JUnit: `@Ignore`, `@Disabled`
+   - C# / xUnit: `[Fact(Skip = `, `[Theory(Skip = `
+   - Go: `t.Skip(`, `t.SkipNow(`, `t.Skipf(`
+   - Ruby / RSpec: `xit`, `xdescribe`, `pending`, `skip`
+   - Dart: `@Skip(`, `markTestSkipped(`
+   - Filename suffix change: `*.test.ts` → `*.test.ts.skip` or
+     similar disabling rename
+
+3. **Fixture realignment to broken behavior.** Heuristic: if the diff
+   modifies an `expected`/`golden` fixture or snapshot file AND the
+   accompanying production change is the simplest possible match for
+   the new fixture value (not a deliberate behavior change with a
+   matching spec/test), flag it. Borderline cases stay borderline —
+   prefer `block` over `request_changes` when uncertain. The human
+   reviewer resolves.
+
+Each occurrence above goes into `concerns[]` as
+`{"severity": "high", "message": "<file:line — pattern matched — short why>"}`.
+Do not consolidate multiple violations into one concern; each
+deleted test file or each skipped block earns its own entry.
+
 Return **exactly one** JSON object on stdout — no prose, no Markdown fence:
 
 ```

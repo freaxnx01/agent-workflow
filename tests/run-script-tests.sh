@@ -296,6 +296,28 @@ assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 ec="$(run_capture_ec env ISSUE_NUMBER=1 INPUT_AUTO_REVIEW=true bash "$GATE")"
 assert_equals "$ec" "2" "missing REPO → exit 2"
 
+section "review-prompt — ADR-002 §2.4 auto-block rules present in template"
+
+PROMPT="$ROOT/scripts/lib/review-prompt.md"
+
+# Section header must exist — a future edit dropping it should fail CI.
+assert_contains "$(cat "$PROMPT")" 'Automatic-block patterns (ADR-002 §2.4)' \
+  "prompt template includes the ADR-002 §2.4 section header"
+
+# Each of the three patterns must be present with a recognizable marker.
+prompt_body="$(cat "$PROMPT")"
+assert_contains "$prompt_body" 'Net deletion of test files'           "rule 1: net test-file deletion"
+assert_contains "$prompt_body" 'renamed-to-skip or marked'            "rule 2: skipped-test detection"
+assert_contains "$prompt_body" 'Fixture realignment to broken behavior' "rule 3: fixture-realignment heuristic"
+
+# Concrete example matchers for the skipped-test rule (rule 2) — one
+# per language family the ADR enumerates. Future contributors who add
+# language coverage extend this list; future contributors who quietly
+# drop language coverage trip the assertion.
+for marker in 'xit(' '@pytest.mark.skip' '@Ignore' '[Fact(Skip = ' 't.Skip(' '@Skip('; do
+  assert_contains "$prompt_body" "$marker" "rule 2: matcher example '$marker' present"
+done
+
 section "review-pr — verdict paths + idempotency + oversized diff"
 
 REVIEW="$ROOT/scripts/review-pr.sh"
