@@ -1,0 +1,9 @@
+{
+  "is_error": true,
+  "error": {
+    "type": "authentication_error",
+    "message": "Invalid API key (403 forbidden). Verify OPENROUTER_API_KEY is set."
+  },
+  "turns": 0,
+  "duration_s": 1
+}

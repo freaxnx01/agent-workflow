@@ -38,11 +38,18 @@ result_text="$(jq -r '.result // ""' "$RESULT_FILE")"
 
 if [[ "$is_error" != "true" ]]; then
   class=success
-elif printf '%s' "$result_text" | grep -qiE 'rate.?limit|"?429"?|too many requests|quota.?exceed'; then
+elif printf '%s' "$result_text" | grep -qiE 'rate.?limit|"?429"?|too many requests|quota.?exceed|insufficient.credits'; then
+  # `insufficient.credits` covers OpenRouter's account-balance error;
+  # bucketed as rate_limit because operator action (top up + wait) is
+  # the same shape as wait-and-retry, just on a longer cadence.
   class=rate_limit
-elif printf '%s' "$result_text" | grep -qiE '"?401"?|invalid.bearer|authentication.error|unauthorized'; then
+elif printf '%s' "$result_text" | grep -qiE '"?401"?|"?403"?|invalid.bearer|authentication.error|unauthorized|invalid.api.key|forbidden'; then
+  # `403` / `forbidden` / `invalid api key` cover OpenRouter auth-fail
+  # variants alongside Claude's `401` / `invalid bearer`.
   class=api_auth
-elif printf '%s' "$result_text" | grep -qiE '"?5[0-9]{2}"?|service.unavailable|timeout|econn|network'; then
+elif printf '%s' "$result_text" | grep -qiE '"?5[0-9]{2}"?|service.unavailable|timeout|econn|network|upstream.error|provider.error'; then
+  # `upstream.error` / `provider.error` cover OpenRouter's pass-through
+  # failures from the underlying model provider.
   class=transient
 elif [[ "$subtype" == "error_max_turns" ]]; then
   class=task_failure

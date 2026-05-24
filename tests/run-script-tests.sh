@@ -1090,6 +1090,64 @@ ec="$(run_capture_ec env PR_NUMBER=1 REPO=o/r \
         bash "$ENVELOPE")"
 assert_equals "$ec" "2" "invalid REQUIRED_CHECKS_STATUS → exit 2"
 
+section "adapt-opencode-result — normalize OpenCode output to canonical shape"
+
+ADAPT_OC="$ROOT/scripts/adapt-opencode-result.sh"
+
+# Happy path
+out="$(MODEL=mistralai/codestral-latest EXECUTION_FILE="$FIXTURES/opencode-success.json" bash "$ADAPT_OC")"
+assert_contains "$out" '"is_error":false'                 "success → is_error=false"
+assert_contains "$out" '"subtype":"success"'              "success → subtype=success"
+assert_contains "$out" '"duration_ms":28000'              "duration_s=28 → duration_ms=28000"
+assert_contains "$out" '"num_turns":4'                    "turns=4 → num_turns=4"
+assert_contains "$out" '"input_tokens":1200'              "prompt_tokens → input_tokens"
+assert_contains "$out" '"output_tokens":580'              "completion_tokens → output_tokens"
+assert_contains "$out" '"cache_creation_input_tokens":0'  "cache_creation=0 (OpenCode has no cache)"
+
+# Rate-limit fixture
+out="$(MODEL=mistralai/mistral-large-latest EXECUTION_FILE="$FIXTURES/opencode-rate-limit.json" bash "$ADAPT_OC")"
+assert_contains "$out" '"is_error":true'                  "rate-limit → is_error=true"
+assert_contains "$out" 'rate limit'                       "rate-limit result text has 'rate limit'"
+
+# Auth-fail fixture
+out="$(EXECUTION_FILE="$FIXTURES/opencode-auth-fail.json" bash "$ADAPT_OC")"
+assert_contains "$out" '"is_error":true'                  "auth-fail → is_error=true"
+assert_contains "$out" '403'                              "auth-fail result text mentions 403"
+
+# Unparseable input → bug-bucket result
+TMP_BAD="$(mktemp)"
+printf 'this is not json {{ bad' > "$TMP_BAD"
+out="$(EXECUTION_FILE="$TMP_BAD" bash "$ADAPT_OC")"
+rm -f "$TMP_BAD"
+assert_contains "$out" '"is_error":true'                       "unparseable → is_error=true"
+assert_contains "$out" '"subtype":"error_during_execution"'    "unparseable → error_during_execution subtype"
+assert_contains "$out" 'not parseable'                         "unparseable → result names the failure"
+
+# End-to-end: adapter output piped into classify-failure.sh produces the
+# expected bucket. Verifies the new classify-failure regex (`403`,
+# `provider.error`, etc.) catches what the adapter passes through.
+adapter_to_classifier() {
+  local fixture="$1"
+  local tmp
+  tmp="$(mktemp --suffix=.json)"
+  MODEL=mistralai/codestral-latest EXECUTION_FILE="$FIXTURES/$fixture" \
+    bash "$ADAPT_OC" > "$tmp"
+  RESULT_FILE="$tmp" bash "$ROOT/scripts/classify-failure.sh"
+  rm -f "$tmp"
+}
+out="$(adapter_to_classifier opencode-success.json)"
+assert_contains "$out" 'class=success'    "opencode success → class=success"
+out="$(adapter_to_classifier opencode-rate-limit.json)"
+assert_contains "$out" 'class=rate_limit' "opencode rate-limit → class=rate_limit"
+out="$(adapter_to_classifier opencode-auth-fail.json)"
+assert_contains "$out" 'class=api_auth'   "opencode 403 / forbidden → class=api_auth"
+
+# Error paths
+ec="$(run_capture_ec env bash "$ADAPT_OC")"
+assert_equals "$ec" "2" "adapter: missing EXECUTION_FILE → exit 2"
+ec="$(run_capture_ec env EXECUTION_FILE=/no/such/file bash "$ADAPT_OC")"
+assert_equals "$ec" "64" "adapter: unreadable EXECUTION_FILE → exit 64"
+
 section "classify-failure — buckets per fixture"
 
 CLASSIFY_FAIL="$ROOT/scripts/classify-failure.sh"

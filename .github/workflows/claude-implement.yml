@@ -314,6 +314,59 @@ jobs:
           claude_env: |
             GH_TOKEN=${{ github.token }}
 
+      - name: Run OpenCode
+        # Mutex with `Run Claude Code` via the classify_agent gate
+        # (ADR-001 §3 — exactly one agent step per job). Reads
+        # OPENROUTER_API_KEY from secrets; never logs it. The
+        # `set +x` at the top of `run:` belt-and-suspenders against
+        # any future shell-tracing default.
+        if: |
+          !inputs.stub-claude
+          && steps.classify_agent.outputs.agent == 'opencode'
+        id: opencode_run
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          PROMPT_FILE: ${{ steps.issue.outputs.prompt-file }}
+          MODEL: ${{ steps.triage.outputs.model }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +x
+          out_file="${RUNNER_TEMP:-/tmp}/opencode-output.json"
+          # OpenCode's exact invocation will be verified in #11's
+          # sandbox dogfood; first-cut shape assumes
+          # `opencode --prompt-file <f> --model <m> --max-turns N
+          # --output-format json` and emits a single JSON object on
+          # stdout. The adapter (next step) tolerates several shapes
+          # so swapping the CLI flag set later doesn't require
+          # changing every downstream consumer.
+          opencode \
+            --prompt-file "$PROMPT_FILE" \
+            --model "$MODEL" \
+            --max-turns 30 \
+            --output-format json \
+            > "$out_file" \
+            2>&1 || true
+          printf 'execution_file=%s\n' "$out_file" >> "$GITHUB_OUTPUT"
+
+      - name: Adapt OpenCode result → claude-result.json
+        # Mirrors `Adapt execution_file -> result.json` for the
+        # OpenCode path. Output of adapt-opencode-result.sh is the
+        # canonical shape every downstream script expects per
+        # ADR-001 §2.
+        if: |
+          !inputs.stub-claude
+          && always()
+          && steps.opencode_run.outputs.execution_file != ''
+        id: opencode_adapt
+        env:
+          EXECUTION_FILE: ${{ steps.opencode_run.outputs.execution_file }}
+          MODEL: ${{ steps.triage.outputs.model }}
+        run: |
+          out="${RUNNER_TEMP:-/tmp}/claude-result.json"
+          bash .claude-pipeline/scripts/adapt-opencode-result.sh > "$out"
+          printf 'result-file=%s\n'    "$out"             >> "$GITHUB_OUTPUT"
+          printf 'execution-file=%s\n' "$EXECUTION_FILE"  >> "$GITHUB_OUTPUT"
+
       - name: Stub Claude run (diagnostic mode)
         if: ${{ inputs.stub-claude }}
         id: stub_run
@@ -359,9 +412,9 @@ jobs:
 
       - name: Classify failure
         id: classify_failure
-        if: always() && (steps.claude.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
+        if: always() && (steps.claude.outputs.result-file != '' || steps.opencode_adapt.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
         env:
-          RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.stub_run.outputs.result-file }}
+          RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.opencode_adapt.outputs.result-file || steps.stub_run.outputs.result-file }}
         run: bash .claude-pipeline/scripts/classify-failure.sh
 
       - name: Plan retry
@@ -382,9 +435,9 @@ jobs:
 
       - name: Extract job outputs from result.json
         id: outputs
-        if: always() && (steps.claude.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
+        if: always() && (steps.claude.outputs.result-file != '' || steps.opencode_adapt.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
         env:
-          RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.stub_run.outputs.result-file }}
+          RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.opencode_adapt.outputs.result-file || steps.stub_run.outputs.result-file }}
         run: |
           jq -r '
             "cost-usd="  + (.total_cost_usd | tostring),
@@ -400,10 +453,10 @@ jobs:
         run: bash .claude-pipeline/scripts/ensure-issue-labels.sh
 
       - name: Post run report
-        if: always() && (steps.claude.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
+        if: always() && (steps.claude.outputs.result-file != '' || steps.opencode_adapt.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
         env:
-          RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.stub_run.outputs.result-file }}
-          EXECUTION_FILE: ${{ steps.claude.outputs.execution-file }}
+          RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.opencode_adapt.outputs.result-file || steps.stub_run.outputs.result-file }}
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution-file || steps.opencode_adapt.outputs.execution-file }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           REPO: ${{ github.repository }}
