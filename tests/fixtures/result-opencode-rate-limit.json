@@ -1,0 +1,16 @@
+{
+  "type": "result",
+  "subtype": "rate_limit_exceeded",
+  "is_error": true,
+  "duration_ms": 2000,
+  "num_turns": 1,
+  "total_cost_usd": 0,
+  "session_id": "opencode-mistralai-mistral-large-latest",
+  "result": "OpenRouter rate limit: too many requests for this provider in 60s. HTTP 429.",
+  "usage": {
+    "input_tokens": 320,
+    "output_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  }
+}

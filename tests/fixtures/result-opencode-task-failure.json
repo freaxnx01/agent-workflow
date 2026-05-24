@@ -1,0 +1,16 @@
+{
+  "type": "result",
+  "subtype": "error_max_turns",
+  "is_error": true,
+  "duration_ms": 290000,
+  "num_turns": 30,
+  "total_cost_usd": 0.012,
+  "session_id": "opencode-mistralai-codestral-latest",
+  "result": "Reached max_turns (30) before completion. Final assistant message: 'I'm not sure how to proceed without more context on the auth module.'",
+  "usage": {
+    "input_tokens": 14200,
+    "output_tokens": 8400,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  }
+}

@@ -57,6 +57,53 @@ jobs:
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
 
+  call-opencode-success:
+    name: Reusable workflow — opencode success
+    uses: ./.github/workflows/claude-implement.yml
+    with:
+      issue-number: 9011
+      default-model: mistralai/codestral-latest
+      timeout-minutes: 10
+      dry-run: true
+      local-scripts: true
+      stub-claude: true
+      stub-fixture: opencode_success
+      agent: opencode
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
+
+  call-opencode-rate-limit:
+    name: Reusable workflow — opencode rate-limit
+    uses: ./.github/workflows/claude-implement.yml
+    with:
+      issue-number: 9012
+      default-model: mistralai/mistral-large-latest
+      timeout-minutes: 10
+      dry-run: true
+      local-scripts: true
+      stub-claude: true
+      stub-fixture: opencode_rate_limit
+      agent: opencode
+      attempt: 1
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
+
+  call-opencode-task-failure:
+    name: Reusable workflow — opencode task-failure (max-turns)
+    uses: ./.github/workflows/claude-implement.yml
+    with:
+      issue-number: 9013
+      default-model: mistralai/codestral-latest
+      timeout-minutes: 10
+      dry-run: true
+      local-scripts: true
+      stub-claude: true
+      stub-fixture: opencode_task_failure
+      agent: opencode
+      attempt: 1
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
+
   verify-success:
     name: Assert success path
     needs: call-success
@@ -102,6 +149,76 @@ jobs:
           [[ "$RETRY" == "retry" ]]         || { echo "::error::retry-decision=$RETRY (want retry)"; fail=1; }
           (( fail == 0 )) || exit 1
           echo "rate-limit path OK: failure=$FAILURE retry=$RETRY"
+
+  verify-opencode-success:
+    name: Assert opencode success path
+    needs: call-opencode-success
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      OUTCOME:   ${{ needs.call-opencode-success.outputs.outcome }}
+      COST_USD:  ${{ needs.call-opencode-success.outputs.cost-usd }}
+      NUM_TURNS: ${{ needs.call-opencode-success.outputs.num-turns }}
+      FAILURE:   ${{ needs.call-opencode-success.outputs.failure-class }}
+      RETRY:     ${{ needs.call-opencode-success.outputs.retry-decision }}
+    steps:
+      - name: Assert opencode success outputs
+        run: |
+          fail=0
+          [[ "$OUTCOME" == "success" ]]      || { echo "::error::outcome=$OUTCOME (want success)"; fail=1; }
+          [[ "$COST_USD" == "0.0035" ]]      || { echo "::error::cost-usd=$COST_USD (want 0.0035 from the opencode fixture)"; fail=1; }
+          [[ "$NUM_TURNS" == "4" ]]          || { echo "::error::num-turns=$NUM_TURNS (want 4)"; fail=1; }
+          [[ "$FAILURE" == "success" ]]      || { echo "::error::failure-class=$FAILURE (want success)"; fail=1; }
+          [[ -z "$RETRY" ]]                  || { echo "::error::retry-decision=$RETRY (want empty — no retry on success)"; fail=1; }
+          (( fail == 0 )) || exit 1
+          echo "opencode-success OK: cost=$COST_USD turns=$NUM_TURNS"
+
+  verify-opencode-rate-limit:
+    name: Assert opencode rate-limit path
+    needs: call-opencode-rate-limit
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      OUTCOME:  ${{ needs.call-opencode-rate-limit.outputs.outcome }}
+      FAILURE:  ${{ needs.call-opencode-rate-limit.outputs.failure-class }}
+      RETRY:    ${{ needs.call-opencode-rate-limit.outputs.retry-decision }}
+    steps:
+      - name: Assert opencode rate-limit triggers retry decision
+        run: |
+          fail=0
+          [[ "$OUTCOME" == "failed" ]]      || { echo "::error::outcome=$OUTCOME (want failed)"; fail=1; }
+          [[ "$FAILURE" == "rate_limit" ]]  || { echo "::error::failure-class=$FAILURE (want rate_limit)"; fail=1; }
+          [[ "$RETRY" == "retry" ]]         || { echo "::error::retry-decision=$RETRY (want retry)"; fail=1; }
+          (( fail == 0 )) || exit 1
+          echo "opencode-rate-limit OK: failure=$FAILURE retry=$RETRY"
+
+  verify-opencode-task-failure:
+    name: Assert opencode task-failure path
+    needs: call-opencode-task-failure
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      OUTCOME:   ${{ needs.call-opencode-task-failure.outputs.outcome }}
+      NUM_TURNS: ${{ needs.call-opencode-task-failure.outputs.num-turns }}
+      FAILURE:   ${{ needs.call-opencode-task-failure.outputs.failure-class }}
+      RETRY:     ${{ needs.call-opencode-task-failure.outputs.retry-decision }}
+    steps:
+      - name: Assert opencode max-turns is bucketed as task_failure
+        run: |
+          fail=0
+          [[ "$OUTCOME" == "failed" ]]         || { echo "::error::outcome=$OUTCOME (want failed)"; fail=1; }
+          [[ "$NUM_TURNS" == "30" ]]           || { echo "::error::num-turns=$NUM_TURNS (want 30)"; fail=1; }
+          [[ "$FAILURE" == "task_failure" ]]   || { echo "::error::failure-class=$FAILURE (want task_failure)"; fail=1; }
+          # task_failure retries at most once; with attempt=1 → retry, but
+          # don't pin the retry decision since #6 may change defaults
+          (( fail == 0 )) || exit 1
+          echo "opencode-task-failure OK: failure=$FAILURE retry=$RETRY"
 
   # ─── Auto-review path (issue #16) ─────────────────────────────────────────
   # Four calls drive the auto_review job through every verdict/envelope

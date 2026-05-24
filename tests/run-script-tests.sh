@@ -1164,6 +1164,27 @@ assert_contains "$out" 'class=task_failure' "max-turns fixture → task_failure"
 out="$(RESULT_FILE="$FIXTURES/result-api-auth.json"           bash "$CLASSIFY_FAIL")"
 assert_contains "$out" 'class=api_auth'     "api-auth fixture → api_auth"
 
+# OpenCode-flavored result fixtures (canonical shape, post-adapter)
+out="$(RESULT_FILE="$FIXTURES/result-opencode-success.json"      bash "$CLASSIFY_FAIL")"
+assert_contains "$out" 'class=success'      "result-opencode-success.json → success"
+
+out="$(RESULT_FILE="$FIXTURES/result-opencode-rate-limit.json"   bash "$CLASSIFY_FAIL")"
+assert_contains "$out" 'class=rate_limit'   "result-opencode-rate-limit.json → rate_limit"
+
+out="$(RESULT_FILE="$FIXTURES/result-opencode-task-failure.json" bash "$CLASSIFY_FAIL")"
+assert_contains "$out" 'class=task_failure' "result-opencode-task-failure.json → task_failure"
+
+# post-run-report.sh renders the OpenCode-flavored success fixture without
+# error. RENDER_ONLY skips the gh comment/label side effects.
+out="$(RENDER_ONLY=1 \
+        RESULT_FILE="$FIXTURES/result-opencode-success.json" \
+        ISSUE_NUMBER=42 \
+        WORKFLOW_RUN_URL='https://example/run/777' \
+        bash "$ROOT/scripts/post-run-report.sh")"
+assert_contains "$out" '0.0035'      "post-run-report includes opencode cost (\$0.0035)"
+assert_contains "$out" '1,200'       "post-run-report formats input_tokens with thousands separator"
+assert_contains "$out" 'success'     "post-run-report shows success outcome"
+
 ec="$(run_capture_ec env bash "$CLASSIFY_FAIL")"
 assert_equals "$ec" "2" "missing RESULT_FILE → exit 2"
 

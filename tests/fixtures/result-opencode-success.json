@@ -1,0 +1,16 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "duration_ms": 28000,
+  "num_turns": 4,
+  "total_cost_usd": 0.0035,
+  "session_id": "opencode-mistralai-codestral-latest",
+  "result": "Implemented the change on branch feat/foo and opened PR #999.",
+  "usage": {
+    "input_tokens": 1200,
+    "output_tokens": 580,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  }
+}
