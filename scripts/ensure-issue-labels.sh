@@ -10,8 +10,11 @@
 #              — read by classify-agent.sh to override the workflow input
 #                (see ADR-001 in docs/DECISIONS.md)
 #   gates      ai-auto-review, ai-chain, ai:chain-paused
-#              — read by future auto-review (epic #3) and chain-dispatch
+#              — read by auto-review (epic #3) and chain-dispatch
 #                (epic #4) workflows; user-applied opt-ins / kill switch
+#   outcome    ai:review-blocked
+#              — written by the auto-review job (ADR-002, epic #3) when
+#                the safety envelope or verdict leaves the PR draft
 #
 # Idempotent: existing labels are preserved unchanged (`gh label create` errors
 # when the label exists; we ignore that error rather than passing `--force`, so
@@ -53,3 +56,5 @@ create agent:opencode  0075CA 'Force the OpenCode (OpenRouter) agent for this ru
 create ai-auto-review  0E8A16 'Run auto-review after PR opens; auto-merge on approve+green'
 create ai-chain        0E8A16 'Eligible for chain-dispatch when blockers resolve'
 create ai:chain-paused D73A4A 'Repo-wide kill switch for chain-dispatch'
+
+create ai:review-blocked D73A4A 'Auto-review left the PR draft; human action required'
