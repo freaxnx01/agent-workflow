@@ -1,0 +1,126 @@
+# Consumer Setup
+
+How to wire `claude-pipeline` into a consumer repo. Two flows:
+
+1. **Minimum stub** — labeled-issue → draft PR (no auto-merge).
+2. **Auto-review + auto-merge** — labeled-issue → draft PR → agent review → squash-merge, inside ADR-002's safety envelope.
+
+## 1. Minimum stub
+
+Add `.github/workflows/claude.yml`:
+
+```yaml
+name: Claude
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  claude:
+    if: github.event.label.name == 'ai-implement'
+    uses: freaxnx01/claude-pipeline/.github/workflows/claude-implement.yml@v1
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    with:
+      issue-number: ${{ github.event.issue.number }}
+      runner-labels: '["ubuntu-latest"]'
+      default-model: claude-opus-4-7
+```
+
+Drop in:
+
+- `CLAUDE_CODE_OAUTH_TOKEN` secret (generate via `claude setup-token` against your Max subscription).
+- Repo labels — the pipeline self-heals these, but a manual `bash scripts/ensure-issue-labels.sh` before the first run keeps the first issue tidy.
+
+Apply `ai-implement` to an issue; Claude opens a draft PR. That's it.
+
+## 2. Auto-review + auto-merge
+
+The auto-merge flow promotes the draft → ready → `gh pr merge --auto --squash` **only when every gate in [ADR-002](DECISIONS.md#adr-002--auto-review-and-auto-merge-safety-envelope) is satisfied**. Failing any gate leaves the PR draft and stamps `ai:review-blocked` on the originating issue.
+
+### Opt-in (two layers)
+
+```yaml
+# .github/workflows/claude.yml
+jobs:
+  claude:
+    uses: freaxnx01/claude-pipeline/.github/workflows/claude-implement.yml@v1
+    with:
+      issue-number: ${{ github.event.issue.number }}
+      auto-review: true        # per-repo opt-in (ADR-002 gate 3)
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+```
+
+Then apply both `ai-implement` AND `ai-auto-review` to the issue (ADR-002 gate 2). Either alone leaves the PR draft.
+
+### Required: a dependency-vulnerability check
+
+ADR-002 gate 5 ("all required status checks green") is the only thing standing between auto-merge and a supply-chain attack. **Wire a vulnerable-dependency check as a required status check on the target branch.** Pick one that matches your stack:
+
+| Stack | Check |
+|---|---|
+| Node | `npm audit --audit-level=high` step or Dependabot's review action |
+| Python | `pip-audit --strict` |
+| .NET | `dotnet list package --vulnerable --include-transitive` (fails build on findings) |
+| Rust | `cargo audit` |
+| Go | `govulncheck ./...` |
+
+Mark it required under **Settings → Branches → Branch protection → Require status checks**.
+
+If no such check is required, `auto-review: true` lets a malicious dependency bump squash-merge into `main`. The pipeline does not block manifest changes itself — gate 6 only blocks `.github/` and secret files (full list in ADR-002 §2.6).
+
+### Optional: per-repo path blocklist
+
+Drop a `.claude-auto-merge-blocklist` at the repo root, one glob per line, `#` for comments:
+
+```
+# Don't auto-merge infra or DB changes
+terraform/**
+migrations/**
+*.tf
+```
+
+Absent file = empty blocklist. The hardcoded list (`.github/`, `*.sops.yaml`, `*.enc.*`, `*.age`, `*.gpg`, `*.pem`, `*.key`, `*.kbx`, `*.p12`, `*.pfx`, `secrets.*`) is always in effect — the blocklist file extends it, never weakens it.
+
+### Optional: custom pipeline author allowlist
+
+If your consumer repo uses a GitHub App or PAT for `gh pr create` instead of the ambient `GITHUB_TOKEN`, the PRs appear as a different `pr.user.login`. Add it to the allowlist (ADR-002 gate 1):
+
+```yaml
+with:
+  auto-review: true
+  pipeline-author-allowlist: |
+    github-actions[bot]
+    my-app[bot]
+```
+
+Never set this to a value that matches arbitrary humans — gate 1's purpose is defense in depth against label injection.
+
+### Kill switches
+
+- **Per-repo:** `auto-review: false` at the call site.
+- **Per-issue:** remove `ai-auto-review` from the issue.
+
+Both only take effect on the next run; PRs that already armed `gh pr merge --auto` will still land once required checks pass. Disarm in-flight with `gh pr merge --disable-auto <PR>`.
+
+## Troubleshooting
+
+### "Auto-merge held: …" comment on the PR
+
+The auto-review job ran, but a gate refused promotion. The comment names the reason. The originating issue gets `ai:review-blocked`. Take over manually: review the diff, fix any blocker, then `gh pr ready` + `gh pr merge --squash` yourself.
+
+### Draft PR opens but no auto-review job runs
+
+Check the workflow run for the `auto_review` job. It only triggers when:
+
+- the `implement` job succeeded
+- `auto-review: true` was passed
+- the issue carries `ai-auto-review`
+- the `implement` job's `auto-review-enabled` output is `true`
+
+If all four hold and the job still didn't run, the issue is in workflow plumbing — file an issue against `claude-pipeline`.
+
+### Self-modification guard
+
+The `freaxnx01/claude-pipeline` repo itself never auto-merges, regardless of input or label state — ADR-002 §"Self-modification / dogfooding". Hardcoded; no way to disable. If you forked `claude-pipeline`, update the guard's hardcoded repo string before enabling `auto-review: true` on the fork.
