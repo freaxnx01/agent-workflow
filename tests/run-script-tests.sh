@@ -553,10 +553,11 @@ section "check-merge-envelope — per-gate evaluation (ADR-002)"
 ENVELOPE="$ROOT/scripts/check-merge-envelope.sh"
 
 envelope_run() {
-  # Helper: collect $GITHUB_OUTPUT into stdout so assertions read keys.
+  # Helper: collect $GITHUB_OUTPUT and the script's stdout into one
+  # blob so assertions can match either.
   local go
   go="$(mktemp)"
-  GITHUB_OUTPUT="$go" "$@" bash "$ENVELOPE" >/dev/null
+  GITHUB_OUTPUT="$go" "$@" bash "$ENVELOPE"
   cat "$go"
   rm -f "$go"
 }
@@ -723,6 +724,84 @@ assert_contains "$out" 'envelope=fail'      "both repo settings off → fail"
 assert_contains "$out" 'failed-gates=7'     "gate 7 consolidated (one ID even when both sub-checks fail)"
 assert_contains "$out" 'allow_squash_merge=false' "names squash-merge in reasons"
 assert_contains "$out" 'allow_auto_merge=false'   "names auto-merge in reasons"
+
+# Gate 7 (CODEOWNERS): no CODEOWNERS file → vacuous pass
+CO_TMP="$(mktemp)"  # used only to force-resolve to an absent path
+out="$(envelope_run env \
+        PR_NUMBER=42 REPO=o/r \
+        PR_AUTHOR='github-actions[bot]' \
+        PR_FILES='src/foo.ts' \
+        REQUIRED_CHECKS_STATUS=pass \
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true \
+        CODEOWNERS_FILE=/no/such/codeowners)"
+rm -f "$CO_TMP"
+assert_contains "$out" 'envelope=pass'  "no CODEOWNERS file → pass"
+
+# Gate 7 (CODEOWNERS): satisfied by PR author
+CO_FIX="$FIXTURES/codeowners-mixed.txt"
+out="$(envelope_run env \
+        PR_NUMBER=42 REPO=o/r \
+        PR_AUTHOR='default-owner' \
+        AUTHOR_ALLOWLIST='default-owner' \
+        PR_FILES='src/random.ts' \
+        REQUIRED_CHECKS_STATUS=pass \
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true \
+        CODEOWNERS_FILE="$CO_FIX" \
+        PR_REVIEWS_JSON='[]')"
+assert_contains "$out" 'envelope=pass'  "PR author is the required owner → pass"
+
+# Gate 7 (CODEOWNERS): satisfied by an approving reviewer
+out="$(envelope_run env \
+        PR_NUMBER=42 REPO=o/r \
+        PR_AUTHOR='github-actions[bot]' \
+        PR_FILES='src/random.ts' \
+        REQUIRED_CHECKS_STATUS=pass \
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true \
+        CODEOWNERS_FILE="$CO_FIX" \
+        PR_REVIEWS_JSON='[{"state":"APPROVED","user":{"login":"default-owner"}}]')"
+assert_contains "$out" 'envelope=pass'  "approving reviewer is the required owner → pass"
+
+# Gate 7 (CODEOWNERS): unsatisfied — no approvals, author is not the owner
+out="$(envelope_run env \
+        PR_NUMBER=42 REPO=o/r \
+        PR_AUTHOR='github-actions[bot]' \
+        PR_FILES='src/random.ts' \
+        REQUIRED_CHECKS_STATUS=pass \
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true \
+        CODEOWNERS_FILE="$CO_FIX" \
+        PR_REVIEWS_JSON='[]')"
+assert_contains "$out" 'envelope=fail'                "CODEOWNERS unsatisfied → fail"
+assert_contains "$out" 'failed-gates=7'               "gate 7 in failed-gates"
+assert_contains "$out" 'CODEOWNERS not satisfied: @default-owner' "names the missing owner"
+
+# Gate 7 (CODEOWNERS): team owners are deferred to GitHub (informational log,
+# not a gate failure)
+out="$(envelope_run env \
+        PR_NUMBER=42 REPO=o/r \
+        PR_AUTHOR='alice' \
+        AUTHOR_ALLOWLIST='alice' \
+        PR_FILES='src/auth/handler.ts' \
+        REQUIRED_CHECKS_STATUS=pass \
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true \
+        CODEOWNERS_FILE="$CO_FIX" \
+        PR_REVIEWS_JSON='[]')"
+assert_contains "$out" 'envelope=pass'                "individual owner satisfied + team deferred → pass"
+assert_contains "$out" 'codeowners-deferred-teams: @example-org/security-team' "team owner logged as deferred"
+
+# Gate 7 (CODEOWNERS): wrong CODEOWNERS file in a path (file exists but
+# no matching pattern) → no required owners → pass
+CO_EMPTY="$(mktemp)"
+printf '# comment only\n\n' > "$CO_EMPTY"
+out="$(envelope_run env \
+        PR_NUMBER=42 REPO=o/r \
+        PR_AUTHOR='github-actions[bot]' \
+        PR_FILES='src/random.ts' \
+        REQUIRED_CHECKS_STATUS=pass \
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true \
+        CODEOWNERS_FILE="$CO_EMPTY" \
+        PR_REVIEWS_JSON='[]')"
+rm -f "$CO_EMPTY"
+assert_contains "$out" 'envelope=pass'  "CODEOWNERS file empty/no matches → pass"
 
 # Invalid REPO_ALLOWS_AUTO_MERGE → exit 2
 ec="$(run_capture_ec env \

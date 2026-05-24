@@ -50,6 +50,16 @@
 #                          query against `gh api repos/.../`.
 #   REPO_ALLOWS_AUTO_MERGE true|false; skip the `allow_auto_merge`
 #                          query against `gh api repos/.../`.
+#   CODEOWNERS_FILE        Path to the repo's CODEOWNERS file. Default:
+#                          first existing of .github/CODEOWNERS,
+#                          CODEOWNERS, docs/CODEOWNERS (GitHub's own
+#                          resolution order). Absent file = no
+#                          CODEOWNERS requirement, gate 7 sub-check
+#                          vacuously passes.
+#   PR_REVIEWS_JSON        JSON array of approving reviews:
+#                          `[{"user":{"login":"x"},"state":"APPROVED"}]`
+#                          Default: `gh api repos/.../pulls/<PR>/reviews`.
+#                          Used by Layer-1 tests.
 #
 # Output ($GITHUB_OUTPUT and stdout):
 #   envelope       pass | fail
@@ -282,6 +292,114 @@ check_repo_setting() {
 
 check_repo_setting REPO_ALLOWS_SQUASH     allow_squash_merge squash-merge
 check_repo_setting REPO_ALLOWS_AUTO_MERGE allow_auto_merge   auto-merge
+
+# CODEOWNERS satisfaction (ADR-002 §2.7). Resolution order matches
+# GitHub's. Absent file → vacuous pass.
+resolve_codeowners_file() {
+  local path
+  for path in .github/CODEOWNERS CODEOWNERS docs/CODEOWNERS; do
+    if [[ -f "$path" ]]; then
+      printf '%s\n' "$path"
+      return 0
+    fi
+  done
+  return 1
+}
+
+codeowners_file="${CODEOWNERS_FILE:-}"
+if [[ -z "$codeowners_file" ]]; then
+  codeowners_file="$(resolve_codeowners_file || true)"
+fi
+
+if [[ -n "$codeowners_file" && -f "$codeowners_file" ]]; then
+  # Parse the file: each non-comment, non-empty line is `<pattern> <owner>...`.
+  # Store as two parallel arrays: patterns[] and owners[] (space-joined owners).
+  CO_PATTERNS=()
+  CO_OWNERS=()
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"
+    # trim leading/trailing whitespace
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+    pat="${line%%[[:space:]]*}"
+    rest="${line#*[[:space:]]}"
+    # rest can be empty if pattern has no owners (which means "remove
+    # earlier ownership" per GitHub semantics — we treat it as
+    # owner-less, satisfied vacuously)
+    [[ "$rest" == "$line" ]] && rest=''
+    CO_PATTERNS+=("$pat")
+    CO_OWNERS+=("$rest")
+  done < "$codeowners_file"
+
+  # For each touched path, find the LAST matching pattern (GitHub
+  # semantics) and accumulate required owners.
+  required_owners=""
+  unsatisfied_paths=()
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    matched_owners=''
+    for i in "${!CO_PATTERNS[@]}"; do
+      pat="${CO_PATTERNS[$i]}"
+      # shellcheck disable=SC2053
+      # Want pattern interpretation, not literal match.
+      if [[ "$path" == $pat || "$path" == */$pat ]]; then
+        matched_owners="${CO_OWNERS[$i]}"
+      fi
+    done
+    if [[ -n "$matched_owners" ]]; then
+      required_owners="$required_owners $matched_owners"
+      # Record the path → owners mapping for diagnostic reasons.
+      unsatisfied_paths+=("$path => $matched_owners")
+    fi
+  done <<< "$PR_FILES"
+
+  if [[ -n "${required_owners// /}" ]]; then
+    # Fetch approving reviewers.
+    reviews_json="${PR_REVIEWS_JSON:-}"
+    if [[ -z "$reviews_json" ]]; then
+      reviews_json="$(gh api "repos/$REPO/pulls/$PR_NUMBER/reviews" 2>/dev/null || printf '[]')"
+    fi
+    approvers="$(printf '%s' "$reviews_json" \
+      | jq -r '[.[] | select(.state == "APPROVED") | .user.login] | unique | .[]' 2>/dev/null \
+      || true)"
+    # Include the PR author as their own approver (per ADR-002 §2.7).
+    [[ -n "${PR_AUTHOR:-}" ]] && approvers="$(printf '%s\n%s\n' "$PR_AUTHOR" "$approvers" | awk 'NF' | sort -u)"
+
+    # Each unique owner in required_owners must be either an approver
+    # or the PR author. Team owners (`@org/team`) cannot be resolved
+    # without the team-membership API; treat them as `unknown` and
+    # delegate enforcement to GitHub's own auto-merge logic (which
+    # honors CODEOWNERS reviews). The reason string flags them so
+    # operators know why promotion was held.
+    unsatisfied=()
+    deferred_teams=()
+    seen_owners=$(printf '%s' "$required_owners" | tr ' ' '\n' | awk 'NF' | sort -u)
+    while IFS= read -r owner; do
+      [[ -z "$owner" ]] && continue
+      # Strip leading @
+      owner_id="${owner#@}"
+      if [[ "$owner_id" == *"/"* ]]; then
+        deferred_teams+=("$owner")
+        continue
+      fi
+      if ! printf '%s\n' "$approvers" | grep -qFx "$owner_id"; then
+        unsatisfied+=("$owner")
+      fi
+    done <<< "$seen_owners"
+
+    if (( ${#unsatisfied[@]} > 0 )); then
+      gate7_failed=true
+      REASONS+=("CODEOWNERS not satisfied: ${unsatisfied[*]}")
+    fi
+    if (( ${#deferred_teams[@]} > 0 )); then
+      # Team membership cannot be checked client-side; log informationally
+      # but do not fail the gate. GitHub's native auto-merge will hold
+      # the PR until the team review lands.
+      printf 'codeowners-deferred-teams: %s\n' "${deferred_teams[*]}"
+    fi
+  fi
+fi
 
 if [[ "$gate7_failed" == true ]]; then
   FAILED_GATES+=(7)
