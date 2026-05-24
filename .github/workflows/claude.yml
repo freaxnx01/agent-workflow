@@ -1,0 +1,49 @@
+name: Claude
+
+# Consumer-side stub that wires labeled issues into the reusable
+# `claude-implement.yml` workflow in this same repo. Dogfood entry
+# point for `claude-pipeline` running against itself.
+#
+# The self-modification guard in claude-implement.yml (ADR-002)
+# ALWAYS blocks auto-merge on freaxnx01/claude-pipeline. The flow
+# exercised here is implement -> draft PR -> human review, never
+# the full auto-merge cycle.
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue-number:
+        description: Issue number to implement (manual retry / dispatch)
+        type: number
+        required: true
+
+permissions:
+  # Once `permissions:` is declared, unlisted permissions default to
+  # none. The called job needs contents/pull-requests/issues: write.
+  # (Lesson from #34.)
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  # Match the reusable workflow's per-(repo, issue) group so the two
+  # never race.
+  group: claude-${{ github.repository }}-${{ github.event.issue.number || inputs.issue-number }}
+  cancel-in-progress: true
+
+jobs:
+  claude:
+    if: |
+      github.event_name == 'workflow_dispatch'
+      || github.event.label.name == 'ai-implement'
+    uses: ./.github/workflows/claude-implement.yml
+    with:
+      issue-number: ${{ github.event.issue.number || inputs.issue-number }}
+      runner-labels: '["ubuntu-latest"]'
+      default-model: claude-sonnet-4-6
+      timeout-minutes: 30
+      auto-review: false
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
