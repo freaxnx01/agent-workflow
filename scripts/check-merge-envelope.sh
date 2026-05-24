@@ -30,9 +30,22 @@
 #   PR_AUTHOR              Skip `gh pr view --json author` and use this.
 #   PR_FILES               Newline-separated changed file paths; skips
 #                          `gh pr view --json files`.
-#   REQUIRED_CHECKS_STATUS One of: pass | fail | none. Skip
-#                          `gh pr checks --required`. `none` means
-#                          there are no required checks configured.
+#   REQUIRED_CHECKS_STATUS One of: pass | fail | none. Skip the live
+#                          two-step query entirely and use this value
+#                          directly. `none` means there are no required
+#                          checks configured on the target branch.
+#   REQUIRED_CHECKS_COUNT  Lower-level test seam. Integer count of
+#                          required checks configured on the base
+#                          branch (skips the `gh api` call). Combined
+#                          with REQUIRED_CHECKS_PASS to exercise the
+#                          live decision path without real network.
+#   REQUIRED_CHECKS_PASS   `true` | `false`. The would-be exit-code
+#                          outcome of `gh pr checks --required` for
+#                          testing. Only consulted when
+#                          REQUIRED_CHECKS_COUNT > 0.
+#   PR_BASE_BRANCH         The PR's base branch (default: query via
+#                          `gh pr view --json baseRefName`). Used to
+#                          target the correct branch-protection rule.
 #   REPO_ALLOWS_SQUASH     true|false; skip `gh api repos/.../`.
 #
 # Output ($GITHUB_OUTPUT and stdout):
@@ -91,19 +104,54 @@ fi
 
 required_checks_status="${REQUIRED_CHECKS_STATUS:-}"
 if [[ -z "$required_checks_status" ]]; then
-  # `gh pr checks --required` exits non-zero if any required check is
-  # failing or pending. No required checks configured → exit 0 with empty
-  # output (which we treat as "none required, gate vacuously passes").
-  if gh pr checks "$PR_NUMBER" --repo "$REPO" --required >/dev/null 2>&1; then
-    required_checks_status=pass
-  else
-    # Distinguish "failing" from "no required checks" by re-running and
-    # inspecting output.
-    if [[ -z "$(gh pr checks "$PR_NUMBER" --repo "$REPO" --required 2>/dev/null || true)" ]]; then
-      required_checks_status=none
-    else
-      required_checks_status=fail
+  # Two-step decision (replaces an earlier heuristic that parsed stdout
+  # of `gh pr checks --required` to distinguish "none configured" from
+  # "failing/pending" — that heuristic mis-classified pending checks as
+  # 'none' on some gh-cli versions, satisfying gate 5 before any check
+  # had actually run). Per ADR-002 §2.5: refuse to promote on
+  # flaky/pending. So:
+  #
+  #   1. Authoritatively query the base branch's required-status-checks
+  #      protection rule. Empty contexts (or 404 → no protection) means
+  #      no required checks configured → gate 5 vacuously passes.
+  #   2. Otherwise, `gh pr checks --required` exit code tells us
+  #      pass (0) vs not-green (non-zero — covers both failing and
+  #      pending; both forbid promotion).
+  required_count="${REQUIRED_CHECKS_COUNT:-}"
+  if [[ -z "$required_count" ]]; then
+    if [[ -z "${PR_BASE_BRANCH:-}" ]]; then
+      PR_BASE_BRANCH="$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+        --json baseRefName --jq '.baseRefName' 2>/dev/null || echo '')"
     fi
+    if [[ -n "$PR_BASE_BRANCH" ]]; then
+      required_count="$(gh api \
+        "repos/$REPO/branches/$PR_BASE_BRANCH/protection/required_status_checks" \
+        --jq '.contexts | length' 2>/dev/null || echo 0)"
+    else
+      required_count=0
+    fi
+  fi
+
+  if (( required_count == 0 )); then
+    required_checks_status=none
+  else
+    pass_flag="${REQUIRED_CHECKS_PASS:-}"
+    if [[ -z "$pass_flag" ]]; then
+      if gh pr checks "$PR_NUMBER" --repo "$REPO" --required >/dev/null 2>&1; then
+        pass_flag=true
+      else
+        pass_flag=false
+      fi
+    fi
+    case "$pass_flag" in
+      true)  required_checks_status=pass ;;
+      false) required_checks_status=fail ;;
+      *)
+        printf 'error: REQUIRED_CHECKS_PASS must be true|false (got %q)\n' \
+          "$pass_flag" >&2
+        exit 2
+        ;;
+    esac
   fi
 fi
 

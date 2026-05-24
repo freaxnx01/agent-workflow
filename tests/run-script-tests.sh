@@ -612,6 +612,47 @@ out="$(envelope_run env \
         REPO_ALLOWS_SQUASH=true)"
 assert_contains "$out" 'envelope=pass'    "no required checks configured → pass"
 
+# Gate 5 (live decision path): REQUIRED_CHECKS_COUNT=0 → none → pass
+out="$(envelope_run env \
+        PR_NUMBER=42 REPO=o/r \
+        PR_AUTHOR='github-actions[bot]' \
+        PR_FILES='src/foo.ts' \
+        REQUIRED_CHECKS_COUNT=0 \
+        REPO_ALLOWS_SQUASH=true)"
+assert_contains "$out" 'envelope=pass'    "REQUIRED_CHECKS_COUNT=0 → pass (no required checks)"
+
+# Gate 5 (live decision path): count>0 + PASS=true → pass
+out="$(envelope_run env \
+        PR_NUMBER=42 REPO=o/r \
+        PR_AUTHOR='github-actions[bot]' \
+        PR_FILES='src/foo.ts' \
+        REQUIRED_CHECKS_COUNT=2 \
+        REQUIRED_CHECKS_PASS=true \
+        REPO_ALLOWS_SQUASH=true)"
+assert_contains "$out" 'envelope=pass'    "count>0 + checks pass → envelope=pass"
+
+# Gate 5 (live decision path): count>0 + PASS=false → fail
+# Covers both failing AND pending checks — `gh pr checks --required`
+# exits non-zero for either, and ADR-002 §2.5 says refuse on both.
+out="$(envelope_run env \
+        PR_NUMBER=42 REPO=o/r \
+        PR_AUTHOR='github-actions[bot]' \
+        PR_FILES='src/foo.ts' \
+        REQUIRED_CHECKS_COUNT=2 \
+        REQUIRED_CHECKS_PASS=false \
+        REPO_ALLOWS_SQUASH=true)"
+assert_contains "$out" 'envelope=fail'    "count>0 + checks not-green (failing or pending) → fail"
+assert_contains "$out" 'failed-gates=5'   "gate 5 fires on pending/failing required check"
+
+# Gate 5 (live decision path): invalid REQUIRED_CHECKS_PASS → exit 2
+ec="$(run_capture_ec env \
+        PR_NUMBER=42 REPO=o/r \
+        PR_AUTHOR='github-actions[bot]' PR_FILES='src/foo.ts' \
+        REQUIRED_CHECKS_COUNT=1 REQUIRED_CHECKS_PASS=maybe \
+        REPO_ALLOWS_SQUASH=true \
+        bash "$ENVELOPE")"
+assert_equals "$ec" "2" "invalid REQUIRED_CHECKS_PASS → exit 2"
+
 # Gate 6: .github/ touch (loaded from fixture)
 out="$(envelope_run env \
         PR_NUMBER=42 REPO=o/r \
