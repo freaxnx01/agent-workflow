@@ -469,26 +469,26 @@ find_next_run() {
   rm -f "$go"
 }
 
-# Single-blocker: PR closes #100; #101 (with ai-chain) blocked-by #100 → eligible
+# Single-blocker: PR closes #100; #101 blocked-by #100 → eligible
 out="$(find_next_run env \
         CLOSED_ISSUE_NUMBER=100 REPO=o/r \
-        CANDIDATES_JSON='[{"number":101,"body":"Blocked by: #100","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]')"
-assert_contains "$out" 'successor-count=1' "single-blocker → 1 successor"
+        CANDIDATES_JSON="$(cat "$FIXTURES/chain-single-blocker.json")")"
+assert_contains "$out" 'successor-count=1' "chain-single-blocker.json → 1 successor"
 assert_contains "$out" 'successors=101'    "successor list contains 101"
 
-# Multi-blocker, NOT all closed: #102 blocked by #100 and #200; #200 still open → NOT eligible
+# Multi-blocker, partial (one still-open)
 out="$(find_next_run env \
         CLOSED_ISSUE_NUMBER=100 REPO=o/r \
         ISSUE_STATE_200=open \
-        CANDIDATES_JSON='[{"number":102,"body":"Blocked by: #100, #200","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]')"
-assert_contains "$out" 'successor-count=0' "multi-blocker with one still-open → 0 successors"
+        CANDIDATES_JSON="$(cat "$FIXTURES/chain-multi-blocker-partial.json")")"
+assert_contains "$out" 'successor-count=0' "chain-multi-blocker-partial.json → 0 successors"
 
-# Multi-blocker, ALL closed (other blocker is also closed) → eligible
+# Multi-blocker, ALL closed
 out="$(find_next_run env \
         CLOSED_ISSUE_NUMBER=100 REPO=o/r \
         ISSUE_STATE_200=closed \
-        CANDIDATES_JSON='[{"number":102,"body":"Blocked by: #100, #200","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]')"
-assert_contains "$out" 'successor-count=1' "multi-blocker all closed → 1 successor"
+        CANDIDATES_JSON="$(cat "$FIXTURES/chain-multi-blocker-all-closed.json")")"
+assert_contains "$out" 'successor-count=1' "chain-multi-blocker-all-closed.json → 1 successor"
 assert_contains "$out" 'successors=102'    "the right successor is named"
 
 # Successor without ai-chain → never picked up
@@ -519,14 +519,14 @@ out="$(find_next_run env \
 assert_contains "$out" 'successor-count=2' "two candidates both unblocked → 2 successors"
 assert_contains "$out" 'successors=106 107' "both successor numbers listed"
 
-# Depth cap engaged: CHAIN_DEPTH == MAX_CHAIN_DEPTH → capped, not dispatched
+# Depth cap engaged (chain-depth-cap.json)
 out="$(find_next_run env \
         CLOSED_ISSUE_NUMBER=100 REPO=o/r \
         KILL_SWITCH_OPEN=false \
         CHAIN_DEPTH=5 MAX_CHAIN_DEPTH=5 \
-        CANDIDATES_JSON='[{"number":108,"body":"Blocked by: #100","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]')"
-assert_contains "$out" 'successor-count=0'              "depth at cap → no dispatches"
-assert_contains "$out" 'capped=108'                     "depth at cap → candidate listed under capped="
+        CANDIDATES_JSON="$(cat "$FIXTURES/chain-depth-cap.json")")"
+assert_contains "$out" 'successor-count=0'              "chain-depth-cap.json @ cap → no dispatches"
+assert_contains "$out" 'capped=108'                     "candidate listed under capped="
 assert_contains "$out" 'candidate=108 decision=capped'  "per-candidate decision=capped emitted"
 assert_contains "$out" 'depth=5'                        "audit line carries the depth"
 
@@ -539,13 +539,13 @@ out="$(find_next_run env \
 assert_contains "$out" 'successor-count=1'                  "depth below cap → dispatched"
 assert_contains "$out" 'candidate=109 decision=dispatched'  "per-candidate decision=dispatched emitted"
 
-# Kill switch open → paused regardless of depth
+# Kill switch open (chain-paused.json) → paused regardless of depth
 out="$(find_next_run env \
         CLOSED_ISSUE_NUMBER=100 REPO=o/r \
         KILL_SWITCH_OPEN=true \
         CHAIN_DEPTH=1 MAX_CHAIN_DEPTH=5 \
-        CANDIDATES_JSON='[{"number":110,"body":"Blocked by: #100","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]')"
-assert_contains "$out" 'successor-count=0'              "kill switch open → no dispatches"
+        CANDIDATES_JSON="$(cat "$FIXTURES/chain-paused.json")")"
+assert_contains "$out" 'successor-count=0'              "chain-paused.json + kill switch → no dispatches"
 assert_contains "$out" 'paused=110'                     "candidate listed under paused="
 assert_contains "$out" 'candidate=110 decision=paused'  "per-candidate decision=paused emitted"
 

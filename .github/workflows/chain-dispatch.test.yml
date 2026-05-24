@@ -1,0 +1,156 @@
+name: chain-dispatch-test
+
+# Layer-2 test for chain-dispatch.yml. Drives the reusable workflow
+# through the scenarios called out in issue #20.
+# Asserts via the workflow's `dispatch-attempted` output, which
+# reflects whether `gh workflow run` was actually invoked against the
+# PATH-shimmed mock.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/chain-dispatch.yml
+      - .github/workflows/chain-dispatch.test.yml
+      - scripts/find-next-blocked-issue.sh
+      - scripts/parse-chain.sh
+      - scripts/post-chain-audit.sh
+      - scripts/lib/chain-audit-comment.md
+      - tests/fixtures/chain-*.json
+
+permissions:
+  # Match elevated permissions the called job declares; per #34's
+  # findings, less than that causes startup_failure. Once a
+  # `permissions:` block exists, every unlisted permission defaults
+  # to `none` — so `contents: read` must be explicit too (the
+  # called workflow's actions/checkout step needs it).
+  contents: read
+  issues: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: chain-dispatch-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  call-single-blocker:
+    name: chain — single-blocker (dispatches)
+    uses: ./.github/workflows/chain-dispatch.yml
+    with:
+      closed-pr-number: 9101
+      local-scripts: true
+      stub-mode: true
+      stub-closed-issue: 100
+      stub-candidates-json: |
+        [{"number":101,"body":"Blocked by: #100","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]
+      stub-kill-switch-open: false
+      stub-chain-depth: 1
+    secrets:
+      GH_TOKEN: not-used-by-stub
+
+  call-multi-blocker-partial:
+    name: chain — multi-blocker partial (no dispatch)
+    uses: ./.github/workflows/chain-dispatch.yml
+    with:
+      closed-pr-number: 9103
+      local-scripts: true
+      stub-mode: true
+      stub-closed-issue: 100
+      stub-candidates-json: |
+        [{"number":103,"body":"Blocked by: #100, #200","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]
+      stub-kill-switch-open: false
+      stub-chain-depth: 1
+    secrets:
+      GH_TOKEN: not-used-by-stub
+
+  call-depth-cap:
+    name: chain — depth cap (no dispatch)
+    uses: ./.github/workflows/chain-dispatch.yml
+    with:
+      closed-pr-number: 9104
+      local-scripts: true
+      stub-mode: true
+      stub-closed-issue: 100
+      stub-candidates-json: |
+        [{"number":108,"body":"Blocked by: #100","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]
+      stub-kill-switch-open: false
+      stub-chain-depth: 5
+      max-chain-depth: 5
+    secrets:
+      GH_TOKEN: not-used-by-stub
+
+  call-paused:
+    name: chain — kill switch (no dispatch)
+    uses: ./.github/workflows/chain-dispatch.yml
+    with:
+      closed-pr-number: 9105
+      local-scripts: true
+      stub-mode: true
+      stub-closed-issue: 100
+      stub-candidates-json: |
+        [{"number":110,"body":"Blocked by: #100","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]
+      stub-kill-switch-open: true
+      stub-chain-depth: 1
+    secrets:
+      GH_TOKEN: not-used-by-stub
+
+  verify-single-blocker:
+    needs: call-single-blocker
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      ATTEMPTED: ${{ needs.call-single-blocker.outputs.dispatch-attempted }}
+    steps:
+      - name: Assert gh workflow run was attempted
+        run: |
+          [[ "$ATTEMPTED" == "true" ]] \
+            || { echo "::error::dispatch-attempted=$ATTEMPTED (want true)"; exit 1; }
+          echo "single-blocker OK"
+
+  verify-multi-blocker-partial:
+    needs: call-multi-blocker-partial
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      ATTEMPTED: ${{ needs.call-multi-blocker-partial.outputs.dispatch-attempted }}
+    steps:
+      - name: Assert gh workflow run was NOT attempted
+        run: |
+          [[ "$ATTEMPTED" == "false" ]] \
+            || { echo "::error::dispatch-attempted=$ATTEMPTED (want false — partial blocker)"; exit 1; }
+          echo "multi-blocker-partial OK"
+
+  verify-depth-cap:
+    needs: call-depth-cap
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      ATTEMPTED: ${{ needs.call-depth-cap.outputs.dispatch-attempted }}
+    steps:
+      - name: Assert gh workflow run was NOT attempted
+        run: |
+          [[ "$ATTEMPTED" == "false" ]] \
+            || { echo "::error::dispatch-attempted=$ATTEMPTED (want false — depth cap)"; exit 1; }
+          echo "depth-cap OK"
+
+  verify-paused:
+    needs: call-paused
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      ATTEMPTED: ${{ needs.call-paused.outputs.dispatch-attempted }}
+    steps:
+      - name: Assert gh workflow run was NOT attempted
+        run: |
+          [[ "$ATTEMPTED" == "false" ]] \
+            || { echo "::error::dispatch-attempted=$ATTEMPTED (want false — kill switch)"; exit 1; }
+          echo "kill-switch OK"
