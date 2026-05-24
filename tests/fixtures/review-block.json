@@ -1,0 +1,7 @@
+{
+  "verdict": "block",
+  "summary": "The branch mixes an unrelated config-file deletion with the actual feature change, and the deleted file appears to be the project's CI lint config. Split the PR before review can proceed.",
+  "concerns": [
+    { "severity": "high", "message": ".github/workflows/lint.yml is deleted without justification — almost certainly the wrong PR scope." }
+  ]
+}

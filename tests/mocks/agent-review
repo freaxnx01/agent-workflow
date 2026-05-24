@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#
+# agent-review — review-pr.sh AGENT_CMD mock for Layer-1 tests.
+#
+# Contract: AGENT_CMD <prompt-file> <result-file>
+# We ignore the prompt and copy $AGENT_FIXTURE to $result-file. If
+# $AGENT_FAIL is "1" we exit non-zero to simulate a runner crash.
+set -euo pipefail
+IFS=$'\n\t'
+
+: "${AGENT_FIXTURE:?AGENT_FIXTURE must point at a review-*.json fixture}"
+
+if [[ "${AGENT_FAIL:-0}" == "1" ]]; then
+  printf 'agent-review mock: simulated failure\n' >&2
+  exit 1
+fi
+
+cp "$AGENT_FIXTURE" "$2"

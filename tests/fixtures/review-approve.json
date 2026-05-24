@@ -1,0 +1,7 @@
+{
+  "verdict": "approve",
+  "summary": "Adds a guard clause to early-return when the input list is empty. Behavior is preserved, tests cover the new branch, no concerns.",
+  "concerns": [
+    { "severity": "low", "message": "Consider extracting the magic number 42 in utils.sh:18 into a named constant." }
+  ]
+}

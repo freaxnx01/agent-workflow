@@ -296,6 +296,116 @@ assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 ec="$(run_capture_ec env ISSUE_NUMBER=1 INPUT_AUTO_REVIEW=true bash "$GATE")"
 assert_equals "$ec" "2" "missing REPO → exit 2"
 
+section "review-pr — verdict paths + idempotency + oversized diff"
+
+REVIEW="$ROOT/scripts/review-pr.sh"
+AGENT_MOCK="$MOCKS/agent-review"
+
+# Common env helper: minimal diff (well below the size cap)
+TINY_DIFF="$(mktemp)"
+trap 'rm -f "$TINY_DIFF"' EXIT
+printf 'diff --git a/foo b/foo\n--- a/foo\n+++ b/foo\n@@ -1 +1 @@\n-old\n+new\n' > "$TINY_DIFF"
+
+review_run() {
+  # args: <fixture> [extra env assignments...]
+  local fixture="$1"; shift
+  local go
+  go="$(mktemp)"
+  GITHUB_OUTPUT="$go" \
+  PR_NUMBER=42 REPO=o/r AGENT=claude HEAD_SHA=abc123 \
+  DIFF_FILE="$TINY_DIFF" \
+  EXISTING_COMMENTS='' \
+  DRY_RUN=1 \
+  AGENT_CMD="$AGENT_MOCK" \
+  AGENT_FIXTURE="$FIXTURES/$fixture" \
+  "$@" \
+    bash "$REVIEW" >/dev/null
+  cat "$go"
+  rm -f "$go"
+}
+
+out="$(review_run review-approve.json)"
+assert_contains "$out" 'verdict=approve'         "approve fixture → verdict=approve"
+assert_contains "$out" 'posted=false'            "approve + DRY_RUN → not posted"
+
+out="$(review_run review-request-changes.json)"
+assert_contains "$out" 'verdict=request_changes' "request_changes fixture → verdict=request_changes"
+
+out="$(review_run review-block.json)"
+assert_contains "$out" 'verdict=block'           "block fixture → verdict=block"
+
+# Oversized diff → block regardless of agent output (agent is not invoked)
+BIG_DIFF="$(mktemp)"
+head -c 1024 /dev/urandom | base64 > "$BIG_DIFF"
+out="$(MAX_DIFF_BYTES=10 \
+       review_run review-approve.json \
+       env DIFF_FILE="$BIG_DIFF")"
+assert_contains "$out" 'verdict=block'           "diff exceeds MAX_DIFF_BYTES → verdict=block"
+assert_contains "$out" 'unreviewable'            "oversized reason mentions 'unreviewable'"
+rm -f "$BIG_DIFF"
+
+# Malformed agent JSON → coerced to block
+out="$(review_run review-malformed.json)"
+assert_contains "$out" 'verdict=block'           "malformed agent output → verdict=block"
+
+# Agent invocation failure → coerced to block
+out="$(review_run review-approve.json env AGENT_FAIL=1)"
+assert_contains "$out" 'verdict=block'           "agent failure → verdict=block"
+
+# Invalid verdict string in agent JSON → coerced to block
+BAD_VERDICT="$(mktemp --suffix=.json)"
+printf '{"verdict":"lgtm","summary":"x","concerns":[]}\n' > "$BAD_VERDICT"
+out="$(AGENT_FIXTURE_OVERRIDE="$BAD_VERDICT" review_run review-approve.json env AGENT_FIXTURE="$BAD_VERDICT")"
+rm -f "$BAD_VERDICT"
+assert_contains "$out" 'verdict=block'           "unknown verdict string → verdict=block"
+
+# Idempotency: existing comment with the head-SHA marker → skip post
+GO="$(mktemp)"
+GITHUB_OUTPUT="$GO" \
+PR_NUMBER=42 REPO=o/r AGENT=claude HEAD_SHA=abc123 \
+DIFF_FILE="$TINY_DIFF" \
+EXISTING_COMMENTS='## Automated review — verdict: `approve`
+<!-- review-pr:abc123 -->
+prior body' \
+AGENT_CMD="$AGENT_MOCK" AGENT_FIXTURE="$FIXTURES/review-approve.json" \
+  bash "$REVIEW" >/dev/null
+out="$(cat "$GO")"
+rm -f "$GO"
+assert_contains "$out" 'posted=false'            "existing marker for HEAD_SHA → posted=false"
+assert_contains "$out" 'verdict=approve'         "idempotent run still emits verdict"
+
+# Full path with mocked gh (no DRY_RUN, no EXISTING_COMMENTS): posts a comment
+REVIEW_LOG="$(mktemp)"
+GO="$(mktemp)"
+PATH="$MOCKS:$PATH" \
+GH_MOCK_LOG="$REVIEW_LOG" \
+GITHUB_OUTPUT="$GO" \
+PR_NUMBER=42 REPO=owner/repo AGENT=claude HEAD_SHA=abc123 \
+DIFF_FILE="$TINY_DIFF" \
+AGENT_CMD="$AGENT_MOCK" AGENT_FIXTURE="$FIXTURES/review-approve.json" \
+  bash "$REVIEW" >/dev/null
+gh_calls="$(cat "$REVIEW_LOG")"
+go_out="$(cat "$GO")"
+rm -f "$REVIEW_LOG" "$GO"
+assert_contains "$gh_calls" 'pr view 42 --repo owner/repo'         "fetches existing comments via gh pr view"
+assert_contains "$gh_calls" 'pr comment 42 --repo owner/repo --body-file' "posts via gh pr comment --body-file"
+assert_contains "$go_out"   'posted=true'                          "no marker → posted=true"
+
+# Error paths
+ec="$(run_capture_ec env REPO=o/r AGENT=claude HEAD_SHA=abc bash "$REVIEW")"
+assert_equals "$ec" "2" "missing PR_NUMBER → exit 2"
+
+ec="$(run_capture_ec env PR_NUMBER=1 REPO=o/r AGENT=mistral HEAD_SHA=abc \
+        DIFF_FILE="$TINY_DIFF" AGENT_CMD="$AGENT_MOCK" \
+        AGENT_FIXTURE="$FIXTURES/review-approve.json" bash "$REVIEW")"
+assert_equals "$ec" "2" "invalid AGENT → exit 2"
+
+ec="$(run_capture_ec env PR_NUMBER=1 REPO=o/r AGENT=claude HEAD_SHA=abc \
+        PROMPT_TEMPLATE=/no/such/template.md DIFF_FILE="$TINY_DIFF" \
+        AGENT_CMD="$AGENT_MOCK" AGENT_FIXTURE="$FIXTURES/review-approve.json" \
+        bash "$REVIEW")"
+assert_equals "$ec" "64" "missing PROMPT_TEMPLATE → exit 64"
+
 section "classify-failure — buckets per fixture"
 
 CLASSIFY_FAIL="$ROOT/scripts/classify-failure.sh"
