@@ -63,6 +63,42 @@ on:
           consumer checkout's `scripts/` into `.claude-pipeline/`.
         type: boolean
         default: false
+      stub-mode:
+        description: |
+          Test-only. When `true`, bypasses every real `gh` call:
+          prepends `tests/mocks` to PATH so `gh pr view`, `gh issue
+          comment`, `gh issue list`, `gh workflow run` all route
+          through the mock and are logged. The verify step emits
+          `dispatch-attempted=true|false` based on whether a
+          `gh workflow run` line appears in the mock log.
+        type: boolean
+        default: false
+      stub-closed-issue:
+        description: |
+          Test-only. When stub-mode=true, the closed-issue number to
+          synthesize (skips `gh pr view` body parsing).
+        type: number
+        default: 100
+      stub-candidates-json:
+        description: |
+          Test-only. When stub-mode=true, the CANDIDATES_JSON env
+          passed straight to find-next-blocked-issue.sh (skips
+          `gh issue list`).
+        type: string
+        default: '[]'
+      stub-kill-switch-open:
+        description: |
+          Test-only. When stub-mode=true, set to true to simulate
+          the `ai:chain-paused` issue being open (skips the live
+          probe).
+        type: boolean
+        default: false
+      stub-chain-depth:
+        description: |
+          Test-only. Override CHAIN_DEPTH for the act test fixtures
+          that exercise the depth-cap path.
+        type: number
+        default: 1
     secrets:
       GH_TOKEN:
         description: |
@@ -77,6 +113,13 @@ on:
       successors:
         description: Space-separated list of successor issue numbers.
         value: ${{ jobs.dispatch.outputs.successors }}
+      dispatch-attempted:
+        description: |
+          "true" or "false" — whether `gh workflow run` was invoked.
+          Populated only under stub-mode (the act test's assertion
+          surface for "no real workflow_run is made"). Empty on
+          real runs.
+        value: ${{ jobs.dispatch.outputs.dispatch-attempted }}
 
 permissions:
   contents: read
@@ -95,8 +138,9 @@ jobs:
       pull-requests: read
       actions: write
     outputs:
-      successor-count: ${{ steps.find.outputs.successor-count }}
-      successors:      ${{ steps.find.outputs.successors }}
+      successor-count:    ${{ steps.find.outputs.successor-count }}
+      successors:         ${{ steps.find.outputs.successors }}
+      dispatch-attempted: ${{ steps.verify_mock.outputs.dispatch-attempted }}
     steps:
       - name: Checkout consumer repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -110,12 +154,36 @@ jobs:
           path: .claude-pipeline
           sparse-checkout: |
             scripts
+            tests/mocks
 
       - name: Mirror local scripts to .claude-pipeline (self-test mode)
         if: ${{ inputs.local-scripts }}
         run: |
-          mkdir -p .claude-pipeline/scripts
+          mkdir -p .claude-pipeline/scripts .claude-pipeline/tests/mocks
           cp -r scripts/. .claude-pipeline/scripts/
+          if [[ -d tests/mocks ]]; then
+            cp -r tests/mocks/. .claude-pipeline/tests/mocks/
+          fi
+
+      - name: Wire gh mock (test mode)
+        if: inputs.stub-mode
+        env:
+          WORKSPACE: ${{ github.workspace }}
+          RUNNER_TEMP_DIR: ${{ runner.temp }}
+        run: |
+          log="$RUNNER_TEMP_DIR/gh-mock.log"
+          : > "$log"
+          {
+            printf 'PATH=%s/.claude-pipeline/tests/mocks:%s\n' "$WORKSPACE" "$PATH"
+            printf 'GH_MOCK_LOG=%s\n' "$log"
+          } >> "$GITHUB_ENV"
+
+      - name: Resolve closed issue (stub mode)
+        if: inputs.stub-mode
+        id: closed_issue_stub
+        env:
+          STUB_CLOSED: ${{ inputs.stub-closed-issue }}
+        run: printf 'closed-issue=%s\n' "$STUB_CLOSED" >> "$GITHUB_OUTPUT"
 
       - name: Resolve closed issue from the merged PR
         # PR body is untrusted input (a contributor can write anything).
@@ -123,6 +191,7 @@ jobs:
         # shell variable and grep extracts a numeric reference. The
         # extracted `closed` value is then `tr -d '#'`-stripped and
         # used only as a numeric.
+        if: ${{ !inputs.stub-mode }}
         id: closed_issue
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
@@ -148,25 +217,34 @@ jobs:
           fi
           printf 'closed-issue=%s\n' "$closed" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve closed-issue seam
+        id: closed
+        env:
+          REAL: ${{ steps.closed_issue.outputs.closed-issue }}
+          STUB: ${{ steps.closed_issue_stub.outputs.closed-issue }}
+        run: printf 'value=%s\n' "${REAL:-$STUB}" >> "$GITHUB_OUTPUT"
+
       - name: Find eligible successors
-        if: steps.closed_issue.outputs.closed-issue != ''
+        if: steps.closed.outputs.value != ''
         id: find
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           REPO: ${{ github.repository }}
-          CLOSED_ISSUE_NUMBER: ${{ steps.closed_issue.outputs.closed-issue }}
+          CLOSED_ISSUE_NUMBER: ${{ steps.closed.outputs.value }}
           MAX_CHAIN_DEPTH: ${{ inputs.max-chain-depth }}
-          CHAIN_DEPTH: ${{ inputs.chain-depth }}
+          CHAIN_DEPTH: ${{ inputs.stub-mode && inputs.stub-chain-depth || inputs.chain-depth }}
+          CANDIDATES_JSON: ${{ inputs.stub-mode && inputs.stub-candidates-json || '' }}
+          KILL_SWITCH_OPEN: ${{ inputs.stub-mode && (inputs.stub-kill-switch-open && 'true' || 'false') || '' }}
         run: bash .claude-pipeline/scripts/find-next-blocked-issue.sh
 
       - name: Post audit comments (every candidate, every decision)
         # ADR-003: an audit comment goes on every candidate so the
         # decision is visible on the PR/issue even when refused.
-        if: steps.closed_issue.outputs.closed-issue != ''
+        if: steps.closed.outputs.value != ''
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           REPO: ${{ github.repository }}
-          CLOSED_ISSUE: ${{ steps.closed_issue.outputs.closed-issue }}
+          CLOSED_ISSUE: ${{ steps.closed.outputs.value }}
           DEPTH: ${{ inputs.chain-depth }}
           MAX_DEPTH: ${{ inputs.max-chain-depth }}
           DISPATCHED: ${{ steps.find.outputs.successors }}
@@ -188,17 +266,19 @@ jobs:
 
       - name: Cooldown before dispatch
         if: |
-          steps.closed_issue.outputs.closed-issue != ''
+          steps.closed.outputs.value != ''
           && steps.find.outputs.successor-count != '0'
         env:
-          COOLDOWN: ${{ inputs.cooldown-seconds }}
+          # Under stub-mode the cooldown is forced to 0 so the act
+          # test doesn't have to wait the full 60s real default.
+          COOLDOWN: ${{ inputs.stub-mode && 0 || inputs.cooldown-seconds }}
         run: |
           printf 'cooldown: sleeping %s seconds before dispatch\n' "$COOLDOWN"
           sleep "$COOLDOWN"
 
       - name: Dispatch successors
         if: |
-          steps.closed_issue.outputs.closed-issue != ''
+          steps.closed.outputs.value != ''
           && steps.find.outputs.successor-count != '0'
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
@@ -217,3 +297,20 @@ jobs:
               --repo "$REPO" \
               -f "issue-number=$n"
           done
+
+      - name: Verify gh mock log (test mode)
+        # Under stub-mode, inspect $GH_MOCK_LOG for a `workflow run`
+        # line and emit `dispatch-attempted=true|false`. The act test
+        # asserts on this — see chain-dispatch.test.yml.
+        if: inputs.stub-mode && always()
+        id: verify_mock
+        run: |
+          log="${GH_MOCK_LOG:-}"
+          if [[ -n "$log" && -r "$log" ]] && grep -qE '^workflow run ' "$log"; then
+            attempted=true
+          else
+            attempted=false
+          fi
+          printf 'dispatch-attempted=%s\n' "$attempted" >> "$GITHUB_OUTPUT"
+          printf 'gh-mock log contents:\n'
+          [[ -r "$log" ]] && cat "$log" || printf '(empty or unreadable)\n'
