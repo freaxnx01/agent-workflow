@@ -399,3 +399,230 @@ here.)
   guard is acceptable for this single-known-instance carve-out; if the
   pipeline ever forks, the fork's first task is to update the guard.
   Prose alone is insufficient — the guard MUST exist in code.
+
+---
+
+## ADR-003 — Issue-chain dispatch on auto-merge (2026-05-24)
+
+**Status:** Accepted
+**Tracking:** [#17](https://github.com/freaxnx01/claude-pipeline/issues/17) under epic [#4](https://github.com/freaxnx01/claude-pipeline/issues/4)
+
+### Context
+
+ADR-002 lands a draft → ready → auto-merge flow for individual issues.
+The natural compounding move: when an auto-merge fires and closes its
+originating issue, look for an opted-in issue whose `Blocked by:` list
+just emptied, and dispatch the pipeline on it automatically. A
+maintainer files a small dependency-graph of issues once and the
+pipeline walks it.
+
+This ADR defines the conventions and safeguards; implementation
+follows in [#18](https://github.com/freaxnx01/claude-pipeline/issues/18)
+(workflow wiring) and [#19](https://github.com/freaxnx01/claude-pipeline/issues/19)
+(chain-depth cap, cooldown, kill switch).
+
+Manual merges are intentionally NOT triggers. ADR-002 already
+established that auto-merge is the only "machine decided this is
+ready" signal in the system; manual merges mean a human is steering
+and should pick the next issue themselves.
+
+### Decision
+
+#### 1. Body markers
+
+Issues declare dependencies using GitHub's native convention in the
+issue **body** (not comments, not titles):
+
+- `Blocks: #N, #M`     — this issue's completion unblocks #N and #M.
+- `Blocked by: #N, #M` — this issue cannot start until #N and #M close.
+
+Rules:
+
+- Case-sensitive (matches GitHub's own rendering: `Blocks` / `Blocked by`).
+- Comma-separated lists allowed: `Blocks: #42, #43`.
+- Multiple lines OK: a `Blocks:` line and a `Blocked by:` line, or
+  even multiple `Blocks:` lines — the parser unions them into a set.
+- Cross-references to other repos (`Blocks: org/repo#42`) are
+  **explicitly out of scope** (see §6); the parser ignores them
+  rather than erroring.
+
+The `Blocked by` semantic IS the dependency edge — a successor with
+no `Blocked by` entries pointing at unresolved issues becomes eligible
+the moment its last blocker closes. The `Blocks` direction is
+optional and informational; the parser uses `Blocked by` as the
+load-bearing relation.
+
+#### 2. Parser
+
+`scripts/parse-chain.sh` (added in [#18](https://github.com/freaxnx01/claude-pipeline/issues/18)):
+
+- Reads the issue body via `gh issue view <N> --json body`.
+- Applies a single-line regex per marker
+  (`^Blocks:\s*(.+)$` and `^Blocked by:\s*(.+)$`, multi-line mode).
+- Extracts `#N` references, ignores `org/repo#N`.
+- Returns two sets: `blocks=[...]` and `blocked_by=[...]`.
+
+Comments, titles, and PR bodies are NOT parsed. A human can
+reorganize the chain by editing the issue body and any change takes
+effect on the next auto-merge tick. Editing comments is a no-op.
+
+#### 3. `ai-chain` opt-in label
+
+The chain-dispatch flow is **per-issue opt-in** via the `ai-chain`
+label. An issue WITHOUT `ai-chain` is never auto-dispatched even if
+all its blockers close. Rationale: the dependency markers are general-
+purpose GitHub conventions; consumers may use them for human-tracked
+work too. The `ai-chain` label is the explicit "this is meant for the
+pipeline" signal.
+
+`ai-implement` and `ai-chain` are independent labels with different
+semantics:
+
+| Label combo on a successor issue | What happens when the blocker closes |
+|---|---|
+| `ai-implement` + `ai-chain` | Successor auto-dispatched on the pipeline. |
+| `ai-implement` only | Nothing; maintainer dispatches manually. |
+| `ai-chain` only | Successor labeled `ai-implement` and dispatched. (See note.) |
+| neither | Ignored. |
+
+**Note on `ai-chain` without `ai-implement`:** the chain dispatcher
+adds `ai-implement` itself before triggering. This lets a maintainer
+file an entire chain up front with just `ai-chain` and let the
+pipeline label-and-dispatch each issue as its turn arrives. The
+maintainer never has to touch follow-on issues.
+
+#### 4. Repo kill switch
+
+Two layers, both checked at chain-dispatch time:
+
+1. **Per-issue:** the original `ai-chain` label can be removed from a
+   successor at any time; the pipeline checks it before dispatch.
+2. **Repo-wide:** an open issue **titled exactly `ai:chain-paused`**
+   halts ALL chain dispatch on the repo until closed.
+
+The "open issue titled X" mechanism is chosen over a repo topic
+because:
+- It is greppable from any pipeline run via `gh issue list --state
+  open --search "ai:chain-paused in:title"`.
+- It needs no special permission (`gh repo edit --add-topic` requires
+  admin; opening an issue requires write).
+- The issue body is the natural place to record *why* the kill switch
+  is on, who set it, and the lift-off criterion.
+- Closing the issue is the lift-off action — atomic and obvious.
+
+A maintainer opens an issue with the exact title `ai:chain-paused`
+when chain-dispatch needs to stop. Re-opens or close-and-reopens are
+unambiguous. **Title must match exactly** — the matcher is `==`, not
+`contains`, to avoid an issue titled `Add ai:chain-paused to docs`
+accidentally tripping the switch.
+
+Propagation latency is the same as ADR-002's kill switches: takes
+effect on the next chain-dispatch tick. A chain step that has already
+started its CI run will complete; the NEXT step won't fire.
+
+#### 5. Cycle handling
+
+The dispatcher must not get stuck in a cycle (`#A` blocks `#B` blocks
+`#A`) or a runaway (`#A` → #B → #C → … → #∞).
+
+Two complementary defenses:
+
+1. **`MAX_CHAIN_DEPTH`** — a workflow input (default `10` per ADR-002-
+   adjacent precedent of conservative defaults). The dispatcher
+   tracks the chain via the `Closes #N` reference from each merged
+   PR; if the depth from the original maintainer-initiated dispatch
+   exceeds `MAX_CHAIN_DEPTH`, refuse and post a comment on the new
+   successor naming the cap.
+2. **Visited-set** — within a single chain (one originating
+   maintainer dispatch), the dispatcher remembers issues it has
+   already dispatched. If a successor lookup would target an
+   already-visited issue, refuse and post a comment.
+
+The visited-set lives in a chain-state issue body, also titled
+`ai:chain-state:<originating-issue-N>`, opened and updated by the
+dispatcher itself. The body holds a checkbox list:
+
+```
+- [x] #42 (originating)
+- [x] #43
+- [ ] #44 (dispatched, in-progress)
+```
+
+This is observable to the maintainer and survives across workflow
+runs without a separate datastore. The dispatcher closes the chain-
+state issue when there are no more eligible successors. Both #18 and
+#19 reference this format.
+
+#### 6. Cross-repo dependencies
+
+Out of scope for this ADR. `Blocks: org/other-repo#42` references are
+parsed but ignored when computing successor eligibility. A future ADR
+may add cross-repo chain support; until then, every chain edge is
+intra-repo.
+
+Rationale: cross-repo dispatch requires either a GitHub App with
+access to all involved repos (operational complexity beyond personal-
+use scope) or a PAT (auth-surface concentration that ADR-001 / ADR-002
+have studiously avoided). Single-repo is enough to walk a typical
+"refactor in N steps" chain.
+
+### Worked example
+
+Maintainer files three issues with both `ai-implement` and `ai-chain`
+labels:
+
+- **#100** — "Refactor auth middleware: extract token validator"
+  body: `Blocks: #101`
+- **#101** — "Refactor auth middleware: extract session loader"
+  body: `Blocked by: #100`, `Blocks: #102`
+- **#102** — "Refactor auth middleware: wire validator + loader into handler"
+  body: `Blocked by: #101`
+
+Maintainer dispatches `#100` (label `ai-implement`). The pipeline:
+
+1. Implements #100, opens a draft PR with `Closes #100` in the body.
+2. Auto-review + envelope pass → ready → squash-merge.
+3. Squash-merge closes #100 and triggers the chain dispatcher.
+4. Dispatcher walks `Blocks: #101` from #100's body. Checks #101:
+   - `ai-chain` present? ✓
+   - All `Blocked by:` entries closed? ✓ (only #100, now closed)
+   - `ai:chain-paused` issue open? ✗
+   - Depth from origin? 1 < `MAX_CHAIN_DEPTH=10`. ✓
+   - Already visited in this chain? ✗
+   - **Eligible** → adds `ai-implement` if missing, dispatches.
+5. #101 implements + auto-merges → chain dispatcher fires again →
+   #102 eligible (its only blocker #101 just closed) → dispatched.
+6. #102 implements + auto-merges → dispatcher walks #102's `Blocks:`
+   markers (none) → no further dispatch → chain ends.
+7. The chain-state issue `ai:chain-state:#100` is closed by the
+   dispatcher.
+
+If at step 5 the maintainer had opened an issue titled
+`ai:chain-paused`, the dispatcher would have refused at step 5 with a
+comment on #102 naming ADR-003 §4 and pointing at the
+`ai:chain-paused` issue. The maintainer closes the kill-switch issue
+when ready to resume; the dispatcher does NOT auto-retry — the
+maintainer must manually re-dispatch the next issue in the chain.
+
+### Consequences
+
+- **Single source of truth for the dependency graph.** The issue
+  body. Editing the body changes the chain on the next tick. No
+  separate config file, no project board to keep in sync.
+- **The chain only walks `ai-chain`-opted issues.** A maintainer
+  who tags only the first issue with `ai-chain` gets a single-step
+  chain that stops after that issue. Useful for partial automation.
+- **Manual merges break the chain by design.** ADR-002 already
+  established auto-merge as the only "machine ready" signal;
+  inheriting that here means a maintainer who steps in to fix
+  something mid-chain naturally takes over the rest.
+- **The chain-state issue is observable, not magical.** A
+  maintainer who wants to know "where is the pipeline in my chain"
+  reads the chain-state issue. No special tool needed.
+- **Cycle and depth defenses are belt-and-suspenders.** The visited
+  set covers true cycles; `MAX_CHAIN_DEPTH` covers chains-too-deep-
+  for-comfort and serves as a final brake. Both fail closed — the
+  dispatcher refuses on either trigger.
+- **The kill switch is operationally cheap.** Opening an issue is a
+  one-keystroke action; no admin permissions, no workflow edit, no
+  re-deploy. Lift-off is closing the issue.

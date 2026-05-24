@@ -367,6 +367,12 @@ These were considered and explicitly deferred:
    otherwise the PR stays draft.
 5. **Conventional Commits** for all auto-commits.
 6. **Mode #0 is a valid skill outcome.** The skill must support "don't delegate."
+7. **Chain dispatch fires only on auto-merge, never on manual merge.** When the
+   pipeline auto-merges a PR with `Closes #N`, it walks `#N`'s `Blocks:` markers
+   and dispatches any opted-in successor whose `Blocked by:` set just emptied.
+   See [DECISIONS.md](DECISIONS.md) ADR-003 for the full conventions
+   (`Blocks:` / `Blocked by:` markers, `ai-chain` opt-in, `ai:chain-paused`
+   kill-switch issue, depth + visited-set cycle defenses).
 
 ## References from the desktop brainstorm
 
