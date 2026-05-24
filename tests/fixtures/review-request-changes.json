@@ -1,0 +1,8 @@
+{
+  "verdict": "request_changes",
+  "summary": "The new endpoint trusts query parameters as-is and passes them into a shell command. This is a command-injection vector; needs input validation and quoting fixes before merge.",
+  "concerns": [
+    { "severity": "high", "message": "scripts/handler.sh:42 — `eval \"$cmd\"` with unsanitized user input. Replace with an argv array and `printf %q`." },
+    { "severity": "medium", "message": "tests/handler.test.sh — no negative test for special characters in the query string." }
+  ]
+}
