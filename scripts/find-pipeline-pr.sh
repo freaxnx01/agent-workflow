@@ -12,7 +12,14 @@
 #   REPO          owner/repo (default: $GITHUB_REPOSITORY).
 #   GH_TOKEN      (or ambient gh auth).
 #
-# Optional environment variables (test seams):
+# Optional environment variables:
+#   AUTHOR_ALLOWLIST   Newline-separated allowed pr.user.login values.
+#                      Default: 'github-actions[bot]'. ADR-002 gate 1 also
+#                      enforces this in check-merge-envelope.sh; we apply
+#                      it here so that an unrelated higher-numbered draft
+#                      PR (e.g. opened by a third party to hijack the
+#                      auto-review target) is filtered out before we
+#                      ever spend an agent turn on it.
 #   PIPELINE_PRS_JSON  Skip the `gh pr list` call and parse this JSON
 #                      blob instead. Used by Layer-1 tests.
 #
@@ -37,6 +44,8 @@ if [[ -z "$REPO" ]]; then
   exit 2
 fi
 
+AUTHOR_ALLOWLIST="${AUTHOR_ALLOWLIST:-github-actions[bot]}"
+
 if [[ -z "${PIPELINE_PRS_JSON:-}" ]]; then
   # `closes #N in:body` is GitHub search syntax. We filter draft + open
   # client-side because the search-API state filter doesn't expose drafts.
@@ -48,12 +57,24 @@ if [[ -z "${PIPELINE_PRS_JSON:-}" ]]; then
     --limit 10 2>/dev/null || printf '[]')"
 fi
 
-# Pick the highest-numbered draft PR that closes the issue. Highest-numbered
-# acts as a most-recent tiebreaker if a previous failed run left a stale draft.
+# Build a JSON array of allowed authors to pass into jq.
+ALLOWED_JSON="$(printf '%s\n' "$AUTHOR_ALLOWLIST" \
+  | awk 'NF > 0' \
+  | jq -R . | jq -sc .)"
+
+# Pick the highest-numbered draft PR that closes the issue AND whose
+# author is in the allowlist. Highest-numbered acts as a most-recent
+# tiebreaker if a previous failed run left a stale draft. The author
+# filter blocks a third-party-opened higher-numbered draft from
+# hijacking the auto-review target.
 pr_number="$(printf '%s' "$PIPELINE_PRS_JSON" \
-  | jq -r '[.[] | select(.isDraft == true)] | sort_by(-.number) | .[0].number // ""')"
+  | jq -r --argjson allow "$ALLOWED_JSON" '
+    [.[] | select(.isDraft == true and (.author.login | IN($allow[])))]
+    | sort_by(-.number) | .[0].number // ""')"
 head_sha="$(printf '%s' "$PIPELINE_PRS_JSON" \
-  | jq -r '[.[] | select(.isDraft == true)] | sort_by(-.number) | .[0].headRefOid // ""')"
+  | jq -r --argjson allow "$ALLOWED_JSON" '
+    [.[] | select(.isDraft == true and (.author.login | IN($allow[])))]
+    | sort_by(-.number) | .[0].headRefOid // ""')"
 
 if [[ -n "$pr_number" ]]; then
   found=true

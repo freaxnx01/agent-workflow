@@ -406,6 +406,56 @@ ec="$(run_capture_ec env PR_NUMBER=1 REPO=o/r AGENT=claude HEAD_SHA=abc \
         bash "$REVIEW")"
 assert_equals "$ec" "64" "missing PROMPT_TEMPLATE → exit 64"
 
+section "post-auto-review-block — reason selection + PR-vs-issue addressing"
+
+POST_BLOCK="$ROOT/scripts/post-auto-review-block.sh"
+
+# Self-mod guard fires → reason names ADR-002 self-modification, comment
+# goes on the PR (PR_NUMBER is known via find-pipeline-pr.sh which runs
+# unconditionally).
+LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
+REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=100 FOUND=true \
+SELF_MOD_BLOCKED=true \
+  bash "$POST_BLOCK" >/dev/null
+calls="$(cat "$LOG")"; rm -f "$LOG"
+assert_contains "$calls" 'pr comment 100 --repo o/r --body Auto-merge held: self-modification guard (ADR-002)' "self-mod → PR comment names ADR-002"
+assert_contains "$calls" 'issue edit 42 --repo o/r --add-label ai:review-blocked' "self-mod → labels issue"
+
+# No PR found (FOUND=false, no PR_NUMBER) → comment on the issue, not the PR
+LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
+REPO=o/r ISSUE_NUMBER=42 FOUND=false \
+  bash "$POST_BLOCK" >/dev/null
+calls="$(cat "$LOG")"; rm -f "$LOG"
+assert_contains     "$calls" 'issue comment 42 --repo o/r --body Auto-review held' "missing PR → falls back to issue comment"
+assert_not_contains "$calls" 'pr comment'                                          "missing PR → no PR comment"
+
+# Verdict != approve → reason quotes the verdict and gate 4
+LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
+REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=100 FOUND=true \
+VERDICT=request_changes \
+  bash "$POST_BLOCK" >/dev/null
+calls="$(cat "$LOG")"; rm -f "$LOG"
+assert_contains "$calls" 'agent review verdict: request_changes (gate 4)' "non-approve verdict → names gate 4"
+
+# Envelope fail → reason includes the gate IDs from check-merge-envelope.sh
+LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
+REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=100 FOUND=true \
+VERDICT=approve ENVELOPE=fail \
+ENVELOPE_REASON="path envelope: .github/: .github/workflows/foo.yml" \
+FAILED_GATES=6 \
+  bash "$POST_BLOCK" >/dev/null
+calls="$(cat "$LOG")"; rm -f "$LOG"
+assert_contains "$calls" 'merge-envelope failed: path envelope' "envelope-fail reason surfaced"
+assert_contains "$calls" 'failed gates: 6'                      "failed-gate IDs in comment"
+
+# Error path
+ec="$(run_capture_ec env REPO=o/r bash "$POST_BLOCK")"
+assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
+
 section "find-pipeline-pr — discover the draft PR opened for an issue"
 
 FIND_PR="$ROOT/scripts/find-pipeline-pr.sh"
@@ -430,6 +480,19 @@ out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
         PIPELINE_PRS_JSON='[{"number":17,"isDraft":true,"headRefOid":"old","author":{"login":"github-actions[bot]"}},{"number":99,"isDraft":true,"headRefOid":"new","author":{"login":"github-actions[bot]"}}]')"
 assert_contains "$out" 'pr-number=99'       "picks highest-numbered draft"
 assert_contains "$out" 'head-sha=new'       "head-sha matches selected PR"
+
+# Higher-numbered draft by a non-allowlisted author is REJECTED → falls
+# back to the legitimate lower-numbered pipeline-authored draft.
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":100,"isDraft":true,"headRefOid":"pipeline","author":{"login":"github-actions[bot]"}},{"number":101,"isDraft":true,"headRefOid":"attacker","author":{"login":"some-human"}}]')"
+assert_contains "$out" 'pr-number=100'      "ignores non-allowlisted author even when higher-numbered"
+assert_contains "$out" 'head-sha=pipeline'  "selects pipeline head-sha, not attacker's"
+
+# Custom allowlist accepts a GitHub App
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        AUTHOR_ALLOWLIST=$'github-actions[bot]\nmy-pipeline-app[bot]' \
+        PIPELINE_PRS_JSON='[{"number":50,"isDraft":true,"headRefOid":"app-pr","author":{"login":"my-pipeline-app[bot]"}}]')"
+assert_contains "$out" 'pr-number=50'       "custom AUTHOR_ALLOWLIST accepts the bot"
 
 # Only a non-draft PR exists (somehow promoted already) → not found
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
