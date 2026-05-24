@@ -215,14 +215,20 @@ jobs:
           sparse-checkout: |
             scripts
             tests/mocks
+            tests/fixtures
 
       - name: Mirror local scripts to .claude-pipeline (self-test mode)
         if: ${{ inputs.local-scripts }}
         run: |
-          mkdir -p .claude-pipeline/scripts .claude-pipeline/tests/mocks
+          mkdir -p .claude-pipeline/scripts \
+                   .claude-pipeline/tests/mocks \
+                   .claude-pipeline/tests/fixtures
           cp -r scripts/. .claude-pipeline/scripts/
           if [[ -d tests/mocks ]]; then
             cp -r tests/mocks/. .claude-pipeline/tests/mocks/
+          fi
+          if [[ -d tests/fixtures ]]; then
+            cp -r tests/fixtures/. .claude-pipeline/tests/fixtures/
           fi
 
       - name: Ensure toolchain
@@ -387,6 +393,18 @@ jobs:
             task_failure)
               jq -nc '{type:"result",subtype:"error_max_turns",is_error:true,duration_ms:300000,num_turns:30,total_cost_usd:0,session_id:"stub-mt",result:"Reached max_turns before completion.",usage:{input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0}}' > "$out"
               ;;
+            opencode_success)
+              # OpenCode-flavored canonical result (post-adapter shape).
+              # Loaded from a fixture rather than synthesized inline so
+              # the same JSON is reviewable in both Layer-1 and Layer-2.
+              cp .claude-pipeline/tests/fixtures/result-opencode-success.json "$out"
+              ;;
+            opencode_rate_limit)
+              cp .claude-pipeline/tests/fixtures/result-opencode-rate-limit.json "$out"
+              ;;
+            opencode_task_failure)
+              cp .claude-pipeline/tests/fixtures/result-opencode-task-failure.json "$out"
+              ;;
             *)
               echo "::error::unknown stub-fixture: $STUB_FIXTURE"; exit 2
               ;;
@@ -500,14 +518,20 @@ jobs:
           sparse-checkout: |
             scripts
             tests/mocks
+            tests/fixtures
 
       - name: Mirror local scripts to .claude-pipeline (self-test mode)
         if: ${{ inputs.local-scripts }}
         run: |
-          mkdir -p .claude-pipeline/scripts .claude-pipeline/tests/mocks
+          mkdir -p .claude-pipeline/scripts \
+                   .claude-pipeline/tests/mocks \
+                   .claude-pipeline/tests/fixtures
           cp -r scripts/. .claude-pipeline/scripts/
           if [[ -d tests/mocks ]]; then
             cp -r tests/mocks/. .claude-pipeline/tests/mocks/
+          fi
+          if [[ -d tests/fixtures ]]; then
+            cp -r tests/fixtures/. .claude-pipeline/tests/fixtures/
           fi
 
       - name: Wire gh mock + stub PR JSON (test mode)
