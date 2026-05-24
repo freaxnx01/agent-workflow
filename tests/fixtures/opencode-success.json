@@ -1,0 +1,11 @@
+{
+  "output": "Implemented the change on branch feat/foo and opened PR #999.",
+  "turns": 4,
+  "duration_s": 28,
+  "usage": {
+    "prompt_tokens": 1200,
+    "completion_tokens": 580
+  },
+  "cost_usd": 0.0035,
+  "session_id": "oc-session-abc"
+}

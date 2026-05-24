@@ -1,0 +1,9 @@
+{
+  "is_error": true,
+  "error": {
+    "type": "rate_limit_exceeded",
+    "message": "OpenRouter rate limit: too many requests for this provider in 60s. HTTP 429."
+  },
+  "turns": 1,
+  "duration_s": 2
+}
