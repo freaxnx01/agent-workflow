@@ -1,0 +1,3 @@
+src/foo.ts
+src/bar.ts
+tests/foo.test.ts

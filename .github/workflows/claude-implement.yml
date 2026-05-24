@@ -78,6 +78,36 @@ on:
           real Claude API calls or waiting for real rate limits.
         type: string
         default: success
+      stub-auto-review-enabled:
+        description: |
+          Test-only. When `stub-claude: true`, forces the implement job's
+          `auto-review-enabled` output to this value instead of running
+          check-auto-review-gate.sh. Required for end-to-end act tests of
+          the auto_review job (the real gate requires a labeled GitHub
+          issue, which doesn't exist under act).
+        type: boolean
+        default: false
+      stub-review-verdict:
+        description: |
+          Test-only. When non-empty, the auto_review job skips installing
+          the Claude CLI and skips the real review-pr.sh invocation; it
+          synthesizes a verdict directly. Value must be one of
+          `approve | request_changes | block`. Also wires a PATH-shimmed
+          `gh` mock so `gh pr ready` / `gh pr merge` / `gh pr comment` /
+          `gh issue edit` calls are captured (not executed) and the new
+          `auto-review-merge-attempted` output reflects whether
+          `gh pr merge` was invoked. Empty (default) runs the real path.
+        type: string
+        default: ''
+      stub-pr-files:
+        description: |
+          Test-only. Newline-separated list of paths fed to
+          check-merge-envelope.sh as the diff file list when
+          `stub-review-verdict` is set. Used to exercise gate 6 paths
+          (`.github/` touch, secret-glob hit, blocklist-hit) without a
+          real PR.
+        type: string
+        default: ''
       attempt:
         description: |
           1-based retry attempt counter. Reusable workflows callers pass this
@@ -126,10 +156,18 @@ on:
         value: ${{ jobs.implement.outputs.retry-decision }}
       auto-review-enabled:
         description: |
-          "true" or "false" from check-auto-review-gate.sh. The downstream
-          auto-review job (added in #15) reads this via needs.implement.outputs.
-          Empty under stub-claude mode (gate is skipped).
+          "true" or "false" from check-auto-review-gate.sh. The auto-
+          review job reads this via needs.implement.outputs. Under stub-
+          claude mode, sourced from `stub-auto-review-enabled` instead.
         value: ${{ jobs.implement.outputs.auto-review-enabled }}
+      auto-review-merge-attempted:
+        description: |
+          "true" or "false" — whether `gh pr merge --auto --squash` was
+          invoked by the auto_review job. Populated only when
+          `stub-review-verdict` is set (the test workflow's assertion
+          surface for "no real merge call is made under act"). Empty on
+          real runs.
+        value: ${{ jobs.auto_review.outputs.merge-attempted }}
 
 permissions:
   contents: read
@@ -153,7 +191,7 @@ jobs:
       num-turns:           ${{ steps.outputs.outputs.num-turns }}
       failure-class:       ${{ steps.classify_failure.outputs.class }}
       retry-decision:      ${{ steps.retry.outputs.decision }}
-      auto-review-enabled: ${{ steps.auto_review_gate.outputs.enabled }}
+      auto-review-enabled: ${{ steps.auto_review_gate.outputs.enabled || steps.auto_review_gate_stub.outputs.enabled }}
     steps:
       - name: Checkout consumer repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -230,6 +268,16 @@ jobs:
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           INPUT_AUTO_REVIEW: ${{ inputs.auto-review }}
         run: bash .claude-pipeline/scripts/check-auto-review-gate.sh
+
+      - name: Stub auto-review gate (test mode)
+        # Mirrors check-auto-review-gate.sh's output under stub-claude=true
+        # so end-to-end act tests can drive the downstream auto_review job
+        # without a real labeled GitHub issue.
+        if: ${{ inputs.stub-claude }}
+        id: auto_review_gate_stub
+        env:
+          ENABLED: ${{ inputs.stub-auto-review-enabled }}
+        run: printf 'enabled=%s\n' "$ENABLED" >> "$GITHUB_OUTPUT"
 
       - name: Run Claude Code
         if: ${{ !inputs.stub-claude && steps.classify_agent.outputs.agent == 'claude' }}
@@ -362,7 +410,7 @@ jobs:
     name: Auto-review PR for issue #${{ inputs.issue-number }}
     needs: implement
     if: |
-      !inputs.stub-claude
+      (!inputs.stub-claude || inputs.stub-review-verdict != '')
       && !inputs.dry-run
       && needs.implement.outputs.outcome == 'success'
       && needs.implement.outputs.auto-review-enabled == 'true'
@@ -372,6 +420,8 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
+    outputs:
+      merge-attempted: ${{ steps.verify_mock.outputs.merge-attempted }}
     steps:
       - name: Checkout consumer repo
         # Needed so .claude-auto-merge-blocklist (if present) is on disk
@@ -387,12 +437,32 @@ jobs:
           path: .claude-pipeline
           sparse-checkout: |
             scripts
+            tests/mocks
 
       - name: Mirror local scripts to .claude-pipeline (self-test mode)
         if: ${{ inputs.local-scripts }}
         run: |
-          mkdir -p .claude-pipeline/scripts
+          mkdir -p .claude-pipeline/scripts .claude-pipeline/tests/mocks
           cp -r scripts/. .claude-pipeline/scripts/
+          if [[ -d tests/mocks ]]; then
+            cp -r tests/mocks/. .claude-pipeline/tests/mocks/
+          fi
+
+      - name: Wire gh mock (test mode)
+        # Under stub-review-verdict, prepend tests/mocks to PATH so every
+        # subsequent `gh` call in this job is captured (not executed)
+        # and logged to $GH_MOCK_LOG. Same mock used by Layer-1 tests.
+        if: inputs.stub-review-verdict != ''
+        env:
+          WORKSPACE: ${{ github.workspace }}
+          RUNNER_TEMP_DIR: ${{ runner.temp }}
+        run: |
+          log="$RUNNER_TEMP_DIR/gh-mock.log"
+          : > "$log"
+          {
+            printf 'PATH=%s/.claude-pipeline/tests/mocks:%s\n' "$WORKSPACE" "$PATH"
+            printf 'GH_MOCK_LOG=%s\n' "$log"
+          } >> "$GITHUB_ENV"
 
       - name: Self-modification guard (ADR-002 — claude-pipeline itself)
         # The pipeline's own scripts/workflows/decisions ARE the pipeline;
@@ -422,21 +492,28 @@ jobs:
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           AUTHOR_ALLOWLIST: ${{ inputs.pipeline-author-allowlist }}
+          # Stub seam: under stub-review-verdict, hand the script a
+          # canned draft PR so it doesn't call the real `gh pr list`.
+          PIPELINE_PRS_JSON: ${{ inputs.stub-review-verdict != '' && '[{"number":9999,"isDraft":true,"headRefOid":"stubsha","author":{"login":"github-actions[bot]"}}]' || '' }}
         run: bash .claude-pipeline/scripts/find-pipeline-pr.sh
 
       - name: Install Claude Code CLI
         # review-pr.sh's default AGENT_CMD invokes `claude`; this job
         # doesn't use anthropics/claude-code-base-action (which installs
         # the CLI in the implement job), so we install it here directly.
+        # Skipped under stub-review-verdict — the stub step below
+        # synthesizes the verdict.
         if: |
           steps.self_mod_guard.outputs.blocked != 'true'
           && steps.find_pr.outputs.found == 'true'
+          && inputs.stub-review-verdict == ''
         run: npm install -g @anthropic-ai/claude-code
 
       - name: Run agent review
         if: |
           steps.self_mod_guard.outputs.blocked != 'true'
           && steps.find_pr.outputs.found == 'true'
+          && inputs.stub-review-verdict == ''
         id: review
         env:
           GH_TOKEN: ${{ github.token }}
@@ -448,24 +525,62 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: bash .claude-pipeline/scripts/review-pr.sh
 
+      - name: Stub agent review (test mode)
+        # Synthesize review-pr.sh's outputs directly when stub-review-
+        # verdict is set. Mirrors the real `verdict` / `reason` keys so
+        # downstream steps don't need to discriminate which path ran.
+        if: |
+          steps.self_mod_guard.outputs.blocked != 'true'
+          && steps.find_pr.outputs.found == 'true'
+          && inputs.stub-review-verdict != ''
+        id: review_stub
+        env:
+          VERDICT: ${{ inputs.stub-review-verdict }}
+        run: |
+          {
+            printf 'verdict=%s\n' "$VERDICT"
+            printf 'reason=stubbed verdict for test mode\n'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve review verdict
+        # Single seam consumed by envelope/promote/marking steps below —
+        # avoids spreading `(real || stub)` expressions across every if:.
+        if: |
+          steps.self_mod_guard.outputs.blocked != 'true'
+          && steps.find_pr.outputs.found == 'true'
+        id: verdict
+        env:
+          REAL: ${{ steps.review.outputs.verdict }}
+          STUB: ${{ steps.review_stub.outputs.verdict }}
+        run: printf 'value=%s\n' "${REAL:-$STUB}" >> "$GITHUB_OUTPUT"
+
       - name: Check merge envelope
         if: |
           steps.self_mod_guard.outputs.blocked != 'true'
           && steps.find_pr.outputs.found == 'true'
-          && steps.review.outputs.verdict == 'approve'
+          && steps.verdict.outputs.value == 'approve'
         id: envelope
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
           AUTHOR_ALLOWLIST: ${{ inputs.pipeline-author-allowlist }}
+          # Stub seams — under stub-review-verdict the script skips its
+          # gh-cli calls and uses these values directly. The values
+          # together represent "minimum-passing envelope" for the
+          # approve-safe path; tests override PR_FILES via stub-pr-files
+          # to exercise gate 6.
+          PR_AUTHOR: ${{ inputs.stub-review-verdict != '' && 'github-actions[bot]' || '' }}
+          PR_FILES: ${{ inputs.stub-pr-files }}
+          REQUIRED_CHECKS_STATUS: ${{ inputs.stub-review-verdict != '' && 'pass' || '' }}
+          REPO_ALLOWS_SQUASH: ${{ inputs.stub-review-verdict != '' && 'true' || '' }}
         run: bash .claude-pipeline/scripts/check-merge-envelope.sh
 
       - name: Promote draft to ready + enable auto-merge
         if: |
           steps.self_mod_guard.outputs.blocked != 'true'
           && steps.find_pr.outputs.found == 'true'
-          && steps.review.outputs.verdict == 'approve'
+          && steps.verdict.outputs.value == 'approve'
           && steps.envelope.outputs.envelope == 'pass'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -483,17 +598,28 @@ jobs:
         if: |
           steps.self_mod_guard.outputs.blocked == 'true'
           || steps.find_pr.outputs.found != 'true'
-          || steps.review.outputs.verdict != 'approve'
-          || (steps.review.outputs.verdict == 'approve' && steps.envelope.outputs.envelope != 'pass')
+          || steps.verdict.outputs.value != 'approve'
+          || (steps.verdict.outputs.value == 'approve' && steps.envelope.outputs.envelope != 'pass')
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
           FOUND: ${{ steps.find_pr.outputs.found }}
-          VERDICT: ${{ steps.review.outputs.verdict }}
+          VERDICT: ${{ steps.verdict.outputs.value }}
           ENVELOPE: ${{ steps.envelope.outputs.envelope }}
           ENVELOPE_REASON: ${{ steps.envelope.outputs.reason }}
           FAILED_GATES: ${{ steps.envelope.outputs.failed-gates }}
           SELF_MOD_BLOCKED: ${{ steps.self_mod_guard.outputs.blocked }}
         run: bash .claude-pipeline/scripts/post-auto-review-block.sh
+
+      - name: Verify gh mock log (test mode)
+        # Read the captured `gh` invocation log and emit whether
+        # `gh pr merge` was attempted. Workflow surfaces this as
+        # `auto-review-merge-attempted` so the act test can assert
+        # "no real merge call is made" — required by issue #16 AC.
+        # $GH_MOCK_LOG was set into the environment by the "Wire gh
+        # mock" step at the top of this job.
+        if: inputs.stub-review-verdict != '' && always()
+        id: verify_mock
+        run: bash .claude-pipeline/scripts/verify-gh-mock-merge.sh

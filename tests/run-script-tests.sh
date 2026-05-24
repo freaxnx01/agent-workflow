@@ -406,6 +406,43 @@ ec="$(run_capture_ec env PR_NUMBER=1 REPO=o/r AGENT=claude HEAD_SHA=abc \
         bash "$REVIEW")"
 assert_equals "$ec" "64" "missing PROMPT_TEMPLATE → exit 64"
 
+section "verify-gh-mock-merge — detect gh pr merge in the mock log"
+
+VERIFY_MOCK="$ROOT/scripts/verify-gh-mock-merge.sh"
+
+# Log containing a 'pr merge' line → attempted=true
+LOG="$(mktemp)"
+GO="$(mktemp)"
+printf 'pr ready 9999 --repo o/r\npr merge 9999 --repo o/r --auto --squash\n' > "$LOG"
+GITHUB_OUTPUT="$GO" GH_MOCK_LOG="$LOG" bash "$VERIFY_MOCK" >/dev/null
+out="$(cat "$GO")"; rm -f "$LOG" "$GO"
+assert_contains "$out" 'merge-attempted=true'  "log with 'pr merge' → attempted=true"
+
+# Log without 'pr merge' → attempted=false
+LOG="$(mktemp)"
+GO="$(mktemp)"
+printf 'pr ready 9999 --repo o/r\nissue edit 42 --repo o/r --add-label ai:review-blocked\n' > "$LOG"
+GITHUB_OUTPUT="$GO" GH_MOCK_LOG="$LOG" bash "$VERIFY_MOCK" >/dev/null
+out="$(cat "$GO")"; rm -f "$LOG" "$GO"
+assert_contains "$out" 'merge-attempted=false' "log without 'pr merge' → attempted=false"
+
+# Anchored: a line that merely contains 'pr merge' as a substring
+# inside a body string MUST NOT trip the detector. The mock writes one
+# space-joined argv per line, so the gh subcommand is always at line
+# start. Guard against future mock format changes regressing the rule.
+LOG="$(mktemp)"
+GO="$(mktemp)"
+printf 'pr comment 9999 --repo o/r --body Considered pr merge but blocked\n' > "$LOG"
+GITHUB_OUTPUT="$GO" GH_MOCK_LOG="$LOG" bash "$VERIFY_MOCK" >/dev/null
+out="$(cat "$GO")"; rm -f "$LOG" "$GO"
+assert_contains "$out" 'merge-attempted=false' "'pr merge' inside body string → still false (anchored at line start)"
+
+# Empty/missing log → attempted=false (no false alarms)
+GO="$(mktemp)"
+GITHUB_OUTPUT="$GO" GH_MOCK_LOG=/no/such/file bash "$VERIFY_MOCK" >/dev/null
+out="$(cat "$GO")"; rm -f "$GO"
+assert_contains "$out" 'merge-attempted=false' "unreadable log → attempted=false"
+
 section "post-auto-review-block — reason selection + PR-vs-issue addressing"
 
 POST_BLOCK="$ROOT/scripts/post-auto-review-block.sh"
@@ -524,15 +561,15 @@ envelope_run() {
   rm -f "$go"
 }
 
-# All-clear happy path: bot author, all required checks pass, clean diff,
-# squash enabled.
+# All-clear happy path: bot author, all required checks pass, clean diff
+# loaded from fixture, squash enabled.
 out="$(envelope_run env \
         PR_NUMBER=42 REPO=o/r \
         PR_AUTHOR='github-actions[bot]' \
-        PR_FILES=$'src/foo.ts\ntests/foo.test.ts' \
+        PR_FILES="$(cat "$FIXTURES/diff-clean.txt")" \
         REQUIRED_CHECKS_STATUS=pass \
         REPO_ALLOWS_SQUASH=true)"
-assert_contains "$out" 'envelope=pass'  "all gates green → envelope=pass"
+assert_contains "$out" 'envelope=pass'  "diff-clean.txt → envelope=pass"
 assert_contains "$out" 'failed-gates='  "pass has empty failed-gates"
 
 # Gate 1: wrong author
@@ -575,40 +612,40 @@ out="$(envelope_run env \
         REPO_ALLOWS_SQUASH=true)"
 assert_contains "$out" 'envelope=pass'    "no required checks configured → pass"
 
-# Gate 6: .github/ touch
+# Gate 6: .github/ touch (loaded from fixture)
 out="$(envelope_run env \
         PR_NUMBER=42 REPO=o/r \
         PR_AUTHOR='github-actions[bot]' \
-        PR_FILES='.github/workflows/foo.yml' \
+        PR_FILES="$(cat "$FIXTURES/diff-github-touch.txt")" \
         REQUIRED_CHECKS_STATUS=pass \
         REPO_ALLOWS_SQUASH=true)"
-assert_contains "$out" 'envelope=fail'                "touches .github/ → fail"
+assert_contains "$out" 'envelope=fail'                "diff-github-touch.txt → fail"
 assert_contains "$out" 'failed-gates=6'               "gate 6 in failed-gates"
 assert_contains "$out" '.github/: .github/workflows'  "names the .github/ violation"
 
-# Gate 6: secret-glob hit
+# Gate 6: secret-glob hit (loaded from fixture)
 out="$(envelope_run env \
         PR_NUMBER=42 REPO=o/r \
         PR_AUTHOR='github-actions[bot]' \
-        PR_FILES=$'src/foo.ts\nconfig/prod.sops.yaml' \
+        PR_FILES="$(cat "$FIXTURES/diff-secret-glob.txt")" \
         REQUIRED_CHECKS_STATUS=pass \
         REPO_ALLOWS_SQUASH=true)"
-assert_contains "$out" 'envelope=fail'             "touches *.sops.yaml → fail"
+assert_contains "$out" 'envelope=fail'             "diff-secret-glob.txt → fail"
 assert_contains "$out" 'failed-gates=6'            "gate 6 fires for secret-glob"
 assert_contains "$out" 'secret-glob: config/prod.sops.yaml' "names the secret-glob hit"
 
-# Gate 6: blocklist-file glob match
+# Gate 6: blocklist-file glob match (loaded from fixture)
 BLOCKLIST_TMP="$(mktemp)"
 printf '# user-defined exclusions\nmigrations/**\n*.tf\n' > "$BLOCKLIST_TMP"
 out="$(envelope_run env \
         PR_NUMBER=42 REPO=o/r \
         PR_AUTHOR='github-actions[bot]' \
-        PR_FILES=$'src/foo.ts\nmain.tf' \
+        PR_FILES="$(cat "$FIXTURES/diff-blocklist-hit.txt")" \
         REQUIRED_CHECKS_STATUS=pass \
         REPO_ALLOWS_SQUASH=true \
         BLOCKLIST_FILE="$BLOCKLIST_TMP")"
 rm -f "$BLOCKLIST_TMP"
-assert_contains "$out" 'envelope=fail'      ".tf in blocklist → fail"
+assert_contains "$out" 'envelope=fail'      "diff-blocklist-hit.txt → fail"
 assert_contains "$out" 'blocklist: main.tf' "names the blocklist hit"
 
 # Gate 7: squash disabled
