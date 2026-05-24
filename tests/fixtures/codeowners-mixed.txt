@@ -1,0 +1,4 @@
+# Test CODEOWNERS fixture: mix of individual owners and a team
+*           @default-owner
+src/auth/*  @example-org/security-team @alice
+docs/*      @example-org/docs-team

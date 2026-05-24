@@ -47,7 +47,14 @@ Two repo-level toggles **both** must be on, or gate 7 refuses promotion:
 | **Allow squash merging** | Settings → General → Pull Requests | usually on | The promote step calls `gh pr merge --squash`. |
 | **Allow auto-merge** | Settings → General → Pull Requests | **off on new repos** | The promote step also passes `--auto`. Without this on, `gh pr merge --auto` fails *after* the draft has already been promoted to ready, leaving the PR in an awkward half-promoted state. Gate 7 verifies it up front. |
 
-CODEOWNERS, if defined, must also be satisfied (separate check coming in #30).
+### CODEOWNERS (gate 7, optional)
+
+If `.github/CODEOWNERS` (or root `CODEOWNERS`, or `docs/CODEOWNERS` — GitHub's resolution order) exists, gate 7 additionally verifies that every owner of a touched path either is the PR author or has left an `APPROVED` review on the PR.
+
+Caveats:
+- **Team owners** (`@org/team`) cannot be resolved without the team-membership API. They're logged as `codeowners-deferred-teams: …` and left to GitHub's native auto-merge to enforce (`gh pr merge --auto` honors CODEOWNERS as a hard requirement).
+- **Path matching** uses bash `[[ p == pat ]]` semantics, not gitignore-style globstar. If your CODEOWNERS uses `**` deeply, the matcher may over- or under-match. Stick to simple `*.ext` or `dir/*` patterns for predictable behavior.
+- No CODEOWNERS file → this sub-check vacuously passes.
 
 ### Opt-in (two layers)
 
