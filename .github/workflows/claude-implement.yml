@@ -138,6 +138,15 @@ on:
       CLAUDE_CODE_OAUTH_TOKEN:
         description: OAuth token for Claude Code (generated via `claude setup-token`).
         required: true
+      OPENROUTER_API_KEY:
+        description: |
+          OpenRouter API key. Required only when the active agent
+          resolves to `opencode` (via the `agent` input or an
+          `agent:opencode` label per ADR-001). When set, the
+          OpenCode runner step (added in #10) reads it from the
+          `secrets` context. The value is never logged; the runner
+          step must `set +x` around any line that interpolates it.
+        required: false
     outputs:
       outcome:
         description: '"success" or "failed".'

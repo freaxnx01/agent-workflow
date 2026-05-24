@@ -122,7 +122,47 @@ Never set this to a value that matches arbitrary humans — gate 1's purpose is 
 
 Both only take effect on the next run; PRs that already armed `gh pr merge --auto` will still land once required checks pass. Disarm in-flight with `gh pr merge --disable-auto <PR>`.
 
-## 3. Issue chaining (optional, requires auto-review)
+## 3. Using OpenCode via OpenRouter (optional)
+
+The pipeline supports a second agent backend besides Claude Code — [OpenCode](https://github.com/opencode-ai/opencode) talking to [OpenRouter](https://openrouter.ai) (Mistral models are the obvious first stop, but any model on OpenRouter works). Per ADR-001, the result-shape contract is identical to the Claude path, so downstream scripts don't branch on agent identity.
+
+### Opt-in
+
+Choose the agent at the call site or per-issue:
+
+```yaml
+# .github/workflows/claude.yml
+jobs:
+  claude:
+    uses: freaxnx01/claude-pipeline/.github/workflows/claude-implement.yml@v1
+    with:
+      issue-number: ${{ github.event.issue.number }}
+      agent: opencode             # ← workflow-input default for this repo
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+```
+
+Per-issue override: apply the `agent:opencode` (or `agent:claude`) label on the issue. Label wins over the workflow input.
+
+### Mint the OpenRouter key
+
+1. Create an account at https://openrouter.ai.
+2. Top up credits or attach billing per their docs.
+3. Settings → Keys → "Create Key". Scope it to a single model family if you want a tighter blast radius.
+4. **Repo secret**: Settings → Secrets and variables → Actions → New repository secret. Name: `OPENROUTER_API_KEY`. Paste the value.
+
+### Security notes
+
+- The secret is declared `required: false` at the workflow boundary; consumers that never set `agent: opencode` don't need to provide it.
+- Inside the runner, the OpenCode step (added in #10) reads it via `${{ secrets.OPENROUTER_API_KEY }}`. The value is never logged: `set +x` is applied around any line that interpolates it, and the GitHub Actions runtime auto-masks secret values in log output by default.
+- The same `ai-auto-review` opt-in (§2) and chain semantics (§4 — below) apply regardless of which agent ran the implementation.
+
+### What's left (multi-agent epic)
+
+Wiring the secret is just the first piece. The OpenCode CLI install (#8), classifier (#9), runner step (#10), and act fixtures (#11) land next. Until #10 merges, setting `agent: opencode` produces a no-op job per the workflow input docstring.
+
+## 4. Issue chaining (optional, requires auto-review)
 
 When an auto-merged PR closes an issue, the pipeline can dispatch a follow-up issue that was `Blocked by:` it. Conventions live in [ADR-003](DECISIONS.md#adr-003--issue-chain-dispatch-on-auto-merge); this section is just the wiring.
 
