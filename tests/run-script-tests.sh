@@ -194,6 +194,42 @@ assert_contains "$out" 'chosen: claude-haiku-4-5 (label model:haiku)' "label mod
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='model:sonnet' bash "$CLASSIFY")"
 assert_contains "$out" 'chosen: claude-sonnet-4-6 (label model:sonnet)' "label model:sonnet → sonnet"
 
+# Override: model:mistral-large with AGENT=opencode → opencode model ID
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
+       ISSUE_LABELS='ai-implement
+model:mistral-large' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: mistralai/mistral-large-latest (label model:mistral-large)' \
+  "label model:mistral-large + agent=opencode → mistral-large"
+
+# Override: model:codestral with AGENT=opencode → codestral
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
+       ISSUE_LABELS='model:codestral' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: mistralai/codestral-latest (label model:codestral)' \
+  "label model:codestral + agent=opencode → codestral"
+
+# Mismatch: model:mistral-large WITHOUT agent=opencode → warn + fall through.
+# `2>&1` captures stderr too so the warn can be asserted; exit code must
+# still be 0. ISSUE_BODY is set so the heuristic fallback doesn't hit
+# the live `gh issue view` and fail under the test runner's `set -e`.
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=claude \
+       ISSUE_LABELS='model:mistral-large' \
+       ISSUE_BODY='filler' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'warn: label model:mistral-large incompatible with AGENT=claude' \
+  "model:mistral-large + agent=claude → warn on stderr"
+assert_contains "$out" 'claude-sonnet-4-6' "mismatch → falls to DEFAULT_MODEL via heuristic default"
+ec="$(run_capture_ec env ISSUE_NUMBER=1 REPO=o/r AGENT=claude \
+       ISSUE_LABELS='model:mistral-large' \
+       ISSUE_BODY='filler' \
+       bash "$CLASSIFY")"
+assert_equals "$ec" "0" "mismatch → exit 0 (warning, not error)"
+
+# Mismatch the other way: model:opus + AGENT=opencode → warn + fall through
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
+       ISSUE_LABELS='model:opus' \
+       ISSUE_BODY='filler' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'warn: label model:opus incompatible with AGENT=opencode' \
+  "model:opus + agent=opencode → warn on stderr"
+
 # Heuristic: refactor keyword → opus
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' \
        ISSUE_BODY='Refactor the auth middleware' bash "$CLASSIFY")"

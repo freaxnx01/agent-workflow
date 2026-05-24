@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 #
-# classify-task.sh — Pick the Claude model for an issue. Two-stage decision:
+# classify-task.sh — Pick the model for an issue. Two-stage decision:
 #
-#   1. Explicit override via `model:opus` / `model:sonnet` / `model:haiku`
-#      label on the issue. This always wins.
-#   2. Heuristic over the issue body — keyword-based for now. The DESIGN
-#      target is a Haiku-powered classifier; that's a future swap-in. Until
-#      then the heuristic + the override label are good enough and cost
-#      nothing to run.
+#   1. Explicit override via `model:<name>` label on the issue. This
+#      always wins. Supported labels:
+#        Claude:   model:opus / model:sonnet / model:haiku
+#        Mistral:  model:mistral-large / model:codestral
+#      Mistral labels are only meaningful when `agent: opencode` runs;
+#      if `AGENT != opencode` the script WARNS to stderr and falls
+#      back to DEFAULT_MODEL (does not exit non-zero — per ADR-001
+#      the agent step is what enforces auth/model compatibility).
+#   2. Heuristic over the issue body — keyword-based for now. The
+#      DESIGN target is a Haiku-powered classifier; that's a future
+#      swap-in. Until then the heuristic + the override label are
+#      good enough and cost nothing to run.
 #
 # Required environment variables:
 #   ISSUE_NUMBER  GitHub issue number
@@ -17,6 +23,9 @@
 # Optional environment variables:
 #   DEFAULT_MODEL  Fallback when no override + no heuristic match.
 #                  Default: claude-sonnet-4-6.
+#   AGENT          `claude | opencode`. Used only to validate that a
+#                  Mistral-flavored override label is compatible with
+#                  the active agent. Default: claude.
 #   ISSUE_LABELS   Newline- or space-separated labels. If set, skips the
 #                  `gh issue view --json labels` call. Used by Layer-1 tests.
 #   ISSUE_BODY     Free-form issue title+body string. If set, skips the
@@ -47,6 +56,7 @@ if [[ -z "$REPO" ]]; then
 fi
 
 DEFAULT_MODEL="${DEFAULT_MODEL:-claude-sonnet-4-6}"
+AGENT="${AGENT:-claude}"
 
 # --- 1) explicit override label -------------------------------------------
 
@@ -54,13 +64,43 @@ if [[ -z "${ISSUE_LABELS:-}" ]]; then
   ISSUE_LABELS="$(gh issue view "$ISSUE_NUMBER" --repo "$REPO" --json labels --jq '.labels[].name')"
 fi
 
+# Per-label compatibility: Claude labels run on `agent=claude`,
+# Mistral labels run on `agent=opencode`. A mismatch warns + falls
+# through (ADR-001 puts compatibility enforcement at the agent step,
+# not here).
+label_is_compatible() {
+  local label="$1"
+  case "$label" in
+    model:opus|model:sonnet|model:haiku)
+      [[ "$AGENT" == "claude" ]]
+      ;;
+    model:mistral-large|model:codestral)
+      [[ "$AGENT" == "opencode" ]]
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
 chosen=''
 reason=''
 while IFS= read -r label; do
   case "$label" in
-    model:opus)   chosen=claude-opus-4-7;    reason='label model:opus' ;;
-    model:sonnet) chosen=claude-sonnet-4-6;  reason='label model:sonnet' ;;
-    model:haiku)  chosen=claude-haiku-4-5;   reason='label model:haiku' ;;
+    model:opus|model:sonnet|model:haiku|model:mistral-large|model:codestral)
+      if ! label_is_compatible "$label"; then
+        printf 'warn: label %s incompatible with AGENT=%s; falling through to default\n' \
+          "$label" "$AGENT" >&2
+        continue
+      fi
+      ;;
+  esac
+  case "$label" in
+    model:opus)           chosen=claude-opus-4-7;                 reason='label model:opus' ;;
+    model:sonnet)         chosen=claude-sonnet-4-6;               reason='label model:sonnet' ;;
+    model:haiku)          chosen=claude-haiku-4-5;                reason='label model:haiku' ;;
+    model:mistral-large)  chosen=mistralai/mistral-large-latest;  reason='label model:mistral-large' ;;
+    model:codestral)      chosen=mistralai/codestral-latest;      reason='label model:codestral' ;;
   esac
 done <<< "$ISSUE_LABELS"
 
