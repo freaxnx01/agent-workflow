@@ -448,10 +448,17 @@ jobs:
             cp -r tests/mocks/. .claude-pipeline/tests/mocks/
           fi
 
-      - name: Wire gh mock (test mode)
-        # Under stub-review-verdict, prepend tests/mocks to PATH so every
-        # subsequent `gh` call in this job is captured (not executed)
-        # and logged to $GH_MOCK_LOG. Same mock used by Layer-1 tests.
+      - name: Wire gh mock + stub PR JSON (test mode)
+        # Under stub-review-verdict:
+        #   - prepend tests/mocks to PATH so every `gh` call is captured
+        #     (not executed) and logged to $GH_MOCK_LOG
+        #   - emit a canned PIPELINE_PRS_JSON for find-pipeline-pr.sh so
+        #     it doesn't call the real GitHub API
+        # The PR JSON cannot be expressed inline as a ${{ ... }} value
+        # because its nested-object `}}` terminates GitHub's expression
+        # parser early (not caught by actionlint, observed as
+        # startup_failure). Emitting it via GITHUB_ENV here sidesteps
+        # the issue.
         if: inputs.stub-review-verdict != ''
         env:
           WORKSPACE: ${{ github.workspace }}
@@ -462,6 +469,8 @@ jobs:
           {
             printf 'PATH=%s/.claude-pipeline/tests/mocks:%s\n' "$WORKSPACE" "$PATH"
             printf 'GH_MOCK_LOG=%s\n' "$log"
+            printf 'PIPELINE_PRS_JSON=%s\n' \
+              '[{"number":9999,"isDraft":true,"headRefOid":"stubsha","author":{"login":"github-actions[bot]"}}]'
           } >> "$GITHUB_ENV"
 
       - name: Self-modification guard (ADR-002 — claude-pipeline itself)
@@ -485,16 +494,15 @@ jobs:
         # PR (or fall back to the issue) on every refusal path —
         # including the self-mod guard, which intentionally skips the
         # review/envelope/promote steps but still owes a comment per
-        # ADR-002.
+        # ADR-002. Under stub-review-verdict, PIPELINE_PRS_JSON is
+        # injected by the prior "Wire gh mock + stub PR JSON" step via
+        # $GITHUB_ENV and inherited here automatically.
         id: find_pr
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           AUTHOR_ALLOWLIST: ${{ inputs.pipeline-author-allowlist }}
-          # Stub seam: under stub-review-verdict, hand the script a
-          # canned draft PR so it doesn't call the real `gh pr list`.
-          PIPELINE_PRS_JSON: ${{ inputs.stub-review-verdict != '' && '[{"number":9999,"isDraft":true,"headRefOid":"stubsha","author":{"login":"github-actions[bot]"}}]' || '' }}
         run: bash .claude-pipeline/scripts/find-pipeline-pr.sh
 
       - name: Install Claude Code CLI
