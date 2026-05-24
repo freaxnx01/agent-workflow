@@ -38,6 +38,17 @@ Apply `ai-implement` to an issue; Claude opens a draft PR. That's it.
 
 The auto-merge flow promotes the draft → ready → `gh pr merge --auto --squash` **only when every gate in [ADR-002](DECISIONS.md#adr-002--auto-review-and-auto-merge-safety-envelope) is satisfied**. Failing any gate leaves the PR draft and stamps `ai:review-blocked` on the originating issue.
 
+### Required GitHub repo settings (gate 7)
+
+Two repo-level toggles **both** must be on, or gate 7 refuses promotion:
+
+| Setting | Path | Default | Why |
+|---|---|---|---|
+| **Allow squash merging** | Settings → General → Pull Requests | usually on | The promote step calls `gh pr merge --squash`. |
+| **Allow auto-merge** | Settings → General → Pull Requests | **off on new repos** | The promote step also passes `--auto`. Without this on, `gh pr merge --auto` fails *after* the draft has already been promoted to ready, leaving the PR in an awkward half-promoted state. Gate 7 verifies it up front. |
+
+CODEOWNERS, if defined, must also be satisfied (separate check coming in #30).
+
 ### Opt-in (two layers)
 
 ```yaml

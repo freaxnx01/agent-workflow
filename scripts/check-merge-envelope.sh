@@ -46,7 +46,10 @@
 #   PR_BASE_BRANCH         The PR's base branch (default: query via
 #                          `gh pr view --json baseRefName`). Used to
 #                          target the correct branch-protection rule.
-#   REPO_ALLOWS_SQUASH     true|false; skip `gh api repos/.../`.
+#   REPO_ALLOWS_SQUASH     true|false; skip the `allow_squash_merge`
+#                          query against `gh api repos/.../`.
+#   REPO_ALLOWS_AUTO_MERGE true|false; skip the `allow_auto_merge`
+#                          query against `gh api repos/.../`.
 #
 # Output ($GITHUB_OUTPUT and stdout):
 #   envelope       pass | fail
@@ -243,25 +246,46 @@ if (( ${#path_violations[@]} > 0 )); then
   done
 fi
 
-# --- Gate 7: branch-protection compat (squash-merge enabled) -------------
+# --- Gate 7: branch-protection compat (squash + auto-merge enabled) ------
+#
+# Two repo-level settings both must be true:
+#   - allow_squash_merge — required because the promote step calls
+#     `gh pr merge --squash`.
+#   - allow_auto_merge   — required because the promote step adds
+#     `--auto`. This flag is OFF by default on new GitHub repos, so a
+#     consumer who enables squash but forgets auto-merge would get
+#     `gh pr merge --auto` failing AFTER `gh pr ready` already promoted
+#     the draft — an inconsistent half-promoted state that the marking
+#     step doesn't catch. Verify both up front.
 
-repo_allows_squash="${REPO_ALLOWS_SQUASH:-}"
-if [[ -z "$repo_allows_squash" ]]; then
-  repo_allows_squash="$(gh api "repos/$REPO" --jq '.allow_squash_merge' 2>/dev/null || echo unknown)"
+gate7_failed=false
+
+check_repo_setting() {
+  # check_repo_setting <env-var-name> <api-field> <human-name>
+  local var="$1" field="$2" name="$3" value
+  value="${!var:-}"
+  if [[ -z "$value" ]]; then
+    value="$(gh api "repos/$REPO" --jq ".$field" 2>/dev/null || echo unknown)"
+  fi
+  case "$value" in
+    true) return 0 ;;
+    false|unknown)
+      gate7_failed=true
+      REASONS+=("repo does not allow $name ($field=$value)")
+      ;;
+    *)
+      printf 'error: %s must be true|false (got %q)\n' "$var" "$value" >&2
+      exit 2
+      ;;
+  esac
+}
+
+check_repo_setting REPO_ALLOWS_SQUASH     allow_squash_merge squash-merge
+check_repo_setting REPO_ALLOWS_AUTO_MERGE allow_auto_merge   auto-merge
+
+if [[ "$gate7_failed" == true ]]; then
+  FAILED_GATES+=(7)
 fi
-
-case "$repo_allows_squash" in
-  true) ;;
-  false|unknown)
-    FAILED_GATES+=(7)
-    REASONS+=("repo does not allow squash-merge (allow_squash_merge=$repo_allows_squash)")
-    ;;
-  *)
-    printf 'error: REPO_ALLOWS_SQUASH must be true|false (got %q)\n' \
-      "$repo_allows_squash" >&2
-    exit 2
-    ;;
-esac
 
 # --- summarize -----------------------------------------------------------
 

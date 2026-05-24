@@ -568,7 +568,7 @@ out="$(envelope_run env \
         PR_AUTHOR='github-actions[bot]' \
         PR_FILES="$(cat "$FIXTURES/diff-clean.txt")" \
         REQUIRED_CHECKS_STATUS=pass \
-        REPO_ALLOWS_SQUASH=true)"
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true)"
 assert_contains "$out" 'envelope=pass'  "diff-clean.txt → envelope=pass"
 assert_contains "$out" 'failed-gates='  "pass has empty failed-gates"
 
@@ -578,7 +578,7 @@ out="$(envelope_run env \
         PR_AUTHOR='some-human' \
         PR_FILES='src/foo.ts' \
         REQUIRED_CHECKS_STATUS=pass \
-        REPO_ALLOWS_SQUASH=true)"
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true)"
 assert_contains "$out" 'envelope=fail'    "non-bot author → fail"
 assert_contains "$out" 'failed-gates=1'   "gate 1 in failed-gates"
 assert_contains "$out" "author 'some-human' not in allowlist" "names the bad author"
@@ -590,7 +590,7 @@ out="$(envelope_run env \
         AUTHOR_ALLOWLIST=$'github-actions[bot]\nmy-pipeline-app[bot]' \
         PR_FILES='src/foo.ts' \
         REQUIRED_CHECKS_STATUS=pass \
-        REPO_ALLOWS_SQUASH=true)"
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true)"
 assert_contains "$out" 'envelope=pass'    "custom AUTHOR_ALLOWLIST → pass"
 
 # Gate 5: failing required check
@@ -599,7 +599,7 @@ out="$(envelope_run env \
         PR_AUTHOR='github-actions[bot]' \
         PR_FILES='src/foo.ts' \
         REQUIRED_CHECKS_STATUS=fail \
-        REPO_ALLOWS_SQUASH=true)"
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true)"
 assert_contains "$out" 'envelope=fail'    "failing required check → fail"
 assert_contains "$out" 'failed-gates=5'   "gate 5 in failed-gates"
 
@@ -609,7 +609,7 @@ out="$(envelope_run env \
         PR_AUTHOR='github-actions[bot]' \
         PR_FILES='src/foo.ts' \
         REQUIRED_CHECKS_STATUS=none \
-        REPO_ALLOWS_SQUASH=true)"
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true)"
 assert_contains "$out" 'envelope=pass'    "no required checks configured → pass"
 
 # Gate 5 (live decision path): REQUIRED_CHECKS_COUNT=0 → none → pass
@@ -618,7 +618,7 @@ out="$(envelope_run env \
         PR_AUTHOR='github-actions[bot]' \
         PR_FILES='src/foo.ts' \
         REQUIRED_CHECKS_COUNT=0 \
-        REPO_ALLOWS_SQUASH=true)"
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true)"
 assert_contains "$out" 'envelope=pass'    "REQUIRED_CHECKS_COUNT=0 → pass (no required checks)"
 
 # Gate 5 (live decision path): count>0 + PASS=true → pass
@@ -628,7 +628,7 @@ out="$(envelope_run env \
         PR_FILES='src/foo.ts' \
         REQUIRED_CHECKS_COUNT=2 \
         REQUIRED_CHECKS_PASS=true \
-        REPO_ALLOWS_SQUASH=true)"
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true)"
 assert_contains "$out" 'envelope=pass'    "count>0 + checks pass → envelope=pass"
 
 # Gate 5 (live decision path): count>0 + PASS=false → fail
@@ -640,7 +640,7 @@ out="$(envelope_run env \
         PR_FILES='src/foo.ts' \
         REQUIRED_CHECKS_COUNT=2 \
         REQUIRED_CHECKS_PASS=false \
-        REPO_ALLOWS_SQUASH=true)"
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true)"
 assert_contains "$out" 'envelope=fail'    "count>0 + checks not-green (failing or pending) → fail"
 assert_contains "$out" 'failed-gates=5'   "gate 5 fires on pending/failing required check"
 
@@ -649,7 +649,7 @@ ec="$(run_capture_ec env \
         PR_NUMBER=42 REPO=o/r \
         PR_AUTHOR='github-actions[bot]' PR_FILES='src/foo.ts' \
         REQUIRED_CHECKS_COUNT=1 REQUIRED_CHECKS_PASS=maybe \
-        REPO_ALLOWS_SQUASH=true \
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true \
         bash "$ENVELOPE")"
 assert_equals "$ec" "2" "invalid REQUIRED_CHECKS_PASS → exit 2"
 
@@ -659,7 +659,7 @@ out="$(envelope_run env \
         PR_AUTHOR='github-actions[bot]' \
         PR_FILES="$(cat "$FIXTURES/diff-github-touch.txt")" \
         REQUIRED_CHECKS_STATUS=pass \
-        REPO_ALLOWS_SQUASH=true)"
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true)"
 assert_contains "$out" 'envelope=fail'                "diff-github-touch.txt → fail"
 assert_contains "$out" 'failed-gates=6'               "gate 6 in failed-gates"
 assert_contains "$out" '.github/: .github/workflows'  "names the .github/ violation"
@@ -670,7 +670,7 @@ out="$(envelope_run env \
         PR_AUTHOR='github-actions[bot]' \
         PR_FILES="$(cat "$FIXTURES/diff-secret-glob.txt")" \
         REQUIRED_CHECKS_STATUS=pass \
-        REPO_ALLOWS_SQUASH=true)"
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true)"
 assert_contains "$out" 'envelope=fail'             "diff-secret-glob.txt → fail"
 assert_contains "$out" 'failed-gates=6'            "gate 6 fires for secret-glob"
 assert_contains "$out" 'secret-glob: config/prod.sops.yaml' "names the secret-glob hit"
@@ -683,7 +683,7 @@ out="$(envelope_run env \
         PR_AUTHOR='github-actions[bot]' \
         PR_FILES="$(cat "$FIXTURES/diff-blocklist-hit.txt")" \
         REQUIRED_CHECKS_STATUS=pass \
-        REPO_ALLOWS_SQUASH=true \
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true \
         BLOCKLIST_FILE="$BLOCKLIST_TMP")"
 rm -f "$BLOCKLIST_TMP"
 assert_contains "$out" 'envelope=fail'      "diff-blocklist-hit.txt → fail"
@@ -695,9 +695,43 @@ out="$(envelope_run env \
         PR_AUTHOR='github-actions[bot]' \
         PR_FILES='src/foo.ts' \
         REQUIRED_CHECKS_STATUS=pass \
-        REPO_ALLOWS_SQUASH=false)"
+        REPO_ALLOWS_SQUASH=false REPO_ALLOWS_AUTO_MERGE=true)"
 assert_contains "$out" 'envelope=fail'      "squash disabled → fail"
 assert_contains "$out" 'failed-gates=7'     "gate 7 in failed-gates"
+assert_contains "$out" 'allow_squash_merge=false' "names squash-merge as the missing setting"
+
+# Gate 7: squash enabled but auto-merge disabled — common consumer
+# misconfiguration (auto-merge is OFF by default on new GitHub repos).
+out="$(envelope_run env \
+        PR_NUMBER=42 REPO=o/r \
+        PR_AUTHOR='github-actions[bot]' \
+        PR_FILES='src/foo.ts' \
+        REQUIRED_CHECKS_STATUS=pass \
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=false)"
+assert_contains "$out" 'envelope=fail'           "auto-merge disabled → fail"
+assert_contains "$out" 'failed-gates=7'          "gate 7 fires for auto-merge off"
+assert_contains "$out" 'allow_auto_merge=false'  "names auto-merge as the missing setting"
+
+# Gate 7: BOTH squash and auto-merge disabled → still one gate-7 entry
+out="$(envelope_run env \
+        PR_NUMBER=42 REPO=o/r \
+        PR_AUTHOR='github-actions[bot]' \
+        PR_FILES='src/foo.ts' \
+        REQUIRED_CHECKS_STATUS=pass \
+        REPO_ALLOWS_SQUASH=false REPO_ALLOWS_AUTO_MERGE=false)"
+assert_contains "$out" 'envelope=fail'      "both repo settings off → fail"
+assert_contains "$out" 'failed-gates=7'     "gate 7 consolidated (one ID even when both sub-checks fail)"
+assert_contains "$out" 'allow_squash_merge=false' "names squash-merge in reasons"
+assert_contains "$out" 'allow_auto_merge=false'   "names auto-merge in reasons"
+
+# Invalid REPO_ALLOWS_AUTO_MERGE → exit 2
+ec="$(run_capture_ec env \
+        PR_NUMBER=42 REPO=o/r \
+        PR_AUTHOR='github-actions[bot]' PR_FILES='src/foo.ts' \
+        REQUIRED_CHECKS_STATUS=pass \
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=maybe \
+        bash "$ENVELOPE")"
+assert_equals "$ec" "2" "invalid REPO_ALLOWS_AUTO_MERGE → exit 2"
 
 # Multiple gates fail simultaneously → both reported
 out="$(envelope_run env \
@@ -705,7 +739,7 @@ out="$(envelope_run env \
         PR_AUTHOR='nope-human' \
         PR_FILES='.github/workflows/auto.yml' \
         REQUIRED_CHECKS_STATUS=fail \
-        REPO_ALLOWS_SQUASH=false)"
+        REPO_ALLOWS_SQUASH=false REPO_ALLOWS_AUTO_MERGE=false)"
 assert_contains "$out" 'envelope=fail'      "multi-gate-fail → fail"
 assert_contains "$out" 'failed-gates=1,5,6,7' "all four gates listed in order"
 
@@ -715,14 +749,14 @@ assert_equals "$ec" "2" "missing PR_NUMBER → exit 2"
 
 ec="$(run_capture_ec env PR_NUMBER=1 \
         PR_AUTHOR='github-actions[bot]' PR_FILES='x' \
-        REQUIRED_CHECKS_STATUS=pass REPO_ALLOWS_SQUASH=true \
+        REQUIRED_CHECKS_STATUS=pass REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true \
         bash "$ENVELOPE")"
 assert_equals "$ec" "2" "missing REPO → exit 2"
 
 ec="$(run_capture_ec env PR_NUMBER=1 REPO=o/r \
         PR_AUTHOR=bot PR_FILES=x \
         REQUIRED_CHECKS_STATUS=maybe \
-        REPO_ALLOWS_SQUASH=true \
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true \
         bash "$ENVELOPE")"
 assert_equals "$ec" "2" "invalid REQUIRED_CHECKS_STATUS → exit 2"
 

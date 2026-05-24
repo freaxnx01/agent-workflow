@@ -589,6 +589,7 @@ jobs:
           PR_FILES: ${{ inputs.stub-pr-files }}
           REQUIRED_CHECKS_STATUS: ${{ inputs.stub-review-verdict != '' && 'pass' || '' }}
           REPO_ALLOWS_SQUASH: ${{ inputs.stub-review-verdict != '' && 'true' || '' }}
+          REPO_ALLOWS_AUTO_MERGE: ${{ inputs.stub-review-verdict != '' && 'true' || '' }}
         run: bash .claude-pipeline/scripts/check-merge-envelope.sh
 
       - name: Promote draft to ready + enable auto-merge
