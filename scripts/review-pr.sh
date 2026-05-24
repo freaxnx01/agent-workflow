@@ -43,10 +43,11 @@
 #   posted        true|false — whether a new comment was posted this run
 #
 # Exit codes:
-#   0   success (any verdict, including block)
+#   0   success (any verdict, including block — agent crashes and
+#       non-JSON output are normalized to verdict=block, not a non-zero
+#       exit, so #15's gating wiring sees a verdict either way)
 #   2   required env missing or invalid
 #   64  template / fixture missing or unreadable
-#   65  agent invocation failed (no JSON produced)
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -205,25 +206,31 @@ awk -v repo="$REPO" -v pr="$PR_NUMBER" -v sha="$HEAD_SHA" -v diff_path="$DIFF_FI
 
 # --- 3) invoke agent ------------------------------------------------------
 
-default_agent_cmd() {
-  case "$AGENT" in
-    claude)   printf 'claude' ;;
-    opencode) printf 'opencode' ;;
-  esac
-}
-
 if [[ -z "${AGENT_CMD:-}" ]]; then
   # Default: call the agent CLI with a `--model` flag if MODEL is set,
   # passing the prompt via stdin and writing JSON to stdout. The wrapper
   # captures stdout into $RESULT_FILE. Real wiring per agent lands in #15
   # — this default is here so the script is self-contained for shellcheck
   # and ad-hoc runs.
+  #
+  # Heredoc is single-quoted so AGENT_BIN / MODEL / argv expand at wrapper
+  # *runtime* in the child shell — never at write time in this parent
+  # shell. Embedding raw env values into the generated script would be a
+  # shell-injection vector (a MODEL value containing `"`, `` ` ``, or `$`
+  # would execute arbitrary code under the runner).
+  case "$AGENT" in
+    claude)   export AGENT_BIN=claude ;;
+    opencode) export AGENT_BIN=opencode ;;
+  esac
+  export MODEL="${MODEL:-}"
   AGENT_CMD="$WORK_DIR/agent-cmd-default.sh"
-  cat > "$AGENT_CMD" <<EOF
+  cat > "$AGENT_CMD" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-prompt="\$1"; out="\$2"
-$(default_agent_cmd) ${MODEL:+--model "$MODEL"} < "\$prompt" > "\$out"
+prompt="$1"; out="$2"
+args=()
+[[ -n "${MODEL:-}" ]] && args+=(--model "$MODEL")
+"$AGENT_BIN" "${args[@]}" < "$prompt" > "$out"
 EOF
   chmod +x "$AGENT_CMD"
 fi
