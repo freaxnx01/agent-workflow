@@ -96,3 +96,142 @@ jobs:
           [[ "$RETRY" == "retry" ]]         || { echo "::error::retry-decision=$RETRY (want retry)"; fail=1; }
           (( fail == 0 )) || exit 1
           echo "rate-limit path OK: failure=$FAILURE retry=$RETRY"
+
+  # ─── Auto-review path (issue #16) ─────────────────────────────────────────
+  # Four calls drive the auto_review job through every verdict/envelope
+  # branch. The PATH-shimmed gh mock captures `gh pr merge` calls so the
+  # `merge-attempted` output asserts "no real merge under act".
+
+  call-auto-review-approve-safe:
+    name: Reusable workflow — auto-review approve + safe envelope
+    uses: ./.github/workflows/claude-implement.yml
+    with:
+      issue-number: 9999
+      timeout-minutes: 10
+      local-scripts: true
+      stub-claude: true
+      stub-fixture: success
+      auto-review: true
+      stub-auto-review-enabled: true
+      stub-review-verdict: approve
+      stub-pr-files: |
+        src/foo.ts
+        tests/foo.test.ts
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
+
+  call-auto-review-approve-unsafe-github:
+    name: Reusable workflow — auto-review approve + .github/ touch (envelope blocks)
+    uses: ./.github/workflows/claude-implement.yml
+    with:
+      issue-number: 9999
+      timeout-minutes: 10
+      local-scripts: true
+      stub-claude: true
+      stub-fixture: success
+      auto-review: true
+      stub-auto-review-enabled: true
+      stub-review-verdict: approve
+      stub-pr-files: |
+        src/foo.ts
+        .github/workflows/foo.yml
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
+
+  call-auto-review-request-changes:
+    name: Reusable workflow — auto-review request_changes
+    uses: ./.github/workflows/claude-implement.yml
+    with:
+      issue-number: 9999
+      timeout-minutes: 10
+      local-scripts: true
+      stub-claude: true
+      stub-fixture: success
+      auto-review: true
+      stub-auto-review-enabled: true
+      stub-review-verdict: request_changes
+      stub-pr-files: |
+        src/foo.ts
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
+
+  call-auto-review-block:
+    name: Reusable workflow — auto-review block
+    uses: ./.github/workflows/claude-implement.yml
+    with:
+      issue-number: 9999
+      timeout-minutes: 10
+      local-scripts: true
+      stub-claude: true
+      stub-fixture: success
+      auto-review: true
+      stub-auto-review-enabled: true
+      stub-review-verdict: block
+      stub-pr-files: |
+        src/foo.ts
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
+
+  verify-auto-review-approve-safe:
+    name: Assert approve + safe → merge attempted
+    needs: call-auto-review-approve-safe
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      ATTEMPTED: ${{ needs.call-auto-review-approve-safe.outputs.auto-review-merge-attempted }}
+    steps:
+      - name: Assert gh pr merge was attempted (against the mock, not real GitHub)
+        run: |
+          [[ "$ATTEMPTED" == "true" ]] \
+            || { echo "::error::merge-attempted=$ATTEMPTED (want true)"; exit 1; }
+          echo "approve+safe OK: merge-attempted=$ATTEMPTED"
+
+  verify-auto-review-approve-unsafe-github:
+    name: Assert approve + .github/ touch → envelope blocks, no merge attempted
+    needs: call-auto-review-approve-unsafe-github
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      ATTEMPTED: ${{ needs.call-auto-review-approve-unsafe-github.outputs.auto-review-merge-attempted }}
+    steps:
+      - name: Assert gh pr merge was NOT attempted
+        run: |
+          [[ "$ATTEMPTED" == "false" ]] \
+            || { echo "::error::merge-attempted=$ATTEMPTED (want false — .github/ touch must block)"; exit 1; }
+          echo "approve+unsafe(.github/) OK: merge-attempted=$ATTEMPTED"
+
+  verify-auto-review-request-changes:
+    name: Assert request_changes → no merge attempted
+    needs: call-auto-review-request-changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      ATTEMPTED: ${{ needs.call-auto-review-request-changes.outputs.auto-review-merge-attempted }}
+    steps:
+      - name: Assert gh pr merge was NOT attempted
+        run: |
+          [[ "$ATTEMPTED" == "false" ]] \
+            || { echo "::error::merge-attempted=$ATTEMPTED (want false — request_changes must block)"; exit 1; }
+          echo "request_changes OK: merge-attempted=$ATTEMPTED"
+
+  verify-auto-review-block:
+    name: Assert block → no merge attempted
+    needs: call-auto-review-block
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      ATTEMPTED: ${{ needs.call-auto-review-block.outputs.auto-review-merge-attempted }}
+    steps:
+      - name: Assert gh pr merge was NOT attempted
+        run: |
+          [[ "$ATTEMPTED" == "false" ]] \
+            || { echo "::error::merge-attempted=$ATTEMPTED (want false — block verdict must block)"; exit 1; }
+          echo "block OK: merge-attempted=$ATTEMPTED"
