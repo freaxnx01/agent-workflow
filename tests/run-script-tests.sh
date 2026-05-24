@@ -1168,6 +1168,33 @@ assert_contains "$out" 'surely_no_such_tool_xyz'                "DRY_RUN report 
 ec="$(run_capture_ec env DRY_RUN=1 TOOLS="surely_no_such_tool_xyz" bash "$ENSURE")"
 assert_equals "$ec" "0" "DRY_RUN with missing tool → exit 0 (no install attempted)"
 
+# AGENT unset → OpenCode install NEVER attempted (Claude path stays zero-cost)
+out="$(TOOLS="bash sh" bash "$ENSURE")"
+assert_not_contains "$out" 'opencode' "AGENT unset → no opencode message at all"
+
+# AGENT=claude → same: no opencode work
+out="$(AGENT=claude TOOLS="bash sh" bash "$ENSURE")"
+assert_not_contains "$out" 'opencode' "AGENT=claude → no opencode message"
+
+# AGENT=opencode + OPENCODE_DRY_RUN → reports install plan, skips
+out="$(AGENT=opencode TOOLS="bash sh" OPENCODE_DRY_RUN=1 bash "$ENSURE")"
+assert_contains "$out" 'opencode'                  "AGENT=opencode → opencode probe runs"
+assert_contains "$out" 'opencode install skipped (DRY_RUN)' "OPENCODE_DRY_RUN → install skipped"
+
+# AGENT=opencode + DRY_RUN (the umbrella flag) also skips opencode install
+out="$(AGENT=opencode TOOLS="bash sh" DRY_RUN=1 bash "$ENSURE")"
+assert_contains "$out" 'opencode install skipped (DRY_RUN)' "umbrella DRY_RUN also skips opencode"
+
+# AGENT=opencode + custom pinned version flows through to the message
+out="$(AGENT=opencode TOOLS="bash sh" OPENCODE_DRY_RUN=1 OPENCODE_VERSION=9.9.9 bash "$ENSURE")"
+assert_contains "$out" 'pinned version 9.9.9'      "OPENCODE_VERSION env overrides the pinned default"
+
+# RUNNER-REQUIREMENTS.md mentions the same pinned version as the script default
+# (catches drift between docs and code).
+SCRIPT_VERSION="$(grep -oE 'OPENCODE_VERSION:-[0-9.]+' "$ENSURE" | head -1 | sed 's/.*-//')"
+assert_contains "$(cat "$ROOT/docs/RUNNER-REQUIREMENTS.md")" "$SCRIPT_VERSION" \
+  "RUNNER-REQUIREMENTS.md mentions the script's OPENCODE_VERSION default ($SCRIPT_VERSION)"
+
 section "full path with mocked gh (verifies side effects)"
 
 MOCK_LOG="$(mktemp)"
