@@ -15,7 +15,13 @@ on:
       - tests/**
 
 permissions:
-  contents: read
+  # Match the elevated permissions the called claude-implement.yml job
+  # declares; a caller granting less than the callee requests causes
+  # GitHub to reject the workflow at load (silent startup_failure,
+  # root cause of #34).
+  contents: write
+  pull-requests: write
+  issues: write
 
 concurrency:
   group: claude-implement-test-${{ github.ref }}
@@ -26,7 +32,7 @@ jobs:
     name: Reusable workflow — stub success
     uses: ./.github/workflows/claude-implement.yml
     with:
-      issue-number: 9999
+      issue-number: 9001
       default-model: claude-sonnet-4-6
       timeout-minutes: 10
       dry-run: true
@@ -40,7 +46,7 @@ jobs:
     name: Reusable workflow — stub rate-limit (retry path)
     uses: ./.github/workflows/claude-implement.yml
     with:
-      issue-number: 9999
+      issue-number: 9002
       default-model: claude-sonnet-4-6
       timeout-minutes: 10
       dry-run: true
@@ -106,12 +112,13 @@ jobs:
     name: Reusable workflow — auto-review approve + safe envelope
     uses: ./.github/workflows/claude-implement.yml
     with:
-      issue-number: 9999
+      issue-number: 9003
       timeout-minutes: 10
       local-scripts: true
       stub-claude: true
       stub-fixture: success
       auto-review: true
+      dry-run: true
       stub-auto-review-enabled: true
       stub-review-verdict: approve
       stub-pr-files: |
@@ -124,12 +131,13 @@ jobs:
     name: Reusable workflow — auto-review approve + .github/ touch (envelope blocks)
     uses: ./.github/workflows/claude-implement.yml
     with:
-      issue-number: 9999
+      issue-number: 9004
       timeout-minutes: 10
       local-scripts: true
       stub-claude: true
       stub-fixture: success
       auto-review: true
+      dry-run: true
       stub-auto-review-enabled: true
       stub-review-verdict: approve
       stub-pr-files: |
@@ -142,12 +150,13 @@ jobs:
     name: Reusable workflow — auto-review request_changes
     uses: ./.github/workflows/claude-implement.yml
     with:
-      issue-number: 9999
+      issue-number: 9005
       timeout-minutes: 10
       local-scripts: true
       stub-claude: true
       stub-fixture: success
       auto-review: true
+      dry-run: true
       stub-auto-review-enabled: true
       stub-review-verdict: request_changes
       stub-pr-files: |
@@ -159,12 +168,13 @@ jobs:
     name: Reusable workflow — auto-review block
     uses: ./.github/workflows/claude-implement.yml
     with:
-      issue-number: 9999
+      issue-number: 9006
       timeout-minutes: 10
       local-scripts: true
       stub-claude: true
       stub-fixture: success
       auto-review: true
+      dry-run: true
       stub-auto-review-enabled: true
       stub-review-verdict: block
       stub-pr-files: |

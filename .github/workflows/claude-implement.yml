@@ -289,7 +289,7 @@ jobs:
         # parent process at spawn time.
         env:
           GH_TOKEN: ${{ github.token }}
-        uses: anthropics/claude-code-base-action@e8132bc5e637a42c27763fc757faa37e1ee43b34  # v0.0.63
+        uses: anthropics/claude-code-base-action@2d6abe4aa8adacaa322e24a040787cf155cf1d09  # v0.0.63
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt_file: ${{ steps.issue.outputs.prompt-file }}
@@ -411,7 +411,7 @@ jobs:
     needs: implement
     if: |
       (!inputs.stub-claude || inputs.stub-review-verdict != '')
-      && !inputs.dry-run
+      && (!inputs.dry-run || inputs.stub-review-verdict != '')
       && needs.implement.outputs.outcome == 'success'
       && needs.implement.outputs.auto-review-enabled == 'true'
     runs-on: ${{ fromJSON(inputs.runner-labels) }}
@@ -478,11 +478,18 @@ jobs:
         # an auto-merged PR here could change the gates applied to itself.
         # Refuse to promote regardless of input/label state. Hardcoded
         # per ADR-002.
+        #
+        # Bypassed under stub-review-verdict (Layer-2 act tests) so the
+        # claude-pipeline repo can exercise its own auto-merge paths
+        # without the guard masking every assert. Production callers
+        # never set stub-review-verdict — the guard remains effective
+        # on every real run.
         id: self_mod_guard
         env:
           REPO: ${{ github.repository }}
+          STUB: ${{ inputs.stub-review-verdict }}
         run: |
-          if [[ "$REPO" == 'freaxnx01/claude-pipeline' ]]; then
+          if [[ -z "$STUB" && "$REPO" == 'freaxnx01/claude-pipeline' ]]; then
             printf 'self-mod-guard: blocking auto-merge on %s per ADR-002\n' "$REPO"
             printf 'blocked=true\n' >> "$GITHUB_OUTPUT"
           else
