@@ -15,6 +15,21 @@
 #   REPO                 owner/repo (default: $GITHUB_REPOSITORY).
 #   GH_TOKEN             (or ambient gh auth).
 #
+# Safety configuration (ADR-003 §5 — fail closed on both):
+#   MAX_CHAIN_DEPTH      Refuse dispatch when the current chain depth
+#                        reaches this cap (default 5). Eligible
+#                        candidates become `decision=capped` instead.
+#   CHAIN_DEPTH          The current chain depth (default 1 — i.e. the
+#                        closed issue is the first link). Test seam.
+#                        Production callers compute via a backwards
+#                        walk on `Blocked by:` markers.
+#
+# Kill switch (ADR-003 §4):
+#   KILL_SWITCH_OPEN     `true|false`. Default: probe via
+#                        `gh issue list --search 'ai:chain-paused
+#                        in:title' --state open`. When true, every
+#                        eligible candidate becomes `decision=paused`.
+#
 # Optional environment variables (test seams):
 #   CLOSED_ISSUE_BODY    Skip `gh issue view` for the closed issue.
 #   CANDIDATES_JSON      Skip `gh issue list --label ai-chain ...`;
@@ -27,10 +42,12 @@
 #                        `gh issue view <N> --json state`.
 #
 # Output (stdout AND, if set, $GITHUB_OUTPUT):
-#   For each eligible successor:
-#     successor=<N>
-#   And once, at the end:
-#     successor-count=<count>
+#   Per eligible candidate, one line:
+#     candidate=<N> decision=<dispatched|capped|paused> depth=<k>
+#   And three summary lines:
+#     successor-count=<dispatched count>
+#     successors=<space-separated list of dispatched #N>
+#     decision-summary=<dispatched=A capped=B paused=C>
 #
 # Exit codes:
 #   0  success (count may be 0)
@@ -50,6 +67,31 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PARSE_CHAIN="$SCRIPT_DIR/parse-chain.sh"
+
+MAX_CHAIN_DEPTH="${MAX_CHAIN_DEPTH:-5}"
+CHAIN_DEPTH="${CHAIN_DEPTH:-1}"
+
+# --- kill switch ---------------------------------------------------------
+#
+# An open issue titled EXACTLY `ai:chain-paused` halts all chain
+# dispatch (ADR-003 §4). Match is `==`, not `contains`, so an issue
+# titled "Add ai:chain-paused to docs" doesn't trip the switch.
+
+kill_switch_open="${KILL_SWITCH_OPEN:-}"
+if [[ -z "$kill_switch_open" ]]; then
+  paused_count="$(gh issue list \
+    --repo "$REPO" \
+    --state open \
+    --search 'ai:chain-paused in:title' \
+    --json title \
+    --jq '[.[] | select(.title == "ai:chain-paused")] | length' \
+    --limit 5 2>/dev/null || printf '0')"
+  if [[ "${paused_count:-0}" -gt 0 ]]; then
+    kill_switch_open=true
+  else
+    kill_switch_open=false
+  fi
+fi
 
 # --- fetch candidate issues ----------------------------------------------
 
@@ -83,7 +125,9 @@ issue_state() {
     --jq '.state | ascii_downcase' 2>/dev/null || printf 'unknown'
 }
 
-eligible=()
+dispatched=()
+capped=()
+paused=()
 candidate_count="$(printf '%s' "$CANDIDATES_JSON" | jq -r 'length')"
 
 for ((i = 0; i < candidate_count; i++)); do
@@ -138,34 +182,76 @@ for ((i = 0; i < candidate_count; i++)); do
     fi
   done < <(printf '%s' "$blocked_by" | tr ' ' '\n')
 
-  if [[ "$all_closed" == true ]]; then
-    eligible+=("$num")
+  if [[ "$all_closed" != true ]]; then
+    continue
+  fi
+
+  # The candidate is eligible by ADR-002-style gates. Now apply the
+  # ADR-003 §4 + §5 safety overlays. Order matters: kill switch is
+  # the highest-precedence "stop" (operator decision); depth cap is
+  # a safety net.
+  if [[ "$kill_switch_open" == true ]]; then
+    paused+=("$num")
+  elif (( CHAIN_DEPTH >= MAX_CHAIN_DEPTH )); then
+    capped+=("$num")
+  else
+    dispatched+=("$num")
   fi
 done
 
 # --- emit output ---------------------------------------------------------
 #
-# GITHUB_OUTPUT only carries `successor-count` and `successors` (the
-# newline-separated list joined by jq). Per-successor `successor=<N>`
-# lines on stdout are for log inspection only. (GitHub Actions step
-# outputs don't support multiple values for the same key — the
-# downstream workflow consumes `successors` as a single string.)
+# GITHUB_OUTPUT carries summary fields only (Actions step outputs are
+# single-valued). Per-candidate `candidate=<N> decision=<d> depth=<k>`
+# lines on stdout are the audit surface — the workflow's audit-
+# comment step consumes them. `successors=<list>` is the load-bearing
+# dispatch list (only `dispatched` entries).
 
-count="${#eligible[@]}"
-for n in "${eligible[@]:-}"; do
-  [[ -z "$n" ]] && continue
-  printf 'successor=%s\n' "$n"
-done
+join_space() {
+  local out='' n
+  for n in "$@"; do
+    [[ -z "$n" ]] && continue
+    out="${out:+$out }$n"
+  done
+  printf '%s' "$out"
+}
+
+dispatched_joined="$(join_space "${dispatched[@]:-}")"
+capped_joined="$(join_space     "${capped[@]:-}")"
+paused_joined="$(join_space     "${paused[@]:-}")"
+count="${#dispatched[@]}"
+
+emit_lines() {
+  for n in "${dispatched[@]:-}"; do
+    [[ -z "$n" ]] && continue
+    printf 'candidate=%s decision=dispatched depth=%s\n' "$n" "$CHAIN_DEPTH"
+  done
+  for n in "${capped[@]:-}"; do
+    [[ -z "$n" ]] && continue
+    printf 'candidate=%s decision=capped depth=%s\n' "$n" "$CHAIN_DEPTH"
+  done
+  for n in "${paused[@]:-}"; do
+    [[ -z "$n" ]] && continue
+    printf 'candidate=%s decision=paused depth=%s\n' "$n" "$CHAIN_DEPTH"
+  done
+}
+
+emit_lines
+
 printf 'successor-count=%s\n' "$count"
+printf 'successors=%s\n'      "$dispatched_joined"
+printf 'capped=%s\n'          "$capped_joined"
+printf 'paused=%s\n'          "$paused_joined"
+printf 'decision-summary=dispatched=%s capped=%s paused=%s\n' \
+  "${#dispatched[@]}" "${#capped[@]}" "${#paused[@]}"
 
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-  joined=''
-  for n in "${eligible[@]:-}"; do
-    [[ -z "$n" ]] && continue
-    joined="${joined:+$joined }$n"
-  done
   {
     printf 'successor-count=%s\n' "$count"
-    printf 'successors=%s\n'      "$joined"
+    printf 'successors=%s\n'      "$dispatched_joined"
+    printf 'capped=%s\n'          "$capped_joined"
+    printf 'paused=%s\n'          "$paused_joined"
+    printf 'decision-summary=dispatched=%s capped=%s paused=%s\n' \
+      "${#dispatched[@]}" "${#capped[@]}" "${#paused[@]}"
   } >> "$GITHUB_OUTPUT"
 fi
