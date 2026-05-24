@@ -122,6 +122,62 @@ Never set this to a value that matches arbitrary humans — gate 1's purpose is 
 
 Both only take effect on the next run; PRs that already armed `gh pr merge --auto` will still land once required checks pass. Disarm in-flight with `gh pr merge --disable-auto <PR>`.
 
+## 3. Issue chaining (optional, requires auto-review)
+
+When an auto-merged PR closes an issue, the pipeline can dispatch a follow-up issue that was `Blocked by:` it. Conventions live in [ADR-003](DECISIONS.md#adr-003--issue-chain-dispatch-on-auto-merge); this section is just the wiring.
+
+### Consumer-side trigger stub
+
+Add `.github/workflows/chain-dispatch.yml` to the consumer repo (alongside the `claude.yml` stub from §1):
+
+```yaml
+name: Chain-dispatch on merged ai-implement PR
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  issues: read
+  pull-requests: read
+  actions: write
+
+jobs:
+  chain:
+    if: |
+      github.event.pull_request.merged == true
+      && contains(github.event.pull_request.labels.*.name, 'ai-implement')
+    uses: freaxnx01/claude-pipeline/.github/workflows/chain-dispatch.yml@v1
+    with:
+      closed-pr-number: ${{ github.event.pull_request.number }}
+      # `target-workflow` defaults to claude.yml — override if your
+      # consumer pipeline stub lives under a different filename.
+    secrets:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+### File issues with chain markers
+
+In each chained issue's body, declare dependencies using GitHub's native convention:
+
+```
+Blocks: #101
+Blocked by: #100
+```
+
+Then label each chained issue with **both** `ai-implement` and `ai-chain`. Label the *first* one only with `ai-implement` initially (or also with `ai-chain` — the dispatcher adds `ai-implement` to opted-in successors automatically).
+
+Dispatch the first issue. The pipeline implements + auto-merges it (subject to all ADR-002 gates). On merge, the chain-dispatch workflow fires, finds the next eligible issue, and dispatches it. The chain walks to completion.
+
+### Kill switch
+
+Open an issue **titled exactly** `ai:chain-paused`. The dispatcher checks for this title before each step and refuses to dispatch while it's open. Close the issue to lift the pause.
+
+### Out of scope (today)
+
+- **Cross-repo dependencies.** `Blocks: org/other-repo#42` is parsed but ignored.
+- **Cycle / depth caps.** Coming in #19. Until then, file shallow chains and watch the chain-state issue.
+- **Manual merges don't trigger the chain** — by design. A human who steps in mid-chain takes over the rest.
+
 ## Troubleshooting
 
 ### "Auto-merge held: …" comment on the PR

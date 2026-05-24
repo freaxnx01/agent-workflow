@@ -428,6 +428,103 @@ ec="$(run_capture_ec env PR_NUMBER=1 REPO=o/r AGENT=claude HEAD_SHA=abc \
         bash "$REVIEW")"
 assert_equals "$ec" "64" "missing PROMPT_TEMPLATE → exit 64"
 
+section "parse-chain — extract Blocks: / Blocked by: markers (ADR-003)"
+
+PARSE_CHAIN="$ROOT/scripts/parse-chain.sh"
+
+out="$(printf 'Title\n\nBlocks: #42, #43\nBlocked by: #100\n' | bash "$PARSE_CHAIN")"
+assert_contains "$out" 'blocks=#42 #43'    "single Blocks: line with commas → two refs"
+assert_contains "$out" 'blocked-by=#100'   "single Blocked by: line → one ref"
+
+# Multiple `Blocks:` lines union into a set
+out="$(printf 'Blocks: #1\nsome text\nBlocks: #2\n' | bash "$PARSE_CHAIN")"
+assert_contains "$out" 'blocks=#1 #2'      "multiple Blocks: lines → union"
+
+# Cross-repo refs parsed-and-discarded per ADR-003 §6
+out="$(printf 'Blocks: #5, org/other-repo#99, #6\n' | bash "$PARSE_CHAIN")"
+assert_contains "$out" 'blocks=#5 #6'      "cross-repo refs ignored"
+
+# `Also Blocks: #44` — not at line start, must not match
+out="$(printf 'Also Blocks: #44\n' | bash "$PARSE_CHAIN")"
+assert_contains "$out" 'blocks='           "inline 'Blocks:' (not at line start) → ignored"
+
+# Body via env var instead of stdin
+out="$(ISSUE_BODY=$'Blocked by: #7\n' bash "$PARSE_CHAIN" < /dev/null)"
+assert_contains "$out" 'blocked-by=#7'     "ISSUE_BODY env seam"
+
+# Missing body → exit 2
+ec="$(run_capture_ec env bash "$PARSE_CHAIN" < /dev/null)"
+assert_equals "$ec" "2" "no body provided → exit 2"
+
+section "find-next-blocked-issue — eligibility per ADR-003"
+
+FIND_NEXT="$ROOT/scripts/find-next-blocked-issue.sh"
+
+find_next_run() {
+  local go
+  go="$(mktemp)"
+  GITHUB_OUTPUT="$go" "$@" bash "$FIND_NEXT" >/dev/null
+  cat "$go"
+  rm -f "$go"
+}
+
+# Single-blocker: PR closes #100; #101 (with ai-chain) blocked-by #100 → eligible
+out="$(find_next_run env \
+        CLOSED_ISSUE_NUMBER=100 REPO=o/r \
+        CANDIDATES_JSON='[{"number":101,"body":"Blocked by: #100","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]')"
+assert_contains "$out" 'successor-count=1' "single-blocker → 1 successor"
+assert_contains "$out" 'successors=101'    "successor list contains 101"
+
+# Multi-blocker, NOT all closed: #102 blocked by #100 and #200; #200 still open → NOT eligible
+out="$(find_next_run env \
+        CLOSED_ISSUE_NUMBER=100 REPO=o/r \
+        ISSUE_STATE_200=open \
+        CANDIDATES_JSON='[{"number":102,"body":"Blocked by: #100, #200","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]')"
+assert_contains "$out" 'successor-count=0' "multi-blocker with one still-open → 0 successors"
+
+# Multi-blocker, ALL closed (other blocker is also closed) → eligible
+out="$(find_next_run env \
+        CLOSED_ISSUE_NUMBER=100 REPO=o/r \
+        ISSUE_STATE_200=closed \
+        CANDIDATES_JSON='[{"number":102,"body":"Blocked by: #100, #200","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]')"
+assert_contains "$out" 'successor-count=1' "multi-blocker all closed → 1 successor"
+assert_contains "$out" 'successors=102'    "the right successor is named"
+
+# Successor without ai-chain → never picked up
+# (the gh query filters this in real runs, but the script defends
+# against a CANDIDATES_JSON that bypasses the filter)
+out="$(find_next_run env \
+        CLOSED_ISSUE_NUMBER=100 REPO=o/r \
+        CANDIDATES_JSON='[{"number":103,"body":"Blocked by: #100","labels":[{"name":"ai-implement"}]}]')"
+assert_contains "$out" 'successor-count=0' "candidate without ai-chain → 0 successors"
+
+# Candidate whose Blocked-by does NOT reference the closed issue → skip
+# (#104 is blocked by #999, not #100; the close of #100 doesn't unblock it)
+out="$(find_next_run env \
+        CLOSED_ISSUE_NUMBER=100 REPO=o/r \
+        CANDIDATES_JSON='[{"number":104,"body":"Blocked by: #999","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]')"
+assert_contains "$out" 'successor-count=0' "candidate not blocked-by the closed issue → 0 successors"
+
+# Candidate with no Blocked-by entries at all → skip (degenerate)
+out="$(find_next_run env \
+        CLOSED_ISSUE_NUMBER=100 REPO=o/r \
+        CANDIDATES_JSON='[{"number":105,"body":"no markers","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]')"
+assert_contains "$out" 'successor-count=0' "candidate with no Blocked-by → 0 successors"
+
+# Multiple eligible successors at once → all dispatched
+out="$(find_next_run env \
+        CLOSED_ISSUE_NUMBER=100 REPO=o/r \
+        CANDIDATES_JSON='[{"number":106,"body":"Blocked by: #100","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]},{"number":107,"body":"Blocked by: #100","labels":[{"name":"ai-chain"},{"name":"ai-implement"}]}]')"
+assert_contains "$out" 'successor-count=2' "two candidates both unblocked → 2 successors"
+assert_contains "$out" 'successors=106 107' "both successor numbers listed"
+
+# Error paths
+ec="$(run_capture_ec env REPO=o/r bash "$FIND_NEXT")"
+assert_equals "$ec" "2" "missing CLOSED_ISSUE_NUMBER → exit 2"
+
+ec="$(run_capture_ec env CLOSED_ISSUE_NUMBER=100 CANDIDATES_JSON='[]' bash "$FIND_NEXT")"
+assert_equals "$ec" "2" "missing REPO → exit 2"
+
 section "verify-gh-mock-merge — detect gh pr merge in the mock log"
 
 VERIFY_MOCK="$ROOT/scripts/verify-gh-mock-merge.sh"
