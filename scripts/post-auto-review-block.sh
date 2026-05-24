@@ -70,6 +70,12 @@ fi
 
 # Label the issue so a watcher can filter for review-blocked work.
 # ensure-issue-labels.sh runs earlier in the implement job under
-# `always() && !dry-run`, so the label exists by the time we get here
-# on every code path that reaches this script.
+# `always() && !dry-run`, so the label usually exists by the time we
+# get here. Belt-and-suspenders: idempotently create it first so a
+# manually-deleted label, or a future refactor that splits implement
+# and auto_review across separate workflows, doesn't break the
+# `--add-label` call.
+gh label create ai:review-blocked --repo "$REPO" --color D73A4A \
+  --description 'Auto-review left the PR draft; human action required' \
+  >/dev/null 2>&1 || true
 gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label ai:review-blocked

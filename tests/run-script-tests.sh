@@ -458,6 +458,17 @@ SELF_MOD_BLOCKED=true \
 calls="$(cat "$LOG")"; rm -f "$LOG"
 assert_contains "$calls" 'pr comment 100 --repo o/r --body Auto-merge held: self-modification guard (ADR-002)' "self-mod → PR comment names ADR-002"
 assert_contains "$calls" 'issue edit 42 --repo o/r --add-label ai:review-blocked' "self-mod → labels issue"
+assert_contains "$calls" 'label create ai:review-blocked --repo o/r' "label-create precedes --add-label (defensive idempotent)"
+# Verify ORDER: label create must come before the add-label call so a
+# deleted label doesn't cause `--add-label` to fail.
+label_line="$(printf '%s\n' "$calls" | grep -n '^label create ai:review-blocked' | head -1 | cut -d: -f1)"
+add_line="$(printf '%s\n'   "$calls" | grep -n '^issue edit 42 --repo o/r --add-label' | head -1 | cut -d: -f1)"
+if [[ -n "$label_line" && -n "$add_line" && "$label_line" -lt "$add_line" ]]; then
+  pass "label-create line ($label_line) appears before --add-label line ($add_line)"
+else
+  fail "label-create line ($label_line) appears before --add-label line ($add_line)" \
+       "order check: create=$label_line add=$add_line"
+fi
 
 # No PR found (FOUND=false, no PR_NUMBER) → comment on the issue, not the PR
 LOG="$(mktemp)"
