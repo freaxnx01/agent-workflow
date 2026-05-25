@@ -1,6 +1,6 @@
 # Consumer Setup
 
-How to wire `claude-pipeline` into a consumer repo. Two flows:
+How to wire `agent-pipeline` into a consumer repo. Two flows:
 
 1. **Minimum stub** — labeled-issue → draft PR (no auto-merge).
 2. **Auto-review + auto-merge** — labeled-issue → draft PR → agent review → squash-merge, inside ADR-002's safety envelope.
@@ -18,7 +18,7 @@ on:
 jobs:
   claude:
     if: github.event.label.name == 'ai-implement'
-    uses: freaxnx01/claude-pipeline/.github/workflows/claude-implement.yml@v1
+    uses: freaxnx01/agent-pipeline/.github/workflows/claude-implement.yml@v1
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     with:
@@ -62,7 +62,7 @@ Caveats:
 # .github/workflows/claude.yml
 jobs:
   claude:
-    uses: freaxnx01/claude-pipeline/.github/workflows/claude-implement.yml@v1
+    uses: freaxnx01/agent-pipeline/.github/workflows/claude-implement.yml@v1
     with:
       issue-number: ${{ github.event.issue.number }}
       auto-review: true        # per-repo opt-in (ADR-002 gate 3)
@@ -134,7 +134,7 @@ Choose the agent at the call site or per-issue:
 # .github/workflows/claude.yml
 jobs:
   claude:
-    uses: freaxnx01/claude-pipeline/.github/workflows/claude-implement.yml@v1
+    uses: freaxnx01/agent-pipeline/.github/workflows/claude-implement.yml@v1
     with:
       issue-number: ${{ github.event.issue.number }}
       agent: opencode             # ← workflow-input default for this repo
@@ -186,7 +186,7 @@ jobs:
     if: |
       github.event.pull_request.merged == true
       && contains(github.event.pull_request.labels.*.name, 'ai-implement')
-    uses: freaxnx01/claude-pipeline/.github/workflows/chain-dispatch.yml@v1
+    uses: freaxnx01/agent-pipeline/.github/workflows/chain-dispatch.yml@v1
     with:
       closed-pr-number: ${{ github.event.pull_request.number }}
       # `target-workflow` defaults to claude.yml — override if your
@@ -233,8 +233,8 @@ Check the workflow run for the `auto_review` job. It only triggers when:
 - the issue carries `ai-auto-review`
 - the `implement` job's `auto-review-enabled` output is `true`
 
-If all four hold and the job still didn't run, the issue is in workflow plumbing — file an issue against `claude-pipeline`.
+If all four hold and the job still didn't run, the issue is in workflow plumbing — file an issue against `agent-pipeline`.
 
 ### Self-modification guard
 
-The `freaxnx01/claude-pipeline` repo itself never auto-merges, regardless of input or label state — ADR-002 §"Self-modification / dogfooding". Hardcoded; no way to disable. If you forked `claude-pipeline`, update the guard's hardcoded repo string before enabling `auto-review: true` on the fork.
+The `freaxnx01/agent-pipeline` repo itself never auto-merges, regardless of input or label state — ADR-002 §"Self-modification / dogfooding". Hardcoded; no way to disable. If you forked `agent-pipeline`, update the guard's hardcoded repo string before enabling `auto-review: true` on the fork.
