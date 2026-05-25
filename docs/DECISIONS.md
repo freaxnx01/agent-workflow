@@ -1,6 +1,6 @@
 # Architecture Decisions
 
-This file records architecturally-significant decisions for `claude-pipeline`.
+This file records architecturally-significant decisions for `agent-pipeline`.
 Each entry is dated and immutable — supersession is captured by a follow-on
 entry, never by editing prior history.
 
@@ -12,14 +12,14 @@ Nygard's pattern, kept terse.
 ## ADR-001 — Agent abstraction layer (2026-05-23)
 
 **Status:** Accepted
-**Tracking:** [#5](https://github.com/freaxnx01/claude-pipeline/issues/5) under epic [#2](https://github.com/freaxnx01/claude-pipeline/issues/2)
+**Tracking:** [#5](https://github.com/freaxnx01/agent-pipeline/issues/5) under epic [#2](https://github.com/freaxnx01/agent-pipeline/issues/2)
 
 ### Context
 
 The reusable workflow `claude-implement.yml` is hard-coded to invoke
 `anthropics/claude-code-base-action` and to address Claude model IDs
 (`claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5`). Epic
-[#2](https://github.com/freaxnx01/claude-pipeline/issues/2) adds OpenCode
+[#2](https://github.com/freaxnx01/agent-pipeline/issues/2) adds OpenCode
 + OpenRouter (Mistral first) as a second executor without forcing a
 redesign on every downstream script (`classify-failure.sh`,
 `post-run-report.sh`, `retry-dispatch.sh`).
@@ -124,7 +124,7 @@ the normalized JSON, not on agent identity.
 - `classify-failure.sh`'s error-string regex must learn OpenRouter-
   flavored rate-limit / auth / 5xx messages alongside the Claude-flavored
   ones. Tracked in
-  [#10](https://github.com/freaxnx01/claude-pipeline/issues/10).
+  [#10](https://github.com/freaxnx01/agent-pipeline/issues/10).
 - Agents that do not surface per-run cost (current OpenCode behavior)
   report `total_cost_usd: 0`. Documented in `CONSUMER-SETUP.md` so the
   run-report comment is not mistaken for "free."
@@ -138,7 +138,7 @@ the normalized JSON, not on agent identity.
 
 **Status:** Accepted — supersedes constraint #4 ("Draft PRs only") in
 `docs/DESIGN.md`.
-**Tracking:** [#12](https://github.com/freaxnx01/claude-pipeline/issues/12) under epic [#3](https://github.com/freaxnx01/claude-pipeline/issues/3)
+**Tracking:** [#12](https://github.com/freaxnx01/agent-pipeline/issues/12) under epic [#3](https://github.com/freaxnx01/agent-pipeline/issues/3)
 
 ### Context
 
@@ -149,9 +149,9 @@ was the right default when there was no review step between
 "agent finished" and "PR exists" — every diff needed human eyes before
 merge.
 
-Epic [#3](https://github.com/freaxnx01/claude-pipeline/issues/3) introduces
+Epic [#3](https://github.com/freaxnx01/agent-pipeline/issues/3) introduces
 an agent-driven review step that runs on the just-opened draft PR
-([#14](https://github.com/freaxnx01/claude-pipeline/issues/14)). With a
+([#14](https://github.com/freaxnx01/agent-pipeline/issues/14)). With a
 review verdict in hand, there is a defensible path to promoting the draft
 to ready and enabling auto-merge — but only if a tight safety envelope is
 enforced. This ADR defines that envelope.
@@ -183,7 +183,7 @@ auto-review job runs:
    using a GitHub App or PAT have a different `pr.user.login` and MUST
    either (a) pass the additional identity via a new
    `pipeline-author-allowlist` workflow input (added in
-   [#15](https://github.com/freaxnx01/claude-pipeline/issues/15)), or
+   [#15](https://github.com/freaxnx01/agent-pipeline/issues/15)), or
    (b) leave `auto-review: false` until the allowlist is wired. Refuse
    to promote a human-authored or third-party-bot PR even if the gating
    labels are present.
@@ -204,12 +204,12 @@ auto-review job runs:
 3. **Per-repo opt-in.** The reusable workflow was called with
    `auto-review: true`.
 4. **Review verdict = approve.** `scripts/review-pr.sh`
-   ([#14](https://github.com/freaxnx01/claude-pipeline/issues/14)) emits
+   ([#14](https://github.com/freaxnx01/agent-pipeline/issues/14)) emits
    `verdict=approve`. `request_changes` and `block` both leave the PR
    draft.
 
    The review prompt
-   ([#14](https://github.com/freaxnx01/claude-pipeline/issues/14)) MUST
+   ([#14](https://github.com/freaxnx01/agent-pipeline/issues/14)) MUST
    flag the following as automatic `block` regardless of other findings:
    - **Any net deletion of test files** — i.e. test-file lines removed
      strictly exceeds test-file lines added (N=0; any net deletion
@@ -292,13 +292,13 @@ If any gate fails, the auto-review job:
   out-of-scope today.
 - **Review verdict was wrong (approved a bad change).** Same as above —
   revert in `main`, and post-mortem the review prompt
-  ([#14](https://github.com/freaxnx01/claude-pipeline/issues/14)) before
+  ([#14](https://github.com/freaxnx01/agent-pipeline/issues/14)) before
   re-enabling `auto-review: true` for the issue category that produced
   it.
 - **Gate-envelope bug** (e.g. a `.github/` file slipped through).
   Disable feature via either kill switch:
   - **Per-repo:** flip `auto-review: false` at the call site. No code
-    change to `claude-pipeline` needed.
+    change to `agent-pipeline` needed.
   - **Per-issue:** remove the `ai-auto-review` label from the
     originating issue. Symmetric with the two-tier opt-in in §2 (gates
     2 + 3).
@@ -337,7 +337,7 @@ allowed:
 `CLAUDE.md` is not amended — the project's `CLAUDE.md` is the AI base
 instructions + CI-automation stack overlay and does not carry this
 specific rule. (The original issue
-[#12](https://github.com/freaxnx01/claude-pipeline/issues/12) body cited
+[#12](https://github.com/freaxnx01/agent-pipeline/issues/12) body cited
 `CLAUDE.md`; the rule is actually in `docs/DESIGN.md` under the
 "Critical constraints — non-negotiable" section, item 4. Corrected
 here.)
@@ -345,18 +345,18 @@ here.)
 ### Consequences
 
 - The `auto-review-enabled` workflow output added in
-  [#13](https://github.com/freaxnx01/claude-pipeline/issues/13) becomes
+  [#13](https://github.com/freaxnx01/agent-pipeline/issues/13) becomes
   the first gate consulted by
-  [#15](https://github.com/freaxnx01/claude-pipeline/issues/15). It is
+  [#15](https://github.com/freaxnx01/agent-pipeline/issues/15). It is
   necessary but not sufficient — gates 1, 4, 5, 6, 7 above are all
   evaluated after it.
 - The safety envelope is the **single source of truth** for "is this PR
   auto-mergeable."
-  [#15](https://github.com/freaxnx01/claude-pipeline/issues/15)'s
+  [#15](https://github.com/freaxnx01/agent-pipeline/issues/15)'s
   `scripts/check-merge-envelope.sh` (to be written there) implements
   exactly these checks — no extra, no fewer. Any divergence is a bug in
   one place or the other, not a policy disagreement.
-- Issue [#17](https://github.com/freaxnx01/claude-pipeline/issues/17)
+- Issue [#17](https://github.com/freaxnx01/agent-pipeline/issues/17)
   (chaining ADR) inherits the assumption that auto-merge is the only
   trigger for chain-dispatch. If a human merges a chained issue's PR
   manually, the chain does NOT auto-advance — this is intentional
@@ -385,7 +385,7 @@ here.)
   painful, a future ADR can carve out a `.github/` allowlist (purely-
   declarative subpaths that cannot affect workflow execution) without
   needing to revisit ADR-002's core decision.
-- **Self-modification / dogfooding.** `claude-pipeline` itself MUST NOT
+- **Self-modification / dogfooding.** `agent-pipeline` itself MUST NOT
   enable `auto-review: true` until a follow-up ADR addresses the
   self-modification risk surface that other consumer repos don't have:
   the pipeline's own `scripts/`, `tests/`, `docs/DECISIONS.md`, and
@@ -394,7 +394,7 @@ here.)
 
   To prevent accidental violation, #15 MUST implement a workflow-level
   guard: refuse to promote (post a clear comment naming this ADR, leave
-  PR draft) when `github.repository == 'freaxnx01/claude-pipeline'`
+  PR draft) when `github.repository == 'freaxnx01/agent-pipeline'`
   regardless of input or label state. Hardcoding the repo string in the
   guard is acceptable for this single-known-instance carve-out; if the
   pipeline ever forks, the fork's first task is to update the guard.
@@ -405,7 +405,7 @@ here.)
 ## ADR-003 — Issue-chain dispatch on auto-merge (2026-05-24)
 
 **Status:** Accepted
-**Tracking:** [#17](https://github.com/freaxnx01/claude-pipeline/issues/17) under epic [#4](https://github.com/freaxnx01/claude-pipeline/issues/4)
+**Tracking:** [#17](https://github.com/freaxnx01/agent-pipeline/issues/17) under epic [#4](https://github.com/freaxnx01/agent-pipeline/issues/4)
 
 ### Context
 
@@ -417,8 +417,8 @@ maintainer files a small dependency-graph of issues once and the
 pipeline walks it.
 
 This ADR defines the conventions and safeguards; implementation
-follows in [#18](https://github.com/freaxnx01/claude-pipeline/issues/18)
-(workflow wiring) and [#19](https://github.com/freaxnx01/claude-pipeline/issues/19)
+follows in [#18](https://github.com/freaxnx01/agent-pipeline/issues/18)
+(workflow wiring) and [#19](https://github.com/freaxnx01/agent-pipeline/issues/19)
 (chain-depth cap, cooldown, kill switch).
 
 Manual merges are intentionally NOT triggers. ADR-002 already
@@ -454,7 +454,7 @@ load-bearing relation.
 
 #### 2. Parser
 
-`scripts/parse-chain.sh` (added in [#18](https://github.com/freaxnx01/claude-pipeline/issues/18)):
+`scripts/parse-chain.sh` (added in [#18](https://github.com/freaxnx01/agent-pipeline/issues/18)):
 
 - Reads the issue body via `gh issue view <N> --json body`.
 - Applies a single-line regex per marker

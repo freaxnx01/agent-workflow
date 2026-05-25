@@ -47,9 +47,9 @@ on:
       pipeline-repo:
         description: |
           Owner/repo to fetch shared scripts from. Defaults to the
-          canonical `freaxnx01/claude-pipeline`.
+          canonical `freaxnx01/agent-pipeline`.
         type: string
-        default: freaxnx01/claude-pipeline
+        default: freaxnx01/agent-pipeline
       pipeline-ref:
         description: |
           Ref of `pipeline-repo` to check out. Defaults to `main`.
@@ -60,7 +60,7 @@ on:
       local-scripts:
         description: |
           If true, skip cross-repo checkout and mirror the local
-          consumer checkout's `scripts/` into `.claude-pipeline/`.
+          consumer checkout's `scripts/` into `.agent-pipeline/`.
         type: boolean
         default: false
       stub-mode:
@@ -145,24 +145,24 @@ jobs:
       - name: Checkout consumer repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Checkout claude-pipeline scripts
+      - name: Checkout agent-pipeline scripts
         if: ${{ !inputs.local-scripts }}
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ inputs.pipeline-ref }}
-          path: .claude-pipeline
+          path: .agent-pipeline
           sparse-checkout: |
             scripts
             tests/mocks
 
-      - name: Mirror local scripts to .claude-pipeline (self-test mode)
+      - name: Mirror local scripts to .agent-pipeline (self-test mode)
         if: ${{ inputs.local-scripts }}
         run: |
-          mkdir -p .claude-pipeline/scripts .claude-pipeline/tests/mocks
-          cp -r scripts/. .claude-pipeline/scripts/
+          mkdir -p .agent-pipeline/scripts .agent-pipeline/tests/mocks
+          cp -r scripts/. .agent-pipeline/scripts/
           if [[ -d tests/mocks ]]; then
-            cp -r tests/mocks/. .claude-pipeline/tests/mocks/
+            cp -r tests/mocks/. .agent-pipeline/tests/mocks/
           fi
 
       - name: Wire gh mock (test mode)
@@ -174,7 +174,7 @@ jobs:
           log="$RUNNER_TEMP_DIR/gh-mock.log"
           : > "$log"
           {
-            printf 'PATH=%s/.claude-pipeline/tests/mocks:%s\n' "$WORKSPACE" "$PATH"
+            printf 'PATH=%s/.agent-pipeline/tests/mocks:%s\n' "$WORKSPACE" "$PATH"
             printf 'GH_MOCK_LOG=%s\n' "$log"
           } >> "$GITHUB_ENV"
 
@@ -235,7 +235,7 @@ jobs:
           CHAIN_DEPTH: ${{ inputs.stub-mode && inputs.stub-chain-depth || inputs.chain-depth }}
           CANDIDATES_JSON: ${{ inputs.stub-mode && inputs.stub-candidates-json || '' }}
           KILL_SWITCH_OPEN: ${{ inputs.stub-mode && (inputs.stub-kill-switch-open && 'true' || 'false') || '' }}
-        run: bash .claude-pipeline/scripts/find-next-blocked-issue.sh
+        run: bash .agent-pipeline/scripts/find-next-blocked-issue.sh
 
       - name: Post audit comments (every candidate, every decision)
         # ADR-003: an audit comment goes on every candidate so the
@@ -258,7 +258,7 @@ jobs:
               return 0
             fi
             ISSUE_NUMBER="$n" DECISION="$decision" \
-              bash .claude-pipeline/scripts/post-chain-audit.sh
+              bash .agent-pipeline/scripts/post-chain-audit.sh
           }
           for n in $DISPATCHED; do post dispatched "$n"; done
           for n in $CAPPED;     do post capped     "$n"; done

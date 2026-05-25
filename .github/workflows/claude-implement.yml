@@ -30,12 +30,12 @@ on:
         default: 30
       pipeline-repo:
         description: |
-          Owner/repo for the claude-pipeline checkout that supplies shared
-          scripts. Defaults to the canonical 'freaxnx01/claude-pipeline'.
+          Owner/repo for the agent-pipeline checkout that supplies shared
+          scripts. Defaults to the canonical 'freaxnx01/agent-pipeline'.
           Override only for self-tests (the test workflow points this at the
           repo currently being PR-tested so it works on fork PRs and act).
         type: string
-        default: freaxnx01/claude-pipeline
+        default: freaxnx01/agent-pipeline
       pipeline-ref:
         description: |
           Ref of `pipeline-repo` to check out for shared scripts. Defaults
@@ -58,7 +58,7 @@ on:
         description: |
           If true, skip the cross-repo checkout of `pipeline-repo` and instead
           mirror the consumer checkout's `scripts/` and `tests/mocks/` into
-          `.claude-pipeline/`. Use for self-tests under act (where the SHA
+          `.agent-pipeline/`. Use for self-tests under act (where the SHA
           isn't on the canonical remote yet) or for monorepo consumers where
           pipeline scripts live in the same repo.
         type: boolean
@@ -205,34 +205,34 @@ jobs:
       - name: Checkout consumer repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Checkout claude-pipeline scripts
+      - name: Checkout agent-pipeline scripts
         if: ${{ !inputs.local-scripts }}
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ inputs.pipeline-ref }}
-          path: .claude-pipeline
+          path: .agent-pipeline
           sparse-checkout: |
             scripts
             tests/mocks
             tests/fixtures
 
-      - name: Mirror local scripts to .claude-pipeline (self-test mode)
+      - name: Mirror local scripts to .agent-pipeline (self-test mode)
         if: ${{ inputs.local-scripts }}
         run: |
-          mkdir -p .claude-pipeline/scripts \
-                   .claude-pipeline/tests/mocks \
-                   .claude-pipeline/tests/fixtures
-          cp -r scripts/. .claude-pipeline/scripts/
+          mkdir -p .agent-pipeline/scripts \
+                   .agent-pipeline/tests/mocks \
+                   .agent-pipeline/tests/fixtures
+          cp -r scripts/. .agent-pipeline/scripts/
           if [[ -d tests/mocks ]]; then
-            cp -r tests/mocks/. .claude-pipeline/tests/mocks/
+            cp -r tests/mocks/. .agent-pipeline/tests/mocks/
           fi
           if [[ -d tests/fixtures ]]; then
-            cp -r tests/fixtures/. .claude-pipeline/tests/fixtures/
+            cp -r tests/fixtures/. .agent-pipeline/tests/fixtures/
           fi
 
       - name: Ensure toolchain
-        run: bash .claude-pipeline/scripts/ensure-toolchain.sh
+        run: bash .agent-pipeline/scripts/ensure-toolchain.sh
 
       - name: Fetch issue context
         if: ${{ !inputs.stub-claude }}
@@ -262,7 +262,7 @@ jobs:
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           DEFAULT_AGENT: ${{ inputs.agent }}
-        run: bash .claude-pipeline/scripts/classify-agent.sh
+        run: bash .agent-pipeline/scripts/classify-agent.sh
 
       - name: Triage model
         if: ${{ !inputs.stub-claude }}
@@ -272,7 +272,7 @@ jobs:
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           DEFAULT_MODEL: ${{ inputs.default-model }}
-        run: bash .claude-pipeline/scripts/classify-task.sh
+        run: bash .agent-pipeline/scripts/classify-task.sh
 
       - name: Check auto-review gate
         if: ${{ !inputs.stub-claude }}
@@ -282,7 +282,7 @@ jobs:
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           INPUT_AUTO_REVIEW: ${{ inputs.auto-review }}
-        run: bash .claude-pipeline/scripts/check-auto-review-gate.sh
+        run: bash .agent-pipeline/scripts/check-auto-review-gate.sh
 
       - name: Stub auto-review gate (test mode)
         # Mirrors check-auto-review-gate.sh's output under stub-claude=true
@@ -369,7 +369,7 @@ jobs:
           MODEL: ${{ steps.triage.outputs.model }}
         run: |
           out="${RUNNER_TEMP:-/tmp}/claude-result.json"
-          bash .claude-pipeline/scripts/adapt-opencode-result.sh > "$out"
+          bash .agent-pipeline/scripts/adapt-opencode-result.sh > "$out"
           printf 'result-file=%s\n'    "$out"             >> "$GITHUB_OUTPUT"
           printf 'execution-file=%s\n' "$EXECUTION_FILE"  >> "$GITHUB_OUTPUT"
 
@@ -397,13 +397,13 @@ jobs:
               # OpenCode-flavored canonical result (post-adapter shape).
               # Loaded from a fixture rather than synthesized inline so
               # the same JSON is reviewable in both Layer-1 and Layer-2.
-              cp .claude-pipeline/tests/fixtures/result-opencode-success.json "$out"
+              cp .agent-pipeline/tests/fixtures/result-opencode-success.json "$out"
               ;;
             opencode_rate_limit)
-              cp .claude-pipeline/tests/fixtures/result-opencode-rate-limit.json "$out"
+              cp .agent-pipeline/tests/fixtures/result-opencode-rate-limit.json "$out"
               ;;
             opencode_task_failure)
-              cp .claude-pipeline/tests/fixtures/result-opencode-task-failure.json "$out"
+              cp .agent-pipeline/tests/fixtures/result-opencode-task-failure.json "$out"
               ;;
             *)
               echo "::error::unknown stub-fixture: $STUB_FIXTURE"; exit 2
@@ -433,7 +433,7 @@ jobs:
         if: always() && (steps.claude.outputs.result-file != '' || steps.opencode_adapt.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
         env:
           RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.opencode_adapt.outputs.result-file || steps.stub_run.outputs.result-file }}
-        run: bash .claude-pipeline/scripts/classify-failure.sh
+        run: bash .agent-pipeline/scripts/classify-failure.sh
 
       - name: Plan retry
         id: retry
@@ -449,7 +449,7 @@ jobs:
           # may trigger an actual `gh workflow run` against the consumer's
           # claude.yml (which now accepts workflow_dispatch).
           DRY_RUN: ${{ inputs.stub-claude && '1' || '0' }}
-        run: bash .claude-pipeline/scripts/retry-dispatch.sh
+        run: bash .agent-pipeline/scripts/retry-dispatch.sh
 
       - name: Extract job outputs from result.json
         id: outputs
@@ -468,7 +468,7 @@ jobs:
         env:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
-        run: bash .claude-pipeline/scripts/ensure-issue-labels.sh
+        run: bash .agent-pipeline/scripts/ensure-issue-labels.sh
 
       - name: Post run report
         if: always() && (steps.claude.outputs.result-file != '' || steps.opencode_adapt.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
@@ -480,7 +480,7 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
           RENDER_ONLY: ${{ inputs.dry-run && '1' || '0' }}
-        run: bash .claude-pipeline/scripts/post-run-report.sh
+        run: bash .agent-pipeline/scripts/post-run-report.sh
 
   auto_review:
     # ADR-002: agent-driven review on the freshly-opened draft PR, with
@@ -508,30 +508,30 @@ jobs:
         # for check-merge-envelope.sh to read.
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Checkout claude-pipeline scripts
+      - name: Checkout agent-pipeline scripts
         if: ${{ !inputs.local-scripts }}
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           repository: ${{ inputs.pipeline-repo }}
           ref: ${{ inputs.pipeline-ref }}
-          path: .claude-pipeline
+          path: .agent-pipeline
           sparse-checkout: |
             scripts
             tests/mocks
             tests/fixtures
 
-      - name: Mirror local scripts to .claude-pipeline (self-test mode)
+      - name: Mirror local scripts to .agent-pipeline (self-test mode)
         if: ${{ inputs.local-scripts }}
         run: |
-          mkdir -p .claude-pipeline/scripts \
-                   .claude-pipeline/tests/mocks \
-                   .claude-pipeline/tests/fixtures
-          cp -r scripts/. .claude-pipeline/scripts/
+          mkdir -p .agent-pipeline/scripts \
+                   .agent-pipeline/tests/mocks \
+                   .agent-pipeline/tests/fixtures
+          cp -r scripts/. .agent-pipeline/scripts/
           if [[ -d tests/mocks ]]; then
-            cp -r tests/mocks/. .claude-pipeline/tests/mocks/
+            cp -r tests/mocks/. .agent-pipeline/tests/mocks/
           fi
           if [[ -d tests/fixtures ]]; then
-            cp -r tests/fixtures/. .claude-pipeline/tests/fixtures/
+            cp -r tests/fixtures/. .agent-pipeline/tests/fixtures/
           fi
 
       - name: Wire gh mock + stub PR JSON (test mode)
@@ -553,20 +553,20 @@ jobs:
           log="$RUNNER_TEMP_DIR/gh-mock.log"
           : > "$log"
           {
-            printf 'PATH=%s/.claude-pipeline/tests/mocks:%s\n' "$WORKSPACE" "$PATH"
+            printf 'PATH=%s/.agent-pipeline/tests/mocks:%s\n' "$WORKSPACE" "$PATH"
             printf 'GH_MOCK_LOG=%s\n' "$log"
             printf 'PIPELINE_PRS_JSON=%s\n' \
               '[{"number":9999,"isDraft":true,"headRefOid":"stubsha","author":{"login":"github-actions[bot]"}}]'
           } >> "$GITHUB_ENV"
 
-      - name: Self-modification guard (ADR-002 — claude-pipeline itself)
+      - name: Self-modification guard (ADR-002 — agent-pipeline itself)
         # The pipeline's own scripts/workflows/decisions ARE the pipeline;
         # an auto-merged PR here could change the gates applied to itself.
         # Refuse to promote regardless of input/label state. Hardcoded
         # per ADR-002.
         #
         # Bypassed under stub-review-verdict (Layer-2 act tests) so the
-        # claude-pipeline repo can exercise its own auto-merge paths
+        # agent-pipeline repo can exercise its own auto-merge paths
         # without the guard masking every assert. Production callers
         # never set stub-review-verdict — the guard remains effective
         # on every real run.
@@ -575,7 +575,7 @@ jobs:
           REPO: ${{ github.repository }}
           STUB: ${{ inputs.stub-review-verdict }}
         run: |
-          if [[ -z "$STUB" && "$REPO" == 'freaxnx01/claude-pipeline' ]]; then
+          if [[ -z "$STUB" && "$REPO" == 'freaxnx01/agent-pipeline' ]]; then
             printf 'self-mod-guard: blocking auto-merge on %s per ADR-002\n' "$REPO"
             printf 'blocked=true\n' >> "$GITHUB_OUTPUT"
           else
@@ -596,7 +596,7 @@ jobs:
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           AUTHOR_ALLOWLIST: ${{ inputs.pipeline-author-allowlist }}
-        run: bash .claude-pipeline/scripts/find-pipeline-pr.sh
+        run: bash .agent-pipeline/scripts/find-pipeline-pr.sh
 
       - name: Install Claude Code CLI
         # review-pr.sh's default AGENT_CMD invokes `claude`; this job
@@ -622,9 +622,9 @@ jobs:
           PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
           HEAD_SHA: ${{ steps.find_pr.outputs.head-sha }}
           AGENT: claude
-          AGENT_CMD: ${{ github.workspace }}/.claude-pipeline/scripts/lib/agent-cmd-claude.sh
+          AGENT_CMD: ${{ github.workspace }}/.agent-pipeline/scripts/lib/agent-cmd-claude.sh
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-        run: bash .claude-pipeline/scripts/review-pr.sh
+        run: bash .agent-pipeline/scripts/review-pr.sh
 
       - name: Stub agent review (test mode)
         # Synthesize review-pr.sh's outputs directly when stub-review-
@@ -676,7 +676,7 @@ jobs:
           REQUIRED_CHECKS_STATUS: ${{ inputs.stub-review-verdict != '' && 'pass' || '' }}
           REPO_ALLOWS_SQUASH: ${{ inputs.stub-review-verdict != '' && 'true' || '' }}
           REPO_ALLOWS_AUTO_MERGE: ${{ inputs.stub-review-verdict != '' && 'true' || '' }}
-        run: bash .claude-pipeline/scripts/check-merge-envelope.sh
+        run: bash .agent-pipeline/scripts/check-merge-envelope.sh
 
       - name: Promote draft to ready + enable auto-merge
         if: |
@@ -713,7 +713,7 @@ jobs:
           ENVELOPE_REASON: ${{ steps.envelope.outputs.reason }}
           FAILED_GATES: ${{ steps.envelope.outputs.failed-gates }}
           SELF_MOD_BLOCKED: ${{ steps.self_mod_guard.outputs.blocked }}
-        run: bash .claude-pipeline/scripts/post-auto-review-block.sh
+        run: bash .agent-pipeline/scripts/post-auto-review-block.sh
 
       - name: Verify gh mock log (test mode)
         # Read the captured `gh` invocation log and emit whether
@@ -724,4 +724,4 @@ jobs:
         # mock" step at the top of this job.
         if: inputs.stub-review-verdict != '' && always()
         id: verify_mock
-        run: bash .claude-pipeline/scripts/verify-gh-mock-merge.sh
+        run: bash .agent-pipeline/scripts/verify-gh-mock-merge.sh

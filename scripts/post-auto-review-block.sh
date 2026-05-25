@@ -47,7 +47,7 @@ ENVELOPE_REASON="${ENVELOPE_REASON:-}"
 FAILED_GATES="${FAILED_GATES:-}"
 
 if [[ "$SELF_MOD_BLOCKED" == 'true' ]]; then
-  reason='self-modification guard (ADR-002) refused promotion on claude-pipeline itself'
+  reason='self-modification guard (ADR-002) refused promotion on agent-pipeline itself'
 elif [[ "$FOUND" != 'true' ]]; then
   reason='auto-review could not find a pipeline-opened draft PR for this issue (expected "Closes #N" in PR body from an allowlisted author)'
 elif [[ "$VERDICT" != 'approve' ]]; then

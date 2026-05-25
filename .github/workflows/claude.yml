@@ -2,10 +2,10 @@ name: Claude
 
 # Consumer-side stub that wires labeled issues into the reusable
 # `claude-implement.yml` workflow in this same repo. Dogfood entry
-# point for `claude-pipeline` running against itself.
+# point for `agent-pipeline` running against itself.
 #
 # The self-modification guard in claude-implement.yml (ADR-002)
-# ALWAYS blocks auto-merge on freaxnx01/claude-pipeline. The flow
+# ALWAYS blocks auto-merge on freaxnx01/agent-pipeline. The flow
 # exercised here is implement -> draft PR -> human review, never
 # the full auto-merge cycle.
 
