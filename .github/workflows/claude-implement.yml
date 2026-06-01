@@ -388,6 +388,20 @@ jobs:
             printf '::warning::opencode exited %s for model %s; see step logs and the adapter result\n' "$oc_rc" "$oc_model"
           fi
 
+      - name: Upload raw OpenCode output (diagnostics)
+        # Keep opencode's raw stdout (--format json events) and stderr log so a
+        # failed/odd run is diagnosable without re-running, and so the event
+        # schema can be checked against adapt-opencode-result.sh (#58).
+        if: ${{ always() && !inputs.stub-claude && steps.classify_agent.outputs.agent == 'opencode' && steps.opencode_run.outputs.execution_file != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: opencode-raw-output
+          path: |
+            ${{ steps.opencode_run.outputs.execution_file }}
+            ${{ runner.temp }}/opencode-output.log
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Adapt OpenCode result → claude-result.json
         # Mirrors `Adapt execution_file -> result.json` for the
         # OpenCode path. Output of adapt-opencode-result.sh is the
