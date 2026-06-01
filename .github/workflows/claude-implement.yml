@@ -338,21 +338,43 @@ jobs:
         run: |
           set +x
           out_file="${RUNNER_TEMP:-/tmp}/opencode-output.json"
-          # OpenCode's exact invocation will be verified in #11's
-          # sandbox dogfood; first-cut shape assumes
-          # `opencode --prompt-file <f> --model <m> --max-turns N
-          # --output-format json` and emits a single JSON object on
-          # stdout. The adapter (next step) tolerates several shapes
-          # so swapping the CLI flag set later doesn't require
-          # changing every downstream consumer.
-          opencode \
-            --prompt-file "$PROMPT_FILE" \
-            --model "$MODEL" \
-            --max-turns 30 \
-            --output-format json \
+          log_file="${RUNNER_TEMP:-/tmp}/opencode-output.log"
+          # opencode 1.x CLI (verified against opencode-ai@1.15.13 --help):
+          #   opencode run [message..] -m <provider/model> --format json
+          # The message is a POSITIONAL arg (no --prompt-file); --format json
+          # writes raw JSON events to stdout; --print-logs sends logs to stderr.
+          # Triage emits OpenRouter model ids (e.g. mistralai/mistral-large-latest,
+          # google/gemma-4-31b-it); opencode needs the `openrouter/` provider
+          # prefix, so prepend it unless already present.
+          #
+          # EXPERIMENTAL (see #58): the OpenRouter auth mechanism (OPENROUTER_API_KEY
+          # env vs. `opencode auth login`) and the exact --format json event shape
+          # consumed by adapt-opencode-result.sh are not yet verified end-to-end.
+          # A non-zero exit / non-JSON output degrades to ai:failed (the adapter
+          # emits an error result and post-run-report tolerates non-JSON), so a
+          # broken run fails gracefully rather than crashing the job.
+          oc_model="$MODEL"
+          case "$oc_model" in
+            openrouter/*) : ;;
+            *) oc_model="openrouter/${oc_model}" ;;
+          esac
+          # `--` ends option parsing so a prompt starting with `-` isn't read
+          # as a flag. The message is passed as a single quoted positional arg
+          # (no shell interpolation of issue content).
+          opencode run \
+            --model "$oc_model" \
+            --format json \
+            --print-logs \
+            -- \
+            "$(cat "$PROMPT_FILE")" \
             > "$out_file" \
-            2>&1 || true
+            2> "$log_file" \
+            && oc_rc=0 || oc_rc=$?
           printf 'execution_file=%s\n' "$out_file" >> "$GITHUB_OUTPUT"
+          printf 'exit_code=%s\n' "$oc_rc" >> "$GITHUB_OUTPUT"
+          if [[ "$oc_rc" -ne 0 ]]; then
+            printf '::warning::opencode exited %s for model %s; see step logs and the adapter result\n' "$oc_rc" "$oc_model"
+          fi
 
       - name: Adapt OpenCode result → claude-result.json
         # Mirrors `Adapt execution_file -> result.json` for the
