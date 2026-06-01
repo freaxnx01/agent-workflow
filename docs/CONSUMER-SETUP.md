@@ -84,6 +84,20 @@ after several clean draft-only runs, enable auto-merge per §2 — including the
 3. **Public repos: hosted runners only.** No self-hosted, ever.
 4. **First run draft-only.** Don't enable auto-merge until the required vuln
    check is in place and you've watched the pipeline behave on the repo.
+5. **Caller needs a `permissions:` block.** Most repos default the workflow
+   `GITHUB_TOKEN` to read-only, and a reusable workflow can't be granted more
+   than its caller. Omitting `contents`/`pull-requests`/`issues: write` fails the
+   run at **`startup_failure`** before any job runs (zero jobs, no logs). See §1.
+6. **"Actions can create PRs" must be enabled.** Even draft-only runs need
+   *Settings → Actions → General → Workflow permissions → Allow GitHub Actions to
+   create and approve pull requests*. Off ⇒ the branch is pushed but `gh pr
+   create` fails — and the run may still report **success**, so the absent PR is
+   silent. See §1.
+7. **The `$X.XX` in the metrics comment is notional under subscription auth.**
+   It's Claude Code's reported `total_cost_usd`, computed from token counts ×
+   public API list prices regardless of how you authenticated. With a
+   `claude setup-token` (Max subscription) token nothing is billed per-token —
+   usage counts against subscription limits. Read it as "equivalent API cost".
 
 ## 1. Minimum stub
 
@@ -94,6 +108,11 @@ name: Claude
 on:
   issues:
     types: [labeled]
+
+permissions:            # the reusable jobs need these; a caller can't grant a
+  contents: write       # reusable workflow more than it has, and the repo's
+  pull-requests: write  # default GITHUB_TOKEN is read-only on most repos, so
+  issues: write         # omitting this fails the run at startup (see below)
 
 jobs:
   claude:
@@ -111,6 +130,16 @@ Drop in:
 
 - `CLAUDE_CODE_OAUTH_TOKEN` secret (generate via `claude setup-token` against your Max subscription).
 - Repo labels — the pipeline self-heals these, but a manual `bash scripts/ensure-issue-labels.sh` before the first run keeps the first issue tidy.
+
+### Required repo settings (even for draft-only runs)
+
+These two are needed for the **first** draft-only run — separate from the
+auto-merge gate-7 settings in §2:
+
+| Setting | Path | Why |
+|---|---|---|
+| **Allow GitHub Actions to create and approve pull requests** | Settings → Actions → General → Workflow permissions | The agent opens the draft PR with `gh pr create` using the ambient `GITHUB_TOKEN`. If this is off, the run pushes the branch but `gh pr create` fails with *"GitHub Actions is not permitted to create or approve pull requests"* — and the run can still report **success** (branch + `Closes #N` exist), so the missing PR is easy to miss. Enable via `gh api -X PUT repos/<owner>/<repo>/actions/permissions/workflow -F can_approve_pull_request_reviews=true`. |
+| **Caller `permissions:` block** | the stub above | Not a repo setting but the same class of trap: a reusable workflow can't be granted more than its caller, and most repos default the workflow token to read-only. Without the block the run ends in `startup_failure` before any job runs. |
 
 Apply `ai-implement` to an issue; Claude opens a draft PR. That's it.
 

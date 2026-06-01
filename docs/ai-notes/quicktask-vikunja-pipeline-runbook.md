@@ -218,3 +218,34 @@ status check first (ADR-002 gate 5).
 3. quicktask-vikunja had **zero open issues** and **no consumer stub** at handoff
    — both created/added in Steps 2 & 4.
 4. Public repo: GitHub-hosted runners only, draft PRs only for the first run.
+
+## Discovered during the first real run (2026-06-01)
+
+The CLI session ran it end-to-end. Two repo-settings traps the steps above
+missed — both now documented canonically in `CONSUMER-SETUP.md §1`:
+
+1. **Caller `permissions:` block is mandatory.** The first run died at
+   `startup_failure` (zero jobs, no logs). quicktask-vikunja's default workflow
+   `GITHUB_TOKEN` is read-only; the reusable jobs request
+   `contents`/`pull-requests`/`issues: write`, and a reusable workflow can't be
+   granted more than its caller. Fix: add to the stub
+   ```yaml
+   permissions:
+     contents: write
+     pull-requests: write
+     issues: write
+   ```
+2. **"Allow GitHub Actions to create and approve pull requests" must be on.**
+   With that toggle off, the agent implemented the change, pushed the branch with
+   `Closes #N`, posted the metrics comment, and stamped `ai:done` — but its
+   `gh pr create` failed (*"GitHub Actions is not permitted to create or approve
+   pull requests"*) and the run still reported **success**. The draft PR was
+   simply absent. Enable:
+   `gh api -X PUT repos/<owner>/<repo>/actions/permissions/workflow -F can_approve_pull_request_reviews=true`.
+3. **The metrics `cost` is notional under subscription auth.** The comment showed
+   `$2.73`, but the run used a `claude setup-token` (Max subscription) token —
+   nothing is billed per-token. The figure is Claude Code's `total_cost_usd`,
+   computed from token counts × public API list prices irrespective of auth
+   method. Read it as "equivalent API cost", not a charge.
+4. **`v1` was promoted to real tags** (`v1.0.0` + moving `v1` at `67e831b`); the
+   stand-in `v1` branch was deleted. `@v1` now resolves via the tag.
