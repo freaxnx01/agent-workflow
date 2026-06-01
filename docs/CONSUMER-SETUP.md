@@ -5,6 +5,18 @@ How to wire `claude-pipeline` into a consumer repo. Two flows:
 1. **Minimum stub** — labeled-issue → draft PR (no auto-merge).
 2. **Auto-review + auto-merge** — labeled-issue → draft PR → agent review → squash-merge, inside ADR-002's safety envelope.
 
+> **Agent selection — two independent mechanisms, don't conflate them:**
+>
+> - **GitHub-native agents** (Copilot, `anthropic-code-agent`, `openai-code-agent`
+>   — GitHub's Agent HQ): steered by **assignee**. You choose the agent by
+>   assigning the issue to that bot actor (e.g. the `replaceActorsForAssignable`
+>   GraphQL mutation). There is **no label** for this, and these agents run
+>   entirely on GitHub's side — they never invoke this pipeline.
+> - **This pipeline** (`claude-implement.yml`): steered by **label**
+>   (`agent:claude` / `agent:opencode`) or the `agent:` workflow input — the
+>   ADR-001 mechanism. It is unrelated to GitHub issue assignment; the pipeline
+>   is triggered by the `ai-implement` label, not by assigning a bot.
+
 ## Onboarding checklist (operator quick-start)
 
 A repo-agnostic walkthrough for bringing a new consumer online. The numbered
