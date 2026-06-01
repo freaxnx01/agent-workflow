@@ -5,6 +5,86 @@ How to wire `claude-pipeline` into a consumer repo. Two flows:
 1. **Minimum stub** — labeled-issue → draft PR (no auto-merge).
 2. **Auto-review + auto-merge** — labeled-issue → draft PR → agent review → squash-merge, inside ADR-002's safety envelope.
 
+## Onboarding checklist (operator quick-start)
+
+A repo-agnostic walkthrough for bringing a new consumer online. The numbered
+sections below (§1–§4) are the reference detail; this is the order to do them in.
+Replace `<owner>/<repo>` with the target consumer repo throughout. For a worked
+example see `ai-notes/quicktask-vikunja-pipeline-runbook.md`.
+
+### 0. Pre-flight
+
+- [ ] Decide **public vs private**. Public → GitHub-hosted runners only
+      (`'["ubuntu-latest"]'`). **Never attach a self-hosted runner to a public
+      repo** — fork-PR attack surface (DESIGN.md, non-negotiable).
+- [ ] Confirm the pipeline ref to pin. Use `@v1` once real tags exist; until then
+      a `v1` branch on the pipeline repo also resolves for `uses: …@v1`.
+
+### 1. Add the auth secret
+
+The pipeline authenticates Claude via a Max-subscription OAuth token.
+
+- [ ] Generate once on any logged-in Claude Code machine: `claude setup-token`
+      (valid ~1 year).
+- [ ] Store it as a **repository secret** named exactly `CLAUDE_CODE_OAUTH_TOKEN`.
+
+Set it without the value touching a transcript or shell history. From a secrets
+manager (Passbolt example — adjust CLI/field to yours):
+
+```bash
+passbolt get resource --id <RESOURCE_ID> --json \
+  | jq -r '.password' \
+  | gh secret set CLAUDE_CODE_OAUTH_TOKEN -R <owner>/<repo>
+```
+
+Or interactively (paste, then Ctrl-D), then verify:
+
+```bash
+gh secret set  CLAUDE_CODE_OAUTH_TOKEN -R <owner>/<repo>
+gh secret list -R <owner>/<repo>   # value never displayed
+```
+
+Only if using the OpenCode/OpenRouter backend (§3 below): also set
+`OPENROUTER_API_KEY`. Skip for the Claude path.
+
+> Secret hygiene: keep the token on the path secrets-manager → your shell →
+> GitHub's encrypted store. Don't paste it into files, issues, commits, or an
+> agent's chat context. Setting an Actions secret is always a human/CLI step —
+> there is no API/MCP tool exposed for it, and a long-lived token shouldn't flow
+> through an agent's context anyway.
+
+### 2. Commit the consumer stub
+
+Add `.github/workflows/claude.yml` (§1 below has the full template). Commit it on
+a feature branch → PR, not direct to the default branch.
+
+### 3. First run = a trivial smoke test
+
+Validate wiring with a near-zero-risk issue before trusting the pipeline with
+path-sensitive work (DESIGN.md). A good smoke test touches only files certain to
+be safe (e.g. a new `CONTRIBUTING.md` + a one-line `README.md` link), fences off
+source/test/build dirs in an **Out of scope** section, and uses the DESIGN.md
+spec template. Create it, then label it **`ai-implement`**.
+
+### 4. Observe, then graduate
+
+Watch the run (§1 below describes the expected draft PR + metrics comment). Only
+after several clean draft-only runs, enable auto-merge per §2 — including the
+**required vulnerable-dependency check** (ADR-002 gate 5).
+
+### Gotchas (learned in practice)
+
+1. **`pipeline-repo` / `pipeline-ref` MUST be overridden** when the pipeline repo
+   isn't `freaxnx01/claude-pipeline`. They default to that name, the cross-repo
+   `scripts/` checkout uses them, and `@v1` in `uses:` does **not** propagate to
+   that checkout (GitHub's `workflow_ref` points at the caller). Mismatch breaks
+   the run at the scripts step.
+2. **`v1` may be a branch, not a tag.** `uses:` accepts either; promote to real
+   `v1.0.0` + moving `v1` tags when convenient.
+3. **Public repos: hosted runners only.** No self-hosted, ever.
+4. **First run draft-only.** Don't enable auto-merge until the required vuln
+   check is in place and you've watched the pipeline behave on the repo.
+
 ## 1. Minimum stub
 
 Add `.github/workflows/claude.yml`:
