@@ -159,6 +159,26 @@ out="$(threshold_run 1000000)"
 assert_not_contains "$out" 'ctx:medium'  "window=1M (16%) → no ctx:medium"
 assert_not_contains "$out" 'ctx:high'    "window=1M (16%) → no ctx:high"
 
+section "unparseable execution log degrades gracefully (regression: #58)"
+
+# The OpenCode path passes the raw opencode-output.json as EXECUTION_FILE. When
+# opencode errors, that file is plain text, not JSON. The report must still
+# render (degrade the context row to n/a) instead of crashing on the
+# max-context jq — that crash is what failed the run in #58.
+ec="$(run_capture_ec render_only result-success-cheap.json exec-unparseable.txt)"
+assert_equals "$ec" "0" "unparseable exec → exit 0, no crash"
+
+out="$(render_only result-success-cheap.json exec-unparseable.txt)"
+assert_contains "$out" 'n/a (no execution log provided)' \
+  "unparseable exec → context row falls back to n/a"
+assert_contains "$out" 'LABELS: ai:done' \
+  "unparseable exec → result outcome still rendered"
+
+# The actual #58 case: opencode failed (is_error result) AND raw exec is non-JSON.
+out="$(render_only result-rate-limit.json exec-unparseable.txt)"
+assert_contains "$out" 'LABELS: ai:failed' \
+  "unparseable exec + error result → ai:failed, graceful"
+
 section "error paths (exit codes are part of the script API)"
 
 ec="$(run_capture_ec env RENDER_ONLY=1 RESULT_FILE=/does/not/exist.json \

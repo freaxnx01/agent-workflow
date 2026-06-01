@@ -1,0 +1,2 @@
+opencode: error: unknown flag '--prompt-file' (run 'opencode --help' for usage)
+Error: failed to start session: the requested model is not supported

@@ -121,24 +121,34 @@ read_result_metrics() {
 HAS_EXECUTION_DATA=0
 MAX_PROMPT_TOKENS=0
 if [[ -n "$EXECUTION_FILE" && -r "$EXECUTION_FILE" ]]; then
-  HAS_EXECUTION_DATA=1
   # Accept either a JSON array (claude-code-base-action's current shape) or
-  # NDJSON (the SDK's --output-format stream-json). Detect and slurp only when
-  # needed.
+  # NDJSON (the SDK's --output-format stream-json). Detect the shape first; if
+  # the file is neither valid JSON nor valid NDJSON, skip the context metric and
+  # degrade to "n/a" rather than crashing the entire report. The OpenCode path
+  # passes the raw opencode output as EXECUTION_FILE, which is plain text (not
+  # JSON) whenever opencode itself errored — that unguarded jq is what failed
+  # the whole run in #58.
+  JQ_SLURP=()
+  EXEC_PARSEABLE=0
   if jq -e 'type == "array"' "$EXECUTION_FILE" >/dev/null 2>&1; then
     JQ_SLURP=()
-  else
+    EXEC_PARSEABLE=1
+  elif jq -e -s '.' "$EXECUTION_FILE" >/dev/null 2>&1; then
     JQ_SLURP=(-s)
+    EXEC_PARSEABLE=1
   fi
-  MAX_PROMPT_TOKENS="$(jq -r "${JQ_SLURP[@]}" '
-    [ .[]
-      | select(.type == "assistant")
-      | (.message.usage // {})
-      | ((.input_tokens // 0)
-         + (.cache_read_input_tokens // 0)
-         + (.cache_creation_input_tokens // 0))
-    ] | (max // 0)
-  ' "$EXECUTION_FILE")"
+  if (( EXEC_PARSEABLE )); then
+    HAS_EXECUTION_DATA=1
+    MAX_PROMPT_TOKENS="$(jq -r "${JQ_SLURP[@]}" '
+      [ .[]
+        | select(.type == "assistant")
+        | (.message.usage // {})
+        | ((.input_tokens // 0)
+           + (.cache_read_input_tokens // 0)
+           + (.cache_creation_input_tokens // 0))
+      ] | (max // 0)
+    ' "$EXECUTION_FILE" 2>/dev/null || printf '0')"
+  fi
 fi
 
 # --- derived values ---------------------------------------------------------
