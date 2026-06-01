@@ -140,13 +140,24 @@ if [[ -n "$EXECUTION_FILE" && -r "$EXECUTION_FILE" ]]; then
   if (( EXEC_PARSEABLE )); then
     HAS_EXECUTION_DATA=1
     MAX_PROMPT_TOKENS="$(jq -r "${JQ_SLURP[@]}" '
-      [ .[]
-        | select(.type == "assistant")
-        | (.message.usage // {})
-        | ((.input_tokens // 0)
-           + (.cache_read_input_tokens // 0)
-           + (.cache_creation_input_tokens // 0))
-      ] | (max // 0)
+      (
+        # Claude (claude-code-base-action): assistant messages carry usage.
+        [ .[]
+          | select(.type == "assistant")
+          | (.message.usage // {})
+          | ((.input_tokens // 0)
+             + (.cache_read_input_tokens // 0)
+             + (.cache_creation_input_tokens // 0))
+        ]
+        # OpenCode (--format json): step_finish events carry .part.tokens.
+        + [ .[]
+            | select(.type == "step_finish")
+            | (.part.tokens // {})
+            | ((.input // 0)
+               + ((.cache.read) // 0)
+               + ((.cache.write) // 0))
+          ]
+      ) | (max // 0)
     ' "$EXECUTION_FILE" 2>/dev/null || printf '0')"
   fi
 fi

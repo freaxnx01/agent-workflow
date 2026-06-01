@@ -179,6 +179,15 @@ out="$(render_only result-rate-limit.json exec-unparseable.txt)"
 assert_contains "$out" 'LABELS: ai:failed' \
   "unparseable exec + error result → ai:failed, graceful"
 
+section "OpenCode context metric (step_finish token shape)"
+
+# OpenCode's --format json stream uses step_finish.part.tokens, not the Claude
+# assistant/message.usage shape. The max-context selector must read it too, else
+# the context row reads 0 for every opencode run.
+out="$(render_only result-opencode-success.json opencode-success.json)"
+assert_contains "$out" '600 / 200,000' \
+  "opencode exec → max context from step_finish tokens (peak input 600)"
+
 section "error paths (exit codes are part of the script API)"
 
 ec="$(run_capture_ec env RENDER_ONLY=1 RESULT_FILE=/does/not/exist.json \
@@ -1118,11 +1127,12 @@ ADAPT_OC="$ROOT/scripts/adapt-opencode-result.sh"
 out="$(MODEL=mistralai/codestral-latest EXECUTION_FILE="$FIXTURES/opencode-success.json" bash "$ADAPT_OC")"
 assert_contains "$out" '"is_error":false'                 "success → is_error=false"
 assert_contains "$out" '"subtype":"success"'              "success → subtype=success"
-assert_contains "$out" '"duration_ms":28000'              "duration_s=28 → duration_ms=28000"
-assert_contains "$out" '"num_turns":4'                    "turns=4 → num_turns=4"
-assert_contains "$out" '"input_tokens":1200'              "prompt_tokens → input_tokens"
-assert_contains "$out" '"output_tokens":580'              "completion_tokens → output_tokens"
-assert_contains "$out" '"cache_creation_input_tokens":0'  "cache_creation=0 (OpenCode has no cache)"
+assert_contains "$out" '"duration_ms":28000'              "duration = max-min event timestamp"
+assert_contains "$out" '"num_turns":2'                    "num_turns = step_finish count"
+assert_contains "$out" '"input_tokens":1200'              "input_tokens = sum step input"
+assert_contains "$out" '"output_tokens":580'              "output_tokens = sum step output"
+assert_contains "$out" '"cache_creation_input_tokens":0'  "cache_creation = sum step cache.write"
+assert_contains "$out" 'opened PR #999'                   "result = final text event"
 
 # Rate-limit fixture
 out="$(MODEL=mistralai/mistral-large-latest EXECUTION_FILE="$FIXTURES/opencode-rate-limit.json" bash "$ADAPT_OC")"

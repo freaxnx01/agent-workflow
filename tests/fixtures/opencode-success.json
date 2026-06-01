@@ -1,11 +1,5 @@
-{
-  "output": "Implemented the change on branch feat/foo and opened PR #999.",
-  "turns": 4,
-  "duration_s": 28,
-  "usage": {
-    "prompt_tokens": 1200,
-    "completion_tokens": 580
-  },
-  "cost_usd": 0.0035,
-  "session_id": "oc-session-abc"
-}
+{"type":"step_start","timestamp":1000,"sessionID":"ses_test","part":{"type":"step-start"}}
+{"type":"tool_use","timestamp":5000,"sessionID":"ses_test","part":{"type":"tool","tool":"bash","state":{"status":"completed"}}}
+{"type":"step_finish","timestamp":15000,"sessionID":"ses_test","part":{"type":"step-finish","reason":"tool-calls","tokens":{"total":800,"input":600,"output":200,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0.0020}}
+{"type":"text","timestamp":28000,"sessionID":"ses_test","part":{"type":"text","text":"Implemented the change on branch feat/foo and opened PR #999."}}
+{"type":"step_finish","timestamp":29000,"sessionID":"ses_test","part":{"type":"step-finish","reason":"stop","tokens":{"total":980,"input":600,"output":380,"reasoning":0,"cache":{"write":0,"read":0}},"cost":0.0015}}

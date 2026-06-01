@@ -1,9 +1,2 @@
-{
-  "is_error": true,
-  "error": {
-    "type": "rate_limit_exceeded",
-    "message": "OpenRouter rate limit: too many requests for this provider in 60s. HTTP 429."
-  },
-  "turns": 1,
-  "duration_s": 2
-}
+{"type":"step_start","timestamp":1000,"sessionID":"ses_rl","part":{"type":"step-start"}}
+{"type":"error","timestamp":2000,"sessionID":"ses_rl","error":{"name":"ProviderError","data":{"message":"OpenRouter rate limit: too many requests for this provider in 60s (HTTP 429)."}}}
