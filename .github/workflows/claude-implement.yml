@@ -264,6 +264,18 @@ jobs:
           DEFAULT_AGENT: ${{ inputs.agent }}
         run: bash .claude-pipeline/scripts/classify-agent.sh
 
+      - name: Ensure OpenCode toolchain
+        # The base "Ensure toolchain" step runs before agent classification, so
+        # it can't know the resolved agent — and the agent is commonly chosen by
+        # the per-issue `agent:opencode` label, not `inputs.agent`. Result: the
+        # opencode CLI was never installed and `Run OpenCode` failed with exit
+        # 127 (#62). Install it here, now that the agent is known. On hosted
+        # runners the base tools are already present, so this only adds opencode.
+        if: ${{ !inputs.stub-claude && steps.classify_agent.outputs.agent == 'opencode' }}
+        env:
+          AGENT: opencode
+        run: bash .claude-pipeline/scripts/ensure-toolchain.sh
+
       - name: Triage model
         if: ${{ !inputs.stub-claude }}
         id: triage
