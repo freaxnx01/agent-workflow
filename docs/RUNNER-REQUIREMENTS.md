@@ -18,7 +18,7 @@ Pre-installed on `ubuntu-latest` — `ensure-toolchain.sh` is a no-op there in p
 
 | Tool | Pinned version | Source |
 |---|---|---|
-| `opencode` | **0.1.0** | npm package `opencode-ai@0.1.0` |
+| `opencode` | **1.15.13** | npm package `opencode-ai@1.15.13` |
 
 The version pin lives in `scripts/ensure-toolchain.sh` at the top (`OPENCODE_VERSION`). Bump in one place; this doc and the script must agree.
 

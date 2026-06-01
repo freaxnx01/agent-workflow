@@ -34,7 +34,7 @@ IFS=$'\n\t'
 # Pinned OpenCode version. Bump in one place. The line is parsed by
 # docs/RUNNER-REQUIREMENTS.md's CI check (when it exists) to keep the
 # README and the script in sync.
-OPENCODE_VERSION="${OPENCODE_VERSION:-0.1.0}"
+OPENCODE_VERSION="${OPENCODE_VERSION:-1.15.13}"
 
 if [[ -n "${TOOLS:-}" ]]; then
   # Force space-separated parsing — the prelude's IFS=$'\n\t' would collapse
