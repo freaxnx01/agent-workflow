@@ -26,7 +26,11 @@ jobs:
       - name: Install actionlint
         run: |
           tarball="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
-          curl -fsSLO "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${tarball}"
+          # Retry the release download — the GitHub release CDN occasionally
+          # returns a transient HTTP error (curl exit 22), which is infra
+          # noise, not a lint failure. Matches DESIGN.md's transient-retry policy.
+          curl -fsSLO --retry 3 --retry-delay 2 --retry-all-errors \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${tarball}"
           printf '%s  %s\n' "${ACTIONLINT_SHA256}" "${tarball}" | sha256sum -c -
           tar -xzf "${tarball}" actionlint
 
