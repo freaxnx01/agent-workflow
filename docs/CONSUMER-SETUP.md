@@ -159,6 +159,17 @@ Apply `ai-implement` to an issue; Claude opens a draft PR. That's it.
 
 The auto-merge flow promotes the draft → ready → `gh pr merge --auto --squash` **only when every gate in [ADR-002](DECISIONS.md#adr-002--auto-review-and-auto-merge-safety-envelope) is satisfied**. Failing any gate leaves the PR draft and stamps `ai:review-blocked` on the originating issue.
 
+> **Auto-merge requires a GitHub App or PAT for PR creation — the ambient
+> `GITHUB_TOKEN` is not enough.** GitHub does **not** run workflows on PRs opened
+> by `GITHUB_TOKEN` (anti-recursion), so the required vulnerable-dependency check
+> (gate 5) never runs and `gh pr merge --auto` waits forever. Create the PR with
+> a **GitHub App token or a PAT** instead, and add that bot's login to
+> `pipeline-author-allowlist` (the workflow normalizes `app/<name>` ⇄
+> `<name>[bot]`, so either spelling matches — see #54). Draft-PR-only (§1) works
+> fine with `GITHUB_TOKEN`; only auto-merge needs the App/PAT. The pipeline does
+> not yet ship a first-class App-token input (#55) — until it does, a consumer
+> wires its own token into the agent's `gh` auth.
+
 ### Required GitHub repo settings (gate 7)
 
 Two repo-level toggles **both** must be on, or gate 7 refuses promotion:

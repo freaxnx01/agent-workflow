@@ -67,14 +67,22 @@ ALLOWED_JSON="$(printf '%s\n' "$AUTHOR_ALLOWLIST" \
 # tiebreaker if a previous failed run left a stale draft. The author
 # filter blocks a third-party-opened higher-numbered draft from
 # hijacking the auto-review target.
-pr_number="$(printf '%s' "$PIPELINE_PRS_JSON" \
-  | jq -r --argjson allow "$ALLOWED_JSON" '
-    [.[] | select(.isDraft == true and (.author.login | IN($allow[])))]
-    | sort_by(-.number) | .[0].number // ""')"
-head_sha="$(printf '%s' "$PIPELINE_PRS_JSON" \
-  | jq -r --argjson allow "$ALLOWED_JSON" '
-    [.[] | select(.isDraft == true and (.author.login | IN($allow[])))]
-    | sort_by(-.number) | .[0].headRefOid // ""')"
+#
+# Author logins are normalized before the allowlist check: `gh pr list --json
+# author` reports the GitHub-Actions bot as `app/github-actions`, while the REST
+# `user.login` (and the configured allowlist) use `github-actions[bot]`. Without
+# normalizing, gate 1 never matches a GITHUB_TOKEN-authored PR (#54). The same
+# maps any App, e.g. `app/my-app` ⇄ `my-app[bot]`.
+SELECTED="$(printf '%s' "$PIPELINE_PRS_JSON" \
+  | jq -c --argjson allow "$ALLOWED_JSON" '
+    def norm: (. // "") | sub("^app/"; "") | sub("\\[bot\\]$"; "");
+    ($allow | map(norm)) as $a
+    | [ .[]
+        | select(.isDraft == true
+                 and ((.author.login | norm) as $au | ($a | index($au)) != null)) ]
+    | sort_by(-.number) | .[0] // {}')"
+pr_number="$(printf '%s' "$SELECTED" | jq -r '.number // ""')"
+head_sha="$(printf '%s' "$SELECTED" | jq -r '.headRefOid // ""')"
 
 if [[ -n "$pr_number" ]]; then
   found=true

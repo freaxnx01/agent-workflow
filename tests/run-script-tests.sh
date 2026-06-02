@@ -837,6 +837,25 @@ out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
         PIPELINE_PRS_JSON='[{"number":50,"isDraft":true,"headRefOid":"app-pr","author":{"login":"my-pipeline-app[bot]"}}]')"
 assert_contains "$out" 'pr-number=50'       "custom AUTHOR_ALLOWLIST accepts the bot"
 
+# #54: `gh pr list --json author` reports the Actions bot as `app/github-actions`,
+# not the REST `github-actions[bot]` the default allowlist uses. Normalization
+# must match them so a GITHUB_TOKEN-authored PR is found.
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":7,"isDraft":true,"headRefOid":"ghtok","author":{"login":"app/github-actions"}}]')"
+assert_contains "$out" 'found=true'         "gh author 'app/github-actions' matches default allowlist"
+assert_contains "$out" 'pr-number=7'        "  → selects the GITHUB_TOKEN-authored PR"
+
+# Normalization is symmetric: gh's `app/<name>` matches an allowlist `<name>[bot]`.
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        AUTHOR_ALLOWLIST='my-app[bot]' \
+        PIPELINE_PRS_JSON='[{"number":8,"isDraft":true,"headRefOid":"appsha","author":{"login":"app/my-app"}}]')"
+assert_contains "$out" 'pr-number=8'        "allowlist 'my-app[bot]' matches gh author 'app/my-app'"
+
+# A genuine non-bot human author is still rejected (no over-matching).
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":9,"isDraft":true,"headRefOid":"h","author":{"login":"some-human"}}]')"
+assert_contains "$out" 'found=false'        "non-allowlisted human still rejected after normalization"
+
 # Only a non-draft PR exists (somehow promoted already) → not found
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
         PIPELINE_PRS_JSON='[{"number":17,"isDraft":false,"headRefOid":"x","author":{"login":"github-actions[bot]"}}]')"
@@ -889,6 +908,17 @@ out="$(envelope_run env \
 assert_contains "$out" 'envelope=fail'    "non-bot author → fail"
 assert_contains "$out" 'failed-gates=1'   "gate 1 in failed-gates"
 assert_contains "$out" "author 'some-human' not in allowlist" "names the bad author"
+
+# Gate 1: gh's `app/github-actions` spelling matches the default `github-actions
+# [bot]` allowlist after normalization (#54). Was a false reject.
+out="$(envelope_run env \
+        PR_NUMBER=42 REPO=o/r \
+        PR_AUTHOR='app/github-actions' \
+        PR_FILES="$(cat "$FIXTURES/diff-clean.txt")" \
+        REQUIRED_CHECKS_STATUS=pass \
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true)"
+assert_contains     "$out" 'envelope=pass' "gate 1: app/github-actions normalizes to allowlist"
+assert_not_contains "$out" 'failed-gates=1' "  → gate 1 not failed for the bot"
 
 # Gate 1: custom allowlist accepts a GitHub App
 out="$(envelope_run env \
