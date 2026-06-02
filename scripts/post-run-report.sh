@@ -46,6 +46,8 @@ REPO="${REPO:-${GITHUB_REPOSITORY:-}}"
 CONTEXT_WINDOW_SIZE="${CONTEXT_WINDOW_SIZE:-200000}"
 RENDER_ONLY="${RENDER_ONLY:-0}"
 EXECUTION_FILE="${EXECUTION_FILE:-}"
+MODEL="${MODEL:-}"   # resolved model (steps.triage.outputs.model) — optional
+AGENT="${AGENT:-}"   # resolved agent (steps.classify_agent.outputs.agent) — optional
 
 [[ -r "$RESULT_FILE" ]] || {
   printf 'error: RESULT_FILE not readable: %s\n' "$RESULT_FILE" >&2
@@ -159,6 +161,29 @@ if [[ -n "$EXECUTION_FILE" && -r "$EXECUTION_FILE" ]]; then
           ]
       ) | (max // 0)
     ' "$EXECUTION_FILE" 2>/dev/null || printf '0')"
+
+    # Cumulative token totals across all turns (#53). result.json's usage is
+    # only the LAST turn for the Claude path (claude-code-base-action), so the
+    # raw values are misleading on multi-turn runs. Sum the execution stream for
+    # true totals — handling both Claude (assistant/message.usage) and OpenCode
+    # (step_finish/part.tokens) shapes — and override the last-turn values.
+    CUM="$(jq -r "${JQ_SLURP[@]}" '
+      def cl: [ .[] | select(.type == "assistant")    | (.message.usage // {}) ];
+      def oc: [ .[] | select(.type == "step_finish")   | (.part.tokens  // {}) ];
+        ( ([ cl[] | (.input_tokens // 0) ]               | add // 0)
+        + ([ oc[] | (.input // 0) ]                       | add // 0) ) as $in
+      | ( ([ cl[] | (.output_tokens // 0) ]              | add // 0)
+        + ([ oc[] | (.output // 0) ]                      | add // 0) ) as $out
+      | ( ([ cl[] | (.cache_read_input_tokens // 0) ]    | add // 0)
+        + ([ oc[] | (.cache.read // 0) ]                  | add // 0) ) as $cr
+      | ( ([ cl[] | (.cache_creation_input_tokens // 0) ]| add // 0)
+        + ([ oc[] | (.cache.write // 0) ]                 | add // 0) ) as $cc
+      | "\($in) \($out) \($cr) \($cc)"
+    ' "$EXECUTION_FILE" 2>/dev/null || printf '')"
+    if [[ -n "$CUM" ]]; then
+      # Script-level IFS is $'\n\t'; CUM is space-separated, so split on space.
+      IFS=' ' read -r INPUT_TOKENS OUTPUT_TOKENS CACHE_READ CACHE_CREATE <<< "$CUM"
+    fi
   fi
 fi
 
@@ -166,6 +191,13 @@ fi
 
 CONTEXT_PCT="$(pct "$MAX_PROMPT_TOKENS" "$CONTEXT_WINDOW_SIZE")"
 CACHE_DENOM=$(( CACHE_READ + INPUT_TOKENS + CACHE_CREATE ))
+TOTAL_TOKENS=$(( INPUT_TOKENS + OUTPUT_TOKENS + CACHE_READ + CACHE_CREATE ))
+
+# Optional "Model · Agent" line (#59). Empty when neither is provided.
+MODEL_AGENT_LINE=''
+if [[ -n "$MODEL" || -n "$AGENT" ]]; then
+  MODEL_AGENT_LINE="**Model:** ${MODEL:-n/a} · **Agent:** ${AGENT:-n/a}"
+fi
 CACHE_HIT_PCT="$(pct "$CACHE_READ" "$CACHE_DENOM")"
 
 if [[ "$IS_ERROR" == "true" ]]; then
@@ -201,6 +233,7 @@ render_comment() {
 
 **Outcome:** ${STATUS_EMOJI} ${STATUS_TEXT}
 **Duration:** $(format_duration_ms "$DURATION_MS") · **Turns:** ${NUM_TURNS} · **Cost:** $(format_usd "$COST_USD")
+${MODEL_AGENT_LINE}
 
 | Metric | Value |
 |---|---|
@@ -208,6 +241,7 @@ render_comment() {
 | Output tokens | $(format_int "$OUTPUT_TOKENS") |
 | Cache read | $(format_int "$CACHE_READ") (${CACHE_HIT_PCT}% hit rate) |
 | Cache create | $(format_int "$CACHE_CREATE") |
+| Total tokens | $(format_int "$TOTAL_TOKENS") |
 | Max context per turn | ${CONTEXT_ROW} |
 
 [View workflow run](${WORKFLOW_RUN_URL})
