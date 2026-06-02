@@ -99,10 +99,18 @@ if [[ -z "${PR_AUTHOR:-}" ]]; then
     --json author --jq '.author.login')"
 fi
 
+# Normalize GitHub's two bot-login spellings to one canonical form: `gh ...
+# --json author` reports the Actions bot as `app/github-actions`, while the REST
+# `user.login` and the configured allowlist use `github-actions[bot]`. Without
+# this, gate 1 rejects a GITHUB_TOKEN-authored PR (#54). Same maps any App,
+# e.g. `app/my-app` ⇄ `my-app[bot]`.
+norm_login() { local s="${1#app/}"; printf '%s' "${s%\[bot\]}"; }
+
+pr_author_norm="$(norm_login "$PR_AUTHOR")"
 author_ok=false
 while IFS= read -r allowed; do
   [[ -z "$allowed" ]] && continue
-  if [[ "$PR_AUTHOR" == "$allowed" ]]; then
+  if [[ "$pr_author_norm" == "$(norm_login "$allowed")" ]]; then
     author_ok=true
     break
   fi
