@@ -24,6 +24,32 @@ sections below (§1–§4) are the reference detail; this is the order to do the
 Replace `<owner>/<repo>` with the target consumer repo throughout. For a worked
 example see `ai-notes/quicktask-vikunja-pipeline-runbook.md`.
 
+### Bulk onboarding — `scripts/onboard-consumer.sh`
+
+To onboard one repo (or loop over many), `scripts/onboard-consumer.sh` does all
+four steps below idempotently via `gh`: enables the create-PRs setting, sets the
+secret (only if missing), opens the stub PR, and pre-creates the labels. Run from
+an agent-pipeline checkout with an authenticated `gh`:
+
+```bash
+# one repo
+REPO=me/app PIPELINE_REF=main CLAUDE_CODE_OAUTH_TOKEN="$(cat token.txt)" \
+  bash scripts/onboard-consumer.sh
+
+# many repos — set the token once, loop. TOKEN_CMD fetches per-iteration
+# without the value ever landing in a file or the environment dump.
+export TOKEN_CMD='passbolt get resource --id <RID> --json | jq -r .password'
+for r in me/app1 me/app2 me/app3; do
+  REPO="$r" PIPELINE_REF=main bash scripts/onboard-consumer.sh
+done
+```
+
+Re-running is safe: each step checks current state first (existing secret/stub/
+labels are left alone). Pin `PIPELINE_REF` to a **post-#68** ref — `main` or a
+recent SHA — not `@v1` until the v1 tag is advanced (see the runbook's Tag state
+note). The script still leaves the stub PR for you to review and merge, and the
+first-run smoke test (§3) stays a deliberate manual step.
+
 ### 0. Pre-flight
 
 - [ ] Decide **public vs private**. Public → GitHub-hosted runners only
