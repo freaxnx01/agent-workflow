@@ -528,6 +528,8 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
           RENDER_ONLY: ${{ inputs.dry-run && '1' || '0' }}
+          MODEL: ${{ steps.triage.outputs.model }}
+          AGENT: ${{ steps.classify_agent.outputs.agent }}
         run: bash .claude-pipeline/scripts/post-run-report.sh
 
   auto_review:

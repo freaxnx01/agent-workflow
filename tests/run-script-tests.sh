@@ -188,6 +188,32 @@ out="$(render_only result-opencode-success.json opencode-success.json)"
 assert_contains "$out" '600 / 200,000' \
   "opencode exec → max context from step_finish tokens (peak input 600)"
 
+section "cumulative token totals from execution stream (#53)"
+
+# result.json carries only the LAST turn's usage (claude-code-base-action quirk);
+# with an execution stream present the comment must show cumulative totals.
+# exec-multiturn.ndjson: turns of input 1000 + 1 → cumulative 1001 (last is 1).
+out="$(render_only result-lastturn.json exec-multiturn.ndjson)"
+assert_contains     "$out" '| Input tokens | 1,001 |'  "input = cumulative (1001), not last-turn (1)"
+assert_contains     "$out" '| Output tokens | 150 |'   "output = cumulative (100+50)"
+assert_contains     "$out" '| Total tokens | 6,351 |'  "total = input+output+cache (1001+150+5000+200)"
+assert_not_contains "$out" '| Input tokens | 1 |'      "last-turn input (1) not shown"
+
+# No execution stream → fall back to result.json usage (best available).
+out="$(render_only result-lastturn.json)"
+assert_contains "$out" '| Input tokens | 1 |' "no exec log → result.json usage used as-is"
+
+section "resolved model + agent in the report (#59)"
+
+out="$(MODEL=claude-opus-4-7 AGENT=claude RENDER_ONLY=1 \
+       RESULT_FILE="$FIXTURES/result-success-cheap.json" \
+       ISSUE_NUMBER=1 WORKFLOW_RUN_URL=u bash "$SCRIPT")"
+assert_contains "$out" '**Model:** claude-opus-4-7 · **Agent:** claude' \
+  "MODEL+AGENT env → Model·Agent line rendered"
+
+out="$(render_only result-success-cheap.json)"
+assert_not_contains "$out" '**Model:**' "no Model line when MODEL/AGENT unset"
+
 section "error paths (exit codes are part of the script API)"
 
 ec="$(run_capture_ec env RENDER_ONLY=1 RESULT_FILE=/does/not/exist.json \

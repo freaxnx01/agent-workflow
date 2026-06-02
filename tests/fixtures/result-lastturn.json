@@ -1,0 +1,16 @@
+{
+  "type": "result",
+  "subtype": "success",
+  "is_error": false,
+  "duration_ms": 5000,
+  "num_turns": 2,
+  "total_cost_usd": 0.01,
+  "session_id": "sess-lastturn",
+  "result": "done",
+  "usage": {
+    "input_tokens": 1,
+    "output_tokens": 50,
+    "cache_read_input_tokens": 5000,
+    "cache_creation_input_tokens": 0
+  }
+}
