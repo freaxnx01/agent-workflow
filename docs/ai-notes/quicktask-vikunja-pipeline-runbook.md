@@ -211,13 +211,44 @@ status check first (ADR-002 gate 5).
 ## Gotchas captured this session
 
 1. The reusable workflow defaults `pipeline-repo`/`pipeline-ref` to
-   `freaxnx01/claude-pipeline@main` — the **old project name**. agent-pipeline
-   consumers MUST override both.
-2. No tags existed on agent-pipeline; `@v1` works only because a `v1` *branch*
-   was created. Promote to real tags (see "Fix the v1 tag").
+   `freaxnx01/claude-pipeline@main` — the **old project name**. **Fixed on
+   `main`** by #68 (default is now `freaxnx01/agent-pipeline`), **but the fix is
+   not yet in any tag** — see "Tag state" below. So:
+   - Pinning `@main` → the override is now optional (default resolves correctly).
+   - Pinning `@v1` (or `@v1.3.1`) → the override is **still mandatory**; those
+     tags predate #68 and still default to the dead `claude-pipeline`.
+   Keep `pipeline-repo`/`pipeline-ref` in the stub regardless — it's correct
+   under every pin and costs nothing.
+2. No tags existed on agent-pipeline at first handoff; `@v1` initially worked
+   only via a stand-in branch. Tags now exist (see "Tag state").
 3. quicktask-vikunja had **zero open issues** and **no consumer stub** at handoff
    — both created/added in Steps 2 & 4.
 4. Public repo: GitHub-hosted runners only, draft PRs only for the first run.
+5. **Self-mod guard mismatch (related to #1).** The ADR-002 guard that refuses to
+   auto-merge changes to the pipeline repo itself hardcoded the *old* repo name,
+   so on the renamed repo it never matched — the protection was effectively off.
+   **Fixed on `main` by #68; likewise not yet in any tag.**
+
+## Tag state (as of 2026-06-02)
+
+`main` HEAD is `f2d1247` (#68, the rename fix). Existing tags — `v1` (moving),
+`v1.0.0`, `v1.3.0`, `v1.3.1` — **all predate #68** and still carry the old
+`freaxnx01/claude-pipeline` defaults + the self-mod-guard mismatch.
+
+**Action (needs push access):** advance the release tags past #68 so `@v1`
+consumers get the fix, e.g.:
+
+```bash
+git fetch origin
+SHA=$(git rev-parse origin/main)           # f2d1247 or later
+git tag -fa v1.3.2 "$SHA" -m "fix: rename refs to agent-pipeline (#68)"
+git tag -fa v1      "$SHA" -m "v1 → v1.3.2"
+git push origin v1.3.2
+git push -f origin v1                       # moving major tag
+```
+
+Until then, prefer pinning consumers to `@main` (or a post-#68 SHA), and keep
+the `pipeline-repo`/`pipeline-ref` override in every stub.
 
 ## Discovered during the first real run (2026-06-01)
 
