@@ -166,9 +166,42 @@ The auto-merge flow promotes the draft → ready → `gh pr merge --auto --squas
 > a **GitHub App token or a PAT** instead, and add that bot's login to
 > `pipeline-author-allowlist` (the workflow normalizes `app/<name>` ⇄
 > `<name>[bot]`, so either spelling matches — see #54). Draft-PR-only (§1) works
-> fine with `GITHUB_TOKEN`; only auto-merge needs the App/PAT. The pipeline does
-> not yet ship a first-class App-token input (#55) — until it does, a consumer
-> wires its own token into the agent's `gh` auth.
+> fine with `GITHUB_TOKEN`; only auto-merge needs the App/PAT.
+
+### Enabling the GitHub App for PR creation (#55)
+
+The reusable workflow accepts a GitHub App so the agent opens the PR *as the
+App* (triggers required checks; stable bot login). To enable:
+
+1. **Create a GitHub App** — Settings → Developer settings → GitHub Apps → New.
+   Repository permissions: **Contents: R/W**, **Pull requests: R/W**,
+   **Issues: R/W**. No webhook needed.
+2. **Generate a private key** (downloads a `.pem`) and **install the App** on the
+   consumer repo.
+3. **Add two repo secrets:** `PIPELINE_APP_ID` (the numeric App ID) and
+   `PIPELINE_APP_PRIVATE_KEY` (the full `.pem` contents).
+4. **Pass them through** in the consumer stub and allowlist the App's bot login
+   (`<app-name>[bot]`; the `app/…` ⇄ `…[bot]` normalization makes either work):
+
+   ```yaml
+   jobs:
+     claude:
+       uses: freaxnx01/agent-pipeline/.github/workflows/claude-implement.yml@v1
+       with:
+         issue-number: ${{ github.event.issue.number }}
+         auto-review: true
+         pipeline-author-allowlist: my-app[bot]
+       secrets:
+         CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+         PIPELINE_APP_ID: ${{ secrets.PIPELINE_APP_ID }}
+         PIPELINE_APP_PRIVATE_KEY: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
+   ```
+
+When `PIPELINE_APP_ID` is unset the workflow mints nothing and falls back to
+`GITHUB_TOKEN` (the draft-PR-only posture) — so this is a no-op until you opt in.
+
+> ⚠️ **Experimental:** the App-token path is wired and falls back safely, but has
+> not yet been verified end-to-end against a real installed App.
 
 ### Required GitHub repo settings (gate 7)
 

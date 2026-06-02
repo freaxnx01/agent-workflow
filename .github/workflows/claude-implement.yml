@@ -147,6 +147,20 @@ on:
           `secrets` context. The value is never logged; the runner
           step must `set +x` around any line that interpolates it.
         required: false
+      PIPELINE_APP_ID:
+        description: |
+          GitHub App ID for PR creation (#55). When set together with
+          PIPELINE_APP_PRIVATE_KEY, the agent opens the PR as the App so it
+          triggers required checks (unlike GITHUB_TOKEN) — the prerequisite for
+          auto-merge. Add the App's `<name>[bot]` login to
+          `pipeline-author-allowlist`. Optional; absent → GITHUB_TOKEN
+          (draft-PR-only).
+        required: false
+      PIPELINE_APP_PRIVATE_KEY:
+        description: |
+          PEM private key for the GitHub App named by PIPELINE_APP_ID (#55).
+          Optional; required only when PIPELINE_APP_ID is set.
+        required: false
     outputs:
       outcome:
         description: '"success" or "failed".'
@@ -201,9 +215,29 @@ jobs:
       failure-class:       ${{ steps.classify_failure.outputs.class }}
       retry-decision:      ${{ steps.retry.outputs.decision }}
       auto-review-enabled: ${{ steps.auto_review_gate.outputs.enabled || steps.auto_review_gate_stub.outputs.enabled }}
+    env:
+      # Optional GitHub App for PR creation (#55). Exposed as an env var so the
+      # mint step's `if:` can test it (the `secrets` context isn't available in
+      # `if:`). Empty → the agent falls back to GITHUB_TOKEN (draft-only posture).
+      PIPELINE_APP_ID: ${{ secrets.PIPELINE_APP_ID }}
     steps:
       - name: Checkout consumer repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Mint pipeline App token (optional)
+        # When PIPELINE_APP_ID + PIPELINE_APP_PRIVATE_KEY are provided, mint a
+        # short-lived installation token so the agent opens the PR *as the App*.
+        # App-authored PRs trigger required status checks (the ambient
+        # GITHUB_TOKEN's PRs do not) and carry a stable `app/<name>` login for
+        # pipeline-author-allowlist (#54/#55). Absent → downstream falls back to
+        # github.token and nothing changes (draft-only). EXPERIMENTAL: the App
+        # path is not yet verified end-to-end (needs a real App installed).
+        id: app_token
+        if: ${{ env.PIPELINE_APP_ID != '' }}
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349  # v2.2.2
+        with:
+          app-id: ${{ secrets.PIPELINE_APP_ID }}
+          private-key: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
 
       - name: Checkout claude-pipeline scripts
         if: ${{ !inputs.local-scripts }}
@@ -315,7 +349,9 @@ jobs:
         # Claude Code's Bash tool only see env vars that were already on the
         # parent process at spawn time.
         env:
-          GH_TOKEN: ${{ github.token }}
+          # App token when configured (#55) so `gh pr create` opens the PR as
+          # the App and triggers required checks; else the ambient GITHUB_TOKEN.
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
         uses: anthropics/claude-code-base-action@2d6abe4aa8adacaa322e24a040787cf155cf1d09  # v0.0.63
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -330,7 +366,7 @@ jobs:
           # `gh pr create` (the action only injects CLAUDE_CODE_OAUTH_TOKEN
           # by default).
           claude_env: |
-            GH_TOKEN=${{ github.token }}
+            GH_TOKEN=${{ steps.app_token.outputs.token || github.token }}
 
       - name: Run OpenCode
         # Mutex with `Run Claude Code` via the classify_agent gate
@@ -346,7 +382,8 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           PROMPT_FILE: ${{ steps.issue.outputs.prompt-file }}
           MODEL: ${{ steps.triage.outputs.model }}
-          GH_TOKEN: ${{ github.token }}
+          # App token when configured (#55), else the ambient GITHUB_TOKEN.
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
         run: |
           set +x
           out_file="${RUNNER_TEMP:-/tmp}/opencode-output.json"
