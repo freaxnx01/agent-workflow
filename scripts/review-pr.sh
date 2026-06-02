@@ -243,10 +243,30 @@ fi
 
 # --- 4) validate result ---------------------------------------------------
 
+# Agents often wrap the JSON verdict in a ```json fence or a sentence of prose
+# (#72). Try the output as-is; if it isn't valid JSON, salvage the object — the
+# span from the first line containing `{` to the last line containing `}`, which
+# also drops surrounding fences/prose — and re-validate. Only output with no
+# recoverable JSON object fail-safe blocks.
 if ! jq -e . "$RESULT_FILE" >/dev/null 2>&1; then
-  reason='agent produced non-JSON output'
-  printf '{"verdict":"block","summary":"%s","concerns":[]}' "$reason" > "$RESULT_FILE"
-  finish block "$reason" "$RESULT_FILE"
+  salvaged="$WORK_DIR/review-result.salvaged.json"
+  awk '
+    { lines[NR] = $0 }
+    END {
+      first = 0; last = 0
+      for (i = 1; i <= NR; i++) if (!first && index(lines[i], "{")) first = i
+      for (i = NR; i >= 1; i--) if (!last  && index(lines[i], "}")) last  = i
+      if (first && last && last >= first)
+        for (i = first; i <= last; i++) print lines[i]
+    }
+  ' "$RESULT_FILE" > "$salvaged"
+  if [[ -s "$salvaged" ]] && jq -e . "$salvaged" >/dev/null 2>&1; then
+    mv "$salvaged" "$RESULT_FILE"
+  else
+    reason='agent produced non-JSON output'
+    printf '{"verdict":"block","summary":"%s","concerns":[]}' "$reason" > "$RESULT_FILE"
+    finish block "$reason" "$RESULT_FILE"
+  fi
 fi
 
 verdict="$(jq -r '.verdict // ""' "$RESULT_FILE")"
