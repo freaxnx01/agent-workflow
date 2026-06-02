@@ -280,3 +280,55 @@ missed — both now documented canonically in `CONSUMER-SETUP.md §1`:
    method. Read it as "equivalent API cost", not a charge.
 4. **`v1` was promoted to real tags** (`v1.0.0` + moving `v1` at `67e831b`); the
    stand-in `v1` branch was deleted. `@v1` now resolves via the tag.
+
+## Auto-merge: GitHub App setup (2026-06-02)
+
+Auto-merge needs PRs to trigger required checks; the ambient `GITHUB_TOKEN`
+can't (GitHub anti-recursion), so PR creation must use a GitHub App or PAT
+(agent-pipeline #55). Pipeline side wired in agent-pipeline PR #70 (optional
+`PIPELINE_APP_ID` / `PIPELINE_APP_PRIVATE_KEY` → mints an installation token →
+agent opens the PR as the App).
+
+### Manual steps performed (record)
+
+1. Created a GitHub App **`quicktask-pipeline-bot`** (Settings → Developer
+   settings → GitHub Apps → New):
+   - Repository permissions: **Contents R/W, Pull requests R/W, Issues R/W**;
+     webhook disabled; "Only on this account".
+2. Generated a private key (`.pem`) and **installed** the App on
+   `freaxnx01/quicktask-vikunja`.
+3. Added repo secrets on quicktask-vikunja:
+   - `PIPELINE_APP_ID` — the numeric App ID
+   - `PIPELINE_APP_PRIVATE_KEY` — full `.pem` contents
+4. **Bot login** (for `pipeline-author-allowlist`): `quicktask-pipeline-bot[bot]`
+   (the workflow normalizes `app/…` ⇄ `…[bot]`, so either spelling matches — #54).
+
+Still TODO to actually run auto-merge: pass the two secrets through the consumer
+stub, set `pipeline-author-allowlist: quicktask-pipeline-bot[bot]`, re-enable the
+auto-review envelope (branch protection + required `osv-scan` + `allow_auto_merge`
++ `auto-review: true` + `ai-auto-review` label), then verify one live run.
+
+### Make it more automatic (future)
+
+- **Store the App credentials in Passbolt** alongside `CLAUDE_CODE_OAUTH_TOKEN`
+  and `OPENROUTER_API_KEY` — the App ID and especially the `.pem` private key
+  (downloaded once; non-recoverable from GitHub). Then push to GitHub secrets the
+  same way we did for OpenRouter (value never hits shell history/transcript):
+  ```bash
+  passbolt get resource --id <APP_ID_RESOURCE>  --json | jq -r '.password' | tr -d '\n' \
+    | gh secret set PIPELINE_APP_ID          -R freaxnx01/quicktask-vikunja
+  passbolt get resource --id <APP_KEY_RESOURCE> --json | jq -r '.password' \
+    | gh secret set PIPELINE_APP_PRIVATE_KEY -R freaxnx01/quicktask-vikunja
+  ```
+  (Note: the private key is multi-line PEM — do **not** `tr -d '\n'` it; pipe it
+  whole. Store the `.pem` in Passbolt as a secret/note resource.)
+- **Scripted setup:** a small `tool/setup-pipeline-secrets.sh` that reads the
+  three secrets from Passbolt by resource id and runs the `gh secret set` calls,
+  so re-provisioning a consumer is one command.
+- **App creation itself is only semi-automatable.** GitHub has no plain "create
+  App" REST call; the closest is the **App Manifest flow** (`POST
+  /app-manifests/{code}/conversions`) which still needs a browser round-trip to
+  approve, or Terraform's `github_app_installation` (manages installs, not App
+  creation). Practically: create the App once by hand (above), then automate
+  *secret provisioning* from Passbolt. Document the App ID + install ID in
+  Passbolt so the manual step never has to be rediscovered.
