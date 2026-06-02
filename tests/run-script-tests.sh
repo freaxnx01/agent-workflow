@@ -461,6 +461,14 @@ rm -f "$BIG_DIFF"
 out="$(review_run review-malformed.json)"
 assert_contains "$out" 'verdict=block'           "malformed agent output → verdict=block"
 
+# #72: agents wrap the JSON verdict in a code fence — salvage it, do not block.
+out="$(review_run review-fenced-approve.json)"
+assert_contains "$out" 'verdict=approve'         "fenced json output salvaged to approve"
+
+# #72: agent adds prose around the JSON object — salvage the object.
+out="$(review_run review-prose-approve.json)"
+assert_contains "$out" 'verdict=approve'         "prose-wrapped json salvaged to approve"
+
 # Agent invocation failure → coerced to block
 out="$(review_run review-approve.json env AGENT_FAIL=1)"
 assert_contains "$out" 'verdict=block'           "agent failure → verdict=block"
