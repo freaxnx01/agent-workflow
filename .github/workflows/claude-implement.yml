@@ -30,12 +30,12 @@ on:
         default: 30
       pipeline-repo:
         description: |
-          Owner/repo for the claude-pipeline checkout that supplies shared
-          scripts. Defaults to the canonical 'freaxnx01/claude-pipeline'.
+          Owner/repo for the agent-pipeline checkout that supplies shared
+          scripts. Defaults to the canonical 'freaxnx01/agent-pipeline'.
           Override only for self-tests (the test workflow points this at the
           repo currently being PR-tested so it works on fork PRs and act).
         type: string
-        default: freaxnx01/claude-pipeline
+        default: freaxnx01/agent-pipeline
       pipeline-ref:
         description: |
           Ref of `pipeline-repo` to check out for shared scripts. Defaults
@@ -625,7 +625,7 @@ jobs:
           REPO: ${{ github.repository }}
           STUB: ${{ inputs.stub-review-verdict }}
         run: |
-          if [[ -z "$STUB" && "$REPO" == 'freaxnx01/claude-pipeline' ]]; then
+          if [[ -z "$STUB" && "$REPO" == 'freaxnx01/agent-pipeline' ]]; then
             printf 'self-mod-guard: blocking auto-merge on %s per ADR-002\n' "$REPO"
             printf 'blocked=true\n' >> "$GITHUB_OUTPUT"
           else
