@@ -42,6 +42,7 @@ STUB_BRANCH="${STUB_BRANCH:-chore/onboard-agent-pipeline}"
 WORKFLOW_PATH=".github/workflows/claude.yml"
 
 command -v gh >/dev/null || { printf 'error: gh CLI not found\n' >&2; exit 2; }
+# shellcheck disable=SC2016  # `gh auth login` is literal help text, not a var to expand
 gh auth status >/dev/null 2>&1 || { printf 'error: gh not authenticated (run `gh auth login`)\n' >&2; exit 3; }
 gh repo view "$REPO" >/dev/null 2>&1 || { printf 'error: repo %s not found / no access\n' "$REPO" >&2; exit 4; }
 
@@ -74,6 +75,7 @@ if secret_exists && [[ "${FORCE_SECRET:-}" != "1" ]]; then
 else
   token="$(resolve_token || true)"
   if [[ -z "${token:-}" ]]; then
+    # shellcheck disable=SC2016  # the $VAR names are literal env-var names shown to the user
     log 'step 2: ⚠ no token in $CLAUDE_CODE_OAUTH_TOKEN / $TOKEN_CMD and secret missing — set it manually:'
     log "        gh secret set CLAUDE_CODE_OAUTH_TOKEN -R ${REPO}"
   else
