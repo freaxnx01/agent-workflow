@@ -47,9 +47,9 @@ on:
       pipeline-repo:
         description: |
           Owner/repo to fetch shared scripts from. Defaults to the
-          canonical `freaxnx01/claude-pipeline`.
+          canonical `freaxnx01/agent-pipeline`.
         type: string
-        default: freaxnx01/claude-pipeline
+        default: freaxnx01/agent-pipeline
       pipeline-ref:
         description: |
           Ref of `pipeline-repo` to check out. Defaults to `main`.
