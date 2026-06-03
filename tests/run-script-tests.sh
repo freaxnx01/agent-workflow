@@ -989,6 +989,29 @@ out="$(envelope_run env \
 assert_contains "$out" 'envelope=fail'    "count>0 + checks not-green (failing or pending) → fail"
 assert_contains "$out" 'failed-gates=5'   "gate 5 fires on pending/failing required check"
 
+# Gate 5 (#75): UNKNOWN count (protection rule unreadable — a non-integer like a
+# 403 error body) must NOT vacuously pass; the PR's required-checks result
+# decides. UNKNOWN + checks green → pass.
+out="$(envelope_run env \
+        PR_NUMBER=42 REPO=o/r \
+        PR_AUTHOR='github-actions[bot]' \
+        PR_FILES='src/foo.ts' \
+        REQUIRED_CHECKS_COUNT='{"status":"403"}' \
+        REQUIRED_CHECKS_PASS=true \
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true)"
+assert_contains "$out" 'envelope=pass'    "unreadable count + checks green → pass (no shell error)"
+
+# UNKNOWN count + checks not-green → BLOCK (must not vacuous-pass on a 403).
+out="$(envelope_run env \
+        PR_NUMBER=42 REPO=o/r \
+        PR_AUTHOR='github-actions[bot]' \
+        PR_FILES='src/foo.ts' \
+        REQUIRED_CHECKS_COUNT='{"status":"403"}' \
+        REQUIRED_CHECKS_PASS=false \
+        REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true)"
+assert_contains "$out" 'envelope=fail'    "unreadable count + checks not-green → fail (no vacuous pass)"
+assert_contains "$out" 'failed-gates=5'   "  → gate 5 blocks on unreadable+not-green"
+
 # Gate 5 (live decision path): invalid REQUIRED_CHECKS_PASS → exit 2
 ec="$(run_capture_ec env \
         PR_NUMBER=42 REPO=o/r \

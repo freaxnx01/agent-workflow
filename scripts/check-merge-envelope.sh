@@ -145,34 +145,52 @@ if [[ -z "$required_checks_status" ]]; then
         --json baseRefName --jq '.baseRefName' 2>/dev/null || echo '')"
     fi
     if [[ -n "$PR_BASE_BRANCH" ]]; then
+      # Reading the protection rule needs `administration: read`, which the
+      # ambient GITHUB_TOKEN usually lacks → 403 (#75). gh writes the error
+      # body to stdout, so guard against a non-integer landing in arithmetic.
       required_count="$(gh api \
         "repos/$REPO/branches/$PR_BASE_BRANCH/protection/required_status_checks" \
-        --jq '.contexts | length' 2>/dev/null || echo 0)"
-    else
-      required_count=0
+        --jq '.contexts | length' 2>/dev/null)" || required_count=''
     fi
   fi
+  # Only a clean non-negative integer is a *known* count. Anything else
+  # (empty, a 403 error body, 404) is UNKNOWN — never coerce it to 0, which
+  # would vacuously pass the supply-chain gate.
+  if ! [[ "$required_count" =~ ^[0-9]+$ ]]; then
+    required_count=''
+  fi
 
-  if (( required_count == 0 )); then
-    required_checks_status=none
-  else
-    pass_flag="${REQUIRED_CHECKS_PASS:-}"
-    if [[ -z "$pass_flag" ]]; then
-      if gh pr checks "$PR_NUMBER" --repo "$REPO" --required >/dev/null 2>&1; then
-        pass_flag=true
-      else
-        pass_flag=false
-      fi
+  # pass/fail of the PR's required checks via `gh pr checks --required` exit
+  # code (0 = all green, non-zero = failing/pending). This does NOT need
+  # administration:read, so it works even when the count read 403'd.
+  pass_flag="${REQUIRED_CHECKS_PASS:-}"
+  if [[ -z "$pass_flag" ]]; then
+    if gh pr checks "$PR_NUMBER" --repo "$REPO" --required >/dev/null 2>&1; then
+      pass_flag=true
+    else
+      pass_flag=false
     fi
-    case "$pass_flag" in
-      true)  required_checks_status=pass ;;
-      false) required_checks_status=fail ;;
-      *)
-        printf 'error: REQUIRED_CHECKS_PASS must be true|false (got %q)\n' \
-          "$pass_flag" >&2
-        exit 2
-        ;;
-    esac
+  fi
+  case "$pass_flag" in
+    true|false) ;;
+    *)
+      printf 'error: REQUIRED_CHECKS_PASS must be true|false (got %q)\n' \
+        "$pass_flag" >&2
+      exit 2
+      ;;
+  esac
+
+  if [[ "$required_count" == "0" ]]; then
+    # Confirmed: no required checks configured → vacuous pass.
+    required_checks_status=none
+  elif [[ -n "$required_count" ]]; then
+    # Known >=1 required checks → green-or-not by the check run.
+    [[ "$pass_flag" == true ]] && required_checks_status=pass || required_checks_status=fail
+  else
+    # UNKNOWN count (e.g. protection rule unreadable, #75). Do NOT assume
+    # "none". Trust the PR's own required-checks result and block on anything
+    # not cleanly green — an unreadable rule must never vacuously pass.
+    [[ "$pass_flag" == true ]] && required_checks_status=pass || required_checks_status=fail
   fi
 fi
 
