@@ -299,6 +299,64 @@ jobs:
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
 
+  # ─── Pre-preview path (issue #77 / ADR-004) ───────────────────────────────
+  # Pre-preview reviews the draft PR and, on approve, runs `gh pr ready`
+  # (promote) but never `gh pr merge`. The gh mock captures both so the
+  # asserts can check ready=true / merge=false on approve, and both=false
+  # on block. The precedence call sets BOTH gates; pre-preview must win.
+
+  call-pre-preview-approve:
+    name: Reusable workflow — pre-preview approve
+    uses: ./.github/workflows/claude-implement.yml
+    with:
+      issue-number: 9007
+      timeout-minutes: 10
+      local-scripts: true
+      stub-claude: true
+      stub-fixture: success
+      pre-preview: true
+      dry-run: true
+      stub-pre-preview-enabled: true
+      stub-review-verdict: approve
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
+
+  call-pre-preview-block:
+    name: Reusable workflow — pre-preview block
+    uses: ./.github/workflows/claude-implement.yml
+    with:
+      issue-number: 9008
+      timeout-minutes: 10
+      local-scripts: true
+      stub-claude: true
+      stub-fixture: success
+      pre-preview: true
+      dry-run: true
+      stub-pre-preview-enabled: true
+      stub-review-verdict: block
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
+
+  call-pre-preview-precedence:
+    name: Reusable workflow — pre-preview wins over auto-review
+    uses: ./.github/workflows/claude-implement.yml
+    with:
+      issue-number: 9009
+      timeout-minutes: 10
+      local-scripts: true
+      stub-claude: true
+      stub-fixture: success
+      auto-review: true
+      pre-preview: true
+      dry-run: true
+      stub-auto-review-enabled: true
+      stub-pre-preview-enabled: true
+      stub-review-verdict: approve
+      stub-pr-files: |
+        src/foo.ts
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
+
   verify-auto-review-approve-safe:
     name: Assert approve + safe → merge attempted
     needs: call-auto-review-approve-safe
@@ -362,3 +420,62 @@ jobs:
           [[ "$ATTEMPTED" == "false" ]] \
             || { echo "::error::merge-attempted=$ATTEMPTED (want false — block verdict must block)"; exit 1; }
           echo "block OK: merge-attempted=$ATTEMPTED"
+
+  verify-pre-preview-approve:
+    name: Assert pre-preview approve → promoted, no merge
+    needs: call-pre-preview-approve
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      READY:     ${{ needs.call-pre-preview-approve.outputs.pre-preview-ready-attempted }}
+      ATTEMPTED: ${{ needs.call-pre-preview-approve.outputs.pre-preview-merge-attempted }}
+    steps:
+      - name: Assert gh pr ready called and gh pr merge NOT called
+        run: |
+          fail=0
+          [[ "$READY" == "true" ]]      || { echo "::error::ready-attempted=$READY (want true — approve must promote)"; fail=1; }
+          [[ "$ATTEMPTED" == "false" ]] || { echo "::error::merge-attempted=$ATTEMPTED (want false — pre-preview never merges)"; fail=1; }
+          (( fail == 0 )) || exit 1
+          echo "pre-preview approve OK: ready=$READY merge=$ATTEMPTED"
+
+  verify-pre-preview-block:
+    name: Assert pre-preview block → draft, no promote, no merge
+    needs: call-pre-preview-block
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      READY:     ${{ needs.call-pre-preview-block.outputs.pre-preview-ready-attempted }}
+      ATTEMPTED: ${{ needs.call-pre-preview-block.outputs.pre-preview-merge-attempted }}
+    steps:
+      - name: Assert neither gh pr ready nor gh pr merge was called
+        run: |
+          fail=0
+          [[ "$READY" == "false" ]]     || { echo "::error::ready-attempted=$READY (want false — block must NOT promote)"; fail=1; }
+          [[ "$ATTEMPTED" == "false" ]] || { echo "::error::merge-attempted=$ATTEMPTED (want false)"; fail=1; }
+          (( fail == 0 )) || exit 1
+          echo "pre-preview block OK: ready=$READY merge=$ATTEMPTED"
+
+  verify-pre-preview-precedence:
+    name: Assert pre-preview wins → promoted, no merge
+    needs: call-pre-preview-precedence
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      READY:           ${{ needs.call-pre-preview-precedence.outputs.pre-preview-ready-attempted }}
+      PREVIEW_MERGE:   ${{ needs.call-pre-preview-precedence.outputs.pre-preview-merge-attempted }}
+      AUTO_MERGE:      ${{ needs.call-pre-preview-precedence.outputs.auto-review-merge-attempted }}
+    steps:
+      - name: Assert pre-preview ran and nothing auto-merged
+        run: |
+          fail=0
+          [[ "$READY" == "true" ]]          || { echo "::error::ready-attempted=$READY (want true — pre-preview should run and promote)"; fail=1; }
+          [[ "$PREVIEW_MERGE" == "false" ]] || { echo "::error::pre-preview-merge-attempted=$PREVIEW_MERGE (want false)"; fail=1; }
+          [[ "$AUTO_MERGE" != "true" ]]     || { echo "::error::auto-review-merge-attempted=$AUTO_MERGE (want not-true — auto_review must be suppressed)"; fail=1; }
+          (( fail == 0 )) || exit 1
+          echo "precedence OK: ready=$READY preview-merge=$PREVIEW_MERGE auto-merge=$AUTO_MERGE"
