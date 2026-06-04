@@ -1,0 +1,43 @@
+name: Release
+
+# On a pushed semver tag, generate release notes from Conventional Commits
+# (git-cliff + cliff.toml) and publish a GitHub Release. SemVer tags are cut on
+# main after merge — see CLAUDE.md → Versioning and the `release` just recipe.
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write   # create the GitHub Release
+    steps:
+      - name: Checkout (full history for git-cliff)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        uses: orhun/git-cliff-action@f50e11560dce63f7c33227798f90b924471a88b5  # v4.8.0
+        with:
+          config: cliff.toml
+          args: --latest --strip all
+        env:
+          OUTPUT: RELEASE_NOTES.md
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" --title "$TAG" --notes-file RELEASE_NOTES.md --verify-tag

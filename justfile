@@ -39,9 +39,9 @@ fixtures-update:
     echo "  2. Run 'just test' and confirm the new/updated branch is covered"
     echo "  3. Commit the fixture in the same PR as the code that produced the new branch"
 
-# Regenerate CHANGELOG.md from conventional commits (needs `git-cliff` + cliff.toml)
+# Preview the pending [Unreleased] changelog section to stdout (non-destructive)
 changelog:
-    git-cliff --output CHANGELOG.md
+    git-cliff --unreleased
 
 # Generate / verify docs (currently: the changelog)
 docs: changelog
@@ -95,7 +95,7 @@ release:
     if git rev-parse "v$v" >/dev/null 2>&1; then
       echo "tag v$v already exists — bump first (just bump-minor / bump-patch)"; exit 1
     fi
-    git-cliff --tag "v$v" --output CHANGELOG.md
+    git-cliff --tag "v$v" --unreleased --prepend CHANGELOG.md
     git add CHANGELOG.md VERSION
     git commit -m "chore(release): v$v"
     git tag -a "v$v" -m "v$v"
