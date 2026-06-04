@@ -1377,6 +1377,7 @@ assert_contains "$log" 'label create agent:opencode --repo owner/repo' "creates 
 
 # Gate labels (auto-review epic #3, chaining epic #4)
 assert_contains "$log" 'label create ai-auto-review --repo owner/repo'  "creates ai-auto-review"
+assert_contains "$log" 'label create ai-pre-preview --repo owner/repo'  "creates ai-pre-preview"
 assert_contains "$log" 'label create ai-chain --repo owner/repo'        "creates ai-chain"
 assert_contains "$log" 'label create ai:chain-paused --repo owner/repo' "creates ai:chain-paused"
 
