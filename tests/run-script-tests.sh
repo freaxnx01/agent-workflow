@@ -757,6 +757,22 @@ GITHUB_OUTPUT="$GO" GH_MOCK_LOG="$LOG" bash "$VERIFY_MOCK" >/dev/null
 out="$(cat "$GO")"; rm -f "$LOG" "$GO"
 assert_contains "$out" 'merge-attempted=true'  "log with 'pr merge' → attempted=true"
 
+# Same log also reports ready-attempted=true (it contains a 'pr ready' line)
+LOG="$(mktemp)"
+GO="$(mktemp)"
+printf 'pr ready 9999 --repo o/r\npr merge 9999 --repo o/r --auto --squash\n' > "$LOG"
+GITHUB_OUTPUT="$GO" GH_MOCK_LOG="$LOG" bash "$VERIFY_MOCK" >/dev/null
+out="$(cat "$GO")"; rm -f "$LOG" "$GO"
+assert_contains "$out" 'ready-attempted=true' "log with 'pr ready' → ready-attempted=true"
+
+# Log without 'pr ready' → ready-attempted=false
+LOG="$(mktemp)"
+GO="$(mktemp)"
+printf 'pr comment 9999 --repo o/r --body held\nissue edit 42 --repo o/r --add-label ai:review-blocked\n' > "$LOG"
+GITHUB_OUTPUT="$GO" GH_MOCK_LOG="$LOG" bash "$VERIFY_MOCK" >/dev/null
+out="$(cat "$GO")"; rm -f "$LOG" "$GO"
+assert_contains "$out" 'ready-attempted=false' "log without 'pr ready' → ready-attempted=false"
+
 # Log without 'pr merge' → attempted=false
 LOG="$(mktemp)"
 GO="$(mktemp)"
