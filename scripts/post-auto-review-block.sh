@@ -24,6 +24,9 @@
 #   ENVELOPE          Envelope outcome (empty if envelope step was skipped).
 #   ENVELOPE_REASON   Human reason from check-merge-envelope.sh.
 #   FAILED_GATES      Comma-separated gate IDs from check-merge-envelope.sh.
+#   MODE              Operational mode (default: auto-review).
+#                     "pre-preview" switches the comment prefix to "Pre-review held"
+#                     instead of "Auto-merge held" / "Auto-review held".
 #
 # Exit codes:
 #   0  success (refusal surfaced)
@@ -45,6 +48,19 @@ VERDICT="${VERDICT:-}"
 ENVELOPE="${ENVELOPE:-}"
 ENVELOPE_REASON="${ENVELOPE_REASON:-}"
 FAILED_GATES="${FAILED_GATES:-}"
+MODE="${MODE:-auto-review}"
+
+# Comment-prefix wording differs by mode; reason text is identical.
+case "$MODE" in
+  pre-preview)
+    pr_prefix='Pre-review held'
+    issue_prefix='Pre-review held'
+    ;;
+  *)
+    pr_prefix='Auto-merge held'
+    issue_prefix='Auto-review held'
+    ;;
+esac
 
 if [[ "$SELF_MOD_BLOCKED" == 'true' ]]; then
   reason='self-modification guard (ADR-002) refused promotion on agent-pipeline itself'
@@ -62,10 +78,10 @@ printf 'auto-review: %s\n' "$reason"
 
 if [[ -n "$PR_NUMBER" ]]; then
   gh pr comment "$PR_NUMBER" --repo "$REPO" \
-    --body "Auto-merge held: $reason. PR stays draft for human review."
+    --body "$pr_prefix: $reason. PR stays draft for human review."
 else
   gh issue comment "$ISSUE_NUMBER" --repo "$REPO" \
-    --body "Auto-review held: $reason."
+    --body "$issue_prefix: $reason."
 fi
 
 # Label the issue so a watcher can filter for review-blocked work.

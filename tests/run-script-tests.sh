@@ -827,6 +827,16 @@ VERDICT=request_changes \
 calls="$(cat "$LOG")"; rm -f "$LOG"
 assert_contains "$calls" 'agent review verdict: request_changes (gate 4)' "non-approve verdict → names gate 4"
 
+# MODE=pre-preview → comment prefix is "Pre-review held", not "Auto-merge held"
+LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
+REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=100 FOUND=true \
+VERDICT=block MODE=pre-preview \
+  bash "$POST_BLOCK" >/dev/null
+calls="$(cat "$LOG")"; rm -f "$LOG"
+assert_contains     "$calls" 'pr comment 100 --repo o/r --body Pre-review held: agent review verdict: block (gate 4)' "MODE=pre-preview → 'Pre-review held' PR comment"
+assert_not_contains "$calls" 'Auto-merge held'                                                                        "MODE=pre-preview → no 'Auto-merge held' wording"
+
 # Envelope fail → reason includes the gate IDs from check-merge-envelope.sh
 LOG="$(mktemp)"
 PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
