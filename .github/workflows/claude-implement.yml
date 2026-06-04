@@ -87,6 +87,15 @@ on:
           issue, which doesn't exist under act).
         type: boolean
         default: false
+      stub-pre-preview-enabled:
+        description: |
+          Test-only. When `stub-claude: true`, forces the implement job's
+          `pre-preview-enabled` output to this value instead of running
+          check-preview-gate.sh. Required for end-to-end act tests of the
+          pre_preview job (the real gate requires a labeled GitHub issue,
+          which doesn't exist under act).
+        type: boolean
+        default: false
       stub-review-verdict:
         description: |
           Test-only. When non-empty, the auto_review job skips installing
@@ -122,6 +131,17 @@ on:
           `auto_review` job runs. Default false preserves the original
           "draft PRs only" posture. The full safety envelope is enforced
           in `check-merge-envelope.sh` per ADR-002.
+        type: boolean
+        default: false
+      pre-preview:
+        description: |
+          Per-repo opt-in for pre-preview mode (#77 / ADR-004). When true
+          AND the issue carries the `ai-pre-preview` label, the
+          `pre_preview` job reviews the freshly-opened draft PR and, on
+          approve, promotes it to ready for a HUMAN to merge — no safety
+          envelope, no auto-merge. If an issue also carries
+          `ai-auto-review`, pre-preview wins (the auto_review job is
+          suppressed).
         type: boolean
         default: false
       pipeline-author-allowlist:
@@ -215,6 +235,7 @@ jobs:
       failure-class:       ${{ steps.classify_failure.outputs.class }}
       retry-decision:      ${{ steps.retry.outputs.decision }}
       auto-review-enabled: ${{ steps.auto_review_gate.outputs.enabled || steps.auto_review_gate_stub.outputs.enabled }}
+      pre-preview-enabled: ${{ steps.preview_gate.outputs.enabled || steps.preview_gate_stub.outputs.enabled }}
     env:
       # Optional GitHub App for PR creation (#55). Exposed as an env var so the
       # mint step's `if:` can test it (the `secrets` context isn't available in
@@ -338,6 +359,26 @@ jobs:
         id: auto_review_gate_stub
         env:
           ENABLED: ${{ inputs.stub-auto-review-enabled }}
+        run: printf 'enabled=%s\n' "$ENABLED" >> "$GITHUB_OUTPUT"
+
+      - name: Check pre-preview gate
+        if: ${{ !inputs.stub-claude }}
+        id: preview_gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          INPUT_PRE_PREVIEW: ${{ inputs.pre-preview }}
+        run: bash .claude-pipeline/scripts/check-preview-gate.sh
+
+      - name: Stub pre-preview gate (test mode)
+        # Mirrors check-preview-gate.sh's output under stub-claude=true so
+        # end-to-end act tests can drive the pre_preview job without a real
+        # labeled GitHub issue.
+        if: ${{ inputs.stub-claude }}
+        id: preview_gate_stub
+        env:
+          ENABLED: ${{ inputs.stub-pre-preview-enabled }}
         run: printf 'enabled=%s\n' "$ENABLED" >> "$GITHUB_OUTPUT"
 
       - name: Run Claude Code
@@ -581,6 +622,7 @@ jobs:
       && (!inputs.dry-run || inputs.stub-review-verdict != '')
       && needs.implement.outputs.outcome == 'success'
       && needs.implement.outputs.auto-review-enabled == 'true'
+      && needs.implement.outputs.pre-preview-enabled != 'true'
     runs-on: ${{ fromJSON(inputs.runner-labels) }}
     timeout-minutes: 10
     permissions:
