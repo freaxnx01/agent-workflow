@@ -387,6 +387,42 @@ assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 ec="$(run_capture_ec env ISSUE_NUMBER=1 INPUT_AUTO_REVIEW=true bash "$GATE")"
 assert_equals "$ec" "2" "missing REPO → exit 2"
 
+section "check-preview-gate — input + label combinations"
+
+PGATE="$ROOT/scripts/check-preview-gate.sh"
+
+# Both off → disabled
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_PRE_PREVIEW=false ISSUE_LABELS='ai-implement' bash "$PGATE")"
+assert_contains "$out" 'enabled=false (workflow input pre-preview=false)' "input=false, no label → disabled"
+
+# Label only → still disabled (input gate not satisfied)
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_PRE_PREVIEW=false ISSUE_LABELS=$'ai-implement\nai-pre-preview' bash "$PGATE")"
+assert_contains "$out" 'enabled=false (workflow input pre-preview=false)' "input=false, label set → disabled (input wins)"
+
+# Input only → disabled (label gate not satisfied)
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_PRE_PREVIEW=true ISSUE_LABELS='ai-implement' bash "$PGATE")"
+assert_contains "$out" 'enabled=false (input=true but label ai-pre-preview missing)' "input=true, no label → disabled"
+
+# Both on → enabled
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_PRE_PREVIEW=true ISSUE_LABELS=$'ai-implement\nai-pre-preview' bash "$PGATE")"
+assert_contains "$out" 'enabled=true (input=true AND label ai-pre-preview present)' "input=true, label set → enabled"
+
+# Default INPUT_PRE_PREVIEW (unset) → disabled
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-pre-preview' bash "$PGATE")"
+assert_contains "$out" 'enabled=false (workflow input pre-preview=false)' "unset INPUT_PRE_PREVIEW defaults to false"
+
+# Invalid INPUT_PRE_PREVIEW → exit 2
+ec="$(run_capture_ec env ISSUE_NUMBER=1 REPO=o/r INPUT_PRE_PREVIEW=yes ISSUE_LABELS='' bash "$PGATE")"
+assert_equals "$ec" "2" "invalid INPUT_PRE_PREVIEW → exit 2"
+
+# Missing ISSUE_NUMBER → exit 2
+ec="$(run_capture_ec env REPO=o/r INPUT_PRE_PREVIEW=true bash "$PGATE")"
+assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
+
+# Missing REPO → exit 2
+ec="$(run_capture_ec env ISSUE_NUMBER=1 INPUT_PRE_PREVIEW=true bash "$PGATE")"
+assert_equals "$ec" "2" "missing REPO → exit 2"
+
 section "review-prompt — ADR-002 §2.4 auto-block rules present in template"
 
 PROMPT="$ROOT/scripts/lib/review-prompt.md"
