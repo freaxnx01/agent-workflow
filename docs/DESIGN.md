@@ -1,7 +1,7 @@
 # Claude Pipeline — Design Notes for Implementation
 
 > Handoff from desktop brainstorming (April 2026) to local Claude Code session.
-> Drop this file into the new `freaxnx01/claude-pipeline` repo as `docs/DESIGN.md`
+> Drop this file into the new `freaxnx01/agent-pipeline` repo as `docs/DESIGN.md`
 > or similar, and reference it from CLAUDE.md so future sessions stay aligned.
 >
 > Brainstorming transcript: https://claude.ai/share/3f06e2d3-2b65-4b64-87a6-81d6715005f7
@@ -28,7 +28,7 @@ subscription, your model choices, and your existing `dotnet-ai-instructions` con
 ### Three repos, distinct concerns
 
 ```
-freaxnx01/claude-pipeline       # NEW — the CI side (workflows, scripts, fixtures, docs)
+freaxnx01/agent-pipeline       # NEW — the CI side (workflows, scripts, fixtures, docs)
 freaxnx01/dotnet-ai-instructions # EXISTING — local Claude Code stack, /sync-ai-instr
 freaxnx01/<homelab-ansible>      # EXISTING — add github-actions-runner role here
 ```
@@ -38,13 +38,13 @@ stub via `/sync-ai-instr`.
 
 ### Reusable workflow pattern
 
-`claude-pipeline` exposes a single reusable workflow that consumer repos call:
+`agent-pipeline` exposes a single reusable workflow that consumer repos call:
 
 ```yaml
 # In consumer repo: .github/workflows/claude.yml
 jobs:
   claude:
-    uses: freaxnx01/claude-pipeline/.github/workflows/claude-implement.yml@v1
+    uses: freaxnx01/agent-pipeline/.github/workflows/claude-implement.yml@v1
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     with:
@@ -55,7 +55,7 @@ jobs:
 This means:
 - Single source of truth for the pipeline logic
 - Each consumer repo has a tiny stub (good for `/sync-ai-instr`)
-- `claude-pipeline` must be **public** (or accessible via PAT) for FlowHub (public) to call it
+- `agent-pipeline` must be **public** (or accessible via PAT) for FlowHub (public) to call it
 
 ### Runner strategy
 
@@ -68,7 +68,7 @@ This means:
 Fork-PR attack surface is unacceptable. FlowHub stays GitHub-hosted permanently.
 
 The self-hosted LXC runner is provisioned via a new Ansible role in the existing
-homelab Ansible repo (`roles/github-actions-runner/`), not in `claude-pipeline` itself.
+homelab Ansible repo (`roles/github-actions-runner/`), not in `agent-pipeline` itself.
 Treat it like any other homelab service.
 
 ### Runner toolchain (both hosted and self-hosted)
@@ -146,10 +146,10 @@ For self-hosted runners: sleeping during rate-limit waits is free. For GitHub-ho
 (FlowHub): minutes are unlimited on public repos, also free. Pattern A from the
 brainstorm (self-rescheduling) is fine for both.
 
-## Repo structure for claude-pipeline
+## Repo structure for agent-pipeline
 
 ```
-claude-pipeline/
+agent-pipeline/
 ├── .github/workflows/
 │   ├── claude-implement.yml         # the reusable workflow consumers call
 │   ├── claude-implement.test.yml    # stubbed Claude step, for act-based testing
@@ -188,7 +188,7 @@ claude-pipeline/
 Strict order. Don't skip ahead.
 
 ### Phase 1: Foundations (Layer 0/1 testing)
-1. Create `claude-pipeline` repo (private at first; flip public when stable)
+1. Create `agent-pipeline` repo (private at first; flip public when stable)
 2. Set up `actionlint` + `shellcheck` lint workflow
 3. Build `scripts/post-run-report.sh` with extracted bash, env-driven
 4. Build fixture set (~6 JSON files covering success/failure/edge cases)
@@ -349,10 +349,10 @@ These were considered and explicitly deferred:
 ## Open questions for the next session
 
 - Exact Ansible role layout for the runner LXC (depends on existing homelab role conventions)
-- Whether `claude-pipeline` should be public from day 1 or flip later
-- Naming: `claude-pipeline` vs `ci-claude` vs `claude-actions` — pick one
+- Whether `agent-pipeline` should be public from day 1 or flip later
+- Naming: `agent-pipeline` vs `ci-claude` vs `claude-actions` — pick one
 - Where the `delegate-to-gh` skill lives long-term: in `dotnet-ai-instructions`
-  (alongside other personal skills) or in `claude-pipeline`? Probably the former.
+  (alongside other personal skills) or in `agent-pipeline`? Probably the former.
 
 ## Critical constraints — non-negotiable
 
