@@ -1,9 +1,10 @@
 # Consumer Setup
 
-How to wire `agent-pipeline` into a consumer repo. Two flows:
+How to wire `agent-pipeline` into a consumer repo. Three flows:
 
 1. **Minimum stub** — labeled-issue → draft PR (no auto-merge).
 2. **Auto-review + auto-merge** — labeled-issue → draft PR → agent review → squash-merge, inside ADR-002's safety envelope.
+3. **Pre-preview** — labeled-issue → draft PR → agent reviews its own PR → on approve, promote draft→ready; a human merges. No envelope, no auto-merge. Opt in with `pre-preview: true` + the `ai-pre-preview` label. See ADR-004.
 
 > **Agent selection — two independent mechanisms, don't conflate them:**
 >
