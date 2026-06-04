@@ -239,7 +239,7 @@ jobs:
           app-id: ${{ secrets.PIPELINE_APP_ID }}
           private-key: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
 
-      - name: Checkout claude-pipeline scripts
+      - name: Checkout agent-pipeline scripts
         if: ${{ !inputs.local-scripts }}
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
@@ -595,7 +595,7 @@ jobs:
         # for check-merge-envelope.sh to read.
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Checkout claude-pipeline scripts
+      - name: Checkout agent-pipeline scripts
         if: ${{ !inputs.local-scripts }}
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
@@ -646,14 +646,14 @@ jobs:
               '[{"number":9999,"isDraft":true,"headRefOid":"stubsha","author":{"login":"github-actions[bot]"}}]'
           } >> "$GITHUB_ENV"
 
-      - name: Self-modification guard (ADR-002 — claude-pipeline itself)
+      - name: Self-modification guard (ADR-002 — agent-pipeline itself)
         # The pipeline's own scripts/workflows/decisions ARE the pipeline;
         # an auto-merged PR here could change the gates applied to itself.
         # Refuse to promote regardless of input/label state. Hardcoded
         # per ADR-002.
         #
         # Bypassed under stub-review-verdict (Layer-2 act tests) so the
-        # claude-pipeline repo can exercise its own auto-merge paths
+        # agent-pipeline repo can exercise its own auto-merge paths
         # without the guard masking every assert. Production callers
         # never set stub-review-verdict — the guard remains effective
         # on every real run.

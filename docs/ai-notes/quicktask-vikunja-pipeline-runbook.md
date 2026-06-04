@@ -94,7 +94,7 @@ jobs:
       default-model: claude-opus-4-7
       # ── REQUIRED for agent-pipeline consumers ──
       # The reusable workflow defaults pipeline-repo/ref to
-      # freaxnx01/claude-pipeline@main (the project's original name). Override
+      # freaxnx01/agent-pipeline@main (the project's original name). Override
       # both so the shared-scripts cross-repo checkout resolves to THIS pipeline.
       pipeline-repo: freaxnx01/agent-pipeline
       pipeline-ref: v1
@@ -107,7 +107,7 @@ The reusable workflow checks out its shared `scripts/` from
 `pipeline-repo`@`pipeline-ref`. GitHub's `github.workflow_ref` refers to the
 *caller's* workflow, so `@v1` in `uses:` does **not** propagate to that script
 checkout — it must be set explicitly, or scripts default to
-`freaxnx01/claude-pipeline@main` and the run breaks.
+`freaxnx01/agent-pipeline@main` and the run breaks.
 
 ## Step 3 — (Optional) chain-dispatch stub
 
@@ -211,12 +211,12 @@ status check first (ADR-002 gate 5).
 ## Gotchas captured this session
 
 1. The reusable workflow defaults `pipeline-repo`/`pipeline-ref` to
-   `freaxnx01/claude-pipeline@main` — the **old project name**. **Fixed on
+   `freaxnx01/agent-pipeline@main` — the **old project name**. **Fixed on
    `main`** by #68 (default is now `freaxnx01/agent-pipeline`), **but the fix is
    not yet in any tag** — see "Tag state" below. So:
    - Pinning `@main` → the override is now optional (default resolves correctly).
    - Pinning `@v1` (or `@v1.3.1`) → the override is **still mandatory**; those
-     tags predate #68 and still default to the dead `claude-pipeline`.
+     tags predate #68 and still default to the dead `agent-pipeline`.
    Keep `pipeline-repo`/`pipeline-ref` in the stub regardless — it's correct
    under every pin and costs nothing.
 2. No tags existed on agent-pipeline at first handoff; `@v1` initially worked
@@ -233,7 +233,7 @@ status check first (ADR-002 gate 5).
 
 `main` HEAD is `f2d1247` (#68, the rename fix). Existing tags — `v1` (moving),
 `v1.0.0`, `v1.3.0`, `v1.3.1` — **all predate #68** and still carry the old
-`freaxnx01/claude-pipeline` defaults + the self-mod-guard mismatch.
+`freaxnx01/agent-pipeline` defaults + the self-mod-guard mismatch.
 
 **Action (needs push access):** advance the release tags past #68 so `@v1`
 consumers get the fix, e.g.:

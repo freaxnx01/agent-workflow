@@ -275,7 +275,7 @@ Init-time checklist (every project, regardless of stack) — including baseline,
 
 Applies on top of `.ai/base-instructions.md` for repos whose primary deliverable is **automation glue** rather than application code: GitHub Actions reusable workflows, composite actions, shell-script tooling, runner provisioning, release-engineering helpers, and similar pipeline-style projects.
 
-Use this stack for repos like `claude-pipeline`, homelab tooling, internal action libraries, or any repo where the bulk of the source is `bash`, `.github/workflows/*.yml`, and supporting fixtures/tests.
+Use this stack for repos like `agent-pipeline`, homelab tooling, internal action libraries, or any repo where the bulk of the source is `bash`, `.github/workflows/*.yml`, and supporting fixtures/tests.
 
 ---
 
