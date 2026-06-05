@@ -3,7 +3,11 @@
 # ensure-issue-labels.sh — Ensure the labels the pipeline reads or writes exist
 # on the target repository.
 #
-# Three categories:
+# Categories:
+#   trigger    ai-implement
+#              — the user-applied label the consumer `claude.yml` keys its
+#                `if:` on to start a run; the pipeline reads it, so ensure it
+#                exists (else the very first run can't be triggered)
 #   lifecycle  ai:running, ai:done, ai:failed, ctx:medium, ctx:high
 #              — written by post-run-report.sh after each run
 #   selectors  agent:claude, agent:opencode
@@ -43,6 +47,8 @@ create() {
     printf 'present: %s\n' "$name"
   fi
 }
+
+create ai-implement 1D76DB 'Trigger the agent-pipeline to implement this issue'
 
 create ai:running FBCA04 'Pipeline run in progress'
 create ai:done    0E8A16 'Pipeline run completed successfully'
