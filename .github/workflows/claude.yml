@@ -1,0 +1,41 @@
+# Production caller — dogfoods this pipeline on its OWN issues.
+#
+# Trigger: apply the `ai-implement` label to an issue. The agent implements it
+# and opens a draft PR. Because `pre-preview: true` is set here, an issue that
+# ALSO carries `ai-pre-preview` runs the pre-preview flow (ADR-004): the agent
+# reviews its own draft PR and, on approve, promotes it to ready for a HUMAN to
+# merge — no envelope, no auto-merge. Issues without `ai-pre-preview` get the
+# plain draft-only flow (#1).
+#
+# Self-dogfood specifics:
+#   - `uses: ./...` calls the reusable workflow from the SAME (default-branch)
+#     commit, so a run exercises current `main`.
+#   - `local-scripts: true` uses this repo's own scripts/ instead of a cross-repo
+#     checkout (the consumer repo IS the pipeline repo here), sidestepping the
+#     pipeline-repo/ref gotcha in CONSUMER-SETUP.md.
+name: Claude
+
+on:
+  issues:
+    types: [labeled]
+
+# A reusable workflow can't be granted more than its caller, and this repo's
+# default GITHUB_TOKEN is read-only — without this block the run fails at
+# startup (see CONSUMER-SETUP.md gotcha #5).
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  claude:
+    if: github.event.label.name == 'ai-implement'
+    uses: ./.github/workflows/claude-implement.yml
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+    with:
+      issue-number: ${{ github.event.issue.number }}
+      runner-labels: '["ubuntu-latest"]'
+      default-model: claude-opus-4-7
+      local-scripts: true
+      pre-preview: true
