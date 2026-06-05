@@ -1,0 +1,60 @@
+# cliff.toml — git-cliff configuration for agent-pipeline.
+# Docs: https://git-cliff.org/docs/configuration
+# Keep-a-Changelog style, grouped from Conventional Commits.
+
+[changelog]
+# Matches the existing CHANGELOG.md top matter so `--prepend` inserts cleanly.
+header = """
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+"""
+body = """
+
+{% if version %}\
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}\
+## [Unreleased]
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim }}
+{% for commit in commits %}
+- {% if commit.scope %}**{{ commit.scope }}:** {% endif %}{{ commit.message | upper_first | trim }}\
+{% endfor %}
+{% endfor %}
+"""
+trim = true
+footer = ""
+# Linkify the version heading to its GitHub release tag.
+postprocessors = [
+  { pattern = '\[(\d+\.\d+\.\d+)\] - ', replace = "[${1}](https://github.com/freaxnx01/agent-pipeline/releases/tag/v${1}) - " },
+]
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+filter_commits = false
+# Only real semver tags are releases — excludes the moving `v1` major tag.
+tag_pattern = "v[0-9]+\\.[0-9]+\\.[0-9]+"
+topo_order = false
+sort_commits = "oldest"
+# Group into Keep-a-Changelog sections; the `<!-- N -->` prefix orders them
+# and is stripped by `striptags` in the template. Noise types are skipped.
+commit_parsers = [
+  { message = "^feat", group = "<!-- 0 -->Added" },
+  { message = "^refactor", group = "<!-- 1 -->Changed" },
+  { message = "^perf", group = "<!-- 1 -->Changed" },
+  { message = "^fix", group = "<!-- 4 -->Fixed" },
+  { body = ".*[Ss]ecurity", group = "<!-- 5 -->Security" },
+  { message = "^docs", group = "<!-- 6 -->Documentation" },
+  { message = "^chore", skip = true },
+  { message = "^ci", skip = true },
+  { message = "^test", skip = true },
+  { message = "^style", skip = true },
+  { message = "^build", skip = true },
+  { message = "^revert", skip = true },
+]

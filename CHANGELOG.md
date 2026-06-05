@@ -5,7 +5,67 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.4.1](https://github.com/freaxnx01/agent-pipeline/releases/tag/v1.4.1) - 2026-06-03
+
+### Fixed
+
+- **envelope:** Gate 5 robust to unreadable branch protection (#75) (#76)
+
+## [1.4.0](https://github.com/freaxnx01/agent-pipeline/releases/tag/v1.4.0) - 2026-06-02
+
+### Added
+
+- **auto-merge:** Optional GitHub App token for PR creation (#55) (#70)
+
+### Fixed
+
+- **workflow:** Update runtime refs to renamed agent-pipeline repo (#68)
+- **review-pr:** Salvage JSON verdict from fenced/prose agent output (#73)
+
+### Documentation
+
+- **changelog:** Draft v1.0.0 release notes (#57)
+- **runbook:** Reflect #68 merge + correct tag state (#69)
+- **runbook:** Record GitHub App auto-merge setup + automation/Passbolt notes (#71)
+
+## [1.3.1](https://github.com/freaxnx01/agent-pipeline/releases/tag/v1.3.1) - 2026-06-02
+
+### Fixed
+
+- **auto-review:** Normalize bot author logins; document App/PAT need (#67)
+
+## [1.3.0](https://github.com/freaxnx01/agent-pipeline/releases/tag/v1.3.0) - 2026-06-02
+
+### Added
+
+- **metrics:** Cumulative token totals + resolved model/agent in report (#66)
+
+## [1.2.0](https://github.com/freaxnx01/agent-pipeline/releases/tag/v1.2.0) - 2026-06-01
+
+### Added
+
+- **opencode:** Upload raw opencode output as a diagnostics artifact (#64)
+
+### Fixed
+
+- **opencode:** Map real --format json event stream to canonical result (#65)
+
+## [1.1.0](https://github.com/freaxnx01/agent-pipeline/releases/tag/v1.1.0) - 2026-06-01
+
+### Added
+
+- **opencode:** Target the real opencode 1.x CLI (experimental) (#61)
+
+### Fixed
+
+- **report:** Degrade gracefully on non-JSON execution file (#60)
+- **opencode:** Install opencode after agent classification (#63)
+
+### Documentation
+
+- Consumer onboarding runbook + checklist; ci: harden actionlint download (#51)
+- **consumer:** Document two repo-settings traps for first runs (#52)
+- **consumer:** Clarify agent selection — assignee vs label (#56)
 
 ## [1.0.0] - 2026-06-01
 
