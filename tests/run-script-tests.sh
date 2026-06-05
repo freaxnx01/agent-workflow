@@ -387,6 +387,42 @@ assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 ec="$(run_capture_ec env ISSUE_NUMBER=1 INPUT_AUTO_REVIEW=true bash "$GATE")"
 assert_equals "$ec" "2" "missing REPO → exit 2"
 
+section "check-preview-gate — input + label combinations"
+
+PGATE="$ROOT/scripts/check-preview-gate.sh"
+
+# Both off → disabled
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_PRE_PREVIEW=false ISSUE_LABELS='ai-implement' bash "$PGATE")"
+assert_contains "$out" 'enabled=false (workflow input pre-preview=false)' "input=false, no label → disabled"
+
+# Label only → still disabled (input gate not satisfied)
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_PRE_PREVIEW=false ISSUE_LABELS=$'ai-implement\nai-pre-preview' bash "$PGATE")"
+assert_contains "$out" 'enabled=false (workflow input pre-preview=false)' "input=false, label set → disabled (input wins)"
+
+# Input only → disabled (label gate not satisfied)
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_PRE_PREVIEW=true ISSUE_LABELS='ai-implement' bash "$PGATE")"
+assert_contains "$out" 'enabled=false (input=true but label ai-pre-preview missing)' "input=true, no label → disabled"
+
+# Both on → enabled
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_PRE_PREVIEW=true ISSUE_LABELS=$'ai-implement\nai-pre-preview' bash "$PGATE")"
+assert_contains "$out" 'enabled=true (input=true AND label ai-pre-preview present)' "input=true, label set → enabled"
+
+# Default INPUT_PRE_PREVIEW (unset) → disabled
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-pre-preview' bash "$PGATE")"
+assert_contains "$out" 'enabled=false (workflow input pre-preview=false)' "unset INPUT_PRE_PREVIEW defaults to false"
+
+# Invalid INPUT_PRE_PREVIEW → exit 2
+ec="$(run_capture_ec env ISSUE_NUMBER=1 REPO=o/r INPUT_PRE_PREVIEW=yes ISSUE_LABELS='' bash "$PGATE")"
+assert_equals "$ec" "2" "invalid INPUT_PRE_PREVIEW → exit 2"
+
+# Missing ISSUE_NUMBER → exit 2
+ec="$(run_capture_ec env REPO=o/r INPUT_PRE_PREVIEW=true bash "$PGATE")"
+assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
+
+# Missing REPO → exit 2
+ec="$(run_capture_ec env ISSUE_NUMBER=1 INPUT_PRE_PREVIEW=true bash "$PGATE")"
+assert_equals "$ec" "2" "missing REPO → exit 2"
+
 section "review-prompt — ADR-002 §2.4 auto-block rules present in template"
 
 PROMPT="$ROOT/scripts/lib/review-prompt.md"
@@ -721,6 +757,22 @@ GITHUB_OUTPUT="$GO" GH_MOCK_LOG="$LOG" bash "$VERIFY_MOCK" >/dev/null
 out="$(cat "$GO")"; rm -f "$LOG" "$GO"
 assert_contains "$out" 'merge-attempted=true'  "log with 'pr merge' → attempted=true"
 
+# Same log also reports ready-attempted=true (it contains a 'pr ready' line)
+LOG="$(mktemp)"
+GO="$(mktemp)"
+printf 'pr ready 9999 --repo o/r\npr merge 9999 --repo o/r --auto --squash\n' > "$LOG"
+GITHUB_OUTPUT="$GO" GH_MOCK_LOG="$LOG" bash "$VERIFY_MOCK" >/dev/null
+out="$(cat "$GO")"; rm -f "$LOG" "$GO"
+assert_contains "$out" 'ready-attempted=true' "log with 'pr ready' → ready-attempted=true"
+
+# Log without 'pr ready' → ready-attempted=false
+LOG="$(mktemp)"
+GO="$(mktemp)"
+printf 'pr comment 9999 --repo o/r --body held\nissue edit 42 --repo o/r --add-label ai:review-blocked\n' > "$LOG"
+GITHUB_OUTPUT="$GO" GH_MOCK_LOG="$LOG" bash "$VERIFY_MOCK" >/dev/null
+out="$(cat "$GO")"; rm -f "$LOG" "$GO"
+assert_contains "$out" 'ready-attempted=false' "log without 'pr ready' → ready-attempted=false"
+
 # Log without 'pr merge' → attempted=false
 LOG="$(mktemp)"
 GO="$(mktemp)"
@@ -790,6 +842,16 @@ VERDICT=request_changes \
   bash "$POST_BLOCK" >/dev/null
 calls="$(cat "$LOG")"; rm -f "$LOG"
 assert_contains "$calls" 'agent review verdict: request_changes (gate 4)' "non-approve verdict → names gate 4"
+
+# MODE=pre-preview → comment prefix is "Pre-review held", not "Auto-merge held"
+LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
+REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=100 FOUND=true \
+VERDICT=block MODE=pre-preview \
+  bash "$POST_BLOCK" >/dev/null
+calls="$(cat "$LOG")"; rm -f "$LOG"
+assert_contains     "$calls" 'pr comment 100 --repo o/r --body Pre-review held: agent review verdict: block (gate 4)' "MODE=pre-preview → 'Pre-review held' PR comment"
+assert_not_contains "$calls" 'Auto-merge held'                                                                        "MODE=pre-preview → no 'Auto-merge held' wording"
 
 # Envelope fail → reason includes the gate IDs from check-merge-envelope.sh
 LOG="$(mktemp)"
@@ -1377,6 +1439,7 @@ assert_contains "$log" 'label create agent:opencode --repo owner/repo' "creates 
 
 # Gate labels (auto-review epic #3, chaining epic #4)
 assert_contains "$log" 'label create ai-auto-review --repo owner/repo'  "creates ai-auto-review"
+assert_contains "$log" 'label create ai-pre-preview --repo owner/repo'  "creates ai-pre-preview"
 assert_contains "$log" 'label create ai-chain --repo owner/repo'        "creates ai-chain"
 assert_contains "$log" 'label create ai:chain-paused --repo owner/repo' "creates ai:chain-paused"
 

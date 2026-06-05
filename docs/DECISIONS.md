@@ -626,3 +626,49 @@ maintainer must manually re-dispatch the next issue in the chain.
 - **The kill switch is operationally cheap.** Opening an issue is a
   one-keystroke action; no admin permissions, no workflow edit, no
   re-deploy. Lift-off is closing the issue.
+
+---
+
+## ADR-004 — Pre-preview mode (agent self-review → human merge) (2026-06-04)
+
+**Status:** Accepted
+**Tracking:** [#77](https://github.com/freaxnx01/agent-pipeline/issues/77)
+
+### Context
+
+The pipeline has two end-states after it opens a draft PR: flow #1 leaves a
+*raw* draft for a human (no agent review), and flow #2 (ADR-002) runs an agent
+review and, inside a safety envelope, **auto-merges**. There is no middle
+ground for a repo that wants the agent's review rigor but keeps the merge
+decision with a human.
+
+### Decision
+
+Add a third flow, **pre-preview**, as a `pre_preview` job parallel to
+`auto_review`:
+
+- **Opt-in:** per-repo input `pre-preview: true` AND per-issue label
+  `ai-pre-preview` (sibling of `auto-review` / `ai-auto-review`), computed by
+  `scripts/check-preview-gate.sh`.
+- **Behavior:** reuse `find-pipeline-pr.sh` + `review-pr.sh`. On `approve`,
+  `gh pr ready` only — **no merge envelope, no `gh pr merge`**; a human merges.
+  Non-approve / missing PR leaves the PR draft and stamps `ai:review-blocked`
+  via `post-auto-review-block.sh` (with `MODE=pre-preview` wording).
+- **No self-modification guard.** Promote-to-ready performs no merge, so
+  (unlike auto_review) it is safe on `freaxnx01/agent-pipeline` itself — this
+  repo can dogfood pre-preview.
+- **Precedence:** if an issue carries both gating labels, **pre-preview wins**
+  — the `auto_review` job gate gains `&& pre-preview-enabled != 'true'`. This
+  fail-safes toward human control: ambiguous intent must not auto-merge.
+- **Self-fix deferred.** The agent fixing its own findings is out of scope;
+  tracked as a follow-up.
+
+### Consequences
+
+- Two near-duplicate jobs (`auto_review`, `pre_preview`) share scaffolding by
+  copy, not abstraction. Accepted for isolation — the ADR-002 auto-merge job's
+  internals stay byte-for-byte. If a fourth flow appears, extract the shared
+  "checkout + find PR + review" into a composite action (brainstorming
+  approach C).
+- The reusable workflow gains `pre-preview` / `stub-pre-preview-enabled` inputs
+  and `pre-preview-{merge,ready}-attempted` outputs.

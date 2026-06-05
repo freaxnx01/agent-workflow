@@ -87,6 +87,15 @@ on:
           issue, which doesn't exist under act).
         type: boolean
         default: false
+      stub-pre-preview-enabled:
+        description: |
+          Test-only. When `stub-claude: true`, forces the implement job's
+          `pre-preview-enabled` output to this value instead of running
+          check-preview-gate.sh. Required for end-to-end act tests of the
+          pre_preview job (the real gate requires a labeled GitHub issue,
+          which doesn't exist under act).
+        type: boolean
+        default: false
       stub-review-verdict:
         description: |
           Test-only. When non-empty, the auto_review job skips installing
@@ -122,6 +131,17 @@ on:
           `auto_review` job runs. Default false preserves the original
           "draft PRs only" posture. The full safety envelope is enforced
           in `check-merge-envelope.sh` per ADR-002.
+        type: boolean
+        default: false
+      pre-preview:
+        description: |
+          Per-repo opt-in for pre-preview mode (#77 / ADR-004). When true
+          AND the issue carries the `ai-pre-preview` label, the
+          `pre_preview` job reviews the freshly-opened draft PR and, on
+          approve, promotes it to ready for a HUMAN to merge — no safety
+          envelope, no auto-merge. If an issue also carries
+          `ai-auto-review`, pre-preview wins (the auto_review job is
+          suppressed).
         type: boolean
         default: false
       pipeline-author-allowlist:
@@ -191,6 +211,19 @@ on:
           surface for "no real merge call is made under act"). Empty on
           real runs.
         value: ${{ jobs.auto_review.outputs.merge-attempted }}
+      pre-preview-merge-attempted:
+        description: |
+          "true" or "false" — whether `gh pr merge` was invoked by the
+          pre_preview job. Always "false" on the pre-preview path (it never
+          merges); populated only when `stub-review-verdict` is set, as the
+          test workflow's "no merge in pre-preview" assertion surface.
+        value: ${{ jobs.pre_preview.outputs.merge-attempted }}
+      pre-preview-ready-attempted:
+        description: |
+          "true" or "false" — whether `gh pr ready` (promote draft→ready)
+          was invoked by the pre_preview job. True on the approve path.
+          Populated only when `stub-review-verdict` is set.
+        value: ${{ jobs.pre_preview.outputs.ready-attempted }}
 
 permissions:
   contents: read
@@ -215,6 +248,7 @@ jobs:
       failure-class:       ${{ steps.classify_failure.outputs.class }}
       retry-decision:      ${{ steps.retry.outputs.decision }}
       auto-review-enabled: ${{ steps.auto_review_gate.outputs.enabled || steps.auto_review_gate_stub.outputs.enabled }}
+      pre-preview-enabled: ${{ steps.preview_gate.outputs.enabled || steps.preview_gate_stub.outputs.enabled }}
     env:
       # Optional GitHub App for PR creation (#55). Exposed as an env var so the
       # mint step's `if:` can test it (the `secrets` context isn't available in
@@ -338,6 +372,26 @@ jobs:
         id: auto_review_gate_stub
         env:
           ENABLED: ${{ inputs.stub-auto-review-enabled }}
+        run: printf 'enabled=%s\n' "$ENABLED" >> "$GITHUB_OUTPUT"
+
+      - name: Check pre-preview gate
+        if: ${{ !inputs.stub-claude }}
+        id: preview_gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          INPUT_PRE_PREVIEW: ${{ inputs.pre-preview }}
+        run: bash .claude-pipeline/scripts/check-preview-gate.sh
+
+      - name: Stub pre-preview gate (test mode)
+        # Mirrors check-preview-gate.sh's output under stub-claude=true so
+        # end-to-end act tests can drive the pre_preview job without a real
+        # labeled GitHub issue.
+        if: ${{ inputs.stub-claude }}
+        id: preview_gate_stub
+        env:
+          ENABLED: ${{ inputs.stub-pre-preview-enabled }}
         run: printf 'enabled=%s\n' "$ENABLED" >> "$GITHUB_OUTPUT"
 
       - name: Run Claude Code
@@ -581,6 +635,7 @@ jobs:
       && (!inputs.dry-run || inputs.stub-review-verdict != '')
       && needs.implement.outputs.outcome == 'success'
       && needs.implement.outputs.auto-review-enabled == 'true'
+      && needs.implement.outputs.pre-preview-enabled != 'true'
     runs-on: ${{ fromJSON(inputs.runner-labels) }}
     timeout-minutes: 10
     permissions:
@@ -809,6 +864,164 @@ jobs:
         # "no real merge call is made" — required by issue #16 AC.
         # $GH_MOCK_LOG was set into the environment by the "Wire gh
         # mock" step at the top of this job.
+        if: inputs.stub-review-verdict != '' && always()
+        id: verify_mock
+        run: bash .claude-pipeline/scripts/verify-gh-mock-merge.sh
+
+  pre_preview:
+    # Pre-preview mode (#77 / ADR-004): the agent reviews the freshly-
+    # opened draft PR; on `approve` the draft is promoted to ready and a
+    # HUMAN merges. No safety envelope and no auto-merge. Because
+    # promote-to-ready performs no merge, there is intentionally NO
+    # self-modification guard here (unlike auto_review) — promoting a draft
+    # on freaxnx01/agent-pipeline itself is safe, so this repo can dogfood
+    # the flow. Non-approve verdict or a missing PR leaves the PR draft and
+    # stamps ai:review-blocked. Mutually exclusive with auto_review via the
+    # implement-job gate (pre-preview wins when both labels are present).
+    name: Pre-preview PR for issue #${{ inputs.issue-number }}
+    needs: implement
+    if: |
+      (!inputs.stub-claude || inputs.stub-review-verdict != '')
+      && (!inputs.dry-run || inputs.stub-review-verdict != '')
+      && needs.implement.outputs.outcome == 'success'
+      && needs.implement.outputs.pre-preview-enabled == 'true'
+    runs-on: ${{ fromJSON(inputs.runner-labels) }}
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    outputs:
+      merge-attempted: ${{ steps.verify_mock.outputs.merge-attempted }}
+      ready-attempted: ${{ steps.verify_mock.outputs.ready-attempted }}
+    steps:
+      - name: Checkout consumer repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Checkout agent-pipeline scripts
+        if: ${{ !inputs.local-scripts }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ inputs.pipeline-ref }}
+          path: .claude-pipeline
+          sparse-checkout: |
+            scripts
+            tests/mocks
+            tests/fixtures
+
+      - name: Mirror local scripts to .claude-pipeline (self-test mode)
+        if: ${{ inputs.local-scripts }}
+        run: |
+          mkdir -p .claude-pipeline/scripts \
+                   .claude-pipeline/tests/mocks \
+                   .claude-pipeline/tests/fixtures
+          cp -r scripts/. .claude-pipeline/scripts/
+          if [[ -d tests/mocks ]]; then
+            cp -r tests/mocks/. .claude-pipeline/tests/mocks/
+          fi
+          if [[ -d tests/fixtures ]]; then
+            cp -r tests/fixtures/. .claude-pipeline/tests/fixtures/
+          fi
+
+      - name: Wire gh mock + stub PR JSON (test mode)
+        if: inputs.stub-review-verdict != ''
+        env:
+          WORKSPACE: ${{ github.workspace }}
+          RUNNER_TEMP_DIR: ${{ runner.temp }}
+        run: |
+          log="$RUNNER_TEMP_DIR/gh-mock.log"
+          : > "$log"
+          {
+            printf 'PATH=%s/.claude-pipeline/tests/mocks:%s\n' "$WORKSPACE" "$PATH"
+            printf 'GH_MOCK_LOG=%s\n' "$log"
+            printf 'PIPELINE_PRS_JSON=%s\n' \
+              '[{"number":9999,"isDraft":true,"headRefOid":"stubsha","author":{"login":"github-actions[bot]"}}]'
+          } >> "$GITHUB_ENV"
+
+      - name: Find pipeline-opened PR
+        id: find_pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          AUTHOR_ALLOWLIST: ${{ inputs.pipeline-author-allowlist }}
+        run: bash .claude-pipeline/scripts/find-pipeline-pr.sh
+
+      - name: Install Claude Code CLI
+        if: |
+          steps.find_pr.outputs.found == 'true'
+          && inputs.stub-review-verdict == ''
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run agent review
+        if: |
+          steps.find_pr.outputs.found == 'true'
+          && inputs.stub-review-verdict == ''
+        id: review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
+          HEAD_SHA: ${{ steps.find_pr.outputs.head-sha }}
+          AGENT: claude
+          AGENT_CMD: ${{ github.workspace }}/.claude-pipeline/scripts/lib/agent-cmd-claude.sh
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: bash .claude-pipeline/scripts/review-pr.sh
+
+      - name: Stub agent review (test mode)
+        if: |
+          steps.find_pr.outputs.found == 'true'
+          && inputs.stub-review-verdict != ''
+        id: review_stub
+        env:
+          VERDICT: ${{ inputs.stub-review-verdict }}
+        run: |
+          {
+            printf 'verdict=%s\n' "$VERDICT"
+            printf 'reason=stubbed verdict for test mode\n'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve review verdict
+        if: steps.find_pr.outputs.found == 'true'
+        id: verdict
+        env:
+          REAL: ${{ steps.review.outputs.verdict }}
+          STUB: ${{ steps.review_stub.outputs.verdict }}
+        run: printf 'value=%s\n' "${REAL:-$STUB}" >> "$GITHUB_OUTPUT"
+
+      - name: Promote draft to ready (pre-preview — no auto-merge)
+        if: |
+          steps.find_pr.outputs.found == 'true'
+          && steps.verdict.outputs.value == 'approve'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
+        run: |
+          # Tolerate a redundant `gh pr ready` (e.g. PR already ready) — a
+          # human still merges, so this must not fail the job.
+          gh pr ready "$PR_NUMBER" --repo "$REPO" || true
+          gh pr comment "$PR_NUMBER" --repo "$REPO" \
+            --body "Pre-reviewed ✓ — promoted to ready. Merge is yours (no auto-merge in pre-preview mode)."
+
+      - name: Mark issue blocked when review refuses or PR missing
+        if: |
+          steps.find_pr.outputs.found != 'true'
+          || steps.verdict.outputs.value != 'approve'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
+          FOUND: ${{ steps.find_pr.outputs.found }}
+          VERDICT: ${{ steps.verdict.outputs.value }}
+          MODE: pre-preview
+        run: bash .claude-pipeline/scripts/post-auto-review-block.sh
+
+      - name: Verify gh mock log (test mode)
+        # Surface merge-attempted (must be false) and ready-attempted
+        # (true on approve) so the act assertions can verify behavior.
         if: inputs.stub-review-verdict != '' && always()
         id: verify_mock
         run: bash .claude-pipeline/scripts/verify-gh-mock-merge.sh

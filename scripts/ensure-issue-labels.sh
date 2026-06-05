@@ -9,7 +9,7 @@
 #   selectors  agent:claude, agent:opencode
 #              — read by classify-agent.sh to override the workflow input
 #                (see ADR-001 in docs/DECISIONS.md)
-#   gates      ai-auto-review, ai-chain, ai:chain-paused
+#   gates      ai-auto-review, ai-pre-preview, ai-chain, ai:chain-paused
 #              — read by auto-review (epic #3) and chain-dispatch
 #                (epic #4) workflows; user-applied opt-ins / kill switch
 #   outcome    ai:review-blocked
@@ -54,6 +54,7 @@ create agent:claude    0075CA 'Force the Claude Code agent for this run'
 create agent:opencode  0075CA 'Force the OpenCode (OpenRouter) agent for this run'
 
 create ai-auto-review  0E8A16 'Run auto-review after PR opens; auto-merge on approve+green'
+create ai-pre-preview  1D76DB 'Run agent pre-review after PR opens; promote to ready for human merge (no auto-merge)'
 create ai-chain        0E8A16 'Eligible for chain-dispatch when blockers resolve'
 create ai:chain-paused D73A4A 'Repo-wide kill switch for chain-dispatch'
 
