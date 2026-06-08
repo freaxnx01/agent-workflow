@@ -85,6 +85,28 @@ Each `lib/*.sh` starts with the standard prelude (`set -euo pipefail`,
 `IFS=$'\n\t'`), quotes every expansion, and is env-driven (not flag-driven) where
 called non-interactively.
 
+### Self-improvement loop (every skill)
+
+Every `SKILL.md` ends with a standard closing instruction:
+
+> **If you hit a blocker while running this skill, solve it, then update this skill
+> file so the blocker can't recur** — capture the fix as a new step, guard clause,
+> or note in the relevant section before finishing the task.
+
+Rules so this stays safe and reviewable:
+
+- The skill edits **its own `SKILL.md`** (or a shared `lib/` helper it owns), never
+  unrelated files, and only the part that addresses the blocker.
+- The improvement is a normal change: it lands as a commit on a branch and goes
+  through the repo's lint/test like any other edit — it is **not** pushed or merged
+  automatically.
+- Prefer the smallest durable fix (a guard clause, a clarified instruction, a new
+  fixture) over broad rewrites. Surface what was changed and why in the skill's
+  final summary to the user.
+
+This makes the family self-maintaining: blockers discovered in real use feed back
+into the skills instead of being re-hit each run.
+
 ## Shared substrate
 
 ### `ideas.md` (per-repo)
