@@ -30,7 +30,7 @@ If `npm` is not on the runner (rare on `ubuntu-latest`), the script fails with a
 
 | Tool | Source |
 |---|---|
-| `claude` (Claude Code CLI) | Installed by `anthropics/claude-code-base-action` in the `implement` job, OR by an explicit `npm install -g @anthropic-ai/claude-code` step in the `auto_review` job (see `claude-implement.yml`) |
+| `claude` (Claude Code CLI) | Installed by `anthropics/claude-code-base-action` in the `implement` job, OR by an explicit `npm install -g @anthropic-ai/claude-code` step in the `auto_review` job (see `agent-implement.yml`) |
 
 ## Provisioning self-hosted runners
 

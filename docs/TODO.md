@@ -13,9 +13,9 @@ Mirrors the implementation order in [DESIGN.md](DESIGN.md). Strict order — don
 
 ## Phase 2: Workflow assembly
 
-- [x] 7. Build `claude-implement.yml` reusable workflow with stubbed Claude step
+- [x] 7. Build `agent-implement.yml` reusable workflow with stubbed Claude step
 - [x] 8. Add `ensure-toolchain.sh` step that installs ripgrep et al. on hosted runners (idempotent, conditional, cheap)
-- [x] 9. Build `claude-implement.test.yml` for `act`-based local runs
+- [x] 9. Build `agent-implement.test.yml` for `act`-based local runs
 - [x] 10. Verify with `act` — workflow logic correct end-to-end
 
 ## Phase 3: First consumer integration

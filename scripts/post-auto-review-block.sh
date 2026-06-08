@@ -3,7 +3,7 @@
 # post-auto-review-block.sh — Surface that the auto-review path refused
 # to promote the PR and stamp the originating issue with
 # `ai:review-blocked`. Called from the `auto_review` job in
-# claude-implement.yml on every refusal path:
+# agent-implement.yml on every refusal path:
 #
 #   - self-modification guard fired (ADR-002 §"Self-modification")
 #   - find-pipeline-pr.sh produced no allowlisted pipeline-opened PR

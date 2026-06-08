@@ -5,7 +5,7 @@
 #
 # Categories:
 #   trigger    ai-implement
-#              — the user-applied label the consumer `claude.yml` keys its
+#              — the user-applied label the consumer `agent.yml` keys its
 #                `if:` on to start a run; the pipeline reads it, so ensure it
 #                exists (else the very first run can't be triggered)
 #   lifecycle  ai:running, ai:done, ai:failed, ctx:medium, ctx:high

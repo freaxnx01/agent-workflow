@@ -11,7 +11,7 @@
 #   3. Labels       — run ensure-issue-labels.sh against the target repo.
 #   4. Repo settings— enable "Actions can create PRs"; for --auto-review also
 #                     enable allow-auto-merge + allow-squash-merge.
-#   5. Consumer stub— commit .github/workflows/claude.yml (and chain-dispatch.yml
+#   5. Consumer stub— commit .github/workflows/agent.yml (and chain-dispatch.yml
 #                     with --chain) on a branch and open a PR — via the GitHub
 #                     API, no local clone required. Idempotent.
 #
@@ -261,7 +261,7 @@ fi
 # ===========================================================================
 # 5. Consumer stub PR
 # ===========================================================================
-build_claude_yml() {
+build_agent_yml() {
   local secrets_block with_block
   secrets_block=$'      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}'
   if [[ "$AGENT" == opencode ]]; then
@@ -289,7 +289,7 @@ permissions:            # a reusable workflow can't be granted more than its
 jobs:
   claude:
     if: github.event.label.name == 'ai-implement'
-    uses: $PIPELINE_REPO/.github/workflows/claude-implement.yml@$REF
+    uses: $PIPELINE_REPO/.github/workflows/agent-implement.yml@$REF
     secrets:
 $secrets_block
     with:
@@ -371,7 +371,7 @@ if [[ "$NO_STUB" == true ]]; then
 else
   info "Committing consumer stub on branch $BRANCH"
   ensure_branch
-  build_claude_yml | put_file ".github/workflows/claude.yml" \
+  build_agent_yml | put_file ".github/workflows/agent.yml" \
     "ci(agent-pipeline): add consumer stub"
   if [[ "$CHAIN" == true ]]; then
     build_chain_yml | put_file ".github/workflows/chain-dispatch.yml" \

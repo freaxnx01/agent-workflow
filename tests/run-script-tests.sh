@@ -1500,7 +1500,7 @@ REPO=owner/repo \
 log="$(cat "$LABELS_LOG")"
 rm -f "$LABELS_LOG"
 
-# Trigger label (user-applied; consumer claude.yml keys its `if:` on it)
+# Trigger label (user-applied; consumer agent.yml keys its `if:` on it)
 assert_contains "$log" 'label create ai-implement --repo owner/repo' "creates ai-implement"
 
 # Lifecycle labels (written by post-run-report.sh)

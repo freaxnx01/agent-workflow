@@ -13,7 +13,7 @@ How to wire `agent-pipeline` into a consumer repo. Three flows:
 >   assigning the issue to that bot actor (e.g. the `replaceActorsForAssignable`
 >   GraphQL mutation). There is **no label** for this, and these agents run
 >   entirely on GitHub's side — they never invoke this pipeline.
-> - **This pipeline** (`claude-implement.yml`): steered by **label**
+> - **This pipeline** (`agent-implement.yml`): steered by **label**
 >   (`agent:claude` / `agent:opencode`) or the `agent:` workflow input — the
 >   ADR-001 mechanism. It is unrelated to GitHub issue assignment; the pipeline
 >   is triggered by the `ai-implement` label, not by assigning a bot.
@@ -68,7 +68,7 @@ Only if using the OpenCode/OpenRouter backend (§3 below): also set
 
 ### 2. Commit the consumer stub
 
-Add `.github/workflows/claude.yml` (§1 below has the full template). Commit it on
+Add `.github/workflows/agent.yml` (§1 below has the full template). Commit it on
 a feature branch → PR, not direct to the default branch.
 
 ### 3. First run = a trivial smoke test
@@ -114,7 +114,23 @@ after several clean draft-only runs, enable auto-merge per §2 — including the
 
 ## 1. Minimum stub
 
-Add `.github/workflows/claude.yml`:
+> **Migrating from `claude-implement.yml`?** The reusable workflow was renamed
+> `claude-implement.yml` → `agent-implement.yml`. The old path is kept as a thin
+> forwarding shim (same inputs/secrets/outputs) so existing `@v1` callers keep
+> running unchanged; it is removed at `v2`. Point new `uses:` references at
+> `agent-implement.yml`, and update existing ones when convenient.
+>
+> **Also rename your trigger stub `claude.yml` → `agent.yml`.** The shim only
+> covers the `uses:` path. Both the retry path and chain-dispatch now redispatch
+> `agent.yml` by default, so a consumer whose trigger workflow is still named
+> `claude.yml` will have **retry-on-rate-limit and chain follow-ups silently
+> 404** (the initial run still works). Renaming the stub to `agent.yml` is the
+> simplest fix and the only one that covers retry — retry-dispatch's target is
+> not consumer-overridable. If you must keep the `claude.yml` filename, you can
+> at least fix the chain path by passing `target-workflow: claude.yml` to
+> `chain-dispatch.yml`; the retry path will still target `agent.yml`.
+
+Add `.github/workflows/agent.yml`:
 
 ```yaml
 name: Claude
@@ -130,7 +146,7 @@ permissions:            # the reusable jobs need these; a caller can't grant a
 jobs:
   claude:
     if: github.event.label.name == 'ai-implement'
-    uses: freaxnx01/agent-pipeline/.github/workflows/claude-implement.yml@v1
+    uses: freaxnx01/agent-pipeline/.github/workflows/agent-implement.yml@v1
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     with:
@@ -187,7 +203,7 @@ App* (triggers required checks; stable bot login). To enable:
    ```yaml
    jobs:
      claude:
-       uses: freaxnx01/agent-pipeline/.github/workflows/claude-implement.yml@v1
+       uses: freaxnx01/agent-pipeline/.github/workflows/agent-implement.yml@v1
        with:
          issue-number: ${{ github.event.issue.number }}
          auto-review: true
@@ -226,10 +242,10 @@ Caveats:
 ### Opt-in (two layers)
 
 ```yaml
-# .github/workflows/claude.yml
+# .github/workflows/agent.yml
 jobs:
   claude:
-    uses: freaxnx01/agent-pipeline/.github/workflows/claude-implement.yml@v1
+    uses: freaxnx01/agent-pipeline/.github/workflows/agent-implement.yml@v1
     with:
       issue-number: ${{ github.event.issue.number }}
       auto-review: true        # per-repo opt-in (ADR-002 gate 3)
@@ -298,10 +314,10 @@ The pipeline supports a second agent backend besides Claude Code — [OpenCode](
 Choose the agent at the call site or per-issue:
 
 ```yaml
-# .github/workflows/claude.yml
+# .github/workflows/agent.yml
 jobs:
   claude:
-    uses: freaxnx01/agent-pipeline/.github/workflows/claude-implement.yml@v1
+    uses: freaxnx01/agent-pipeline/.github/workflows/agent-implement.yml@v1
     with:
       issue-number: ${{ github.event.issue.number }}
       agent: opencode             # ← workflow-input default for this repo
@@ -360,7 +376,7 @@ When an auto-merged PR closes an issue, the pipeline can dispatch a follow-up is
 
 ### Consumer-side trigger stub
 
-Add `.github/workflows/chain-dispatch.yml` to the consumer repo (alongside the `claude.yml` stub from §1):
+Add `.github/workflows/chain-dispatch.yml` to the consumer repo (alongside the `agent.yml` stub from §1):
 
 ```yaml
 name: Chain-dispatch on merged ai-implement PR
@@ -381,7 +397,7 @@ jobs:
     uses: freaxnx01/agent-pipeline/.github/workflows/chain-dispatch.yml@v1
     with:
       closed-pr-number: ${{ github.event.pull_request.number }}
-      # `target-workflow` defaults to claude.yml — override if your
+      # `target-workflow` defaults to agent.yml — override if your
       # consumer pipeline stub lives under a different filename.
     secrets:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
