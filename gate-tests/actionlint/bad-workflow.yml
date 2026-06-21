@@ -1,0 +1,17 @@
+# Known-bad workflow fixture for the actionlint gate.
+#
+# HARD CONSTRAINT: this file lives OUTSIDE .github/workflows/ on purpose —
+# GitHub executes anything valid-looking under .github/workflows/, and this is
+# designed to be rejected. gate-selftest points actionlint at this path
+# explicitly and asserts a non-zero exit. A *passing* lint here = a dead gate.
+name: bad-fixture
+on:
+  push:
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      # Undefined steps context — actionlint flags the property as not defined.
+      - run: echo "${{ steps.does-not-exist.outputs.value }}"
+      # Undefined needs context — another expression error.
+      - run: echo "${{ needs.nope.outputs.x }}"

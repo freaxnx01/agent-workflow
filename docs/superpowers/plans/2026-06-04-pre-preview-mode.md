@@ -11,6 +11,7 @@
 **Reference spec:** `docs/superpowers/specs/2026-06-04-pre-preview-mode-design.md`
 
 **Conventions for every task below:**
+
 - Layer-1 tests live in `tests/run-script-tests.sh`; run the whole suite with `bash tests/run-script-tests.sh` (must finish < 5s, exit 0).
 - Lint with `shellcheck -x -e SC1091 <file>.sh` for scripts and `actionlint` for workflow YAML.
 - Commit after each task. Branch is already `feat/pre-preview-mode` (spec already committed there).
@@ -20,6 +21,7 @@
 ## Task 1: Add the `ai-pre-preview` label
 
 **Files:**
+
 - Modify: `scripts/ensure-issue-labels.sh` (gates group)
 - Test: `tests/run-script-tests.sh` (`ensure-issue-labels` section)
 
@@ -52,11 +54,13 @@ create ai-pre-preview  1D76DB 'Run agent pre-review after PR opens; promote to r
 
 Also update the `gates` description in the script's header comment (lines ~13-15) from:
 
-```
+```text
 #   gates      ai-auto-review, ai-chain, ai:chain-paused
 ```
+
 to:
-```
+
+```text
 #   gates      ai-auto-review, ai-pre-preview, ai-chain, ai:chain-paused
 ```
 
@@ -84,6 +88,7 @@ git commit -m "feat(labels): add ai-pre-preview gate label (#77)"
 A near-clone of `scripts/check-auto-review-gate.sh`: `enabled=true` iff `INPUT_PRE_PREVIEW == true` AND the issue carries `ai-pre-preview`.
 
 **Files:**
+
 - Create: `scripts/check-preview-gate.sh`
 - Test: `tests/run-script-tests.sh` (new section)
 
@@ -245,6 +250,7 @@ fi
 chmod +x scripts/check-preview-gate.sh
 bash tests/run-script-tests.sh
 ```
+
 Expected: PASS — all 8 `check-preview-gate` assertions green, suite exits 0.
 
 - [ ] **Step 5: Lint**
@@ -266,6 +272,7 @@ git commit -m "feat(gate): add check-preview-gate.sh for pre-preview mode (#77)"
 Reuse the block script for pre-preview, but make its comment say "Pre-review held" instead of "Auto-merge held" / "Auto-review held". Default behavior is byte-for-byte unchanged.
 
 **Files:**
+
 - Modify: `scripts/post-auto-review-block.sh`
 - Test: `tests/run-script-tests.sh` (`post-auto-review-block` section)
 
@@ -366,6 +373,7 @@ git commit -m "feat(block): MODE=pre-preview comment wording (#77)"
 The act assertions need to confirm `gh pr ready` *was* called (approve path) and `gh pr merge` was *not*. Extend the existing mock-log inspector to emit `ready-attempted` alongside `merge-attempted`.
 
 **Files:**
+
 - Modify: `scripts/verify-gh-mock-merge.sh`
 - Test: `tests/run-script-tests.sh` (`verify-gh-mock-merge` section)
 
@@ -451,6 +459,7 @@ git commit -m "feat(test-helper): verify-gh-mock-merge reports ready-attempted (
 Wire the new gate into the `implement` job and add the precedence clause to the `auto_review` job. (The `pre_preview` job and the workflow_call outputs it feeds come in Task 6, so this task keeps the YAML lint-clean on its own.)
 
 **Files:**
+
 - Modify: `.github/workflows/claude-implement.yml`
 
 - [ ] **Step 1: Add the two inputs**
@@ -551,6 +560,7 @@ git commit -m "feat(workflow): pre-preview gate + precedence on implement/auto_r
 ## Task 6: Workflow — the `pre_preview` job + outputs
 
 **Files:**
+
 - Modify: `.github/workflows/claude-implement.yml`
 
 - [ ] **Step 1: Add the workflow_call outputs**
@@ -756,6 +766,7 @@ git commit -m "feat(workflow): add pre_preview job (#77)"
 Add three reusable-workflow calls + their assertion jobs to the test workflow: approve (promotes, no merge), block (stays draft, no merge), precedence (both labels → pre-preview runs, no merge).
 
 **Files:**
+
 - Modify: `.github/workflows/claude-implement.test.yml`
 
 - [ ] **Step 1: Add the three call jobs**
@@ -910,6 +921,7 @@ git commit -m "test(act): pre-preview approve/block/precedence scenarios (#77)"
 ## Task 8: Docs — CONSUMER-SETUP flow #3 + ADR-004
 
 **Files:**
+
 - Modify: `docs/CONSUMER-SETUP.md`
 - Modify: `docs/DECISIONS.md`
 
@@ -917,14 +929,14 @@ git commit -m "test(act): pre-preview approve/block/precedence scenarios (#77)"
 
 In `docs/CONSUMER-SETUP.md`, change the flows list near the top from:
 
-```
+```text
 1. **Minimum stub** — labeled-issue → draft PR (no auto-merge).
 2. **Auto-review + auto-merge** — labeled-issue → draft PR → agent review → squash-merge, inside ADR-002's safety envelope.
 ```
 
 to:
 
-```
+```text
 1. **Minimum stub** — labeled-issue → draft PR (no auto-merge).
 2. **Auto-review + auto-merge** — labeled-issue → draft PR → agent review → squash-merge, inside ADR-002's safety envelope.
 3. **Pre-preview** — labeled-issue → draft PR → agent reviews its own PR → on approve, promote draft→ready; a human merges. No envelope, no auto-merge. Opt in with `pre-preview: true` + the `ai-pre-preview` label. See ADR-004.
@@ -1007,6 +1019,7 @@ bash tests/run-script-tests.sh
 shellcheck -x -e SC1091 scripts/check-preview-gate.sh scripts/post-auto-review-block.sh scripts/verify-gh-mock-merge.sh scripts/ensure-issue-labels.sh
 actionlint
 ```
+
 Expected: all green / no output.
 
 - [ ] **Step 2: Push the branch**
@@ -1014,6 +1027,7 @@ Expected: all green / no output.
 ```bash
 git push -u origin feat/pre-preview-mode
 ```
+
 (Use the freaxnx01 `.envrc` token: `direnv exec /home/admin/repos/github/freaxnx01 bash -c 'GITHUB_TOKEN="$GH_TOKEN" git push -u origin feat/pre-preview-mode'`.)
 
 - [ ] **Step 3: Open the PR** (as freaxnx01)

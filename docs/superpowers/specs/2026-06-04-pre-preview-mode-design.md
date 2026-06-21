@@ -39,7 +39,8 @@ has already vetted, without surrendering the merge decision.
 
 ## Goals / Non-goals
 
-**Goals**
+### Goals
+
 - A consumer can opt a repo (input) and an issue (label) into pre-preview.
 - After the pipeline opens a draft PR, the agent reviews it with the existing
   `review-pr.sh`. On `approve`, the draft is promoted to ready so a human can
@@ -48,7 +49,8 @@ has already vetted, without surrendering the merge decision.
 - The pipeline never merges in this mode.
 - This repo (`freaxnx01/agent-pipeline`) can dogfood pre-preview.
 
-**Non-goals (deferred)**
+### Non-goals (deferred)
+
 - Self-fix loop (agent commits fixes for its own findings, re-reviews, bounded
   iterations). → follow-up issue.
 - Composite-action refactor to de-duplicate job scaffolding (approach C). →
@@ -182,11 +184,13 @@ pre_preview:
    copied from `auto_review`.
 9. **Promote draft to ready (pre-preview)** — gated on `found == 'true' &&
    verdict.value == 'approve'`:
+
    ```bash
    gh pr ready "$PR_NUMBER" --repo "$REPO"
    gh pr comment "$PR_NUMBER" --repo "$REPO" \
      --body "Pre-reviewed ✓ — promoted to ready. Merge is yours (no auto-merge in pre-preview mode)."
    ```
+
    No envelope check. No `gh pr merge`.
 10. **Mark blocked** — gated on `found != 'true' || verdict.value != 'approve'`:
     `post-auto-review-block.sh` with `MODE=pre-preview`. Leaves the PR draft,
@@ -217,7 +221,7 @@ reachable (no envelope, no self-mod guard).
 
 ## Data flow
 
-```
+```text
 issue labeled (ai-implement + ai-pre-preview)
         │
         ▼
@@ -253,6 +257,7 @@ Mirrors the existing two-layer strategy.
 
 **Layer-1 (script units)** — new `check-preview-gate.sh` cases (fixtures of the
 same shape as the auto-review-gate tests):
+
 - input `false` → `enabled=false`.
 - input `true`, label present → `enabled=true`.
 - input `true`, label absent → `enabled=false`.
@@ -263,6 +268,7 @@ same shape as the auto-review-gate tests):
 **Layer-2 (act, `claude-implement.test.yml`)** — new scenarios using the
 existing stub seams (`stub-pre-preview-enabled`, `stub-review-verdict`,
 gh-mock log):
+
 - **preview-approve** → assert `gh pr ready` called AND `gh pr merge` **not**
   called.
 - **preview-block** (and **preview-request_changes**) → assert PR stays draft,

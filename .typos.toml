@@ -1,0 +1,5 @@
+# typos allowlist — words this repo uses intentionally that typos would flag.
+# "unparseable" is a valid word used in fixtures and a regression test (#58);
+# do not "correct" it to "unparsable".
+[default.extend-words]
+unparseable = "unparseable"

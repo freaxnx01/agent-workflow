@@ -260,12 +260,14 @@ missed — both now documented canonically in `CONSUMER-SETUP.md §1`:
    `GITHUB_TOKEN` is read-only; the reusable jobs request
    `contents`/`pull-requests`/`issues: write`, and a reusable workflow can't be
    granted more than its caller. Fix: add to the stub
+
    ```yaml
    permissions:
      contents: write
      pull-requests: write
      issues: write
    ```
+
 2. **"Allow GitHub Actions to create and approve pull requests" must be on.**
    With that toggle off, the agent implemented the change, pushed the branch with
    `Closes #N`, posted the metrics comment, and stamped `ai:done` — but its
@@ -305,8 +307,8 @@ agent opens the PR as the App).
 
 Still TODO to actually run auto-merge: pass the two secrets through the consumer
 stub, set `pipeline-author-allowlist: quicktask-pipeline-bot[bot]`, re-enable the
-auto-review envelope (branch protection + required `osv-scan` + `allow_auto_merge`
-+ `auto-review: true` + `ai-auto-review` label), then verify one live run.
+auto-review envelope (branch protection + required `osv-scan` + `allow_auto_merge`,
+`auto-review: true` + `ai-auto-review` label), then verify one live run.
 
 ### Make it more automatic (future)
 
@@ -314,12 +316,14 @@ auto-review envelope (branch protection + required `osv-scan` + `allow_auto_merg
   and `OPENROUTER_API_KEY` — the App ID and especially the `.pem` private key
   (downloaded once; non-recoverable from GitHub). Then push to GitHub secrets the
   same way we did for OpenRouter (value never hits shell history/transcript):
+
   ```bash
   passbolt get resource --id <APP_ID_RESOURCE>  --json | jq -r '.password' | tr -d '\n' \
     | gh secret set PIPELINE_APP_ID          -R freaxnx01/quicktask-vikunja
   passbolt get resource --id <APP_KEY_RESOURCE> --json | jq -r '.password' \
     | gh secret set PIPELINE_APP_PRIVATE_KEY -R freaxnx01/quicktask-vikunja
   ```
+
   (Note: the private key is multi-line PEM — do **not** `tr -d '\n'` it; pipe it
   whole. Store the `.pem` in Passbolt as a secret/note resource.)
 - **Scripted setup:** a small `tool/setup-pipeline-secrets.sh` that reads the

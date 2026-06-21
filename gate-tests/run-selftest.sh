@@ -90,6 +90,21 @@ assert_exit 1 "vulnerable-package scan (Newtonsoft.Json 12.0.1)" \
 run_stryker() { ( cd "$GT/mutation" && dotnet-stryker ); }
 assert_nonzero "mutation gate breaks below score threshold" run_stryker
 
+# --- 8. actionlint (workflow YAML) -----------------------------------------
+# The bad fixture lives OUTSIDE .github/workflows/ (GitHub would execute a valid
+# workflow there), so actionlint is pointed at it explicitly. Prefer a local
+# actionlint binary; fall back to the pinned Docker image.
+actionlint_fixture() {
+  local rel="gate-tests/actionlint/bad-workflow.yml"
+  if command -v actionlint >/dev/null 2>&1; then
+    ( cd "$ROOT" && actionlint -no-color "$rel" )
+  else
+    docker run --rm -v "$ROOT:/repo" -w /repo \
+      rhysd/actionlint:1.7.7 -no-color "$rel"
+  fi
+}
+assert_nonzero "actionlint rejects the bad workflow fixture" actionlint_fixture
+
 # --- Verdict ----------------------------------------------------------------
 note "VERDICT"
 if (( fail != 0 )); then

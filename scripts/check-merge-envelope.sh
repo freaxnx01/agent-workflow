@@ -127,7 +127,7 @@ required_checks_status="${REQUIRED_CHECKS_STATUS:-}"
 if [[ -z "$required_checks_status" ]]; then
   # Two-step decision (replaces an earlier heuristic that parsed stdout
   # of `gh pr checks --required` to distinguish "none configured" from
-  # "failing/pending" — that heuristic mis-classified pending checks as
+  # "failing/pending" — that heuristic misclassified pending checks as
   # 'none' on some gh-cli versions, satisfying gate 5 before any check
   # had actually run). Per ADR-002 §2.5: refuse to promote on
   # flaky/pending. So:

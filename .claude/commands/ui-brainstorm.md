@@ -9,7 +9,9 @@ You are helping design a new UI screen or component. Use the active stack overla
 ## Your job in this phase
 
 ### Step 1 — Ask clarifying questions (do this first)
+
 Ask only what you need to understand scope. Cover:
+
 - What is the primary user goal on this screen?
 - Which user roles interact with it?
 - What data is displayed or captured?
@@ -19,7 +21,9 @@ Ask only what you need to understand scope. Cover:
 Wait for answers before continuing.
 
 ### Step 2 — Propose ASCII wireframe
+
 After the user answers, draw a clear ASCII wireframe showing:
+
 - Overall layout (top bar / side nav / main content area, or the stack's equivalent)
 - Key regions (tables, forms, dialogs, etc.)
 - Primary actions (buttons, FABs, links)
@@ -27,7 +31,8 @@ After the user answers, draw a clear ASCII wireframe showing:
 - Error state placement
 
 Use box-drawing characters for clarity:
-```
+
+```text
 ┌─────────────────────────────────────┐
 │ Top Bar                             │
 ├──────────┬──────────────────────────┤
@@ -37,12 +42,14 @@ Use box-drawing characters for clarity:
 ```
 
 ### Step 3 — Wait for approval
+
 Do NOT proceed to Mermaid diagrams or code.
 End with: "Does this wireframe match your intent? Approve to continue to Phase 2 (/ui-flow)."
 
 ---
 
 ## Rules
+
 - No Mermaid diagrams in this phase
 - No code in this phase
 - One wireframe iteration at a time
