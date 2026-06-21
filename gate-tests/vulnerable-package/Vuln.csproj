@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Isolated fixture (no Directory.Build.props in this subtree): pins a
+       package version with a published advisory so the vulnerable-package gate
+       has something real to find. NOT part of any solution or normal build. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <!-- Analyzers off: this fixture exists to trip the vulnerability scan, not
+         a code-analysis rule. -->
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <RunAnalyzersDuringBuild>false</RunAnalyzersDuringBuild>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Newtonsoft.Json < 13.0.1 has GHSA-5crp-9r3c-p9vr (StackOverflow DoS). -->
+    <PackageReference Include="Newtonsoft.Json" Version="12.0.1" />
+  </ItemGroup>
+</Project>

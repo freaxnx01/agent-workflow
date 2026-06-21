@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- All settings inherited from ../Directory.Build.props. Designed to FAIL
+       the build on IDE0005 (unnecessary using directive). -->
+</Project>

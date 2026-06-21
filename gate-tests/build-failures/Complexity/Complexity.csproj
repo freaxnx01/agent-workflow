@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- All settings inherited from ../Directory.Build.props. Designed to FAIL
+       the build on CA1502 (cyclomatic complexity > 10). -->
+</Project>

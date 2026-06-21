@@ -5,3 +5,14 @@
 # OS / editor noise
 .DS_Store
 *.swp
+
+# Python bytecode cache (from running the bundled check scripts)
+__pycache__/
+*.pyc
+
+# .NET build/metrics/mutation artifacts from the gate-test fixtures.
+# (Fixtures under gate-tests/ are compiled only by gate-selftest.yml.)
+gate-tests/**/bin/
+gate-tests/**/obj/
+gate-tests/**/StrykerOutput/
+*.Metrics.xml

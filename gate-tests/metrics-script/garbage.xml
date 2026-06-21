@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Garbage fixture: well-formed XML but contains ZERO <Method> elements with
+     an ExecutableLines metric. This simulates a metrics run that scanned
+     nothing (wrong path, empty solution, tool no-op). check-method-size.py
+     MUST exit 1 here via its zero-methods guard — a silent green would be the
+     worst failure mode. -->
+<CodeMetricsReport Version="1.0">
+  <Targets>
+    <Target Name="Empty.csproj">
+      <Assembly Name="Empty, Version=1.0.0.0">
+        <Namespaces />
+      </Assembly>
+    </Target>
+  </Targets>
+</CodeMetricsReport>
