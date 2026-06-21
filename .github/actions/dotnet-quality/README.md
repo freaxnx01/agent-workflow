@@ -36,6 +36,7 @@ mutation `break` comes from the consumer's `stryker-config.json`.
 | `base-ref` | no | `""` | Base ref for the diff-scope guard. Falls back to `origin/$GITHUB_BASE_REF` on PRs; the guard is skipped when no base is resolvable. |
 | `stryker-config-dir` | no | `.` | Directory containing `stryker-config.json`. |
 | `run-mutation` | no | `true` | Set `false` to skip the (slow) mutation signal. |
+| `run-method-size` | no | `true` | Set `false` to skip the method-size step (its metrics generator is Windows-only and fails on Linux — see issue #91). |
 
 ## Consumer requirements
 
