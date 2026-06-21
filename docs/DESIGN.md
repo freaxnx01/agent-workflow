@@ -4,7 +4,7 @@
 > Drop this file into the new `freaxnx01/agent-pipeline` repo as `docs/DESIGN.md`
 > or similar, and reference it from CLAUDE.md so future sessions stay aligned.
 >
-> Brainstorming transcript: https://claude.ai/share/3f06e2d3-2b65-4b64-87a6-81d6715005f7
+> Brainstorming transcript: <https://claude.ai/share/3f06e2d3-2b65-4b64-87a6-81d6715005f7>
 >
 > Architectural decisions made after this design landed are recorded in
 > [DECISIONS.md](DECISIONS.md).
@@ -27,7 +27,7 @@ subscription, your model choices, and your existing `dotnet-ai-instructions` con
 
 ### Three repos, distinct concerns
 
-```
+```text
 freaxnx01/agent-pipeline       # NEW — the CI side (workflows, scripts, fixtures, docs)
 freaxnx01/dotnet-ai-instructions # EXISTING — local Claude Code stack, /sync-ai-instr
 freaxnx01/<homelab-ansible>      # EXISTING — add github-actions-runner role here
@@ -53,6 +53,7 @@ jobs:
 ```
 
 This means:
+
 - Single source of truth for the pipeline logic
 - Each consumer repo has a tiny stub (good for `/sync-ai-instr`)
 - `agent-pipeline` must be **public** (or accessible via PAT) for FlowHub (public) to call it
@@ -78,6 +79,7 @@ pre-installed on `ubuntu-latest`, others need explicit install. On self-hosted
 runners, bake everything into the LXC via Ansible so per-run install cost is zero.
 
 **Required:**
+
 - `ripgrep` — Claude Code's built-in Grep tool prefers `rg` when available.
   ~5–20× faster than grep on medium repos, respects `.gitignore` by default
   (no node_modules noise), better Unicode/regex defaults. Pre-installed on
@@ -88,6 +90,7 @@ runners, bake everything into the LXC via Ansible so per-run install cost is zer
   `ubuntu-latest`.
 
 **Recommended:**
+
 - `fd` — file finder, complements ripgrep. Modest benefit; nice to have.
 - Language formatters in scope: `dotnet format` (for .NET repos), `prettier`
   (for JS/TS), `black` (for Python). Lets Claude run formatter as a self-check
@@ -95,6 +98,7 @@ runners, bake everything into the LXC via Ansible so per-run install cost is zer
 - `actionlint` and `shellcheck` for the pipeline repo's own lint workflow.
 
 **Not installed by default — explicit opt-in only:**
+
 - LSP servers (csharp-lsp, vtsls, etc.). Deferred — see "Deferred decisions".
 - Superpowers / other Claude Code plugins. Deferred — see "Deferred decisions".
 
@@ -123,6 +127,7 @@ Bias toward Sonnet when uncertain. Posts decision as issue comment for observabi
 ### Metrics & reporting
 
 Every run posts a comment to the issue with:
+
 - Outcome, duration, turns, cost
 - Tokens (input / output / cache read / cache create)
 - Cache hit rate (key signal of CLAUDE.md health)
@@ -134,6 +139,7 @@ Plus stamps labels: `ai:running`, `ai:done`, `ai:failed`, `ctx:high` / `ctx:medi
 ### Retry / rate-limit handling
 
 Retry policy depends on failure mode:
+
 - **Rate limit**: parse reset time from error, sleep, re-dispatch via workflow_dispatch.
   Hard cap 3 retries.
 - **Transient infra (5xx, network)**: exponential backoff, 3 retries.
@@ -148,7 +154,7 @@ brainstorm (self-rescheduling) is fine for both.
 
 ## Repo structure for agent-pipeline
 
-```
+```text
 agent-pipeline/
 ├── .github/workflows/
 │   ├── claude-implement.yml         # the reusable workflow consumers call
@@ -188,6 +194,7 @@ agent-pipeline/
 Strict order. Don't skip ahead.
 
 ### Phase 1: Foundations (Layer 0/1 testing)
+
 1. Create `agent-pipeline` repo (private at first; flip public when stable)
 2. Set up `actionlint` + `shellcheck` lint workflow
 3. Build `scripts/post-run-report.sh` with extracted bash, env-driven
@@ -196,6 +203,7 @@ Strict order. Don't skip ahead.
 6. Verify locally — should run in <5 seconds, exercise all branches
 
 ### Phase 2: Workflow assembly
+
 7. Build `claude-implement.yml` reusable workflow with stubbed Claude step
 8. Add `ensure-toolchain.sh` step that installs ripgrep et al. on hosted runners
    (idempotent, conditional, cheap)
@@ -203,6 +211,7 @@ Strict order. Don't skip ahead.
 10. Verify with `act` — workflow logic correct end-to-end
 
 ### Phase 3: First consumer integration
+
 11. Create `claude-action-sandbox` repo (private, throwaway)
 12. Add CLAUDE.md and the consumer stub workflow
 13. Generate `CLAUDE_CODE_OAUTH_TOKEN` via `claude setup-token`
@@ -211,22 +220,26 @@ Strict order. Don't skip ahead.
 16. Iterate until clean
 
 ### Phase 4: Triage + retry
+
 17. Add the Haiku classify-task.sh step for model selection
 18. Add classify-failure.sh and retry-dispatch.sh
 19. Test rate-limit path with fixtures + act (real rate limits are too slow to wait for)
 
 ### Phase 5: FlowHub integration
+
 20. Add consumer stub to FlowHub
 21. Configure FlowHub-specific settings (concurrency, timeout, fork-PR protection)
 22. Run a real task end-to-end
 
 ### Phase 6: Self-hosted runner (later, only for private repos)
+
 23. Add Ansible role for github-actions-runner LXC in homelab repo
 24. Bake toolchain (ripgrep, gh, jq, fd, formatters) into the LXC image
 25. Provision LXC, register as runner with labels `[self-hosted, homelab]`
 26. Test with a private homelab repo (NOT FlowHub)
 
 ### Phase 7: delegate-to-gh skill (only after using Phases 1–5 manually for ~2 weeks)
+
 27. Build the local skill once you've written ~20 issue specs by hand and know
     what makes them succeed or fail
 28. Implement skill-assisted path discovery (Grep/Glob/Read/LSP orchestration)
@@ -257,7 +270,7 @@ in the local session, using the tools local Claude has available:
 The skill should run targeted exploration automatically, present candidates with
 context, and ask focused follow-ups. Example flow:
 
-```
+```text
 User: /delegate-to-gh "Add 24h caching to SRF episode lookups"
 
 Skill (orchestrating local Claude):
@@ -377,6 +390,7 @@ These were considered and explicitly deferred:
 ## References from the desktop brainstorm
 
 Key design rationale captured in the conversation that produced this doc:
+
 - Why explicit file paths beat module names (3 reasons: cold context, autonomy
   amplifies ambiguity, forces user to verify scope)
 - Why the spec quality matters more than the executor choice

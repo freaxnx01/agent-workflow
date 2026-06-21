@@ -1,0 +1,67 @@
+# Polyglot lint gate (pre-commit) — canonical template.
+#
+# Seeded into a repo root by /sync-ai-instructions. Runs as a local git hook and
+# in CI via `pre-commit run --all-files`. See base-instructions.md
+# ("Polyglot Lint") for what each hook catches and the Docker caveat.
+#
+# Pin every rev with `pre-commit autoupdate` — no floating refs.
+# Hooks marked "needs Docker" have binary/system alternatives noted in the standard.
+
+default_language_version:
+  python: python3
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+        # tests/fixtures/ holds deliberately-malformed JSON/JSONL used to test
+        # the pipeline's parse-salvage paths — not config to validate.
+        exclude: ^tests/fixtures/
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: mixed-line-ending
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint-docker   # needs Docker; binary variant: id "actionlint"
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.38.0
+    hooks:
+      - id: yamllint            # reads .yamllint at the repo root
+
+  - repo: https://github.com/koalaman/shellcheck-precommit
+    rev: v0.11.0
+    hooks:
+      - id: shellcheck
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.18
+    hooks:
+      - id: ruff
+      - id: ruff-format
+
+  - repo: https://github.com/DavidAnson/markdownlint-cli2
+    rev: v0.22.1
+    hooks:
+      - id: markdownlint-cli2   # reads .markdownlint-cli2.yaml at the repo root
+
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.14.0
+    hooks:
+      - id: hadolint-docker     # needs Docker; binary variant: id "hadolint"
+
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.47.2
+    hooks:
+      - id: typos
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks

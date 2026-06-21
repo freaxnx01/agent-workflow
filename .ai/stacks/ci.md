@@ -26,7 +26,7 @@ Use this stack for repos like `claude-pipeline`, homelab tooling, internal actio
 
 ## Project Structure
 
-```
+```text
 .github/workflows/
   <name>.yml              ← public reusable workflows consumers call
   <name>.test.yml         ← act-runnable test workflows (stubbed external steps)
@@ -103,20 +103,26 @@ on:
 
 - **One reusable workflow per public entry point.** Don't multiplex unrelated triggers in one file.
 - **Pin every action by full SHA**, not by tag. Renovate/Dependabot promotes the SHA.
+
   ```yaml
   - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
   ```
+
 - **Concurrency control** on every long-running workflow: cancel in-progress runs of the same ref.
+
   ```yaml
   concurrency:
     group: ${{ github.workflow }}-${{ github.ref }}
     cancel-in-progress: true
   ```
+
 - **Permissions: least-privilege.** Top of the workflow:
+
   ```yaml
   permissions:
     contents: read
   ```
+
   Then escalate per-job only where needed (`pull-requests: write`, `issues: write`, `id-token: write`).
 - **`timeout-minutes:` on every job.** Defaults of 6 hours are not safe defaults.
 - **Output extraction in scripts, not inline bash.** Inline bash in YAML is unlinted, untested, hard to read. One-liners excepted.
@@ -145,7 +151,7 @@ Every layer must run in CI; the lower layers also run locally in seconds.
 
 Bash scripts execute against fixture files (`tests/fixtures/*.json`) with external CLIs mocked via `tests/mocks/`. Should run in **<5 seconds** total. No network, no GitHub, no Docker.
 
-```
+```text
 tests/
   fixtures/
     result-success.json
@@ -203,22 +209,26 @@ jobs:
 Pipeline repos using this stack should ship a repo-root `justfile` (using [casey/just](https://github.com/casey/just)) with these canonical recipes. Recipe bodies are project-specific; recipe names are not.
 
 ### Quality
+
 - `lint` — actionlint + shellcheck on workflows and scripts
 - `test` — Layer-1 fixture tests
 - `test-act` — Layer-2 `act` run of `*.test.yml` workflows
 - `format` — formatters where applicable (e.g. `shfmt -w scripts/`)
 
 ### Local development
+
 - `fixtures-update` — regenerate fixtures from a known-good real run (when intentional)
 - `docs` — generate / verify docs (e.g. CHANGELOG via `git-cliff`)
 
 ### Release
+
 - `version` / `version-set 1.2.3` / `bump-major` / `bump-minor` / `bump-patch` / `bump-auto`
 - `changelog` — `git-cliff --output CHANGELOG.md`
 - `release` — tag `v$(just version)`, regenerate changelog, commit, tag (no auto-push)
 - `push-release` — `git push origin main "v$(just version)"`
 
 ### Cleanup
+
 - `clean` — remove generated artifacts (`.act/`, `coverage/`, etc.)
 
 Document each recipe with a leading `# <description>` comment. Set a default recipe `default: @just --list --unsorted` so `just` with no args prints the documented set.

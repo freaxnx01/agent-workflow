@@ -9,6 +9,7 @@ Review the implemented component against the approved wireframe, flow diagrams, 
 ## Review checklist — work through every item
 
 ### Layout & Wireframe fidelity
+
 - [ ] Does the layout match the approved ASCII wireframe?
 - [ ] Are all sections present (top bar, nav, main content, actions)?
 - [ ] Are empty states implemented and visible when there is no data?
@@ -16,12 +17,14 @@ Review the implemented component against the approved wireframe, flow diagrams, 
 - [ ] Are error states handled visibly (toast / banner / alert)?
 
 ### Flow fidelity
+
 - [ ] Does every user action from the Mermaid flow have an implementation?
 - [ ] Are all error branches handled (API failure, 403, 404, validation)?
 - [ ] Are destructive actions gated by a confirmation dialog?
 - [ ] Are all exit points (navigation, success redirect) wired correctly?
 
 ### Component-library conventions (per stack overlay)
+
 - [ ] No raw HTML / primitive widgets where a first-party library component exists
 - [ ] Tabular data uses the stack's preferred data-grid component
 - [ ] Toasts / snackbars use the stack's feedback component (no custom toast)
@@ -29,12 +32,14 @@ Review the implemented component against the approved wireframe, flow diagrams, 
 - [ ] Spacing uses the stack's spacing utilities
 
 ### Code conventions
+
 - [ ] No business logic in view/markup files (only binding and UI events)
 - [ ] Code-behind / controller / ViewModel separation respected (per stack)
 - [ ] No direct API calls from the component — always via a service
 - [ ] No duplicate components — anything reusable moved to the shared folder
 
 ### Testing
+
 - [ ] Component-level test file exists for this component
 - [ ] Happy path test passes
 - [ ] Empty state test passes
@@ -44,7 +49,9 @@ Review the implemented component against the approved wireframe, flow diagrams, 
 ---
 
 ## Output format
+
 Report findings in three groups:
+
 1. **Must fix** — blocks PR merge
 2. **Should fix** — not blocking but flagged for follow-up
 3. **Looks good** — confirmed compliant items

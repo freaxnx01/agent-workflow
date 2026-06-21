@@ -218,6 +218,7 @@ Two repo-level toggles **both** must be on, or gate 7 refuses promotion:
 If `.github/CODEOWNERS` (or root `CODEOWNERS`, or `docs/CODEOWNERS` — GitHub's resolution order) exists, gate 7 additionally verifies that every owner of a touched path either is the PR author or has left an `APPROVED` review on the PR.
 
 Caveats:
+
 - **Team owners** (`@org/team`) cannot be resolved without the team-membership API. They're logged as `codeowners-deferred-teams: …` and left to GitHub's native auto-merge to enforce (`gh pr merge --auto` honors CODEOWNERS as a hard requirement).
 - **Path matching** uses bash `[[ p == pat ]]` semantics, not gitignore-style globstar. If your CODEOWNERS uses `**` deeply, the matcher may over- or under-match. Stick to simple `*.ext` or `dir/*` patterns for predictable behavior.
 - No CODEOWNERS file → this sub-check vacuously passes.
@@ -258,7 +259,7 @@ If no such check is required, `auto-review: true` lets a malicious dependency bu
 
 Drop a `.claude-auto-merge-blocklist` at the repo root, one glob per line, `#` for comments:
 
-```
+```text
 # Don't auto-merge infra or DB changes
 terraform/**
 migrations/**
@@ -313,7 +314,7 @@ Per-issue override: apply the `agent:opencode` (or `agent:claude`) label on the 
 
 ### Mint the OpenRouter key
 
-1. Create an account at https://openrouter.ai.
+1. Create an account at <https://openrouter.ai>.
 2. Top up credits or attach billing per their docs.
 3. Settings → Keys → "Create Key". Scope it to a single model family if you want a tighter blast radius.
 4. **Repo secret**: Settings → Secrets and variables → Actions → New repository secret. Name: `OPENROUTER_API_KEY`. Paste the value.
@@ -365,7 +366,7 @@ jobs:
 
 In each chained issue's body, declare dependencies using GitHub's native convention:
 
-```
+```text
 Blocks: #101
 Blocked by: #100
 ```

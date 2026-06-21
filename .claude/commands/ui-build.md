@@ -9,7 +9,9 @@ The wireframe and flow diagrams are approved. Now build the component. This skil
 ## Build order — follow this exactly, one step at a time
 
 ### Step 1 — Shell only
+
 Create the component file(s) with:
+
 - Layout structure matching the approved wireframe, using the stack's preferred layout/container components
 - Placeholder comments where dynamic content will go
 - Service/dependency declarations (no implementation yet)
@@ -18,6 +20,7 @@ Create the component file(s) with:
 Present the shell. Wait for confirmation before Step 2.
 
 ### Step 2 — Wire up data & logic
+
 - Implement service calls
 - Bind data to the UI (using the stack's native binding mechanism)
 - Handle **loading** states (skeleton/spinner/progress indicator)
@@ -27,6 +30,7 @@ Present the shell. Wait for confirmation before Step 2.
 Present the result. Wait for confirmation before Step 3.
 
 ### Step 3 — Interactions & events
+
 - Implement action handlers and parent/child event wiring
 - Add a confirmation dialog for destructive actions
 - Add form validation using the stack's validation mechanism
@@ -34,6 +38,7 @@ Present the result. Wait for confirmation before Step 3.
 Present the result. Wait for confirmation before Step 4.
 
 ### Step 4 — Polish
+
 - Apply consistent spacing using the stack's spacing utilities
 - Verify responsive behaviour at the expected breakpoints
 - Add tooltips on icon-only buttons
@@ -42,6 +47,7 @@ Present the result. Wait for confirmation before Step 4.
 ---
 
 ## Hard rules
+
 - One step at a time — never skip ahead
 - Keep view/markup files free of business logic — only binding and UI events
 - Reuse from the project's shared/common folder — check before creating anything new

@@ -20,6 +20,7 @@ The reusable workflow `claude-implement.yml` is hard-coded to invoke
 `anthropics/claude-code-base-action` and to address Claude model IDs
 (`claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5`). Epic
 [#2](https://github.com/freaxnx01/agent-pipeline/issues/2) adds OpenCode
+
 + OpenRouter (Mistral first) as a second executor without forcing a
 redesign on every downstream script (`classify-failure.sh`,
 `post-run-report.sh`, `retry-dispatch.sh`).
@@ -36,14 +37,14 @@ Introduce an **agent abstraction layer** with five elements:
 
 #### 1. Selector surface — input + label
 
-- New `agent` workflow input (string, default `claude`, validated to one
++ New `agent` workflow input (string, default `claude`, validated to one
   of `claude | opencode`).
-- Per-issue override via `agent:claude` / `agent:opencode` label, parallel
++ Per-issue override via `agent:claude` / `agent:opencode` label, parallel
   to the existing `model:*` override convention.
-- **Three-tier precedence: label > workflow input > script default.** This
++ **Three-tier precedence: label > workflow input > script default.** This
   *extends* the two-tier pattern in `classify-task.sh` (label > default),
   which has no workflow-input tier today.
-- A new script `scripts/classify-agent.sh` performs the decision and
++ A new script `scripts/classify-agent.sh` performs the decision and
   emits `agent=...` and `reason=...` to `$GITHUB_OUTPUT`.
 
 #### 2. Result-shape contract
@@ -89,10 +90,10 @@ agent execution and no fallback chain.
 Each agent declares its own secret at the `workflow_call.secrets`
 boundary:
 
-- `CLAUDE_CODE_OAUTH_TOKEN` — currently `required: true`; becomes
++ `CLAUDE_CODE_OAUTH_TOKEN` — currently `required: true`; becomes
   `required: false` after the OpenCode path lands so consumers can pick
   one.
-- `OPENROUTER_API_KEY` — added as `required: false`.
++ `OPENROUTER_API_KEY` — added as `required: false`.
 
 Consumers that want both agents available declare both secrets;
 consumers that want only one declare only one. The workflow does **not**
@@ -106,10 +107,10 @@ The contract is small: one selector script, one result-shape JSON, one
 secret per agent. Adding a third agent later (Aider, Goose, a future
 first-party Anthropic non-CLI runner) is:
 
-- Add `agent: <name>` to the input enum and `agent:<name>` to the label
++ Add `agent: <name>` to the input enum and `agent:<name>` to the label
   vocabulary.
-- Add one runner step and one adapter script.
-- Add fixtures for the new agent's success / rate-limit / task-failure
++ Add one runner step and one adapter script.
++ Add fixtures for the new agent's success / rate-limit / task-failure
   shapes.
 
 No downstream script changes. The Phase-4 retry/classify infrastructure
@@ -118,17 +119,17 @@ the normalized JSON, not on agent identity.
 
 ### Consequences
 
-- The Claude path becomes one branch of an `if:` ladder rather than the
++ The Claude path becomes one branch of an `if:` ladder rather than the
   unconditional path. Defaults stay the same so existing consumers see
   no behavior change.
-- `classify-failure.sh`'s error-string regex must learn OpenRouter-
++ `classify-failure.sh`'s error-string regex must learn OpenRouter-
   flavored rate-limit / auth / 5xx messages alongside the Claude-flavored
   ones. Tracked in
   [#10](https://github.com/freaxnx01/agent-pipeline/issues/10).
-- Agents that do not surface per-run cost (current OpenCode behavior)
++ Agents that do not surface per-run cost (current OpenCode behavior)
   report `total_cost_usd: 0`. Documented in `CONSUMER-SETUP.md` so the
   run-report comment is not mistaken for "free."
-- The result-shape table above is now load-bearing. Any change to it is a
++ The result-shape table above is now load-bearing. Any change to it is a
   breaking change to consumers' assumptions about the run-report. Such
   changes require a new ADR and a major-version bump.
 
@@ -162,8 +163,8 @@ enforced. This ADR defines that envelope.
 
 When all hard-gates in §2 are satisfied, the pipeline may:
 
-- `gh pr ready <PR>` — promote the draft to ready-for-review.
-- `gh pr merge --auto --squash <PR>` — enable GitHub's native auto-merge,
++ `gh pr ready <PR>` — promote the draft to ready-for-review.
++ `gh pr merge --auto --squash <PR>` — enable GitHub's native auto-merge,
   which fires once all required status checks pass.
 
 Without all gates satisfied, the PR stays draft and a human is expected
@@ -211,13 +212,13 @@ auto-review job runs:
    The review prompt
    ([#14](https://github.com/freaxnx01/agent-pipeline/issues/14)) MUST
    flag the following as automatic `block` regardless of other findings:
-   - **Any net deletion of test files** — i.e. test-file lines removed
+   + **Any net deletion of test files** — i.e. test-file lines removed
      strictly exceeds test-file lines added (N=0; any net deletion
      blocks). Same rule for whole-file deletions in `tests/**`.
-   - Test files renamed-to-skip or marked `@Ignore` / `xit(` /
+   + Test files renamed-to-skip or marked `@Ignore` / `xit(` /
      `@pytest.mark.skip` / `[Fact(Skip = …)]` / `t.Skip(…)` and
      equivalents.
-   - Changes to test fixtures that align expected outputs with newly-
+   + Changes to test fixtures that align expected outputs with newly-
      broken implementation behavior (heuristic; the reviewer flags
      suspect, human resolves).
 
@@ -229,14 +230,14 @@ auto-review job runs:
    refuse to promote (don't bet on a flaky check turning green after the
    fact).
 6. **Diff is inside the safety envelope.** The PR must not touch:
-   - Anything under `.github/` (workflows, actions, CODEOWNERS, branch
+   + Anything under `.github/` (workflows, actions, CODEOWNERS, branch
      protection config). Touching CI from within an auto-merged change
      is a self-modifying-pipeline footgun.
-   - Encrypted-secret naming conventions: `*.sops.yaml`, `*.enc.*`,
+   + Encrypted-secret naming conventions: `*.sops.yaml`, `*.enc.*`,
      `*.age`, `*.gpg`, `*.pem`, `*.key`, `*.kbx`, `*.p12`, `*.pfx`,
      `secrets.*`. **Non-exhaustive.** Repos with their own conventions
      extend coverage via the `.claude-auto-merge-blocklist` file below.
-   - Paths listed in a repo-local `.claude-auto-merge-blocklist` file
+   + Paths listed in a repo-local `.claude-auto-merge-blocklist` file
      (one glob per line, comments with `#`). Optional; absent file =
      empty blocklist. Consumers customize per-repo without needing a
      workflow change.
@@ -259,47 +260,48 @@ auto-review job runs:
    PR comment when we don't promote).
 
 If any gate fails, the auto-review job:
-- Posts a single PR review comment naming the failed gate(s).
-- Leaves the PR draft.
-- Applies the `ai:review-blocked` label to the originating issue (label
+
++ Posts a single PR review comment naming the failed gate(s).
++ Leaves the PR draft.
++ Applies the `ai:review-blocked` label to the originating issue (label
   itself is out of scope for this ADR; created when needed).
-- Exits the job successfully — gate failure is a *decision*, not an
++ Exits the job successfully — gate failure is a *decision*, not an
   error.
 
 #### 3. Merge strategy
 
 **Squash only.** Rationale:
 
-- The pipeline produces multiple commits per branch (implementation,
++ The pipeline produces multiple commits per branch (implementation,
   test, fixup-from-review). The commit-by-commit history is uninteresting
   to consumers; the PR-title-as-commit-subject squash gives a clean
   `main` history.
-- Squash-merge plays well with Conventional Commits — the PR title is
++ Squash-merge plays well with Conventional Commits — the PR title is
   already conventional (the pipeline enforces this when creating the PR),
   so the squash commit is too.
-- Rebase-merge fans out N agent commits into `main`; merge-commit
++ Rebase-merge fans out N agent commits into `main`; merge-commit
   pollutes `main` with merge bubbles. Both lose the "one decision per
   merge" story that auto-merge needs to make sense in `git log`.
 
 #### 4. Failure modes & rollback
 
-- **Required check fails after promotion.** GitHub's auto-merge cancels
++ **Required check fails after promotion.** GitHub's auto-merge cancels
   itself and notifies via PR. The pipeline does not retry. A human
   takes over.
-- **Squash-merge succeeds, then a follow-up CI run (e.g. nightly) finds
++ **Squash-merge succeeds, then a follow-up CI run (e.g. nightly) finds
   a regression.** Revert is a normal `git revert` — no pipeline-specific
   rollback. Worth a future ADR if reverts ever become common, but
   out-of-scope today.
-- **Review verdict was wrong (approved a bad change).** Same as above —
++ **Review verdict was wrong (approved a bad change).** Same as above —
   revert in `main`, and post-mortem the review prompt
   ([#14](https://github.com/freaxnx01/agent-pipeline/issues/14)) before
   re-enabling `auto-review: true` for the issue category that produced
   it.
-- **Gate-envelope bug** (e.g. a `.github/` file slipped through).
++ **Gate-envelope bug** (e.g. a `.github/` file slipped through).
   Disable feature via either kill switch:
-  - **Per-repo:** flip `auto-review: false` at the call site. No code
+  + **Per-repo:** flip `auto-review: false` at the call site. No code
     change to `agent-pipeline` needed.
-  - **Per-issue:** remove the `ai-auto-review` label from the
+  + **Per-issue:** remove the `ai-auto-review` label from the
     originating issue. Symmetric with the two-tier opt-in in §2 (gates
     2 + 3).
 
@@ -313,7 +315,7 @@ If any gate fails, the auto-review job:
   active enough to require immediate stopping, do that manually on
   affected PRs.
 
-- **Indefinite auto-merge.** GitHub's `gh pr merge --auto` waits
++ **Indefinite auto-merge.** GitHub's `gh pr merge --auto` waits
   forever for required checks to go green. A flaky or hung required
   check leaves the PR in armed-but-not-merged state indefinitely. This
   is acceptable today (the PR remains visible, draft-promoted, and a
@@ -344,24 +346,24 @@ here.)
 
 ### Consequences
 
-- The `auto-review-enabled` workflow output added in
++ The `auto-review-enabled` workflow output added in
   [#13](https://github.com/freaxnx01/agent-pipeline/issues/13) becomes
   the first gate consulted by
   [#15](https://github.com/freaxnx01/agent-pipeline/issues/15). It is
   necessary but not sufficient — gates 1, 4, 5, 6, 7 above are all
   evaluated after it.
-- The safety envelope is the **single source of truth** for "is this PR
++ The safety envelope is the **single source of truth** for "is this PR
   auto-mergeable."
   [#15](https://github.com/freaxnx01/agent-pipeline/issues/15)'s
   `scripts/check-merge-envelope.sh` (to be written there) implements
   exactly these checks — no extra, no fewer. Any divergence is a bug in
   one place or the other, not a policy disagreement.
-- Issue [#17](https://github.com/freaxnx01/agent-pipeline/issues/17)
++ Issue [#17](https://github.com/freaxnx01/agent-pipeline/issues/17)
   (chaining ADR) inherits the assumption that auto-merge is the only
   trigger for chain-dispatch. If a human merges a chained issue's PR
   manually, the chain does NOT auto-advance — this is intentional
   (manual merge implies the human is steering).
-- **`ai:review-blocked` label provenance.** §2 names this label as a
++ **`ai:review-blocked` label provenance.** §2 names this label as a
   side effect of a failed gate, but the in-tree `ensure-issue-labels.sh`
   does not create it today. **Whichever of #14 or #15 lands first MUST
   extend `scripts/ensure-issue-labels.sh`** with `ai:review-blocked`
@@ -370,7 +372,7 @@ here.)
   label appears in the mock log — so the missing-label state fails CI
   and the obligation cannot be silently dropped. The other issue
   rebases over the change.
-- **Posture asymmetry with ADR-001 is principled, not accidental.**
++ **Posture asymmetry with ADR-001 is principled, not accidental.**
   ADR-001 trusts the agent step to fail loudly on bad auth and lets
   `classify-failure.sh` bucket the error — blast radius is low (one
   failed run, retriable). ADR-002 validates seven gates pre-merge
@@ -378,14 +380,14 @@ here.)
   `main` — much more expensive to recover from. Different consequence
   asymmetry justifies different posture. Future ADR readers should not
   try to "harmonize" the two; the asymmetry is the point.
-- **Gate 6 trade-off cost.** The blanket `.github/` exclusion blocks
++ **Gate 6 trade-off cost.** The blanket `.github/` exclusion blocks
   routine docs-only PRs to `.github/ISSUE_TEMPLATE/`,
   `.github/PULL_REQUEST_TEMPLATE/`, `CODEOWNERS`, `dependabot.yml`,
   etc. This is accepted as a conservative default. If it becomes
   painful, a future ADR can carve out a `.github/` allowlist (purely-
   declarative subpaths that cannot affect workflow execution) without
   needing to revisit ADR-002's core decision.
-- **Self-modification / dogfooding.** `agent-pipeline` itself MUST NOT
++ **Self-modification / dogfooding.** `agent-pipeline` itself MUST NOT
   enable `auto-review: true` until a follow-up ADR addresses the
   self-modification risk surface that other consumer repos don't have:
   the pipeline's own `scripts/`, `tests/`, `docs/DECISIONS.md`, and
@@ -433,16 +435,16 @@ and should pick the next issue themselves.
 Issues declare dependencies using GitHub's native convention in the
 issue **body** (not comments, not titles):
 
-- `Blocks: #N, #M`     — this issue's completion unblocks #N and #M.
-- `Blocked by: #N, #M` — this issue cannot start until #N and #M close.
++ `Blocks: #N, #M`     — this issue's completion unblocks #N and #M.
++ `Blocked by: #N, #M` — this issue cannot start until #N and #M close.
 
 Rules:
 
-- Case-sensitive (matches GitHub's own rendering: `Blocks` / `Blocked by`).
-- Comma-separated lists allowed: `Blocks: #42, #43`.
-- Multiple lines OK: a `Blocks:` line and a `Blocked by:` line, or
++ Case-sensitive (matches GitHub's own rendering: `Blocks` / `Blocked by`).
++ Comma-separated lists allowed: `Blocks: #42, #43`.
++ Multiple lines OK: a `Blocks:` line and a `Blocked by:` line, or
   even multiple `Blocks:` lines — the parser unions them into a set.
-- Cross-references to other repos (`Blocks: org/repo#42`) are
++ Cross-references to other repos (`Blocks: org/repo#42`) are
   **explicitly out of scope** (see §6); the parser ignores them
   rather than erroring.
 
@@ -456,11 +458,11 @@ load-bearing relation.
 
 `scripts/parse-chain.sh` (added in [#18](https://github.com/freaxnx01/agent-pipeline/issues/18)):
 
-- Reads the issue body via `gh issue view <N> --json body`.
-- Applies a single-line regex per marker
++ Reads the issue body via `gh issue view <N> --json body`.
++ Applies a single-line regex per marker
   (`^Blocks:\s*(.+)$` and `^Blocked by:\s*(.+)$`, multi-line mode).
-- Extracts `#N` references, ignores `org/repo#N`.
-- Returns two sets: `blocks=[...]` and `blocked_by=[...]`.
++ Extracts `#N` references, ignores `org/repo#N`.
++ Returns two sets: `blocks=[...]` and `blocked_by=[...]`.
 
 Comments, titles, and PR bodies are NOT parsed. A human can
 reorganize the chain by editing the issue body and any change takes
@@ -502,13 +504,14 @@ Two layers, both checked at chain-dispatch time:
 
 The "open issue titled X" mechanism is chosen over a repo topic
 because:
-- It is greppable from any pipeline run via `gh issue list --state
+
++ It is greppable from any pipeline run via `gh issue list --state
   open --search "ai:chain-paused in:title"`.
-- It needs no special permission (`gh repo edit --add-topic` requires
++ It needs no special permission (`gh repo edit --add-topic` requires
   admin; opening an issue requires write).
-- The issue body is the natural place to record *why* the kill switch
++ The issue body is the natural place to record *why* the kill switch
   is on, who set it, and the lift-off criterion.
-- Closing the issue is the lift-off action — atomic and obvious.
++ Closing the issue is the lift-off action — atomic and obvious.
 
 A maintainer opens an issue with the exact title `ai:chain-paused`
 when chain-dispatch needs to stop. Re-opens or close-and-reopens are
@@ -542,7 +545,7 @@ The visited-set lives in a chain-state issue body, also titled
 `ai:chain-state:<originating-issue-N>`, opened and updated by the
 dispatcher itself. The body holds a checkbox list:
 
-```
+```text
 - [x] #42 (originating)
 - [x] #43
 - [ ] #44 (dispatched, in-progress)
@@ -550,8 +553,8 @@ dispatcher itself. The body holds a checkbox list:
 
 This is observable to the maintainer and survives across workflow
 runs without a separate datastore. The dispatcher closes the chain-
-state issue when there are no more eligible successors. Both #18 and
-#19 reference this format.
+state issue when there are no more eligible successors. Both #18 and #19
+reference this format.
 
 #### 6. Cross-repo dependencies
 
@@ -571,11 +574,11 @@ have studiously avoided). Single-repo is enough to walk a typical
 Maintainer files three issues with both `ai-implement` and `ai-chain`
 labels:
 
-- **#100** — "Refactor auth middleware: extract token validator"
++ **#100** — "Refactor auth middleware: extract token validator"
   body: `Blocks: #101`
-- **#101** — "Refactor auth middleware: extract session loader"
++ **#101** — "Refactor auth middleware: extract session loader"
   body: `Blocked by: #100`, `Blocks: #102`
-- **#102** — "Refactor auth middleware: wire validator + loader into handler"
++ **#102** — "Refactor auth middleware: wire validator + loader into handler"
   body: `Blocked by: #101`
 
 Maintainer dispatches `#100` (label `ai-implement`). The pipeline:
@@ -584,12 +587,12 @@ Maintainer dispatches `#100` (label `ai-implement`). The pipeline:
 2. Auto-review + envelope pass → ready → squash-merge.
 3. Squash-merge closes #100 and triggers the chain dispatcher.
 4. Dispatcher walks `Blocks: #101` from #100's body. Checks #101:
-   - `ai-chain` present? ✓
-   - All `Blocked by:` entries closed? ✓ (only #100, now closed)
-   - `ai:chain-paused` issue open? ✗
-   - Depth from origin? 1 < `MAX_CHAIN_DEPTH=10`. ✓
-   - Already visited in this chain? ✗
-   - **Eligible** → adds `ai-implement` if missing, dispatches.
+   + `ai-chain` present? ✓
+   + All `Blocked by:` entries closed? ✓ (only #100, now closed)
+   + `ai:chain-paused` issue open? ✗
+   + Depth from origin? 1 < `MAX_CHAIN_DEPTH=10`. ✓
+   + Already visited in this chain? ✗
+   + **Eligible** → adds `ai-implement` if missing, dispatches.
 5. #101 implements + auto-merges → chain dispatcher fires again →
    #102 eligible (its only blocker #101 just closed) → dispatched.
 6. #102 implements + auto-merges → dispatcher walks #102's `Blocks:`
@@ -606,24 +609,24 @@ maintainer must manually re-dispatch the next issue in the chain.
 
 ### Consequences
 
-- **Single source of truth for the dependency graph.** The issue
++ **Single source of truth for the dependency graph.** The issue
   body. Editing the body changes the chain on the next tick. No
   separate config file, no project board to keep in sync.
-- **The chain only walks `ai-chain`-opted issues.** A maintainer
++ **The chain only walks `ai-chain`-opted issues.** A maintainer
   who tags only the first issue with `ai-chain` gets a single-step
   chain that stops after that issue. Useful for partial automation.
-- **Manual merges break the chain by design.** ADR-002 already
++ **Manual merges break the chain by design.** ADR-002 already
   established auto-merge as the only "machine ready" signal;
   inheriting that here means a maintainer who steps in to fix
   something mid-chain naturally takes over the rest.
-- **The chain-state issue is observable, not magical.** A
++ **The chain-state issue is observable, not magical.** A
   maintainer who wants to know "where is the pipeline in my chain"
   reads the chain-state issue. No special tool needed.
-- **Cycle and depth defenses are belt-and-suspenders.** The visited
++ **Cycle and depth defenses are belt-and-suspenders.** The visited
   set covers true cycles; `MAX_CHAIN_DEPTH` covers chains-too-deep-
   for-comfort and serves as a final brake. Both fail closed — the
   dispatcher refuses on either trigger.
-- **The kill switch is operationally cheap.** Opening an issue is a
++ **The kill switch is operationally cheap.** Opening an issue is a
   one-keystroke action; no admin permissions, no workflow edit, no
   re-deploy. Lift-off is closing the issue.
 
@@ -647,28 +650,28 @@ decision with a human.
 Add a third flow, **pre-preview**, as a `pre_preview` job parallel to
 `auto_review`:
 
-- **Opt-in:** per-repo input `pre-preview: true` AND per-issue label
++ **Opt-in:** per-repo input `pre-preview: true` AND per-issue label
   `ai-pre-preview` (sibling of `auto-review` / `ai-auto-review`), computed by
   `scripts/check-preview-gate.sh`.
-- **Behavior:** reuse `find-pipeline-pr.sh` + `review-pr.sh`. On `approve`,
++ **Behavior:** reuse `find-pipeline-pr.sh` + `review-pr.sh`. On `approve`,
   `gh pr ready` only — **no merge envelope, no `gh pr merge`**; a human merges.
   Non-approve / missing PR leaves the PR draft and stamps `ai:review-blocked`
   via `post-auto-review-block.sh` (with `MODE=pre-preview` wording).
-- **No self-modification guard.** Promote-to-ready performs no merge, so
++ **No self-modification guard.** Promote-to-ready performs no merge, so
   (unlike auto_review) it is safe on `freaxnx01/agent-pipeline` itself — this
   repo can dogfood pre-preview.
-- **Precedence:** if an issue carries both gating labels, **pre-preview wins**
++ **Precedence:** if an issue carries both gating labels, **pre-preview wins**
   — the `auto_review` job gate gains `&& pre-preview-enabled != 'true'`. This
   fail-safes toward human control: ambiguous intent must not auto-merge.
-- **Self-fix deferred.** The agent fixing its own findings is out of scope;
++ **Self-fix deferred.** The agent fixing its own findings is out of scope;
   tracked as a follow-up.
 
 ### Consequences
 
-- Two near-duplicate jobs (`auto_review`, `pre_preview`) share scaffolding by
++ Two near-duplicate jobs (`auto_review`, `pre_preview`) share scaffolding by
   copy, not abstraction. Accepted for isolation — the ADR-002 auto-merge job's
   internals stay byte-for-byte. If a fourth flow appears, extract the shared
   "checkout + find PR + review" into a composite action (brainstorming
   approach C).
-- The reusable workflow gains `pre-preview` / `stub-pre-preview-enabled` inputs
++ The reusable workflow gains `pre-preview` / `stub-pre-preview-enabled` inputs
   and `pre-preview-{merge,ready}-attempted` outputs.

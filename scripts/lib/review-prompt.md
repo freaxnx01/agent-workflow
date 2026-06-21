@@ -33,14 +33,14 @@ can be satisfied by deleting the failing checks themselves.
 
 2. **Test files renamed-to-skip or marked.** Block if any test that
    was previously executable is now marked as skipped via any of:
-   - JavaScript / TypeScript: `xit(`, `xdescribe(`, `it.skip(`,
+   - JavaScript / TypeScript: `xit(`, `describe(`, `it.skip(`,
      `describe.skip(`, `test.skip(`
    - Python: `@pytest.mark.skip`, `@pytest.mark.skipif`,
      `@unittest.skip`, `self.skipTest(`
    - Java / JUnit: `@Ignore`, `@Disabled`
-   - C# / xUnit: `[Fact(Skip = `, `[Theory(Skip = `
+   - C# / xUnit: `[Fact(Skip =`, `[Theory(Skip =`
    - Go: `t.Skip(`, `t.SkipNow(`, `t.Skipf(`
-   - Ruby / RSpec: `xit`, `xdescribe`, `pending`, `skip`
+   - Ruby / RSpec: `xit`, `describe`, `pending`, `skip`
    - Dart: `@Skip(`, `markTestSkipped(`
    - Filename suffix change: `*.test.ts` → `*.test.ts.skip` or
      similar disabling rename
@@ -60,7 +60,7 @@ deleted test file or each skipped block earns its own entry.
 
 Return **exactly one** JSON object on stdout — no prose, no Markdown fence:
 
-```
+```text
 {
   "verdict": "approve" | "request_changes" | "block",
   "summary": "one-paragraph summary of the change and your decision",

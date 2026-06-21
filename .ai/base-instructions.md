@@ -145,7 +145,7 @@ Full per-factor table: [`.ai/references/base/12-factor.md`](https://github.com/f
 
 ## Branching Strategy (GitHub Flow + protection rules)
 
-```
+```text
 main              ← always deployable, protected
   └── feature/<issue-id>-short-description
   └── fix/<issue-id>-short-description
@@ -174,7 +174,7 @@ Agent tooling that automates worktree creation should discover these rules from 
 
 ## Commit Messages (Conventional Commits)
 
-```
+```text
 <type>(<scope>): <short summary>
 
 [optional body]
@@ -185,7 +185,7 @@ Agent tooling that automates worktree creation should discover these rules from 
 **Types:** `feat`, `fix`, `test`, `refactor`, `chore`, `docs`, `ci`, `perf`
 **Scope:** module or layer name, e.g. `orders`, `auth`, `infra`, `ui`
 
-```
+```text
 feat(orders): add order cancellation endpoint
 
 Implements POST /api/v1/orders/{id}/cancel.
@@ -236,11 +236,13 @@ Concrete CI configuration (GitHub Actions YAML, commands, package scanners) live
 ## Documentation Structure
 
 Repo-root `docs/` contains:
+
 - `design/<feature-name>/` — UI wireframes (`wireframe.md`) & Mermaid flows (`flow.md`) per feature
 - `adr/` — Architecture Decision Records
 - `ai-notes/` — AI agent working notes
 
 Rules:
+
 - `README.md` and `CHANGELOG.md` live in the repo root
 - UI design artifacts are saved per feature during the UI workflow phases
 - AI agents write working notes to `docs/ai-notes/`, not `.ai/`
