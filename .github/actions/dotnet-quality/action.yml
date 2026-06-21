@@ -1,0 +1,76 @@
+name: dotnet-quality
+description: >-
+  Quality gate for .NET projects bundling four independent quality signals
+  (cyclomatic complexity, class coupling, method length, mutation score) plus a
+  vulnerable-package scan and an added-C#-lines diff-scope guard. Thresholds and
+  analyzer config are supplied by the consumer repo (seeded from
+  ai-instructions/templates/dotnet); this action is the mechanism that runs them.
+
+inputs:
+  solution:
+    description: Solution or project to restore, build (with analyzers) and scan.
+    required: true
+  test-project:
+    description: Test project or solution to run with `dotnet test`.
+    required: true
+  configuration:
+    description: Build configuration.
+    required: false
+    default: Release
+  max-added-cs-lines:
+    description: Maximum added C# lines allowed in the PR diff (diff-scope guard).
+    required: false
+    default: "800"
+  max-method-lines:
+    description: Maximum executable lines per method (method-size metrics check).
+    required: false
+    default: "40"
+  base-ref:
+    description: >-
+      Base git ref for the diff-scope guard. Defaults to
+      origin/$GITHUB_BASE_REF on pull requests; the guard is skipped when no
+      base ref is resolvable.
+    required: false
+    default: ""
+  stryker-config-dir:
+    description: Directory containing stryker-config.json (mutation testing).
+    required: false
+    default: "."
+  run-mutation:
+    description: Set to "false" to skip the (slow) mutation-testing signal.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: Restore
+      shell: bash
+      run: dotnet restore "${{ inputs.solution }}"
+
+    - name: Build + analyzer gate
+      shell: bash
+      run: dotnet build "${{ inputs.solution }}" -c "${{ inputs.configuration }}" --no-restore
+
+    - name: Tests
+      shell: bash
+      run: dotnet test "${{ inputs.test-project }}" -c "${{ inputs.configuration }}" --no-restore
+
+    - name: Vulnerable-package scan
+      shell: bash
+      run: "${{ github.action_path }}/check-vulnerable.sh" "${{ inputs.solution }}"
+
+    - name: Method-size metrics check
+      shell: bash
+      run: |
+        "${{ github.action_path }}/gen-metrics.sh" "${{ inputs.solution }}" "${{ inputs.configuration }}" "${RUNNER_TEMP:-/tmp}/code-metrics.xml"
+        python3 "${{ github.action_path }}/check-method-size.py" --max "${{ inputs.max-method-lines }}" "${RUNNER_TEMP:-/tmp}/code-metrics.xml"
+
+    - name: Diff-scope guard
+      shell: bash
+      run: "${{ github.action_path }}/scope-from-git.sh" --max "${{ inputs.max-added-cs-lines }}" --base "${{ inputs.base-ref }}"
+
+    - name: Mutation testing (Stryker)
+      if: inputs.run-mutation == 'true'
+      shell: bash
+      run: "${{ github.action_path }}/run-stryker.sh" "${{ inputs.stryker-config-dir }}"

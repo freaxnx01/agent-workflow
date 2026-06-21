@@ -1,0 +1,8 @@
+{
+  "stryker-config": {
+    "project": "Calc.csproj",
+    "test-projects": ["Calc.Tests/Calc.Tests.csproj"],
+    "thresholds": { "high": 80, "low": 60, "break": 60 },
+    "reporters": ["cleartext"]
+  }
+}

@@ -1,0 +1,37 @@
+name: gate-selftest
+
+# Meta-CI: proves every .NET quality gate can actually fail. Feeds each gate a
+# known-bad fixture under gate-tests/ and asserts it returns non-zero. A gate
+# that fails to fire fails this workflow — "gates demonstrated failing", not
+# "gates added".
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate-selftest:
+    name: gate-selftest
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@9a946fdbd5fb07b82b2f5a4466058b876ab72bb2  # v5.3.0
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Install Stryker.NET
+        run: dotnet tool install -g dotnet-stryker
+
+      - name: Run gate self-test (every gate must fire)
+        run: bash gate-tests/run-selftest.sh

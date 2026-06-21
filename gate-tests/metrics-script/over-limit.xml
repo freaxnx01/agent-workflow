@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Code Metrics report shape produced by Microsoft.CodeAnalysis.Metrics.
+     Crafted fixture: one method whose ExecutableLines (41) exceeds the
+     standard maximum of 40, so the method-size check must exit 1. -->
+<CodeMetricsReport Version="1.0">
+  <Targets>
+    <Target Name="Sample.csproj">
+      <Assembly Name="Sample, Version=1.0.0.0">
+        <Namespaces>
+          <Namespace Name="Sample">
+            <Types>
+              <NamedType Name="Calculator">
+                <Members>
+                  <Method Name="long Sample.Calculator.Compute()">
+                    <Metrics>
+                      <Metric Name="MaintainabilityIndex" Value="70" />
+                      <Metric Name="CyclomaticComplexity" Value="3" />
+                      <Metric Name="ClassCoupling" Value="2" />
+                      <Metric Name="ExecutableLines" Value="41" />
+                    </Metrics>
+                  </Method>
+                  <Method Name="int Sample.Calculator.Small()">
+                    <Metrics>
+                      <Metric Name="ExecutableLines" Value="5" />
+                    </Metrics>
+                  </Method>
+                </Members>
+              </NamedType>
+            </Types>
+          </Namespace>
+        </Namespaces>
+      </Assembly>
+    </Target>
+  </Targets>
+</CodeMetricsReport>

@@ -1,0 +1,5 @@
+# Code Metrics thresholds for the gate-fixture analyzers.
+# Format: <RuleId>: <threshold>
+# These are deliberately strict so the fixtures trip on modest violations.
+CA1502: 10
+CA1506: 20

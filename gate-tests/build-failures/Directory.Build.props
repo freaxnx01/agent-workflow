@@ -1,0 +1,44 @@
+<Project>
+
+  <!--
+    Shared analyzer configuration for the build-failure gate fixtures ONLY.
+
+    Each fixture below this directory is a standalone project that is *designed
+    to fail compilation* on exactly one analyzer rule. This props file turns on
+    the analyzers and wires the Code Metrics thresholds; the sibling
+    .editorconfig promotes the target rules to `error`, and CodeMetricsConfig.txt
+    sets the CA1502/CA1506 thresholds.
+
+    HARD CONSTRAINT: nothing here may be part of a real solution or the normal
+    build. These projects compile only under gate-selftest.yml, which expects
+    non-zero exits.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+
+    <!-- Built-in .NET analyzers + IDE code-style enforcement at build time. -->
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <!-- IDE0005 (unnecessary usings) is only reported on a command-line build
+         when a documentation file is generated. CS1591 (missing XML doc) is the
+         noise that flips on with it, so silence just that. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+    <!-- Keep fixtures out of any package/lock surprises. -->
+    <IsPackable>false</IsPackable>
+    <RestorePackagesWithLockFile>false</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- CA1502/CA1506 read their thresholds from this file; it must be an
+         AdditionalFile or the custom thresholds are silently ignored. -->
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)CodeMetricsConfig.txt" />
+  </ItemGroup>
+
+</Project>

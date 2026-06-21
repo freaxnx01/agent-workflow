@@ -1,0 +1,10 @@
+# Analyzer severities for the build-failure gate fixtures.
+# root=true so the repo's own editorconfig (if any) never relaxes these.
+root = true
+
+[*.cs]
+# Promote the three target rules to errors so the build exits non-zero when
+# they fire. Thresholds for CA1502/CA1506 live in CodeMetricsConfig.txt.
+dotnet_diagnostic.CA1502.severity = error   # excessive cyclomatic complexity
+dotnet_diagnostic.CA1506.severity = error   # excessive class coupling
+dotnet_diagnostic.IDE0005.severity = error  # unnecessary using directive
