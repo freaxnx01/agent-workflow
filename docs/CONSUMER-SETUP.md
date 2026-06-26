@@ -325,6 +325,13 @@ Pick the model per issue with a `model:*` label (alongside `agent:opencode`). Th
 | `model:gemini-flash` | `google/gemini-2.5-flash` | Fast, capable |
 | `model:deepseek-r1` | `deepseek/deepseek-r1-0528` | Reasoning model |
 | `model:llama-4-maverick` | `meta-llama/llama-4-maverick` | Meta open-weight |
+| `model:qwen3-coder` | `qwen/qwen3-coder-30b-a3b-instruct` | Qwen3 coder (tool-use capable, unlike 2.5-coder) |
+| `model:gpt-oss-120b` | `openai/gpt-oss-120b` | OpenAI open-weight, cheap |
+| `model:glm-flash` | `z-ai/glm-4.7-flash` | GLM agentic coder |
+| `model:minimax-m2` | `minimax/minimax-m2.5` | Agentic/tool-use coder |
+| `model:deepseek-v32` | `deepseek/deepseek-v3.2` | Newer DeepSeek all-rounder |
+
+> **OpenCode requires tool-use.** OpenCode drives edits through function/tool calls, so only OpenRouter models that advertise `tools` in their `supported_parameters` work. Models without it fail with *"No endpoints found that support tool use"* (e.g. `qwen-2.5-coder-32b`); some advertise tools but emit malformed tool calls (e.g. `codestral`) and silently make no edits. Verify tool support before adding a model.
 
 Claude-path labels (`model:opus` / `model:sonnet` / `model:haiku`) are documented in DESIGN.md.
 

@@ -288,6 +288,32 @@ out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
 assert_contains "$out" 'chosen: meta-llama/llama-4-maverick (label model:llama-4-maverick)' \
   "label model:llama-4-maverick + agent=opencode → llama-4-maverick"
 
+# Additional tool-use-capable coding models (#98)
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
+       ISSUE_LABELS='model:qwen3-coder' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: qwen/qwen3-coder-30b-a3b-instruct (label model:qwen3-coder)' \
+  "label model:qwen3-coder + agent=opencode → qwen3-coder"
+
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
+       ISSUE_LABELS='model:gpt-oss-120b' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: openai/gpt-oss-120b (label model:gpt-oss-120b)' \
+  "label model:gpt-oss-120b + agent=opencode → gpt-oss-120b"
+
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
+       ISSUE_LABELS='model:glm-flash' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: z-ai/glm-4.7-flash (label model:glm-flash)' \
+  "label model:glm-flash + agent=opencode → glm-flash"
+
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
+       ISSUE_LABELS='model:minimax-m2' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: minimax/minimax-m2.5 (label model:minimax-m2)' \
+  "label model:minimax-m2 + agent=opencode → minimax-m2"
+
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
+       ISSUE_LABELS='model:deepseek-v32' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: deepseek/deepseek-v3.2 (label model:deepseek-v32)' \
+  "label model:deepseek-v32 + agent=opencode → deepseek-v32"
+
 # Mismatch: a new OpenRouter label WITHOUT agent=opencode → warn + fall through
 out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=claude \
        ISSUE_LABELS='model:qwen-coder' \
