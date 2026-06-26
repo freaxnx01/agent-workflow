@@ -253,29 +253,29 @@ assert_contains "$out" 'chosen: claude-sonnet-4-6 (label model:sonnet)' "label m
 out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
        ISSUE_LABELS='ai-implement
 model:mistral-large' bash "$CLASSIFY")"
-assert_contains "$out" 'chosen: mistralai/mistral-large-latest (label model:mistral-large)' \
+assert_contains "$out" 'chosen: mistralai/mistral-large (label model:mistral-large)' \
   "label model:mistral-large + agent=opencode → mistral-large"
 
 # Override: model:codestral with AGENT=opencode → codestral
 out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
        ISSUE_LABELS='model:codestral' bash "$CLASSIFY")"
-assert_contains "$out" 'chosen: mistralai/codestral-latest (label model:codestral)' \
+assert_contains "$out" 'chosen: mistralai/codestral-2508 (label model:codestral)' \
   "label model:codestral + agent=opencode → codestral"
 
 # Override: additional OpenRouter coding models (#94) with AGENT=opencode
 out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
        ISSUE_LABELS='model:deepseek-v3' bash "$CLASSIFY")"
-assert_contains "$out" 'chosen: deepseek/deepseek-v3-0324 (label model:deepseek-v3)' \
+assert_contains "$out" 'chosen: deepseek/deepseek-chat-v3-0324 (label model:deepseek-v3)' \
   "label model:deepseek-v3 + agent=opencode → deepseek-v3"
 
 out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
        ISSUE_LABELS='model:qwen-coder' bash "$CLASSIFY")"
-assert_contains "$out" 'chosen: qwen/qwen2.5-coder-32b-instruct (label model:qwen-coder)' \
+assert_contains "$out" 'chosen: qwen/qwen-2.5-coder-32b-instruct (label model:qwen-coder)' \
   "label model:qwen-coder + agent=opencode → qwen-coder"
 
 out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
        ISSUE_LABELS='model:gemini-flash' bash "$CLASSIFY")"
-assert_contains "$out" 'chosen: google/gemini-2.0-flash-001 (label model:gemini-flash)' \
+assert_contains "$out" 'chosen: google/gemini-2.5-flash (label model:gemini-flash)' \
   "label model:gemini-flash + agent=opencode → gemini-flash"
 
 out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
@@ -1306,7 +1306,7 @@ section "adapt-opencode-result — normalize OpenCode output to canonical shape"
 ADAPT_OC="$ROOT/scripts/adapt-opencode-result.sh"
 
 # Happy path
-out="$(MODEL=mistralai/codestral-latest EXECUTION_FILE="$FIXTURES/opencode-success.json" bash "$ADAPT_OC")"
+out="$(MODEL=mistralai/codestral-2508 EXECUTION_FILE="$FIXTURES/opencode-success.json" bash "$ADAPT_OC")"
 assert_contains "$out" '"is_error":false'                 "success → is_error=false"
 assert_contains "$out" '"subtype":"success"'              "success → subtype=success"
 assert_contains "$out" '"duration_ms":28000'              "duration = max-min event timestamp"
@@ -1317,7 +1317,7 @@ assert_contains "$out" '"cache_creation_input_tokens":0'  "cache_creation = sum 
 assert_contains "$out" 'opened PR #999'                   "result = final text event"
 
 # Rate-limit fixture
-out="$(MODEL=mistralai/mistral-large-latest EXECUTION_FILE="$FIXTURES/opencode-rate-limit.json" bash "$ADAPT_OC")"
+out="$(MODEL=mistralai/mistral-large EXECUTION_FILE="$FIXTURES/opencode-rate-limit.json" bash "$ADAPT_OC")"
 assert_contains "$out" '"is_error":true'                  "rate-limit → is_error=true"
 assert_contains "$out" 'rate limit'                       "rate-limit result text has 'rate limit'"
 
@@ -1342,7 +1342,7 @@ adapter_to_classifier() {
   local fixture="$1"
   local tmp
   tmp="$(mktemp --suffix=.json)"
-  MODEL=mistralai/codestral-latest EXECUTION_FILE="$FIXTURES/$fixture" \
+  MODEL=mistralai/codestral-2508 EXECUTION_FILE="$FIXTURES/$fixture" \
     bash "$ADAPT_OC" > "$tmp"
   RESULT_FILE="$tmp" bash "$ROOT/scripts/classify-failure.sh"
   rm -f "$tmp"

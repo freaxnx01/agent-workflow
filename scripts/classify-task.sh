@@ -102,11 +102,11 @@ while IFS= read -r label; do
     model:opus)           chosen=claude-opus-4-7;                 reason='label model:opus' ;;
     model:sonnet)         chosen=claude-sonnet-4-6;               reason='label model:sonnet' ;;
     model:haiku)          chosen=claude-haiku-4-5;                reason='label model:haiku' ;;
-    model:mistral-large)  chosen=mistralai/mistral-large-latest;  reason='label model:mistral-large' ;;
-    model:codestral)      chosen=mistralai/codestral-latest;      reason='label model:codestral' ;;
-    model:deepseek-v3)    chosen=deepseek/deepseek-v3-0324;        reason='label model:deepseek-v3' ;;
-    model:qwen-coder)     chosen=qwen/qwen2.5-coder-32b-instruct;  reason='label model:qwen-coder' ;;
-    model:gemini-flash)   chosen=google/gemini-2.0-flash-001;      reason='label model:gemini-flash' ;;
+    model:mistral-large)  chosen=mistralai/mistral-large;          reason='label model:mistral-large' ;;
+    model:codestral)      chosen=mistralai/codestral-2508;         reason='label model:codestral' ;;
+    model:deepseek-v3)    chosen=deepseek/deepseek-chat-v3-0324;   reason='label model:deepseek-v3' ;;
+    model:qwen-coder)     chosen=qwen/qwen-2.5-coder-32b-instruct; reason='label model:qwen-coder' ;;
+    model:gemini-flash)   chosen=google/gemini-2.5-flash;          reason='label model:gemini-flash' ;;
     model:deepseek-r1)    chosen=deepseek/deepseek-r1-0528;        reason='label model:deepseek-r1' ;;
     model:llama-4-maverick) chosen=meta-llama/llama-4-maverick;    reason='label model:llama-4-maverick' ;;
   esac
