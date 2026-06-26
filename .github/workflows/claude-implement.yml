@@ -352,6 +352,10 @@ jobs:
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           DEFAULT_MODEL: ${{ inputs.default-model }}
+          # Use the RESOLVED agent (label override included), not inputs.agent —
+          # otherwise classify-task treats opencode model labels as incompatible
+          # with the default AGENT=claude and falls back to DEFAULT_MODEL.
+          AGENT: ${{ steps.classify_agent.outputs.agent }}
         run: bash .claude-pipeline/scripts/classify-task.sh
 
       - name: Check auto-review gate
