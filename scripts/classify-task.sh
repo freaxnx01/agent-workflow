@@ -8,7 +8,9 @@
 #        OpenRouter: model:mistral-large / model:codestral /
 #                    model:deepseek-v3 / model:qwen-coder /
 #                    model:gemini-flash / model:deepseek-r1 /
-#                    model:llama-4-maverick
+#                    model:llama-4-maverick / model:qwen3-coder /
+#                    model:gpt-oss-120b / model:glm-flash /
+#                    model:minimax-m2 / model:deepseek-v32
 #      OpenRouter labels are only meaningful when `agent: opencode` runs;
 #      if `AGENT != opencode` the script WARNS to stderr and falls
 #      back to DEFAULT_MODEL (does not exit non-zero — per ADR-001
@@ -77,7 +79,7 @@ label_is_compatible() {
     model:opus|model:sonnet|model:haiku)
       [[ "$AGENT" == "claude" ]]
       ;;
-    model:mistral-large|model:codestral|model:deepseek-v3|model:qwen-coder|model:gemini-flash|model:deepseek-r1|model:llama-4-maverick)
+    model:mistral-large|model:codestral|model:deepseek-v3|model:qwen-coder|model:gemini-flash|model:deepseek-r1|model:llama-4-maverick|model:qwen3-coder|model:gpt-oss-120b|model:glm-flash|model:minimax-m2|model:deepseek-v32)
       [[ "$AGENT" == "opencode" ]]
       ;;
     *)
@@ -90,7 +92,7 @@ chosen=''
 reason=''
 while IFS= read -r label; do
   case "$label" in
-    model:opus|model:sonnet|model:haiku|model:mistral-large|model:codestral|model:deepseek-v3|model:qwen-coder|model:gemini-flash|model:deepseek-r1|model:llama-4-maverick)
+    model:opus|model:sonnet|model:haiku|model:mistral-large|model:codestral|model:deepseek-v3|model:qwen-coder|model:gemini-flash|model:deepseek-r1|model:llama-4-maverick|model:qwen3-coder|model:gpt-oss-120b|model:glm-flash|model:minimax-m2|model:deepseek-v32)
       if ! label_is_compatible "$label"; then
         printf 'warn: label %s incompatible with AGENT=%s; falling through to default\n' \
           "$label" "$AGENT" >&2
@@ -109,6 +111,11 @@ while IFS= read -r label; do
     model:gemini-flash)   chosen=google/gemini-2.5-flash;          reason='label model:gemini-flash' ;;
     model:deepseek-r1)    chosen=deepseek/deepseek-r1-0528;        reason='label model:deepseek-r1' ;;
     model:llama-4-maverick) chosen=meta-llama/llama-4-maverick;    reason='label model:llama-4-maverick' ;;
+    model:qwen3-coder)    chosen=qwen/qwen3-coder-30b-a3b-instruct; reason='label model:qwen3-coder' ;;
+    model:gpt-oss-120b)   chosen=openai/gpt-oss-120b;              reason='label model:gpt-oss-120b' ;;
+    model:glm-flash)      chosen=z-ai/glm-4.7-flash;               reason='label model:glm-flash' ;;
+    model:minimax-m2)     chosen=minimax/minimax-m2.5;             reason='label model:minimax-m2' ;;
+    model:deepseek-v32)   chosen=deepseek/deepseek-v3.2;           reason='label model:deepseek-v32' ;;
   esac
 done <<< "$ISSUE_LABELS"
 
