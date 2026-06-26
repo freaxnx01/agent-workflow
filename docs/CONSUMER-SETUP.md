@@ -312,6 +312,22 @@ jobs:
 
 Per-issue override: apply the `agent:opencode` (or `agent:claude`) label on the issue. Label wins over the workflow input.
 
+### Per-issue model labels
+
+Pick the model per issue with a `model:*` label (alongside `agent:opencode`). The label wins over the workflow's `default-model`. OpenCode-path labels are ignored (warn + fall back to default) when the run is on the Claude agent, and vice-versa.
+
+| Label | OpenRouter model | Notes |
+|---|---|---|
+| `model:codestral` | `mistralai/codestral-latest` | Mistral code specialist |
+| `model:mistral-large` | `mistralai/mistral-large-latest` | Mistral general flagship |
+| `model:deepseek-v3` | `deepseek/deepseek-v3-0324` | Strong non-reasoning coder |
+| `model:qwen-coder` | `qwen/qwen2.5-coder-32b-instruct` | Purpose-built for code, cheapest |
+| `model:gemini-flash` | `google/gemini-2.0-flash-001` | Fast, capable |
+| `model:deepseek-r1` | `deepseek/deepseek-r1-0528` | Reasoning model |
+| `model:llama-4-maverick` | `meta-llama/llama-4-maverick` | Meta open-weight |
+
+Claude-path labels (`model:opus` / `model:sonnet` / `model:haiku`) are documented in DESIGN.md.
+
 ### Mint the OpenRouter key
 
 1. Create an account at <https://openrouter.ai>.
