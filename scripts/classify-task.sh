@@ -4,9 +4,12 @@
 #
 #   1. Explicit override via `model:<name>` label on the issue. This
 #      always wins. Supported labels:
-#        Claude:   model:opus / model:sonnet / model:haiku
-#        Mistral:  model:mistral-large / model:codestral
-#      Mistral labels are only meaningful when `agent: opencode` runs;
+#        Claude:     model:opus / model:sonnet / model:haiku
+#        OpenRouter: model:mistral-large / model:codestral /
+#                    model:deepseek-v3 / model:qwen-coder /
+#                    model:gemini-flash / model:deepseek-r1 /
+#                    model:llama-4-maverick
+#      OpenRouter labels are only meaningful when `agent: opencode` runs;
 #      if `AGENT != opencode` the script WARNS to stderr and falls
 #      back to DEFAULT_MODEL (does not exit non-zero — per ADR-001
 #      the agent step is what enforces auth/model compatibility).
@@ -74,7 +77,7 @@ label_is_compatible() {
     model:opus|model:sonnet|model:haiku)
       [[ "$AGENT" == "claude" ]]
       ;;
-    model:mistral-large|model:codestral)
+    model:mistral-large|model:codestral|model:deepseek-v3|model:qwen-coder|model:gemini-flash|model:deepseek-r1|model:llama-4-maverick)
       [[ "$AGENT" == "opencode" ]]
       ;;
     *)
@@ -87,7 +90,7 @@ chosen=''
 reason=''
 while IFS= read -r label; do
   case "$label" in
-    model:opus|model:sonnet|model:haiku|model:mistral-large|model:codestral)
+    model:opus|model:sonnet|model:haiku|model:mistral-large|model:codestral|model:deepseek-v3|model:qwen-coder|model:gemini-flash|model:deepseek-r1|model:llama-4-maverick)
       if ! label_is_compatible "$label"; then
         printf 'warn: label %s incompatible with AGENT=%s; falling through to default\n' \
           "$label" "$AGENT" >&2
@@ -101,6 +104,11 @@ while IFS= read -r label; do
     model:haiku)          chosen=claude-haiku-4-5;                reason='label model:haiku' ;;
     model:mistral-large)  chosen=mistralai/mistral-large-latest;  reason='label model:mistral-large' ;;
     model:codestral)      chosen=mistralai/codestral-latest;      reason='label model:codestral' ;;
+    model:deepseek-v3)    chosen=deepseek/deepseek-v3-0324;        reason='label model:deepseek-v3' ;;
+    model:qwen-coder)     chosen=qwen/qwen2.5-coder-32b-instruct;  reason='label model:qwen-coder' ;;
+    model:gemini-flash)   chosen=google/gemini-2.0-flash-001;      reason='label model:gemini-flash' ;;
+    model:deepseek-r1)    chosen=deepseek/deepseek-r1-0528;        reason='label model:deepseek-r1' ;;
+    model:llama-4-maverick) chosen=meta-llama/llama-4-maverick;    reason='label model:llama-4-maverick' ;;
   esac
 done <<< "$ISSUE_LABELS"
 

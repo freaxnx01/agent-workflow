@@ -262,6 +262,39 @@ out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
 assert_contains "$out" 'chosen: mistralai/codestral-latest (label model:codestral)' \
   "label model:codestral + agent=opencode → codestral"
 
+# Override: additional OpenRouter coding models (#94) with AGENT=opencode
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
+       ISSUE_LABELS='model:deepseek-v3' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: deepseek/deepseek-v3-0324 (label model:deepseek-v3)' \
+  "label model:deepseek-v3 + agent=opencode → deepseek-v3"
+
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
+       ISSUE_LABELS='model:qwen-coder' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: qwen/qwen2.5-coder-32b-instruct (label model:qwen-coder)' \
+  "label model:qwen-coder + agent=opencode → qwen-coder"
+
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
+       ISSUE_LABELS='model:gemini-flash' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: google/gemini-2.0-flash-001 (label model:gemini-flash)' \
+  "label model:gemini-flash + agent=opencode → gemini-flash"
+
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
+       ISSUE_LABELS='model:deepseek-r1' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: deepseek/deepseek-r1-0528 (label model:deepseek-r1)' \
+  "label model:deepseek-r1 + agent=opencode → deepseek-r1"
+
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
+       ISSUE_LABELS='model:llama-4-maverick' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: meta-llama/llama-4-maverick (label model:llama-4-maverick)' \
+  "label model:llama-4-maverick + agent=opencode → llama-4-maverick"
+
+# Mismatch: a new OpenRouter label WITHOUT agent=opencode → warn + fall through
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=claude \
+       ISSUE_LABELS='model:qwen-coder' \
+       ISSUE_BODY='filler' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'warn: label model:qwen-coder incompatible with AGENT=claude' \
+  "model:qwen-coder + agent=claude → warn on stderr"
+
 # Mismatch: model:mistral-large WITHOUT agent=opencode → warn + fall through.
 # `2>&1` captures stderr too so the warn can be asserted; exit code must
 # still be 0. ISSUE_BODY is set so the heuristic fallback doesn't hit
