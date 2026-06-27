@@ -137,6 +137,21 @@ rm -f "$exec_array"
 assert_contains "$out" 'ai:done,ctx:high'               "execution as JSON array → still ctx:high"
 assert_contains "$out" '165,000 / 200,000 (82%)'        "execution as JSON array → same 82% peak"
 
+# #100: a successful run that opened no PR must NOT be ai:done.
+out="$(PR_PRESENT=false render_only result-success-cheap.json)"
+assert_contains "$out" 'LABELS: ai:failed'   "success but PR_PRESENT=false → ai:failed"
+assert_contains "$out" 'no PR was opened'     "  → status text names the missing-PR cause"
+
+# Regression: PR_PRESENT=true (or unset) preserves ai:done.
+out="$(PR_PRESENT=true render_only result-success-cheap.json)"
+assert_contains "$out" 'LABELS: ai:done'      "success + PR_PRESENT=true → ai:done"
+out="$(render_only result-success-cheap.json)"
+assert_contains "$out" 'LABELS: ai:done'      "success + PR_PRESENT unset → ai:done (legacy)"
+
+# A genuine agent error stays ai:failed regardless of PR_PRESENT.
+out="$(PR_PRESENT=true render_only result-rate-limit.json)"
+assert_contains "$out" 'LABELS: ai:failed'    "agent error + PR_PRESENT=true → still ai:failed"
+
 section "context threshold knobs (vary CONTEXT_WINDOW_SIZE on same exec fixture)"
 
 threshold_run() {
@@ -1571,6 +1586,147 @@ assert_contains "$log" 'issue comment 42 --repo owner/repo --body-file' "calls '
 assert_contains "$log" 'issue edit 42 --repo owner/repo --add-label ai:done,ctx:high' "applies ai:done,ctx:high"
 assert_contains "$log" 'issue edit 42 --repo owner/repo --remove-label ai:running'   "removes ai:running"
 assert_contains "$log" 'issue edit 42 --repo owner/repo --remove-label ai:failed'    "removes opposite label (ai:failed) on success"
+
+section "gh-retry — backoff classifies and retries transient failures"
+
+GH_RETRY="$ROOT/scripts/lib/gh-retry.sh"
+
+# Fake command: fails the first N invocations (tracked in a counter file),
+# emitting a chosen stderr, then succeeds. Used to drive with_backoff.
+make_flaky() {
+  local script="$1" fail_times="$2" stderr_msg="$3"
+  cat > "$script" <<EOF
+#!/usr/bin/env bash
+ctr="\${FLAKY_CTR:?}"
+n=\$(cat "\$ctr" 2>/dev/null || printf 0)
+n=\$((n + 1)); printf '%s' "\$n" > "\$ctr"
+if (( n <= $fail_times )); then printf '%s\n' "$stderr_msg" >&2; exit 1; fi
+printf 'ok\n'; exit 0
+EOF
+  chmod +x "$script"
+}
+
+# Retryable: secondary rate limit, succeeds on the 2nd attempt.
+flaky="$(mktemp)"; ctr="$(mktemp)"; : > "$ctr"
+make_flaky "$flaky" 1 "You have exceeded a secondary rate limit"
+ec=0
+# shellcheck disable=SC1090  # source path is intentionally dynamic (test seam)
+( source "$GH_RETRY"
+  FLAKY_CTR="$ctr" GH_RETRY_SLEEP_CMD=: GH_RETRY_NO_JITTER=1 with_backoff "$flaky" ) >/dev/null 2>&1 || ec=$?
+assert_equals "$ec" "0" "with_backoff retries secondary-rate-limit then succeeds"
+assert_equals "$(cat "$ctr")" "2" "  → exactly 2 attempts (1 fail + 1 success)"
+
+# Non-retryable: permission error fails fast on the first attempt.
+flaky2="$(mktemp)"; ctr2="$(mktemp)"; : > "$ctr2"
+make_flaky "$flaky2" 5 "GitHub Actions is not permitted to create or approve pull requests"
+ec=0
+# shellcheck disable=SC1090
+( source "$GH_RETRY"
+  FLAKY_CTR="$ctr2" GH_RETRY_SLEEP_CMD=: GH_RETRY_NO_JITTER=1 with_backoff "$flaky2" ) >/dev/null 2>&1 || ec=$?
+assert_equals "$ec" "1" "with_backoff fails fast on non-retryable permission error"
+assert_equals "$(cat "$ctr2")" "1" "  → exactly 1 attempt (no retry)"
+
+# Exhausts retries on a persistently retryable failure.
+flaky3="$(mktemp)"; ctr3="$(mktemp)"; : > "$ctr3"
+make_flaky "$flaky3" 9 "503 Server Error"
+ec=0
+# shellcheck disable=SC1090
+( source "$GH_RETRY"
+  FLAKY_CTR="$ctr3" GH_RETRY_MAX=3 GH_RETRY_SLEEP_CMD=: GH_RETRY_NO_JITTER=1 with_backoff "$flaky3" ) >/dev/null 2>&1 || ec=$?
+assert_equals "$ec" "1" "with_backoff gives up after GH_RETRY_MAX attempts"
+assert_equals "$(cat "$ctr3")" "3" "  → exactly GH_RETRY_MAX (3) attempts"
+
+# gh_retryable classification.
+# shellcheck disable=SC1090,SC2015  # dynamic source; A&&B||C pattern is intentional (pass/fail callbacks)
+( source "$GH_RETRY"; gh_retryable "secondary rate limit" ) \
+  && pass "gh_retryable: secondary rate limit → retryable" \
+  || fail "gh_retryable: secondary rate limit → retryable"
+# shellcheck disable=SC1090,SC2015
+( source "$GH_RETRY"; gh_retryable "not permitted to create or approve pull requests" ) \
+  && fail "gh_retryable: permission error → must NOT be retryable" \
+  || pass "gh_retryable: permission error → not retryable"
+
+# shellcheck disable=SC1090,SC2015  # dynamic source; intentional pass/fail via &&/||
+( source "$GH_RETRY"
+  gh_retryable "not permitted to create or approve pull requests and hit secondary rate limit" ) \
+  && fail "gh_retryable: fatal+transient co-occurrence must be fatal" \
+  || pass "gh_retryable: fatal wins over transient co-occurrence"
+
+section "verify-or-recover-pr — make run status PR-aware"
+
+VERIFY="$ROOT/scripts/verify-or-recover-pr.sh"
+
+verify_run() {
+  local go log; go="$(mktemp)"; log="$(mktemp)"
+  GITHUB_OUTPUT="$go" GH_MOCK_LOG="$log" PATH="$MOCKS:$PATH" "$@" bash "$VERIFY" >/dev/null 2>&1 || true
+  printf 'LOG<<%s>>\n' "$(tr '\n' ';' < "$log")"
+  cat "$go"; rm -f "$go" "$log"
+}
+
+# Genuine agent error → no-op, pr-present=false, no gh pr create.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=true)"
+assert_contains "$out" 'pr-present=false'  "IS_ERROR=true → pr-present=false"
+assert_contains "$out" 'recovered=false'   "IS_ERROR=true → recovered=false"
+assert_not_contains "$out" 'pr create'     "IS_ERROR=true → never calls gh pr create"
+
+# PR already exists → pr-present=true, no recovery.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false \
+        PIPELINE_PRS_JSON='[{"number":17,"isDraft":true,"headRefOid":"x","author":{"login":"github-actions[bot]"}}]')"
+assert_contains "$out" 'pr-present=true'    "existing PR → pr-present=true"
+assert_contains "$out" 'recovered=false'    "existing PR → no recovery"
+assert_not_contains "$out" 'pr create'      "existing PR → never calls gh pr create"
+
+# No PR + recoverable branch → recovery opens the PR.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true)"
+assert_contains "$out" 'recovered=true'     "no PR + branch → recovery runs"
+assert_contains "$out" 'pr-present=true'    "no PR + branch → pr-present after recovery"
+assert_contains "$out" 'pr create'          "recovery calls gh pr create"
+assert_contains "$out" 'Closes #42'         "recovery PR body closes the issue"
+
+# No PR + no usable branch → pr-present=false, no recovery attempt.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=main BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true)"
+assert_contains "$out" 'pr-present=false'   "branch == default → not recoverable"
+assert_not_contains "$out" 'pr create'      "default branch → never calls gh pr create"
+
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=false BRANCH_AHEAD=true)"
+assert_contains "$out" 'pr-present=false'   "branch not pushed → pr-present=false"
+
+# No PR + branch, but gh pr create fails transiently then succeeds → recovered.
+ctr="$(mktemp)"; : > "$ctr"
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        GH_RETRY_SLEEP_CMD=: GH_RETRY_NO_JITTER=1 \
+        GH_MOCK_PR_CREATE_FAIL_TIMES=1 GH_MOCK_PR_CREATE_CTR="$ctr" \
+        GH_MOCK_PR_CREATE_STDERR='secondary rate limit')"
+assert_contains "$out" 'recovered=true'     "transient pr-create failure → retried → recovered"
+
+# No PR + branch, but gh pr create fails permanently (permission) → not recovered.
+ctr2="$(mktemp)"; : > "$ctr2"
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        GH_RETRY_SLEEP_CMD=: GH_RETRY_NO_JITTER=1 \
+        GH_MOCK_PR_CREATE_FAIL_TIMES=9 GH_MOCK_PR_CREATE_CTR="$ctr2" \
+        GH_MOCK_PR_CREATE_STDERR='not permitted to create or approve pull requests')"
+assert_contains "$out" 'pr-present=false'   "permanent pr-create failure → pr-present=false"
+assert_contains "$out" 'recovered=false'    "permanent pr-create failure → recovered=false"
+
+# No PR + branch, but gh pr create fails with "already exists" (search-index lag)
+# → pr-present=true (the PR already existed), recovered=false.
+ctr3_ae="$(mktemp)"; : > "$ctr3_ae"
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        GH_RETRY_SLEEP_CMD=: GH_RETRY_NO_JITTER=1 \
+        GH_MOCK_PR_CREATE_FAIL_TIMES=9 GH_MOCK_PR_CREATE_CTR="$ctr3_ae" \
+        GH_MOCK_PR_CREATE_STDERR='a pull request for branch "ai/issue-42" into branch "main" already exists')"
+assert_contains "$out" 'pr-present=true'   "gh pr create 'already exists' (search lag) → pr-present=true"
+assert_contains "$out" 'recovered=false'   "  → not counted as recovered (it pre-existed)"
+
+# Missing required env → exit 2.
+ec="$(run_capture_ec env REPO=o/r IS_ERROR=false bash "$VERIFY")"
+assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 
 # --- summary ----------------------------------------------------------------
 

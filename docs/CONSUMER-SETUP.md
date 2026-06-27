@@ -105,7 +105,7 @@ after several clean draft-only runs, enable auto-merge per §2 — including the
    *Settings → Actions → General → Workflow permissions → Allow GitHub Actions to
    create and approve pull requests*. Off ⇒ the branch is pushed but `gh pr
    create` fails — and the run may still report **success**, so the absent PR is
-   silent. See §1.
+   silent. See §1. As of #100 the implement job verifies a PR exists after the run and, when the work is on a pushed branch, recovers by opening the PR itself (with retry/backoff); if no PR can be opened the run is marked **`ai:failed`** instead of silently reporting success.
 7. **The `$X.XX` in the metrics comment is notional under subscription auth.**
    It's Claude Code's reported `total_cost_usd`, computed from token counts ×
    public API list prices regardless of how you authenticated. With a

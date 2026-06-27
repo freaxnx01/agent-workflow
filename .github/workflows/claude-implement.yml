@@ -625,6 +625,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash .claude-pipeline/scripts/ensure-issue-labels.sh
 
+      - name: Verify or recover PR
+        id: verify_pr
+        if: always() && !inputs.dry-run && (steps.claude.outputs.result-file != '' || steps.opencode_adapt.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          IS_ERROR: ${{ steps.outputs.outputs.outcome == 'failed' }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+        run: bash .claude-pipeline/scripts/verify-or-recover-pr.sh
+
       - name: Post run report
         if: always() && (steps.claude.outputs.result-file != '' || steps.opencode_adapt.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
         env:
@@ -637,6 +648,7 @@ jobs:
           RENDER_ONLY: ${{ inputs.dry-run && '1' || '0' }}
           MODEL: ${{ steps.triage.outputs.model }}
           AGENT: ${{ steps.classify_agent.outputs.agent }}
+          PR_PRESENT: ${{ steps.verify_pr.outputs.pr-present }}
         run: bash .claude-pipeline/scripts/post-run-report.sh
 
   auto_review:

@@ -3,10 +3,21 @@
 # gh — minimal stand-in for the GitHub CLI used by Layer-1 fixture tests.
 #
 # Appends each invocation's argv as a single space-joined line to $GH_MOCK_LOG.
-# Always exits 0. Knows nothing about subcommands; assertions live in the test
-# runner.
+# Exits 0 by default. Optional seams let a test simulate a flaky `gh pr create`:
+#   GH_MOCK_PR_CREATE_FAIL_TIMES  fail the first N `pr create` calls (exit 1)
+#   GH_MOCK_PR_CREATE_STDERR      stderr emitted on those failures
+#   GH_MOCK_PR_CREATE_CTR         counter file path (required if FAIL_TIMES set)
 set -euo pipefail
 IFS=$'\n\t'
 : "${GH_MOCK_LOG:?GH_MOCK_LOG must be set when using the gh mock}"
 ( IFS=' '; printf '%s\n' "$*" >> "$GH_MOCK_LOG" )
+
+if [[ "${1:-}" == "pr" && "${2:-}" == "create" && -n "${GH_MOCK_PR_CREATE_FAIL_TIMES:-}" ]]; then
+  ctr="${GH_MOCK_PR_CREATE_CTR:?GH_MOCK_PR_CREATE_CTR must be set with FAIL_TIMES}"
+  n=$(cat "$ctr" 2>/dev/null || printf 0); n=$((n + 1)); printf '%s' "$n" > "$ctr"
+  if (( n <= GH_MOCK_PR_CREATE_FAIL_TIMES )); then
+    printf '%s\n' "${GH_MOCK_PR_CREATE_STDERR:-secondary rate limit}" >&2
+    exit 1
+  fi
+fi
 exit 0

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **pipeline:** Runs that complete without opening a PR are no longer reported as `ai:done` — the implement job verifies the PR exists, recovers the orphan branch when possible, and marks `ai:failed` otherwise (#100)
+
 ### Documentation
 
 - Add living OpenCode × OpenRouter model-comparison report (`docs/model-comparison.md`) and link it from `CONSUMER-SETUP.md`
