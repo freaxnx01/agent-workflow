@@ -1572,6 +1572,65 @@ assert_contains "$log" 'issue edit 42 --repo owner/repo --add-label ai:done,ctx:
 assert_contains "$log" 'issue edit 42 --repo owner/repo --remove-label ai:running'   "removes ai:running"
 assert_contains "$log" 'issue edit 42 --repo owner/repo --remove-label ai:failed'    "removes opposite label (ai:failed) on success"
 
+section "gh-retry — backoff classifies and retries transient failures"
+
+GH_RETRY="$ROOT/scripts/lib/gh-retry.sh"
+
+# Fake command: fails the first N invocations (tracked in a counter file),
+# emitting a chosen stderr, then succeeds. Used to drive with_backoff.
+make_flaky() {
+  local script="$1" fail_times="$2" stderr_msg="$3"
+  cat > "$script" <<EOF
+#!/usr/bin/env bash
+ctr="\${FLAKY_CTR:?}"
+n=\$(cat "\$ctr" 2>/dev/null || printf 0)
+n=\$((n + 1)); printf '%s' "\$n" > "\$ctr"
+if (( n <= $fail_times )); then printf '%s\n' "$stderr_msg" >&2; exit 1; fi
+printf 'ok\n'; exit 0
+EOF
+  chmod +x "$script"
+}
+
+# Retryable: secondary rate limit, succeeds on the 2nd attempt.
+flaky="$(mktemp)"; ctr="$(mktemp)"; : > "$ctr"
+make_flaky "$flaky" 1 "You have exceeded a secondary rate limit"
+ec=0
+# shellcheck disable=SC1090  # source path is intentionally dynamic (test seam)
+( source "$GH_RETRY"
+  FLAKY_CTR="$ctr" GH_RETRY_SLEEP_CMD=: GH_RETRY_NO_JITTER=1 with_backoff "$flaky" ) >/dev/null 2>&1 || ec=$?
+assert_equals "$ec" "0" "with_backoff retries secondary-rate-limit then succeeds"
+assert_equals "$(cat "$ctr")" "2" "  → exactly 2 attempts (1 fail + 1 success)"
+
+# Non-retryable: permission error fails fast on the first attempt.
+flaky2="$(mktemp)"; ctr2="$(mktemp)"; : > "$ctr2"
+make_flaky "$flaky2" 5 "GitHub Actions is not permitted to create or approve pull requests"
+ec=0
+# shellcheck disable=SC1090
+( source "$GH_RETRY"
+  FLAKY_CTR="$ctr2" GH_RETRY_SLEEP_CMD=: GH_RETRY_NO_JITTER=1 with_backoff "$flaky2" ) >/dev/null 2>&1 || ec=$?
+assert_equals "$ec" "1" "with_backoff fails fast on non-retryable permission error"
+assert_equals "$(cat "$ctr2")" "1" "  → exactly 1 attempt (no retry)"
+
+# Exhausts retries on a persistently retryable failure.
+flaky3="$(mktemp)"; ctr3="$(mktemp)"; : > "$ctr3"
+make_flaky "$flaky3" 9 "503 Server Error"
+ec=0
+# shellcheck disable=SC1090
+( source "$GH_RETRY"
+  FLAKY_CTR="$ctr3" GH_RETRY_MAX=3 GH_RETRY_SLEEP_CMD=: GH_RETRY_NO_JITTER=1 with_backoff "$flaky3" ) >/dev/null 2>&1 || ec=$?
+assert_equals "$ec" "1" "with_backoff gives up after GH_RETRY_MAX attempts"
+assert_equals "$(cat "$ctr3")" "3" "  → exactly GH_RETRY_MAX (3) attempts"
+
+# gh_retryable classification.
+# shellcheck disable=SC1090,SC2015  # dynamic source; A&&B||C pattern is intentional (pass/fail callbacks)
+( source "$GH_RETRY"; gh_retryable "secondary rate limit" ) \
+  && pass "gh_retryable: secondary rate limit → retryable" \
+  || fail "gh_retryable: secondary rate limit → retryable"
+# shellcheck disable=SC1090,SC2015
+( source "$GH_RETRY"; gh_retryable "not permitted to create or approve pull requests" ) \
+  && fail "gh_retryable: permission error → must NOT be retryable" \
+  || pass "gh_retryable: permission error → not retryable"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"
