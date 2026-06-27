@@ -16,7 +16,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source=scripts/lib/gh-retry.sh
+# shellcheck source=scripts/lib/gh-retry.sh disable=SC1091  # hook runs without -x; SC1091 is conventionally suppressed
 source "$HERE/lib/gh-retry.sh"
 
 if [[ -z "${ISSUE_NUMBER:-}" ]]; then
