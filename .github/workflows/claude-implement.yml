@@ -299,6 +299,18 @@ jobs:
             cp -r tests/fixtures/. .claude-pipeline/tests/fixtures/
           fi
 
+      - name: Hide .claude-pipeline from the consumer repo's git (#99)
+        # The pipeline scripts are checked out INTO the consumer working tree at
+        # .claude-pipeline/ (a nested repo with its own .git, or copied files in
+        # local-scripts mode). A broad `git add -A`/`git add .` by the agent
+        # would otherwise stage that nested repo as a submodule gitlink
+        # (mode 160000) — or its files — and leak it into the PR (#99). Excluding
+        # it via .git/info/exclude (NOT the tracked .gitignore) keeps it invisible
+        # to the agent's staging without itself appearing in the diff.
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/.git/info"
+          printf '%s\n' '.claude-pipeline/' >> "$GITHUB_WORKSPACE/.git/info/exclude"
+
       - name: Ensure toolchain
         run: bash .claude-pipeline/scripts/ensure-toolchain.sh
 
