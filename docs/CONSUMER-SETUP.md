@@ -333,6 +333,8 @@ Pick the model per issue with a `model:*` label (alongside `agent:opencode`). Th
 
 > **OpenCode requires tool-use.** OpenCode drives edits through function/tool calls, so only OpenRouter models that advertise `tools` in their `supported_parameters` work. Models without it fail with *"No endpoints found that support tool use"* (e.g. `qwen-2.5-coder-32b`); some advertise tools but emit malformed tool calls (e.g. `codestral`) and silently make no edits. Verify tool support before adding a model.
 
+For measured per-model results — which model produced the cleanest code on a real task, and which ones failed — see the living [model-comparison report](model-comparison.md).
+
 Claude-path labels (`model:opus` / `model:sonnet` / `model:haiku`) are documented in DESIGN.md.
 
 ### Mint the OpenRouter key
