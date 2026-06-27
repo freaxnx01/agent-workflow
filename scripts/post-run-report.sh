@@ -205,6 +205,13 @@ if [[ "$IS_ERROR" == "true" ]]; then
   STATUS_TEXT="failed: ${SUBTYPE}"
   STATUS_LABEL='ai:failed'
   STATUS_LABEL_OPPOSITE='ai:done'
+elif [[ "${PR_PRESENT:-}" == "false" ]]; then
+  # #100: run finished without error but no PR exists (and recovery, if any,
+  # failed). Do not report success — the work is not reviewable.
+  STATUS_EMOJI=':x:'
+  STATUS_TEXT='failed: run completed but no PR was opened'
+  STATUS_LABEL='ai:failed'
+  STATUS_LABEL_OPPOSITE='ai:done'
 else
   STATUS_EMOJI=':white_check_mark:'
   STATUS_TEXT='success'

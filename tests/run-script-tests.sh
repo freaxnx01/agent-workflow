@@ -137,6 +137,21 @@ rm -f "$exec_array"
 assert_contains "$out" 'ai:done,ctx:high'               "execution as JSON array → still ctx:high"
 assert_contains "$out" '165,000 / 200,000 (82%)'        "execution as JSON array → same 82% peak"
 
+# #100: a successful run that opened no PR must NOT be ai:done.
+out="$(PR_PRESENT=false render_only result-success-cheap.json)"
+assert_contains "$out" 'LABELS: ai:failed'   "success but PR_PRESENT=false → ai:failed"
+assert_contains "$out" 'no PR was opened'     "  → status text names the missing-PR cause"
+
+# Regression: PR_PRESENT=true (or unset) preserves ai:done.
+out="$(PR_PRESENT=true render_only result-success-cheap.json)"
+assert_contains "$out" 'LABELS: ai:done'      "success + PR_PRESENT=true → ai:done"
+out="$(render_only result-success-cheap.json)"
+assert_contains "$out" 'LABELS: ai:done'      "success + PR_PRESENT unset → ai:done (legacy)"
+
+# A genuine agent error stays ai:failed regardless of PR_PRESENT.
+out="$(PR_PRESENT=true render_only result-rate-limit.json)"
+assert_contains "$out" 'LABELS: ai:failed'    "agent error + PR_PRESENT=true → still ai:failed"
+
 section "context threshold knobs (vary CONTEXT_WINDOW_SIZE on same exec fixture)"
 
 threshold_run() {
