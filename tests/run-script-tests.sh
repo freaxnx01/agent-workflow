@@ -1637,6 +1637,71 @@ assert_equals "$(cat "$ctr3")" "3" "  → exactly GH_RETRY_MAX (3) attempts"
   && fail "gh_retryable: fatal+transient co-occurrence must be fatal" \
   || pass "gh_retryable: fatal wins over transient co-occurrence"
 
+section "verify-or-recover-pr — make run status PR-aware"
+
+VERIFY="$ROOT/scripts/verify-or-recover-pr.sh"
+
+verify_run() {
+  local go log; go="$(mktemp)"; log="$(mktemp)"
+  GITHUB_OUTPUT="$go" GH_MOCK_LOG="$log" PATH="$MOCKS:$PATH" "$@" bash "$VERIFY" >/dev/null 2>&1 || true
+  printf 'LOG<<%s>>\n' "$(tr '\n' ';' < "$log")"
+  cat "$go"; rm -f "$go" "$log"
+}
+
+# Genuine agent error → no-op, pr-present=false, no gh pr create.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=true)"
+assert_contains "$out" 'pr-present=false'  "IS_ERROR=true → pr-present=false"
+assert_contains "$out" 'recovered=false'   "IS_ERROR=true → recovered=false"
+assert_not_contains "$out" 'pr create'     "IS_ERROR=true → never calls gh pr create"
+
+# PR already exists → pr-present=true, no recovery.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false \
+        PIPELINE_PRS_JSON='[{"number":17,"isDraft":true,"headRefOid":"x","author":{"login":"github-actions[bot]"}}]')"
+assert_contains "$out" 'pr-present=true'    "existing PR → pr-present=true"
+assert_contains "$out" 'recovered=false'    "existing PR → no recovery"
+assert_not_contains "$out" 'pr create'      "existing PR → never calls gh pr create"
+
+# No PR + recoverable branch → recovery opens the PR.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true)"
+assert_contains "$out" 'recovered=true'     "no PR + branch → recovery runs"
+assert_contains "$out" 'pr-present=true'    "no PR + branch → pr-present after recovery"
+assert_contains "$out" 'pr create'          "recovery calls gh pr create"
+assert_contains "$out" 'Closes #42'         "recovery PR body closes the issue"
+
+# No PR + no usable branch → pr-present=false, no recovery attempt.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=main BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true)"
+assert_contains "$out" 'pr-present=false'   "branch == default → not recoverable"
+assert_not_contains "$out" 'pr create'      "default branch → never calls gh pr create"
+
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=false BRANCH_AHEAD=true)"
+assert_contains "$out" 'pr-present=false'   "branch not pushed → pr-present=false"
+
+# No PR + branch, but gh pr create fails transiently then succeeds → recovered.
+ctr="$(mktemp)"; : > "$ctr"
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        GH_RETRY_SLEEP_CMD=: GH_RETRY_NO_JITTER=1 \
+        GH_MOCK_PR_CREATE_FAIL_TIMES=1 GH_MOCK_PR_CREATE_CTR="$ctr" \
+        GH_MOCK_PR_CREATE_STDERR='secondary rate limit')"
+assert_contains "$out" 'recovered=true'     "transient pr-create failure → retried → recovered"
+
+# No PR + branch, but gh pr create fails permanently (permission) → not recovered.
+ctr2="$(mktemp)"; : > "$ctr2"
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        GH_RETRY_SLEEP_CMD=: GH_RETRY_NO_JITTER=1 \
+        GH_MOCK_PR_CREATE_FAIL_TIMES=9 GH_MOCK_PR_CREATE_CTR="$ctr2" \
+        GH_MOCK_PR_CREATE_STDERR='not permitted to create or approve pull requests')"
+assert_contains "$out" 'pr-present=false'   "permanent pr-create failure → pr-present=false"
+assert_contains "$out" 'recovered=false'    "permanent pr-create failure → recovered=false"
+
+# Missing required env → exit 2.
+ec="$(run_capture_ec env REPO=o/r IS_ERROR=false bash "$VERIFY")"
+assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"
