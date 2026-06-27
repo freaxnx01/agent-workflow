@@ -76,15 +76,18 @@ fi
 # 4. Recover — open the draft PR with retry/backoff.
 set +x
 recover_ec=0
-GH_TOKEN="${GH_TOKEN:-}" with_backoff \
+recover_out="$(GH_TOKEN="${GH_TOKEN:-}" with_backoff \
   gh pr create --repo "$REPO" --draft \
     --base "$default_branch" --head "$branch" \
     --title "Implement #${ISSUE_NUMBER}" \
     --body "Recovered by pipeline. Closes #${ISSUE_NUMBER}." \
-  || recover_ec=$?
+  2>&1)" || recover_ec=$?
 
 if [[ "$recover_ec" -eq 0 ]]; then
   emit false true true
+elif printf '%s' "$recover_out" | grep -qi 'already exists'; then
+  # PR already existed — the search index lagged; treat as present but not recovered.
+  emit false true false
 else
   emit false false false
 fi

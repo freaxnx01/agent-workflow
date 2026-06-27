@@ -1713,6 +1713,17 @@ out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=mai
 assert_contains "$out" 'pr-present=false'   "permanent pr-create failure → pr-present=false"
 assert_contains "$out" 'recovered=false'    "permanent pr-create failure → recovered=false"
 
+# No PR + branch, but gh pr create fails with "already exists" (search-index lag)
+# → pr-present=true (the PR already existed), recovered=false.
+ctr3_ae="$(mktemp)"; : > "$ctr3_ae"
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        GH_RETRY_SLEEP_CMD=: GH_RETRY_NO_JITTER=1 \
+        GH_MOCK_PR_CREATE_FAIL_TIMES=9 GH_MOCK_PR_CREATE_CTR="$ctr3_ae" \
+        GH_MOCK_PR_CREATE_STDERR='a pull request for branch "ai/issue-42" into branch "main" already exists')"
+assert_contains "$out" 'pr-present=true'   "gh pr create 'already exists' (search lag) → pr-present=true"
+assert_contains "$out" 'recovered=false'   "  → not counted as recovered (it pre-existed)"
+
 # Missing required env → exit 2.
 ec="$(run_capture_ec env REPO=o/r IS_ERROR=false bash "$VERIFY")"
 assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
