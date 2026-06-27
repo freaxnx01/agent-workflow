@@ -42,7 +42,7 @@ A new workflow step in `claude-implement.yml` runs **after the agent step** and 
 the source of truth for "does a PR exist". The step exposes a `pr-present` output that
 `post-run-report.sh` consumes to make status PR-aware.
 
-```
+```text
 agent step ──▶ verify-or-recover-pr.sh ──▶ post-run-report.sh
                  │  find-pipeline-pr.sh         │  status = ai:failed when
                  │  (+ recovery via             │  IS_ERROR=false AND
@@ -58,6 +58,7 @@ Single purpose: after a run, ensure a PR exists for the issue when one should, r
 possible, and report whether one is now present.
 
 **Inputs (env):**
+
 - `ISSUE_NUMBER` (required) — issue being implemented.
 - `REPO` — `owner/repo` (default `$GITHUB_REPOSITORY`).
 - `DEFAULT_BRANCH` (required for recovery) — base branch to diff against and target.
@@ -68,6 +69,7 @@ possible, and report whether one is now present.
   `PIPELINE_PRS_JSON` seam).
 
 **Logic (guard clauses):**
+
 1. If `IS_ERROR=true` → no-op. Emit `pr-present=false recovered=false`. (Genuine agent
    failure; existing handling owns it.)
 2. Run `find-pipeline-pr.sh`. If `found=true` → emit `pr-present=true recovered=false`.
@@ -92,6 +94,7 @@ possible, and report whether one is now present.
 ### `lib/gh-retry.sh` (new shared helper)
 
 `gh_retry_pr_create` (or a generic `with_backoff`) — runs a command with exponential backoff:
+
 - up to 3 attempts, jittered sleep between them;
 - retries only on transient/secondary-rate-limit signatures in stderr
   (e.g. `secondary rate limit`, `rate limit`, `was submitted too quickly`, HTTP 5xx/timeouts);
@@ -134,6 +137,7 @@ Insert the verify-or-recover step after the agent step, capturing `pr-present` (
 ## Testing (Layer-1, mocked `gh`/git)
 
 New fixtures + `tests/run-script-tests.sh` cases for `verify-or-recover-pr.sh`:
+
 - `IS_ERROR=true` → no-op, `pr-present=false`.
 - PR already exists → `pr-present=true recovered=false`, no `gh pr create` call.
 - No PR + recoverable branch → recovery opens PR → `pr-present=true recovered=true`.
@@ -142,6 +146,7 @@ New fixtures + `tests/run-script-tests.sh` cases for `verify-or-recover-pr.sh`:
 - `gh pr create` permanent (permission) → fails fast → `pr-present=false`.
 
 `post-run-report.sh` cases:
+
 - `IS_ERROR=false` + `PR_PRESENT=false` → `ai:failed` + the no-PR status text.
 - `IS_ERROR=false` + `PR_PRESENT` unset/true → unchanged `ai:done` (regression guard).
 

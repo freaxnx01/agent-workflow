@@ -29,10 +29,12 @@
 ### Task 1: `scripts/lib/gh-retry.sh` — backoff helper
 
 **Files:**
+
 - Create: `scripts/lib/gh-retry.sh`
 - Test: `tests/run-script-tests.sh` (new `gh-retry` section)
 
 **Interfaces:**
+
 - Produces: `with_backoff "$@"` — runs the command; returns `0` on success. On failure, retries only when the command's stderr matches a retryable signature, up to `GH_RETRY_MAX` attempts (default `3`); returns the command's last non-zero exit code otherwise. Honors seams: `GH_RETRY_MAX`, `GH_RETRY_BASE_SLEEP` (default `2`), `GH_RETRY_SLEEP_CMD` (default `sleep`), `GH_RETRY_NO_JITTER` (default unset → jitter on).
 - Produces: `gh_retryable "<text>"` — exit `0` if the text matches a transient/secondary-rate-limit signature and does NOT match a non-retryable signature; else exit `1`.
 
@@ -177,11 +179,13 @@ git commit -m "feat(gh-retry): backoff helper retrying transient gh failures (#1
 ### Task 2: `scripts/verify-or-recover-pr.sh` — verify a PR exists, recover if not
 
 **Files:**
+
 - Create: `scripts/verify-or-recover-pr.sh`
 - Modify: `tests/mocks/gh` (teach it to simulate `gh pr create` failures)
 - Test: `tests/run-script-tests.sh` (new `verify-or-recover-pr` section)
 
 **Interfaces:**
+
 - Consumes: `scripts/find-pipeline-pr.sh` (existing) via `PIPELINE_PRS_JSON`; `scripts/lib/gh-retry.sh` `with_backoff` (Task 1).
 - Produces: stdout + `$GITHUB_OUTPUT` lines `found=<bool> pr-present=<bool> recovered=<bool>`.
 - Inputs (env): `ISSUE_NUMBER` (required), `REPO` (default `$GITHUB_REPOSITORY`), `DEFAULT_BRANCH`, `IS_ERROR` (default `false`), `GH_TOKEN`/ambient. Seams: `PIPELINE_PRS_JSON` (existence check), `BRANCH` / `BRANCH_REMOTE_EXISTS` / `BRANCH_AHEAD` (override the git probes used for recovery eligibility).
@@ -415,10 +419,12 @@ git commit -m "feat(verify-or-recover-pr): verify a PR exists, recover orphan br
 ### Task 3: `post-run-report.sh` — PR-aware status
 
 **Files:**
+
 - Modify: `scripts/post-run-report.sh` (the `IS_ERROR` status block, ~L203-217)
 - Test: `tests/run-script-tests.sh` (extend the `render_only` section)
 
 **Interfaces:**
+
 - Consumes: new optional env `PR_PRESENT` (`true|false`; unset = legacy behaviour).
 - Produces: when `IS_ERROR=false` AND `PR_PRESENT=false` → `STATUS_LABEL='ai:failed'`, `STATUS_TEXT='run completed but no PR was opened'`.
 
@@ -497,9 +503,11 @@ git commit -m "feat(post-run-report): mark ai:failed when a run opens no PR (#10
 ### Task 4: Wire the step into `claude-implement.yml`
 
 **Files:**
+
 - Modify: `.github/workflows/claude-implement.yml` (add a step after `Extract job outputs from result.json` / id `outputs` ~L610-620, before `Post run report` ~L640; add `PR_PRESENT` to the report step's env)
 
 **Interfaces:**
+
 - Consumes: `steps.outputs.outputs.outcome` (`success|failed`), `scripts/verify-or-recover-pr.sh` outputs.
 - Produces: `steps.verify_pr.outputs.pr-present` consumed by the report step.
 
@@ -550,6 +558,7 @@ git commit -m "ci(implement): verify/recover PR before stamping run status (#100
 ### Task 5: Documentation — gotcha #6 + CHANGELOG
 
 **Files:**
+
 - Modify: `docs/CONSUMER-SETUP.md` (gotcha #6 row, ~L154)
 - Modify: `CHANGELOG.md` (`[Unreleased]` → Fixed)
 
@@ -588,6 +597,7 @@ git commit -m "docs: note PR verify/recover self-heal in gotcha #6 + CHANGELOG (
 ## Self-Review
 
 **Spec coverage:**
+
 - Verify PR exists before `ai:done` → Tasks 2 + 3. ✓
 - Recover via `gh pr create` + retry/backoff → Tasks 1 + 2. ✓
 - Branch discovered from post-agent local git state → Task 2 Step 4 (`git rev-parse --abbrev-ref HEAD`, seamed). ✓
