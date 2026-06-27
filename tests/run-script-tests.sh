@@ -1631,6 +1631,12 @@ assert_equals "$(cat "$ctr3")" "3" "  → exactly GH_RETRY_MAX (3) attempts"
   && fail "gh_retryable: permission error → must NOT be retryable" \
   || pass "gh_retryable: permission error → not retryable"
 
+# shellcheck disable=SC1090,SC2015  # dynamic source; intentional pass/fail via &&/||
+( source "$GH_RETRY"
+  gh_retryable "not permitted to create or approve pull requests and hit secondary rate limit" ) \
+  && fail "gh_retryable: fatal+transient co-occurrence must be fatal" \
+  || pass "gh_retryable: fatal wins over transient co-occurrence"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"
