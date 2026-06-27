@@ -10,6 +10,7 @@
 
 ## Global Constraints
 
+- Use Test-Driven Development for every task: write a failing test first, watch it fail, implement minimally to pass, verify green.
 - Every script starts with `#!/usr/bin/env bash`, `set -euo pipefail`, `IFS=$'\n\t'`.
 - Quote every expansion; `[[ ]]` over `[ ]`; `$(...)` over backticks; no `eval`.
 - Exit codes: `0` success, `2` usage/required-env missing.
