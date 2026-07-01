@@ -4,11 +4,11 @@
 The selection policy distilled from it lives in the `gh:route` command (Step 4b) and the
 model roster in [`CONSUMER-SETUP.md`](CONSUMER-SETUP.md#per-issue-model-labels).
 
-> ⚠️ **Evidence is currently thin.** As of the latest round, the policy rests on a
-> *single task shape* (a CRUD-ish search endpoint) on a *single stack* (.NET). Treat the
-> per-shape picks as a **starting default**, prefer the safer Claude pick when a task
-> differs materially, and widen the evidence — run the comparison on a bugfix, a refactor,
-> and a UI change — before hard-trusting the rankings.
+> ⚠️ **Evidence is currently thin.** The policy rests on two rounds of the *same task shape*
+> (CRUD-ish query endpoints — search, then authors) on a *single stack* (.NET), one run per
+> model. Treat the per-shape picks as a **starting default**, prefer the safer Claude pick
+> when a task differs materially, and widen the evidence — multiple runs per model, plus a
+> bugfix, a refactor, and a UI change — before hard-trusting the rankings.
 
 ## Why this lives here
 
@@ -27,6 +27,39 @@ against the acceptance criteria and rank them. Label an issue with
 `ai-implement` + `agent:opencode` + a `model:*` label (roster in
 [`CONSUMER-SETUP.md`](CONSUMER-SETUP.md#per-issue-model-labels)); for a Claude baseline use
 `agent:claude` + `model:sonnet`.
+
+---
+
+## Round 3 — .NET authors endpoint (qwen3.6-27b debut)
+
+**Date:** 2026-07-01 · **Stack:** .NET · **Provenance:** [`freaxnx01/quotes`](https://github.com/freaxnx01/quotes) issues #37/#38, draft PRs #40 (qwen3-27b) / #41 (gpt-oss-120b)
+
+**Task:** `GET /Api/authors` — distinct quote authors with counts; optional case-insensitive
+`q` substring filter on author; `page` (default 1, min 1), `pageSize` (default 20, min 1,
+max 100); order by `count` desc then `author` asc; response
+`{ items: [{ author, count }], page, pageSize, total }` where `total` = distinct authors
+matching. Invalid / non-numeric paging → `400`. Carried Round 2's anti-blind-spot criteria
+(EF-Core translatable, compiles cleanly, don't delete existing endpoints).
+
+First outing for **`qwen3.6-27b`** (`qwen/qwen3.6-27b`, added to the roster in agent-pipeline
+#112), head-to-head against the Round-2 winner `gpt-oss-120b` on an identical spec.
+
+| Rank | Model | OpenRouter slug | Result | Notes |
+|---|---|---|---|---|
+| 🥇 | **qwen3-27b** | `qwen/qwen3.6-27b` | ✅ | Clean and correct. `EF.Functions.Like(Author.ToLower(), …)`, async end-to-end, `AsNoTracking`, correct distinct-author `total`, order `count desc, author asc`. Took `page`/`pageSize` as `string` + `int.TryParse` → explicit `400` on non-numeric. **20 turns · 7m53s · $0.15.** |
+| 2 | **gpt-oss-120b** | `openai/gpt-oss-120b` | ❌ | Two defects: (1) **missing `;`** after the `.Select(...)` → does not compile (`CS1002`); (2) **deleted `[HttpGet("search")]`** from the existing `Search` action → breaks `/Api/search` (AC violation). Query logic otherwise sound. **23 turns · 3m23s · $0.01.** |
+
+### Findings
+
+1. **qwen3.6-27b's debut is promising but pricey.** It clears the OpenCode tool-use gate and
+   produced the cleaner implementation on this task — but at **~15× the cost** of gpt-oss-120b
+   ($0.15 vs $0.01), consistent with its Gemini-Flash-tier pricing (~$0.29/$2.40 per M).
+2. **Single-run variance is real.** gpt-oss-120b won Round 2 decisively yet shipped a
+   non-compiling diff here that *also* tripped the "don't delete endpoints" criterion. Treat
+   this as one noisy sample, **not** a ranking reversal — multi-run rounds are needed to
+   separate signal from noise. The selection policy below is **unchanged** pending that.
+3. **The anti-blind-spot criteria keep earning their place.** Round 2's "compiles cleanly /
+   don't delete endpoints" sentences are exactly what gpt-oss-120b violated this round.
 
 ---
 
