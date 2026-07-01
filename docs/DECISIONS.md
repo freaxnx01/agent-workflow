@@ -18,7 +18,7 @@ Nygard's pattern, kept terse.
 
 The reusable workflow `agent-implement.yml` is hard-coded to invoke
 `anthropics/claude-code-base-action` and to address Claude model IDs
-(`claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5`). Epic
+(`claude-opus-4-7`, `claude-sonnet-5`, `claude-haiku-4-5`). Epic
 [#2](https://github.com/freaxnx01/agent-pipeline/issues/2) adds OpenCode
 
 + OpenRouter (Mistral first) as a second executor without forcing a

@@ -14,7 +14,7 @@ on:
       default-model:
         description: Model used when no `model:*` label is present on the issue.
         type: string
-        default: claude-opus-4-7
+        default: claude-sonnet-5
       agent:
         description: |
           Which agent runs the implementation. One of `claude` or `opencode`.

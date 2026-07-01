@@ -27,7 +27,7 @@
 #
 # Optional environment variables:
 #   DEFAULT_MODEL  Fallback when no override + no heuristic match.
-#                  Default: claude-sonnet-4-6.
+#                  Default: claude-sonnet-5.
 #   AGENT          `claude | opencode`. Used only to validate that a
 #                  Mistral-flavored override label is compatible with
 #                  the active agent. Default: claude.
@@ -60,7 +60,7 @@ if [[ -z "$REPO" ]]; then
   exit 2
 fi
 
-DEFAULT_MODEL="${DEFAULT_MODEL:-claude-sonnet-4-6}"
+DEFAULT_MODEL="${DEFAULT_MODEL:-claude-sonnet-5}"
 AGENT="${AGENT:-claude}"
 
 # --- 1) explicit override label -------------------------------------------
@@ -102,7 +102,7 @@ while IFS= read -r label; do
   esac
   case "$label" in
     model:opus)           chosen=claude-opus-4-7;                 reason='label model:opus' ;;
-    model:sonnet)         chosen=claude-sonnet-4-6;               reason='label model:sonnet' ;;
+    model:sonnet)         chosen=claude-sonnet-5;                 reason='label model:sonnet' ;;
     model:haiku)          chosen=claude-haiku-4-5;                reason='label model:haiku' ;;
     model:mistral-large)  chosen=mistralai/mistral-large;          reason='label model:mistral-large' ;;
     model:codestral)      chosen=mistralai/codestral-2508;         reason='label model:codestral' ;;

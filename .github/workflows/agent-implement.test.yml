@@ -33,7 +33,7 @@ jobs:
     uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9001
-      default-model: claude-sonnet-4-6
+      default-model: claude-sonnet-5
       timeout-minutes: 10
       dry-run: true
       local-scripts: true
@@ -47,7 +47,7 @@ jobs:
     uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9002
-      default-model: claude-sonnet-4-6
+      default-model: claude-sonnet-5
       timeout-minutes: 10
       dry-run: true
       local-scripts: true
