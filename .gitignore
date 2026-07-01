@@ -2,6 +2,9 @@
 .claude/worktrees/
 .worktrees/
 
+# Business-sensitive specs / local notes — never commit to the public repo
+docs/private/
+
 # OS / editor noise
 .DS_Store
 *.swp
