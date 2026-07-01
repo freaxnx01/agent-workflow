@@ -9,6 +9,7 @@
 **Tech Stack:** Bash 5 (`set -euo pipefail`), `gh` CLI, `jq`, `awk`; shellcheck + actionlint; `just`; git-cliff. Tests are fixture-driven with `gh` mocked via a shell-function override — no network.
 
 **Conventions for the executor:**
+
 - The new repo root is `/home/admin/repos/github/freaxnx01/public/agent-skills` — called **`$AS`** throughout. It does **not** exist yet; Task 1 creates it. All `Create:` paths are absolute under `$AS`.
 - Run every `git` command with `git -C "$AS"` so the working directory never matters.
 - No GitHub remote is created in this plan — the user creates it later. Nothing is pushed.
@@ -44,6 +45,7 @@
 ### Task 1: Initialize repo + plugin manifest
 
 **Files:**
+
 - Create: `/home/admin/repos/github/freaxnx01/public/agent-skills/.gitignore`
 - Create: `/home/admin/repos/github/freaxnx01/public/agent-skills/.editorconfig`
 - Create: `/home/admin/repos/github/freaxnx01/public/agent-skills/.claude-plugin/plugin.json`
@@ -56,11 +58,13 @@ AS=/home/admin/repos/github/freaxnx01/public/agent-skills
 mkdir -p "$AS"/{.claude-plugin,skills/lib,tests/fixtures,tests/mocks,docs,.github/workflows}
 git -C "$AS" init -q
 ```
+
 Expected: `$AS/.git` exists.
 
 - [ ] **Step 2: Write `.gitignore`**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/.gitignore`:
+
 ```gitignore
 .act/
 coverage/
@@ -72,6 +76,7 @@ coverage/
 - [ ] **Step 3: Write `.editorconfig`**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/.editorconfig`:
+
 ```ini
 root = true
 
@@ -94,6 +99,7 @@ trim_trailing_whitespace = false
 - [ ] **Step 4: Write the plugin manifest**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/.claude-plugin/plugin.json`:
+
 ```json
 {
   "name": "agent-skills",
@@ -106,7 +112,8 @@ File `/home/admin/repos/github/freaxnx01/public/agent-skills/.claude-plugin/plug
 - [ ] **Step 5: Write `VERSION`**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/VERSION`:
-```
+
+```text
 0.1.0
 ```
 
@@ -117,6 +124,7 @@ AS=/home/admin/repos/github/freaxnx01/public/agent-skills
 git -C "$AS" add -A
 git -C "$AS" commit -q -m "chore: scaffold agent-skills plugin repo"
 ```
+
 Expected: one commit created.
 
 ---
@@ -126,12 +134,14 @@ Expected: one commit created.
 This task builds the Layer-1 harness *first* so every helper can be TDD'd against it.
 
 **Files:**
+
 - Create: `/home/admin/repos/github/freaxnx01/public/agent-skills/tests/mocks/gh-mock.sh`
 - Create: `/home/admin/repos/github/freaxnx01/public/agent-skills/tests/run-skill-tests.sh`
 
 - [ ] **Step 1: Write the `gh` mock**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/tests/mocks/gh-mock.sh`:
+
 ```bash
 #!/usr/bin/env bash
 # Canned `gh` responses for Layer-1 tests. Behaviour selected via $GH_MOCK_CASE.
@@ -165,6 +175,7 @@ esac
 - [ ] **Step 2: Write the test runner**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/tests/run-skill-tests.sh`:
+
 ```bash
 #!/usr/bin/env bash
 # Layer-1 tests: source lib helpers, override `gh` with the mock, assert outputs.
@@ -230,12 +241,14 @@ git -C "$AS" commit -q -m "test: add Layer-1 harness and gh mock"
 ### Task 3: `ideas.sh` — append entry (TDD)
 
 **Files:**
+
 - Test: `/home/admin/repos/github/freaxnx01/public/agent-skills/tests/cases/ideas-append.sh`
 - Create: `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/lib/ideas.sh`
 
 - [ ] **Step 1: Write the failing test**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/tests/cases/ideas-append.sh`:
+
 ```bash
 # shellcheck disable=SC1090
 source "$LIB/ideas.sh"
@@ -259,6 +272,7 @@ Expected: FAIL — `ideas.sh` does not exist / `ideas_append: command not found`
 - [ ] **Step 3: Write the minimal implementation**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/lib/ideas.sh`:
+
 ```bash
 #!/usr/bin/env bash
 # Read/append/update entries in a repo's docs/ideas.md.
@@ -303,12 +317,14 @@ git -C "$AS" commit -q -m "feat(lib): ideas_append writes a raw idea entry"
 ### Task 4: `ideas.sh` — list + set status (TDD)
 
 **Files:**
+
 - Test: `/home/admin/repos/github/freaxnx01/public/agent-skills/tests/cases/ideas-list-status.sh`
 - Modify: `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/lib/ideas.sh`
 
 - [ ] **Step 1: Write the failing test**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/tests/cases/ideas-list-status.sh`:
+
 ```bash
 # shellcheck disable=SC1090
 source "$LIB/ideas.sh"
@@ -340,6 +356,7 @@ Expected: FAIL — `ideas_list` / `ideas_set_status: command not found`.
 - [ ] **Step 3: Append the implementation**
 
 Append to `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/lib/ideas.sh`:
+
 ```bash
 
 # ideas_list <file> [status] -> tab-separated "id<TAB>status<TAB>title" per entry
@@ -388,12 +405,14 @@ git -C "$AS" commit -q -m "feat(lib): ideas_list and ideas_set_status"
 ### Task 5: `gh-helpers.sh` (TDD)
 
 **Files:**
+
 - Test: `/home/admin/repos/github/freaxnx01/public/agent-skills/tests/cases/gh-helpers.sh`
 - Create: `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/lib/gh-helpers.sh`
 
 - [ ] **Step 1: Write the failing test**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/tests/cases/gh-helpers.sh`:
+
 ```bash
 # shellcheck disable=SC1090
 source "$LIB/gh-helpers.sh"
@@ -417,6 +436,7 @@ Expected: FAIL — `gh_create_issue: command not found`.
 - [ ] **Step 3: Write the implementation**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/lib/gh-helpers.sh`:
+
 ```bash
 #!/usr/bin/env bash
 # Thin wrappers around the gh CLI. Sourced; never executed directly.
@@ -462,12 +482,14 @@ git -C "$AS" commit -q -m "feat(lib): gh-helpers for issue create/read"
 ### Task 6: `board.sh` (TDD)
 
 **Files:**
+
 - Test: `/home/admin/repos/github/freaxnx01/public/agent-skills/tests/cases/board.sh`
 - Create: `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/lib/board.sh`
 
 - [ ] **Step 1: Write the failing test**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/tests/cases/board.sh`:
+
 ```bash
 # shellcheck disable=SC1090
 source "$LIB/board.sh"
@@ -493,6 +515,7 @@ Expected: FAIL — `board_add_issue: command not found`.
 - [ ] **Step 3: Write the implementation**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/lib/board.sh`:
+
 ```bash
 #!/usr/bin/env bash
 # Operations on the freaxnx01 "Backlog" GitHub Project. Sourced; never run directly.
@@ -540,12 +563,14 @@ git -C "$AS" commit -q -m "feat(lib): board add/list helpers for the Backlog pro
 ### Task 7: Shared docs — `ideas-schema.md` + `spec-template.md`
 
 **Files:**
+
 - Create: `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/lib/ideas-schema.md`
 - Create: `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/lib/spec-template.md`
 
 - [ ] **Step 1: Write the ideas schema**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/lib/ideas-schema.md`:
+
 ```markdown
 # ideas.md entry schema
 
@@ -571,6 +596,7 @@ line; everything after is free-form body. `capture-idea` writes entries;
 - [ ] **Step 2: Write the spec template (migrated from agent-pipeline DESIGN.md)**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/lib/spec-template.md`:
+
 ```markdown
 ## Goal
 <1-2 sentences. What does done look like?>
@@ -613,11 +639,13 @@ git -C "$AS" commit -q -m "docs(lib): ideas schema and issue spec template"
 ### Task 8: Scaffold — justfile, lint workflow, changelog, docs
 
 **Files:**
+
 - Create: `justfile`, `cliff.toml`, `CHANGELOG.md`, `README.md`, `.github/workflows/lint.yml`, `docs/DESIGN.md`, `docs/DECISIONS.md` (all under `$AS`)
 
 - [ ] **Step 1: Write the justfile**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/justfile`:
+
 ```just
 # Show the documented recipe set
 default:
@@ -645,6 +673,7 @@ changelog:
 - [ ] **Step 2: Write `cliff.toml`**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/cliff.toml`:
+
 ```toml
 [changelog]
 header = "# Changelog\n\nAll notable changes to this project are documented here.\n"
@@ -674,6 +703,7 @@ tag_pattern = "v[0-9]*"
 - [ ] **Step 3: Write `CHANGELOG.md`**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/CHANGELOG.md`:
+
 ```markdown
 # Changelog
 
@@ -691,6 +721,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com); versioning is [Se
 - [ ] **Step 4: Write the lint workflow**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/.github/workflows/lint.yml`:
+
 ```yaml
 name: lint
 on:
@@ -722,6 +753,7 @@ Note for the executor: the `rhysd/actionlint` SHA above is a placeholder. Before
 - [ ] **Step 5: Write `README.md`**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/README.md`:
+
 ```markdown
 # agent-skills
 
@@ -761,6 +793,7 @@ cp "$SPEC" "$AS/docs/DESIGN.md"
 ```
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/docs/DECISIONS.md`:
+
 ```markdown
 # Decisions (ADR log)
 
@@ -782,11 +815,13 @@ File `/home/admin/repos/github/freaxnx01/public/agent-skills/docs/DECISIONS.md`:
 - [ ] **Step 7: Lint and test, then commit**
 
 Run:
+
 ```bash
 AS=/home/admin/repos/github/freaxnx01/public/agent-skills
 ( cd "$AS" && shellcheck -x -e SC1091 skills/lib/*.sh tests/run-skill-tests.sh tests/mocks/gh-mock.sh )
 bash "$AS/tests/run-skill-tests.sh"
 ```
+
 Expected: shellcheck clean; tests `0 failed`.
 
 ```bash
@@ -807,11 +842,13 @@ git -C "$AS" commit -q -m "chore: justfile, lint workflow, changelog, docs scaff
 ### Task 9: `capture-idea` skill
 
 **Files:**
+
 - Create: `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/capture-idea/SKILL.md`
 
 - [ ] **Step 1: Write the skill**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/capture-idea/SKILL.md`:
+
 ```markdown
 ---
 name: capture-idea
@@ -858,11 +895,13 @@ commit on a branch. Never push or merge automatically. Tell the user what you ch
 - [ ] **Step 2: Validate frontmatter + referenced helper**
 
 Run:
+
 ```bash
 AS=/home/admin/repos/github/freaxnx01/public/agent-skills
 head -3 "$AS/skills/capture-idea/SKILL.md" | grep -q '^name: capture-idea' && echo OK-name
 grep -q 'ideas_append' "$AS/skills/lib/ideas.sh" && echo OK-helper-exists
 ```
+
 Expected: `OK-name` and `OK-helper-exists`.
 
 - [ ] **Step 3: Commit**
@@ -878,11 +917,13 @@ git -C "$AS" commit -q -m "feat(skill): capture-idea"
 ### Task 10: `evaluate-to-issue` skill (keystone)
 
 **Files:**
+
 - Create: `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/evaluate-to-issue/SKILL.md`
 
 - [ ] **Step 1: Write the skill**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/evaluate-to-issue/SKILL.md`:
+
 ```markdown
 ---
 name: evaluate-to-issue
@@ -966,6 +1007,7 @@ branch. Never push or merge automatically. Tell the user what you changed.
 - [ ] **Step 2: Validate frontmatter + referenced helpers exist**
 
 Run:
+
 ```bash
 AS=/home/admin/repos/github/freaxnx01/public/agent-skills
 grep -q '^name: evaluate-to-issue' "$AS/skills/evaluate-to-issue/SKILL.md" && echo OK-name
@@ -973,6 +1015,7 @@ for fn in ideas_list gh_create_issue board_add_issue ideas_set_status gh_issue_n
   grep -rq "$fn()" "$AS/skills/lib" && echo "OK-$fn" || echo "MISSING-$fn"
 done
 ```
+
 Expected: `OK-name` and `OK-` for every function (no `MISSING-`).
 
 - [ ] **Step 3: Commit**
@@ -988,11 +1031,13 @@ git -C "$AS" commit -q -m "feat(skill): evaluate-to-issue (keystone)"
 ### Task 11: `plan-sprint` skill
 
 **Files:**
+
 - Create: `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/plan-sprint/SKILL.md`
 
 - [ ] **Step 1: Write the skill**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/plan-sprint/SKILL.md`:
+
 ```markdown
 ---
 name: plan-sprint
@@ -1047,11 +1092,13 @@ or merge automatically. Tell the user what you changed.
 - [ ] **Step 2: Validate**
 
 Run:
+
 ```bash
 AS=/home/admin/repos/github/freaxnx01/public/agent-skills
 grep -q '^name: plan-sprint' "$AS/skills/plan-sprint/SKILL.md" && echo OK-name
 grep -q 'board_list_open()' "$AS/skills/lib/board.sh" && echo OK-helper
 ```
+
 Expected: `OK-name` and `OK-helper`.
 
 - [ ] **Step 3: Commit**
@@ -1067,11 +1114,13 @@ git -C "$AS" commit -q -m "feat(skill): plan-sprint"
 ### Task 12: `review-pr` skill
 
 **Files:**
+
 - Create: `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/review-pr/SKILL.md`
 
 - [ ] **Step 1: Write the skill**
 
 File `/home/admin/repos/github/freaxnx01/public/agent-skills/skills/review-pr/SKILL.md`:
+
 ```markdown
 ---
 name: review-pr
@@ -1134,11 +1183,13 @@ or merge automatically. Tell the user what you changed.
 - [ ] **Step 2: Validate**
 
 Run:
+
 ```bash
 AS=/home/admin/repos/github/freaxnx01/public/agent-skills
 grep -q '^name: review-pr' "$AS/skills/review-pr/SKILL.md" && echo OK-name
 grep -q 'gh_issue_body()' "$AS/skills/lib/gh-helpers.sh" && echo OK-helper
 ```
+
 Expected: `OK-name` and `OK-helper`.
 
 - [ ] **Step 3: Commit**
@@ -1154,6 +1205,7 @@ git -C "$AS" commit -q -m "feat(skill): review-pr"
 ### Task 13: Generate `CLAUDE.md` + final verification
 
 **Files:**
+
 - Create: `/home/admin/repos/github/freaxnx01/public/agent-skills/CLAUDE.md`
 
 - [ ] **Step 1: Generate CLAUDE.md via the sync skill**
@@ -1165,21 +1217,25 @@ first line is the source-of-truth banner and which points at `docs/DESIGN.md`, a
 note in `docs/DECISIONS.md` that a full sync is pending.
 
 Validate:
+
 ```bash
 AS=/home/admin/repos/github/freaxnx01/public/agent-skills
 test -f "$AS/CLAUDE.md" && echo OK-claude-md
 ```
+
 Expected: `OK-claude-md`.
 
 - [ ] **Step 2: Full green check — lint + test**
 
 Run:
+
 ```bash
 AS=/home/admin/repos/github/freaxnx01/public/agent-skills
 ( cd "$AS" && shellcheck -x -e SC1091 skills/lib/*.sh tests/run-skill-tests.sh tests/mocks/gh-mock.sh )
 bash "$AS/tests/run-skill-tests.sh"
 ls "$AS"/skills/*/SKILL.md
 ```
+
 Expected: shellcheck clean; tests `0 failed`; four SKILL.md files listed.
 
 - [ ] **Step 3: Commit**
@@ -1190,6 +1246,7 @@ git -C "$AS" add -A
 git -C "$AS" commit -q -m "chore: CLAUDE.md and Phase 0+1 completion"
 git -C "$AS" log --oneline
 ```
+
 Expected: full commit history for Phase 0 + Phase 1.
 
 ---
@@ -1203,4 +1260,3 @@ Expected: full commit history for Phase 0 + Phase 1.
 - Repo is local only; no remote, nothing pushed.
 - Phase 2 (author-chain, pipeline-retro, groom-backlog, triage-failure) remains for
   a follow-up plan.
-```

@@ -42,7 +42,7 @@ and built.
 `freaxnx01/agent-skills`, scaffolded as a Claude Code plugin on the CI/automation
 stack overlay (bash helpers + markdown + tests; no application code):
 
-```
+```text
 agent-skills/
 ├── .claude-plugin/plugin.json     # manifest: name, version, the 8 skills
 ├── skills/
@@ -144,12 +144,14 @@ follow / Acceptance criteria / Test expectations / Constraints. Migrated to
 ## Skill contracts
 
 ### 1. capture-idea
+
 - **In:** fuzzy text (the idea). **Out:** a `status: raw` entry appended to the
   current repo's `docs/ideas.md` (created if absent).
 - **Behavior:** zero friction. No clarifying questions unless the title is
   genuinely ambiguous. Confirms with the entry id. Does not evaluate.
 
 ### 2. evaluate-to-issue (keystone)
+
 - **In:** an idea (by id from `ideas.md`) or a fresh fuzzy intent. **Out:** a
   GitHub Issue added to the Backlog board (Mode #1), OR a "do it now locally"
   decision (Mode #0), OR "spec not ready — work on it more" (refusal).
@@ -168,6 +170,7 @@ follow / Acceptance criteria / Test expectations / Constraints. Migrated to
     create issue, add to board, set originating idea `status: issued(#N)`.
 
 ### 3. plan-sprint
+
 - **In:** optional sprint size. **Out:** a committed sprint set with board status
   updated.
 - **Behavior:** reads open Backlog issues via `gh`, presents them with age,
@@ -176,6 +179,7 @@ follow / Acceptance criteria / Test expectations / Constraints. Migrated to
   pipeline on chosen issues.
 
 ### 4. review-pr
+
 - **In:** PR number (or the current branch's PR). **Out:** an executed decision —
   merge / request-changes / close.
 - **Behavior:** loads the PR and its originating issue spec. Checks acceptance-
@@ -188,6 +192,7 @@ follow / Acceptance criteria / Test expectations / Constraints. Migrated to
   `pre-preview` self-review — this is spec-conformance + the merge decision.
 
 ### 5. author-chain
+
 - **In:** a set of related issues. **Out:** issue bodies updated with
   `Blocks:`/`Blocked by:` markers and `ai-chain` opt-in label.
 - **Behavior:** helps express dependencies per agent-pipeline DECISIONS.md ADR-003;
@@ -195,6 +200,7 @@ follow / Acceptance criteria / Test expectations / Constraints. Migrated to
   pipeline's chain-dispatch (which fires only on auto-merge).
 
 ### 6. pipeline-retro
+
 - **In:** a time window / label filter. **Out:** a retro summary.
 - **Behavior:** reads recent run-report comments the pipeline already posts across
   issues; aggregates outcome, cost, cache-hit rate, and context utilization; flags
@@ -202,12 +208,14 @@ follow / Acceptance criteria / Test expectations / Constraints. Migrated to
   loop — the metrics are posted today but nothing consumes them.
 
 ### 7. groom-backlog
+
 - **In:** none. **Out:** a grooming report; approved changes applied.
 - **Behavior:** scans `ideas.md` + open issues for duplicates/near-duplicates,
-  stale `raw` ideas, and mis-prioritized items; proposes merges/prunes/re-ranks;
+  stale `raw` ideas, and wrongly prioritized items; proposes merges/prunes/re-ranks;
   applies on approval. Keeps capture-idea's low-friction dumping from rotting.
 
 ### 8. triage-failure
+
 - **In:** a failed issue/run (`ai:failed`). **Out:** a decision + executed action.
 - **Behavior:** reads the run report + the pipeline's failure classification
   (rate_limit | transient | task_failure | bug); recommends retry / escalate-model
