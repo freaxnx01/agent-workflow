@@ -30,7 +30,7 @@ on:
         default: '["ubuntu-latest"]'
       default-model:
         type: string
-        default: claude-opus-4-7
+        default: claude-sonnet-5
       agent:
         type: string
         default: claude

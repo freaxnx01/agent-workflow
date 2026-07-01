@@ -49,7 +49,7 @@ jobs:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     with:
       runner-labels: '["ubuntu-latest"]'   # or self-hosted for private repos
-      default-model: claude-opus-4-7
+      default-model: claude-sonnet-5
 ```
 
 This means:

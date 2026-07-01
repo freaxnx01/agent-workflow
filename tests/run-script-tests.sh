@@ -262,7 +262,7 @@ assert_contains "$out" 'chosen: claude-haiku-4-5 (label model:haiku)' "label mod
 
 # Override: model:sonnet
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='model:sonnet' bash "$CLASSIFY")"
-assert_contains "$out" 'chosen: claude-sonnet-4-6 (label model:sonnet)' "label model:sonnet → sonnet"
+assert_contains "$out" 'chosen: claude-sonnet-5 (label model:sonnet)' "label model:sonnet → sonnet"
 
 # Override: model:mistral-large with AGENT=opencode → opencode model ID
 out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
@@ -345,7 +345,7 @@ out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=claude \
        ISSUE_BODY='filler' bash "$CLASSIFY" 2>&1)"
 assert_contains "$out" 'warn: label model:mistral-large incompatible with AGENT=claude' \
   "model:mistral-large + agent=claude → warn on stderr"
-assert_contains "$out" 'claude-sonnet-4-6' "mismatch → falls to DEFAULT_MODEL via heuristic default"
+assert_contains "$out" 'claude-sonnet-5' "mismatch → falls to DEFAULT_MODEL via heuristic default"
 ec="$(run_capture_ec env ISSUE_NUMBER=1 REPO=o/r AGENT=claude \
        ISSUE_LABELS='model:mistral-large' \
        ISSUE_BODY='filler' \
@@ -372,7 +372,7 @@ assert_contains "$out" 'claude-haiku-4-5 (heuristic: trivial-edit keywords)' "ty
 # Default: nothing matches
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' \
        ISSUE_BODY='Add a hello.md file' bash "$CLASSIFY")"
-assert_contains "$out" 'claude-sonnet-4-6 (heuristic: default)' "no match → default sonnet"
+assert_contains "$out" 'claude-sonnet-5 (heuristic: default)' "no match → default sonnet"
 
 # Default override via DEFAULT_MODEL env
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' \

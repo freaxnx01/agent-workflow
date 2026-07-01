@@ -152,7 +152,7 @@ jobs:
     with:
       issue-number: ${{ github.event.issue.number }}
       runner-labels: '["ubuntu-latest"]'
-      default-model: claude-opus-4-7
+      default-model: claude-sonnet-5
 ```
 
 Drop in:
