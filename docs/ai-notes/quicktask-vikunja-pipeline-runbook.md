@@ -66,7 +66,7 @@ DESIGN.md.)
 
 ## Step 2 — Commit the consumer stub
 
-Add `quicktask-vikunja/.github/workflows/claude.yml`:
+Add `quicktask-vikunja/.github/workflows/agent.yml`:
 
 ```yaml
 name: Claude
@@ -85,7 +85,7 @@ jobs:
     if: >-
       (github.event_name == 'issues' && github.event.label.name == 'ai-implement')
       || github.event_name == 'workflow_dispatch'
-    uses: freaxnx01/agent-pipeline/.github/workflows/claude-implement.yml@v1
+    uses: freaxnx01/agent-pipeline/.github/workflows/agent-implement.yml@v1
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     with:
@@ -191,7 +191,7 @@ pipeline self-heals labels anyway.
 
 Applying the `ai-implement` label triggers the workflow. Expect:
 
-- An Actions run on quicktask-vikunja (`Claude` workflow → `claude-implement.yml`).
+- An Actions run on quicktask-vikunja (`Claude` workflow → `agent-implement.yml`).
 - A **draft PR** whose body contains `Closes #<issue>`.
 - A metrics comment on the issue: outcome, duration, turns, cost, tokens,
   cache-hit rate, context utilization, run link.

@@ -1,6 +1,6 @@
-name: claude-implement-test
+name: agent-implement-test
 
-# Layer-2 test for the reusable workflow. Calls claude-implement.yml with
+# Layer-2 test for the reusable workflow. Calls agent-implement.yml with
 # `dry-run: true` so the post-run-report step renders to stdout instead of
 # touching the GitHub API. Designed to be runnable both in CI on every PR
 # that touches the pipeline, and locally via `act`.
@@ -9,13 +9,13 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
-      - .github/workflows/claude-implement.yml
-      - .github/workflows/claude-implement.test.yml
+      - .github/workflows/agent-implement.yml
+      - .github/workflows/agent-implement.test.yml
       - scripts/**
       - tests/**
 
 permissions:
-  # Match the elevated permissions the called claude-implement.yml job
+  # Match the elevated permissions the called agent-implement.yml job
   # declares; a caller granting less than the callee requests causes
   # GitHub to reject the workflow at load (silent startup_failure,
   # root cause of #34).
@@ -30,7 +30,7 @@ concurrency:
 jobs:
   call-success:
     name: Reusable workflow — stub success
-    uses: ./.github/workflows/claude-implement.yml
+    uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9001
       default-model: claude-sonnet-4-6
@@ -44,7 +44,7 @@ jobs:
 
   call-rate-limit:
     name: Reusable workflow — stub rate-limit (retry path)
-    uses: ./.github/workflows/claude-implement.yml
+    uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9002
       default-model: claude-sonnet-4-6
@@ -59,7 +59,7 @@ jobs:
 
   call-opencode-success:
     name: Reusable workflow — opencode success
-    uses: ./.github/workflows/claude-implement.yml
+    uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9011
       default-model: mistralai/codestral-latest
@@ -74,7 +74,7 @@ jobs:
 
   call-opencode-rate-limit:
     name: Reusable workflow — opencode rate-limit
-    uses: ./.github/workflows/claude-implement.yml
+    uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9012
       default-model: mistralai/mistral-large-latest
@@ -90,7 +90,7 @@ jobs:
 
   call-opencode-task-failure:
     name: Reusable workflow — opencode task-failure (max-turns)
-    uses: ./.github/workflows/claude-implement.yml
+    uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9013
       default-model: mistralai/codestral-latest
@@ -227,7 +227,7 @@ jobs:
 
   call-auto-review-approve-safe:
     name: Reusable workflow — auto-review approve + safe envelope
-    uses: ./.github/workflows/claude-implement.yml
+    uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9003
       timeout-minutes: 10
@@ -246,7 +246,7 @@ jobs:
 
   call-auto-review-approve-unsafe-github:
     name: Reusable workflow — auto-review approve + .github/ touch (envelope blocks)
-    uses: ./.github/workflows/claude-implement.yml
+    uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9004
       timeout-minutes: 10
@@ -265,7 +265,7 @@ jobs:
 
   call-auto-review-request-changes:
     name: Reusable workflow — auto-review request_changes
-    uses: ./.github/workflows/claude-implement.yml
+    uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9005
       timeout-minutes: 10
@@ -283,7 +283,7 @@ jobs:
 
   call-auto-review-block:
     name: Reusable workflow — auto-review block
-    uses: ./.github/workflows/claude-implement.yml
+    uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9006
       timeout-minutes: 10
@@ -307,7 +307,7 @@ jobs:
 
   call-pre-preview-approve:
     name: Reusable workflow — pre-preview approve
-    uses: ./.github/workflows/claude-implement.yml
+    uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9007
       timeout-minutes: 10
@@ -323,7 +323,7 @@ jobs:
 
   call-pre-preview-block:
     name: Reusable workflow — pre-preview block
-    uses: ./.github/workflows/claude-implement.yml
+    uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9008
       timeout-minutes: 10
@@ -339,7 +339,7 @@ jobs:
 
   call-pre-preview-precedence:
     name: Reusable workflow — pre-preview wins over auto-review
-    uses: ./.github/workflows/claude-implement.yml
+    uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9009
       timeout-minutes: 10

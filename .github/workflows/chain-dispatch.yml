@@ -40,10 +40,10 @@ on:
         description: |
           The consumer's pipeline workflow file. Eligible successors are
           dispatched via `gh workflow run <target-workflow> -f
-          issue-number=<N>`. Default `claude.yml` matches the
+          issue-number=<N>`. Default `agent.yml` matches the
           CONSUMER-SETUP.md section 1 stub.
         type: string
-        default: claude.yml
+        default: agent.yml
       pipeline-repo:
         description: |
           Owner/repo to fetch shared scripts from. Defaults to the

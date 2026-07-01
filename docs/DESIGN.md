@@ -41,10 +41,10 @@ stub via `/sync-ai-instr`.
 `agent-pipeline` exposes a single reusable workflow that consumer repos call:
 
 ```yaml
-# In consumer repo: .github/workflows/claude.yml
+# In consumer repo: .github/workflows/agent.yml
 jobs:
   claude:
-    uses: freaxnx01/agent-pipeline/.github/workflows/claude-implement.yml@v1
+    uses: freaxnx01/agent-pipeline/.github/workflows/agent-implement.yml@v1
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     with:
@@ -157,8 +157,8 @@ brainstorm (self-rescheduling) is fine for both.
 ```text
 agent-pipeline/
 ├── .github/workflows/
-│   ├── claude-implement.yml         # the reusable workflow consumers call
-│   ├── claude-implement.test.yml    # stubbed Claude step, for act-based testing
+│   ├── agent-implement.yml         # the reusable workflow consumers call
+│   ├── agent-implement.test.yml    # stubbed Claude step, for act-based testing
 │   └── lint.yml                     # actionlint + shellcheck on PRs
 ├── scripts/
 │   ├── classify-failure.sh          # rate_limit | transient | task_failure | bug
@@ -204,10 +204,10 @@ Strict order. Don't skip ahead.
 
 ### Phase 2: Workflow assembly
 
-7. Build `claude-implement.yml` reusable workflow with stubbed Claude step
+7. Build `agent-implement.yml` reusable workflow with stubbed Claude step
 8. Add `ensure-toolchain.sh` step that installs ripgrep et al. on hosted runners
    (idempotent, conditional, cheap)
-9. Build `claude-implement.test.yml` for `act`-based local runs
+9. Build `agent-implement.test.yml` for `act`-based local runs
 10. Verify with `act` — workflow logic correct end-to-end
 
 ### Phase 3: First consumer integration

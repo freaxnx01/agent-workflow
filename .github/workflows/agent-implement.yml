@@ -1,0 +1,1055 @@
+name: Agent Implement (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      issue-number:
+        description: GitHub issue number this run is implementing.
+        type: number
+        required: true
+      runner-labels:
+        description: JSON array of runner labels (e.g. '["ubuntu-latest"]').
+        type: string
+        default: '["ubuntu-latest"]'
+      default-model:
+        description: Model used when no `model:*` label is present on the issue.
+        type: string
+        default: claude-opus-4-7
+      agent:
+        description: |
+          Which agent runs the implementation. One of `claude` or `opencode`.
+          Per-issue override via `agent:claude` / `agent:opencode` label.
+          See docs/DECISIONS.md ADR-001 for the contract. NOTE: the
+          `opencode` runner step is added in #10 — selecting it before then
+          produces a no-op job.
+        type: string
+        default: claude
+      timeout-minutes:
+        description: Hard cap on the implementation job runtime.
+        type: number
+        default: 30
+      pipeline-repo:
+        description: |
+          Owner/repo for the agent-pipeline checkout that supplies shared
+          scripts. Defaults to the canonical 'freaxnx01/agent-pipeline'.
+          Override only for self-tests (the test workflow points this at the
+          repo currently being PR-tested so it works on fork PRs and act).
+        type: string
+        default: freaxnx01/agent-pipeline
+      pipeline-ref:
+        description: |
+          Ref of `pipeline-repo` to check out for shared scripts. Defaults
+          to `main`. NOTE: GitHub's `github.workflow_sha`/`workflow_ref`
+          context fields refer to the *caller's* workflow when running as
+          a reusable workflow, so we cannot auto-resolve to the same ref
+          the caller pinned in `uses:`. Consumers that pin to a tag (e.g.
+          `uses: ...@v1`) should also pass `pipeline-ref: v1` here to keep
+          workflow and scripts in lockstep.
+        type: string
+        default: main
+      dry-run:
+        description: |
+          If true, skip GitHub API side effects in the report step (no issue
+          comment, no label changes). Used by `agent-implement.test.yml` under
+          act, and as a manual escape hatch for inspection-only runs.
+        type: boolean
+        default: false
+      local-scripts:
+        description: |
+          If true, skip the cross-repo checkout of `pipeline-repo` and instead
+          mirror the consumer checkout's `scripts/` and `tests/mocks/` into
+          `.claude-pipeline/`. Use for self-tests under act (where the SHA
+          isn't on the canonical remote yet) or for monorepo consumers where
+          pipeline scripts live in the same repo.
+        type: boolean
+        default: false
+      stub-claude:
+        description: |
+          If true, skip the real Claude action and synthesize a canned result
+          (see `stub-fixture`). Used by agent-implement.test.yml under act
+          (no valid token) and as a manual diagnostic for the surrounding wiring.
+        type: boolean
+        default: false
+      stub-fixture:
+        description: |
+          When `stub-claude: true`, picks which canned outcome the stub should
+          synthesize: success | rate_limit | task_failure. Used to exercise the
+          classify-failure + retry-dispatch branch under act without burning
+          real Claude API calls or waiting for real rate limits.
+        type: string
+        default: success
+      stub-auto-review-enabled:
+        description: |
+          Test-only. When `stub-claude: true`, forces the implement job's
+          `auto-review-enabled` output to this value instead of running
+          check-auto-review-gate.sh. Required for end-to-end act tests of
+          the auto_review job (the real gate requires a labeled GitHub
+          issue, which doesn't exist under act).
+        type: boolean
+        default: false
+      stub-pre-preview-enabled:
+        description: |
+          Test-only. When `stub-claude: true`, forces the implement job's
+          `pre-preview-enabled` output to this value instead of running
+          check-preview-gate.sh. Required for end-to-end act tests of the
+          pre_preview job (the real gate requires a labeled GitHub issue,
+          which doesn't exist under act).
+        type: boolean
+        default: false
+      stub-review-verdict:
+        description: |
+          Test-only. When non-empty, the auto_review job skips installing
+          the Claude CLI and skips the real review-pr.sh invocation; it
+          synthesizes a verdict directly. Value must be one of
+          `approve | request_changes | block`. Also wires a PATH-shimmed
+          `gh` mock so `gh pr ready` / `gh pr merge` / `gh pr comment` /
+          `gh issue edit` calls are captured (not executed) and the new
+          `auto-review-merge-attempted` output reflects whether
+          `gh pr merge` was invoked. Empty (default) runs the real path.
+        type: string
+        default: ''
+      stub-pr-files:
+        description: |
+          Test-only. Newline-separated list of paths fed to
+          check-merge-envelope.sh as the diff file list when
+          `stub-review-verdict` is set. Used to exercise gate 6 paths
+          (`.github/` touch, secret-glob hit, blocklist-hit) without a
+          real PR.
+        type: string
+        default: ''
+      attempt:
+        description: |
+          1-based retry attempt counter. Reusable workflows callers pass this
+          on retry-dispatch (or always default to 1). Drives retry-policy caps
+          in retry-dispatch.sh.
+        type: number
+        default: 1
+      auto-review:
+        description: |
+          Per-repo opt-in for the auto-review + auto-merge flow (epic #3).
+          When true AND the issue carries the `ai-auto-review` label, the
+          `auto_review` job runs. Default false preserves the original
+          "draft PRs only" posture. The full safety envelope is enforced
+          in `check-merge-envelope.sh` per ADR-002.
+        type: boolean
+        default: false
+      pre-preview:
+        description: |
+          Per-repo opt-in for pre-preview mode (#77 / ADR-004). When true
+          AND the issue carries the `ai-pre-preview` label, the
+          `pre_preview` job reviews the freshly-opened draft PR and, on
+          approve, promotes it to ready for a HUMAN to merge — no safety
+          envelope, no auto-merge. If an issue also carries
+          `ai-auto-review`, pre-preview wins (the auto_review job is
+          suppressed).
+        type: boolean
+        default: false
+      pipeline-author-allowlist:
+        description: |
+          Newline-separated list of `pr.user.login` values the auto-merge
+          gate (ADR-002 §2.1) accepts as a pipeline-authored PR. Default
+          covers consumers using the workflow's ambient `GITHUB_TOKEN`
+          (PRs appear as `github-actions[bot]`). Consumers using a GitHub
+          App or PAT add their bot login here. Hardcoding "any author"
+          here defeats gate 1 — don't.
+        type: string
+        default: 'github-actions[bot]'
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: OAuth token for Claude Code (generated via `claude setup-token`).
+        required: true
+      OPENROUTER_API_KEY:
+        description: |
+          OpenRouter API key. Required only when the active agent
+          resolves to `opencode` (via the `agent` input or an
+          `agent:opencode` label per ADR-001). When set, the
+          OpenCode runner step (added in #10) reads it from the
+          `secrets` context. The value is never logged; the runner
+          step must `set +x` around any line that interpolates it.
+        required: false
+      PIPELINE_APP_ID:
+        description: |
+          GitHub App ID for PR creation (#55). When set together with
+          PIPELINE_APP_PRIVATE_KEY, the agent opens the PR as the App so it
+          triggers required checks (unlike GITHUB_TOKEN) — the prerequisite for
+          auto-merge. Add the App's `<name>[bot]` login to
+          `pipeline-author-allowlist`. Optional; absent → GITHUB_TOKEN
+          (draft-PR-only).
+        required: false
+      PIPELINE_APP_PRIVATE_KEY:
+        description: |
+          PEM private key for the GitHub App named by PIPELINE_APP_ID (#55).
+          Optional; required only when PIPELINE_APP_ID is set.
+        required: false
+    outputs:
+      outcome:
+        description: '"success" or "failed".'
+        value: ${{ jobs.implement.outputs.outcome }}
+      cost-usd:
+        description: Total Claude API cost in USD for this run.
+        value: ${{ jobs.implement.outputs.cost-usd }}
+      num-turns:
+        description: Number of conversation turns the run took.
+        value: ${{ jobs.implement.outputs.num-turns }}
+      failure-class:
+        description: 'Failure bucket from classify-failure.sh (success | rate_limit | api_auth | transient | task_failure | bug).'
+        value: ${{ jobs.implement.outputs.failure-class }}
+      retry-decision:
+        description: '"retry" or "stop" from retry-dispatch.sh. Empty when class=success (retry-dispatch is skipped).'
+        value: ${{ jobs.implement.outputs.retry-decision }}
+      auto-review-enabled:
+        description: |
+          "true" or "false" from check-auto-review-gate.sh. The auto-
+          review job reads this via needs.implement.outputs. Under stub-
+          claude mode, sourced from `stub-auto-review-enabled` instead.
+        value: ${{ jobs.implement.outputs.auto-review-enabled }}
+      auto-review-merge-attempted:
+        description: |
+          "true" or "false" — whether `gh pr merge --auto --squash` was
+          invoked by the auto_review job. Populated only when
+          `stub-review-verdict` is set (the test workflow's assertion
+          surface for "no real merge call is made under act"). Empty on
+          real runs.
+        value: ${{ jobs.auto_review.outputs.merge-attempted }}
+      pre-preview-merge-attempted:
+        description: |
+          "true" or "false" — whether `gh pr merge` was invoked by the
+          pre_preview job. Always "false" on the pre-preview path (it never
+          merges); populated only when `stub-review-verdict` is set, as the
+          test workflow's "no merge in pre-preview" assertion surface.
+        value: ${{ jobs.pre_preview.outputs.merge-attempted }}
+      pre-preview-ready-attempted:
+        description: |
+          "true" or "false" — whether `gh pr ready` (promote draft→ready)
+          was invoked by the pre_preview job. True on the approve path.
+          Populated only when `stub-review-verdict` is set.
+        value: ${{ jobs.pre_preview.outputs.ready-attempted }}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claude-implement-${{ github.repository }}-${{ inputs.issue-number }}
+  cancel-in-progress: true
+
+jobs:
+  implement:
+    name: Implement issue #${{ inputs.issue-number }}
+    runs-on: ${{ fromJSON(inputs.runner-labels) }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    outputs:
+      outcome:             ${{ steps.outputs.outputs.outcome }}
+      cost-usd:            ${{ steps.outputs.outputs.cost-usd }}
+      num-turns:           ${{ steps.outputs.outputs.num-turns }}
+      failure-class:       ${{ steps.classify_failure.outputs.class }}
+      retry-decision:      ${{ steps.retry.outputs.decision }}
+      auto-review-enabled: ${{ steps.auto_review_gate.outputs.enabled || steps.auto_review_gate_stub.outputs.enabled }}
+      pre-preview-enabled: ${{ steps.preview_gate.outputs.enabled || steps.preview_gate_stub.outputs.enabled }}
+    env:
+      # Optional GitHub App for PR creation (#55). Exposed as an env var so the
+      # mint step's `if:` can test it (the `secrets` context isn't available in
+      # `if:`). Empty → the agent falls back to GITHUB_TOKEN (draft-only posture).
+      PIPELINE_APP_ID: ${{ secrets.PIPELINE_APP_ID }}
+    steps:
+      - name: Checkout consumer repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Mint pipeline App token (optional)
+        # When PIPELINE_APP_ID + PIPELINE_APP_PRIVATE_KEY are provided, mint a
+        # short-lived installation token so the agent opens the PR *as the App*.
+        # App-authored PRs trigger required status checks (the ambient
+        # GITHUB_TOKEN's PRs do not) and carry a stable `app/<name>` login for
+        # pipeline-author-allowlist (#54/#55). Absent → downstream falls back to
+        # github.token and nothing changes (draft-only). EXPERIMENTAL: the App
+        # path is not yet verified end-to-end (needs a real App installed).
+        id: app_token
+        if: ${{ env.PIPELINE_APP_ID != '' }}
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349  # v2.2.2
+        with:
+          app-id: ${{ secrets.PIPELINE_APP_ID }}
+          private-key: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
+
+      - name: Checkout agent-pipeline scripts
+        if: ${{ !inputs.local-scripts }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ inputs.pipeline-ref }}
+          path: .claude-pipeline
+          sparse-checkout: |
+            scripts
+            tests/mocks
+            tests/fixtures
+
+      - name: Mirror local scripts to .claude-pipeline (self-test mode)
+        if: ${{ inputs.local-scripts }}
+        run: |
+          mkdir -p .claude-pipeline/scripts \
+                   .claude-pipeline/tests/mocks \
+                   .claude-pipeline/tests/fixtures
+          cp -r scripts/. .claude-pipeline/scripts/
+          if [[ -d tests/mocks ]]; then
+            cp -r tests/mocks/. .claude-pipeline/tests/mocks/
+          fi
+          if [[ -d tests/fixtures ]]; then
+            cp -r tests/fixtures/. .claude-pipeline/tests/fixtures/
+          fi
+
+      - name: Hide .claude-pipeline from the consumer repo's git (#99)
+        # The pipeline scripts are checked out INTO the consumer working tree at
+        # .claude-pipeline/ (a nested repo with its own .git, or copied files in
+        # local-scripts mode). A broad `git add -A`/`git add .` by the agent
+        # would otherwise stage that nested repo as a submodule gitlink
+        # (mode 160000) — or its files — and leak it into the PR (#99). Excluding
+        # it via .git/info/exclude (NOT the tracked .gitignore) keeps it invisible
+        # to the agent's staging without itself appearing in the diff.
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/.git/info"
+          printf '%s\n' '.claude-pipeline/' >> "$GITHUB_WORKSPACE/.git/info/exclude"
+
+      - name: Ensure toolchain
+        run: bash .claude-pipeline/scripts/ensure-toolchain.sh
+
+      - name: Fetch issue context
+        if: ${{ !inputs.stub-claude }}
+        id: issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+        run: |
+          prompt_file="${RUNNER_TEMP:-/tmp}/claude-prompt.md"
+          ctx=$(gh issue view "$ISSUE_NUMBER" --repo "$REPO" --json title,body --jq '"# " + .title + "\n\n" + .body')
+          {
+            printf '# Issue #%s\n\n%s\n\n---\n\n' "$ISSUE_NUMBER" "$ctx"
+            printf 'Read CLAUDE.md and follow the house rules.\n'
+            printf 'Implement the change on a new branch and open a DRAFT pull request.\n'
+            printf 'The PR body MUST include "Closes #%s" on its own line so the\n' "$ISSUE_NUMBER"
+            printf 'pipeline can link the PR back to this issue (find-pipeline-pr.sh\n'
+            printf 'searches for that exact phrase).\n'
+          } > "$prompt_file"
+          echo "prompt-file=$prompt_file" >> "$GITHUB_OUTPUT"
+
+      - name: Classify agent
+        if: ${{ !inputs.stub-claude }}
+        id: classify_agent
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          DEFAULT_AGENT: ${{ inputs.agent }}
+        run: bash .claude-pipeline/scripts/classify-agent.sh
+
+      - name: Ensure OpenCode toolchain
+        # The base "Ensure toolchain" step runs before agent classification, so
+        # it can't know the resolved agent — and the agent is commonly chosen by
+        # the per-issue `agent:opencode` label, not `inputs.agent`. Result: the
+        # opencode CLI was never installed and `Run OpenCode` failed with exit
+        # 127 (#62). Install it here, now that the agent is known. On hosted
+        # runners the base tools are already present, so this only adds opencode.
+        if: ${{ !inputs.stub-claude && steps.classify_agent.outputs.agent == 'opencode' }}
+        env:
+          AGENT: opencode
+        run: bash .claude-pipeline/scripts/ensure-toolchain.sh
+
+      - name: Triage model
+        if: ${{ !inputs.stub-claude }}
+        id: triage
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          DEFAULT_MODEL: ${{ inputs.default-model }}
+          # Use the RESOLVED agent (label override included), not inputs.agent —
+          # otherwise classify-task treats opencode model labels as incompatible
+          # with the default AGENT=claude and falls back to DEFAULT_MODEL.
+          AGENT: ${{ steps.classify_agent.outputs.agent }}
+        run: bash .claude-pipeline/scripts/classify-task.sh
+
+      - name: Check auto-review gate
+        if: ${{ !inputs.stub-claude }}
+        id: auto_review_gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          INPUT_AUTO_REVIEW: ${{ inputs.auto-review }}
+        run: bash .claude-pipeline/scripts/check-auto-review-gate.sh
+
+      - name: Stub auto-review gate (test mode)
+        # Mirrors check-auto-review-gate.sh's output under stub-claude=true
+        # so end-to-end act tests can drive the downstream auto_review job
+        # without a real labeled GitHub issue.
+        if: ${{ inputs.stub-claude }}
+        id: auto_review_gate_stub
+        env:
+          ENABLED: ${{ inputs.stub-auto-review-enabled }}
+        run: printf 'enabled=%s\n' "$ENABLED" >> "$GITHUB_OUTPUT"
+
+      - name: Check pre-preview gate
+        if: ${{ !inputs.stub-claude }}
+        id: preview_gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          INPUT_PRE_PREVIEW: ${{ inputs.pre-preview }}
+        run: bash .claude-pipeline/scripts/check-preview-gate.sh
+
+      - name: Stub pre-preview gate (test mode)
+        # Mirrors check-preview-gate.sh's output under stub-claude=true so
+        # end-to-end act tests can drive the pre_preview job without a real
+        # labeled GitHub issue.
+        if: ${{ inputs.stub-claude }}
+        id: preview_gate_stub
+        env:
+          ENABLED: ${{ inputs.stub-pre-preview-enabled }}
+        run: printf 'enabled=%s\n' "$ENABLED" >> "$GITHUB_OUTPUT"
+
+      - name: Run Claude Code
+        if: ${{ !inputs.stub-claude && steps.classify_agent.outputs.agent == 'claude' }}
+        id: claude_run
+        # Step-level env propagates to the action's process.env, which the
+        # action then spreads into the spawned `claude` subprocess. Belt-and-
+        # suspenders alongside `claude_env` below — some configurations of
+        # Claude Code's Bash tool only see env vars that were already on the
+        # parent process at spawn time.
+        env:
+          # App token when configured (#55) so `gh pr create` opens the PR as
+          # the App and triggers required checks; else the ambient GITHUB_TOKEN.
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+        uses: anthropics/claude-code-base-action@2d6abe4aa8adacaa322e24a040787cf155cf1d09  # v0.0.63
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt_file: ${{ steps.issue.outputs.prompt-file }}
+          model: ${{ steps.triage.outputs.model }}
+          max_turns: '30'
+          # Headless mode has no human in the loop to approve tool use, so
+          # everything Claude needs to implement an issue must be allowlisted
+          # up front: code changes, search, repo operations, branch + PR.
+          allowed_tools: Edit,Write,Read,Glob,Grep,MultiEdit,TodoWrite,Bash
+          # Expose GH_TOKEN to the spawned `claude` subprocess so it can call
+          # `gh pr create` (the action only injects CLAUDE_CODE_OAUTH_TOKEN
+          # by default).
+          claude_env: |
+            GH_TOKEN=${{ steps.app_token.outputs.token || github.token }}
+
+      - name: Run OpenCode
+        # Mutex with `Run Claude Code` via the classify_agent gate
+        # (ADR-001 §3 — exactly one agent step per job). Reads
+        # OPENROUTER_API_KEY from secrets; never logs it. The
+        # `set +x` at the top of `run:` belt-and-suspenders against
+        # any future shell-tracing default.
+        if: |
+          !inputs.stub-claude
+          && steps.classify_agent.outputs.agent == 'opencode'
+        id: opencode_run
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          PROMPT_FILE: ${{ steps.issue.outputs.prompt-file }}
+          MODEL: ${{ steps.triage.outputs.model }}
+          # App token when configured (#55), else the ambient GITHUB_TOKEN.
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+        run: |
+          set +x
+          out_file="${RUNNER_TEMP:-/tmp}/opencode-output.json"
+          log_file="${RUNNER_TEMP:-/tmp}/opencode-output.log"
+          # opencode 1.x CLI (verified against opencode-ai@1.15.13 --help):
+          #   opencode run [message..] -m <provider/model> --format json
+          # The message is a POSITIONAL arg (no --prompt-file); --format json
+          # writes raw JSON events to stdout; --print-logs sends logs to stderr.
+          # Triage emits OpenRouter model ids (e.g. mistralai/mistral-large-latest,
+          # google/gemma-4-31b-it); opencode needs the `openrouter/` provider
+          # prefix, so prepend it unless already present.
+          #
+          # EXPERIMENTAL (see #58): the OpenRouter auth mechanism (OPENROUTER_API_KEY
+          # env vs. `opencode auth login`) and the exact --format json event shape
+          # consumed by adapt-opencode-result.sh are not yet verified end-to-end.
+          # A non-zero exit / non-JSON output degrades to ai:failed (the adapter
+          # emits an error result and post-run-report tolerates non-JSON), so a
+          # broken run fails gracefully rather than crashing the job.
+          oc_model="$MODEL"
+          case "$oc_model" in
+            openrouter/*) : ;;
+            *) oc_model="openrouter/${oc_model}" ;;
+          esac
+          # `--` ends option parsing so a prompt starting with `-` isn't read
+          # as a flag. The message is passed as a single quoted positional arg
+          # (no shell interpolation of issue content).
+          opencode run \
+            --model "$oc_model" \
+            --format json \
+            --print-logs \
+            -- \
+            "$(cat "$PROMPT_FILE")" \
+            > "$out_file" \
+            2> "$log_file" \
+            && oc_rc=0 || oc_rc=$?
+          printf 'execution_file=%s\n' "$out_file" >> "$GITHUB_OUTPUT"
+          printf 'exit_code=%s\n' "$oc_rc" >> "$GITHUB_OUTPUT"
+          if [[ "$oc_rc" -ne 0 ]]; then
+            printf '::warning::opencode exited %s for model %s; see step logs and the adapter result\n' "$oc_rc" "$oc_model"
+          fi
+
+      - name: Upload raw OpenCode output (diagnostics)
+        # Keep opencode's raw stdout (--format json events) and stderr log so a
+        # failed/odd run is diagnosable without re-running, and so the event
+        # schema can be checked against adapt-opencode-result.sh (#58).
+        if: ${{ always() && !inputs.stub-claude && steps.classify_agent.outputs.agent == 'opencode' && steps.opencode_run.outputs.execution_file != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: opencode-raw-output
+          path: |
+            ${{ steps.opencode_run.outputs.execution_file }}
+            ${{ runner.temp }}/opencode-output.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Adapt OpenCode result → claude-result.json
+        # Mirrors `Adapt execution_file -> result.json` for the
+        # OpenCode path. Output of adapt-opencode-result.sh is the
+        # canonical shape every downstream script expects per
+        # ADR-001 §2.
+        if: |
+          !inputs.stub-claude
+          && always()
+          && steps.opencode_run.outputs.execution_file != ''
+        id: opencode_adapt
+        env:
+          EXECUTION_FILE: ${{ steps.opencode_run.outputs.execution_file }}
+          MODEL: ${{ steps.triage.outputs.model }}
+        run: |
+          out="${RUNNER_TEMP:-/tmp}/claude-result.json"
+          bash .claude-pipeline/scripts/adapt-opencode-result.sh > "$out"
+          printf 'result-file=%s\n'    "$out"             >> "$GITHUB_OUTPUT"
+          printf 'execution-file=%s\n' "$EXECUTION_FILE"  >> "$GITHUB_OUTPUT"
+
+      - name: Stub Claude run (diagnostic mode)
+        if: ${{ inputs.stub-claude }}
+        id: stub_run
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          DEFAULT_MODEL: ${{ inputs.default-model }}
+          STUB_FIXTURE: ${{ inputs.stub-fixture }}
+        run: |
+          out="${RUNNER_TEMP:-/tmp}/claude-result.json"
+          case "$STUB_FIXTURE" in
+            success)
+              jq -nc --argjson issue "$ISSUE_NUMBER" --arg model "$DEFAULT_MODEL" \
+                '{type:"result",subtype:"success",is_error:false,duration_ms:1500,num_turns:1,total_cost_usd:0,session_id:"stub",result:("Stub success for issue #" + ($issue|tostring) + " (model " + $model + ")."),usage:{input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0}}' > "$out"
+              ;;
+            rate_limit)
+              jq -nc '{type:"result",subtype:"error_during_execution",is_error:true,duration_ms:5000,num_turns:2,total_cost_usd:0,session_id:"stub-rl",result:"API Error: 429 rate_limit_error — Please retry after 2026-04-29T20:00:00Z.",usage:{input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0}}' > "$out"
+              ;;
+            task_failure)
+              jq -nc '{type:"result",subtype:"error_max_turns",is_error:true,duration_ms:300000,num_turns:30,total_cost_usd:0,session_id:"stub-mt",result:"Reached max_turns before completion.",usage:{input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0}}' > "$out"
+              ;;
+            opencode_success)
+              # OpenCode-flavored canonical result (post-adapter shape).
+              # Loaded from a fixture rather than synthesized inline so
+              # the same JSON is reviewable in both Layer-1 and Layer-2.
+              cp .claude-pipeline/tests/fixtures/result-opencode-success.json "$out"
+              ;;
+            opencode_rate_limit)
+              cp .claude-pipeline/tests/fixtures/result-opencode-rate-limit.json "$out"
+              ;;
+            opencode_task_failure)
+              cp .claude-pipeline/tests/fixtures/result-opencode-task-failure.json "$out"
+              ;;
+            *)
+              echo "::error::unknown stub-fixture: $STUB_FIXTURE"; exit 2
+              ;;
+          esac
+          echo "result-file=$out" >> "$GITHUB_OUTPUT"
+
+      - name: Adapt execution_file -> result.json
+        if: ${{ !inputs.stub-claude && always() && steps.claude_run.outputs.execution_file != '' }}
+        id: claude
+        env:
+          EXECUTION_FILE: ${{ steps.claude_run.outputs.execution_file }}
+        run: |
+          out="${RUNNER_TEMP:-/tmp}/claude-result.json"
+          # execution_file may be a JSON array (current action behavior) or NDJSON
+          # (older). Detect and pick the right jq invocation either way.
+          if jq -e 'type == "array"' "$EXECUTION_FILE" >/dev/null 2>&1; then
+            jq    'map(select(.type == "result")) | last' "$EXECUTION_FILE" > "$out"
+          else
+            jq -s 'map(select(.type == "result")) | last' "$EXECUTION_FILE" > "$out"
+          fi
+          echo "result-file=$out" >> "$GITHUB_OUTPUT"
+          echo "execution-file=$EXECUTION_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Classify failure
+        id: classify_failure
+        if: always() && (steps.claude.outputs.result-file != '' || steps.opencode_adapt.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
+        env:
+          RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.opencode_adapt.outputs.result-file || steps.stub_run.outputs.result-file }}
+        run: bash .claude-pipeline/scripts/classify-failure.sh
+
+      - name: Plan retry
+        id: retry
+        if: always() && steps.classify_failure.outputs.class != '' && steps.classify_failure.outputs.class != 'success'
+        env:
+          CLASS: ${{ steps.classify_failure.outputs.class }}
+          ATTEMPT: ${{ inputs.attempt }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          # Stub runs are tests — never auto-redispatch. Real runs follow
+          # the classify+retry policy: rate_limit/transient/task_failure
+          # may trigger an actual `gh workflow run` against the consumer's
+          # agent.yml (which now accepts workflow_dispatch).
+          DRY_RUN: ${{ inputs.stub-claude && '1' || '0' }}
+        run: bash .claude-pipeline/scripts/retry-dispatch.sh
+
+      - name: Extract job outputs from result.json
+        id: outputs
+        if: always() && (steps.claude.outputs.result-file != '' || steps.opencode_adapt.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
+        env:
+          RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.opencode_adapt.outputs.result-file || steps.stub_run.outputs.result-file }}
+        run: |
+          jq -r '
+            "cost-usd="  + (.total_cost_usd | tostring),
+            "num-turns=" + (.num_turns      | tostring),
+            "outcome="   + (if .is_error then "failed" else "success" end)
+          ' "$RESULT_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure issue labels exist
+        if: always() && !inputs.dry-run
+        env:
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash .claude-pipeline/scripts/ensure-issue-labels.sh
+
+      - name: Verify or recover PR
+        id: verify_pr
+        if: always() && !inputs.dry-run && (steps.claude.outputs.result-file != '' || steps.opencode_adapt.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          IS_ERROR: ${{ steps.outputs.outputs.outcome == 'failed' }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+        run: bash .claude-pipeline/scripts/verify-or-recover-pr.sh
+
+      - name: Post run report
+        if: always() && (steps.claude.outputs.result-file != '' || steps.opencode_adapt.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
+        env:
+          RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.opencode_adapt.outputs.result-file || steps.stub_run.outputs.result-file }}
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution-file || steps.opencode_adapt.outputs.execution-file }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RENDER_ONLY: ${{ inputs.dry-run && '1' || '0' }}
+          MODEL: ${{ steps.triage.outputs.model }}
+          AGENT: ${{ steps.classify_agent.outputs.agent }}
+          PR_PRESENT: ${{ steps.verify_pr.outputs.pr-present }}
+        run: bash .claude-pipeline/scripts/post-run-report.sh
+
+  auto_review:
+    # ADR-002: agent-driven review on the freshly-opened draft PR, with
+    # gates 1/5/6/7 enforced in scripts/check-merge-envelope.sh. Verdict
+    # !=approve or any failed gate leaves the PR draft and stamps
+    # ai:review-blocked on the originating issue.
+    name: Auto-review PR for issue #${{ inputs.issue-number }}
+    needs: implement
+    if: |
+      (!inputs.stub-claude || inputs.stub-review-verdict != '')
+      && (!inputs.dry-run || inputs.stub-review-verdict != '')
+      && needs.implement.outputs.outcome == 'success'
+      && needs.implement.outputs.auto-review-enabled == 'true'
+      && needs.implement.outputs.pre-preview-enabled != 'true'
+    runs-on: ${{ fromJSON(inputs.runner-labels) }}
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    outputs:
+      merge-attempted: ${{ steps.verify_mock.outputs.merge-attempted }}
+    steps:
+      - name: Checkout consumer repo
+        # Needed so .claude-auto-merge-blocklist (if present) is on disk
+        # for check-merge-envelope.sh to read.
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Checkout agent-pipeline scripts
+        if: ${{ !inputs.local-scripts }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ inputs.pipeline-ref }}
+          path: .claude-pipeline
+          sparse-checkout: |
+            scripts
+            tests/mocks
+            tests/fixtures
+
+      - name: Mirror local scripts to .claude-pipeline (self-test mode)
+        if: ${{ inputs.local-scripts }}
+        run: |
+          mkdir -p .claude-pipeline/scripts \
+                   .claude-pipeline/tests/mocks \
+                   .claude-pipeline/tests/fixtures
+          cp -r scripts/. .claude-pipeline/scripts/
+          if [[ -d tests/mocks ]]; then
+            cp -r tests/mocks/. .claude-pipeline/tests/mocks/
+          fi
+          if [[ -d tests/fixtures ]]; then
+            cp -r tests/fixtures/. .claude-pipeline/tests/fixtures/
+          fi
+
+      - name: Wire gh mock + stub PR JSON (test mode)
+        # Under stub-review-verdict:
+        #   - prepend tests/mocks to PATH so every `gh` call is captured
+        #     (not executed) and logged to $GH_MOCK_LOG
+        #   - emit a canned PIPELINE_PRS_JSON for find-pipeline-pr.sh so
+        #     it doesn't call the real GitHub API
+        # The PR JSON cannot be expressed inline as a ${{ ... }} value
+        # because its nested-object `}}` terminates GitHub's expression
+        # parser early (not caught by actionlint, observed as
+        # startup_failure). Emitting it via GITHUB_ENV here sidesteps
+        # the issue.
+        if: inputs.stub-review-verdict != ''
+        env:
+          WORKSPACE: ${{ github.workspace }}
+          RUNNER_TEMP_DIR: ${{ runner.temp }}
+        run: |
+          log="$RUNNER_TEMP_DIR/gh-mock.log"
+          : > "$log"
+          {
+            printf 'PATH=%s/.claude-pipeline/tests/mocks:%s\n' "$WORKSPACE" "$PATH"
+            printf 'GH_MOCK_LOG=%s\n' "$log"
+            printf 'PIPELINE_PRS_JSON=%s\n' \
+              '[{"number":9999,"isDraft":true,"headRefOid":"stubsha","author":{"login":"github-actions[bot]"}}]'
+          } >> "$GITHUB_ENV"
+
+      - name: Self-modification guard (ADR-002 — agent-pipeline itself)
+        # The pipeline's own scripts/workflows/decisions ARE the pipeline;
+        # an auto-merged PR here could change the gates applied to itself.
+        # Refuse to promote regardless of input/label state. Hardcoded
+        # per ADR-002.
+        #
+        # Bypassed under stub-review-verdict (Layer-2 act tests) so the
+        # agent-pipeline repo can exercise its own auto-merge paths
+        # without the guard masking every assert. Production callers
+        # never set stub-review-verdict — the guard remains effective
+        # on every real run.
+        id: self_mod_guard
+        env:
+          REPO: ${{ github.repository }}
+          STUB: ${{ inputs.stub-review-verdict }}
+        run: |
+          if [[ -z "$STUB" && "$REPO" == 'freaxnx01/agent-pipeline' ]]; then
+            printf 'self-mod-guard: blocking auto-merge on %s per ADR-002\n' "$REPO"
+            printf 'blocked=true\n' >> "$GITHUB_OUTPUT"
+          else
+            printf 'blocked=false\n' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Find pipeline-opened PR
+        # Run unconditionally so the marking step below can address the
+        # PR (or fall back to the issue) on every refusal path —
+        # including the self-mod guard, which intentionally skips the
+        # review/envelope/promote steps but still owes a comment per
+        # ADR-002. Under stub-review-verdict, PIPELINE_PRS_JSON is
+        # injected by the prior "Wire gh mock + stub PR JSON" step via
+        # $GITHUB_ENV and inherited here automatically.
+        id: find_pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          AUTHOR_ALLOWLIST: ${{ inputs.pipeline-author-allowlist }}
+        run: bash .claude-pipeline/scripts/find-pipeline-pr.sh
+
+      - name: Install Claude Code CLI
+        # review-pr.sh's default AGENT_CMD invokes `claude`; this job
+        # doesn't use anthropics/claude-code-base-action (which installs
+        # the CLI in the implement job), so we install it here directly.
+        # Skipped under stub-review-verdict — the stub step below
+        # synthesizes the verdict.
+        if: |
+          steps.self_mod_guard.outputs.blocked != 'true'
+          && steps.find_pr.outputs.found == 'true'
+          && inputs.stub-review-verdict == ''
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run agent review
+        if: |
+          steps.self_mod_guard.outputs.blocked != 'true'
+          && steps.find_pr.outputs.found == 'true'
+          && inputs.stub-review-verdict == ''
+        id: review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
+          HEAD_SHA: ${{ steps.find_pr.outputs.head-sha }}
+          AGENT: claude
+          AGENT_CMD: ${{ github.workspace }}/.claude-pipeline/scripts/lib/agent-cmd-claude.sh
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: bash .claude-pipeline/scripts/review-pr.sh
+
+      - name: Stub agent review (test mode)
+        # Synthesize review-pr.sh's outputs directly when stub-review-
+        # verdict is set. Mirrors the real `verdict` / `reason` keys so
+        # downstream steps don't need to discriminate which path ran.
+        if: |
+          steps.self_mod_guard.outputs.blocked != 'true'
+          && steps.find_pr.outputs.found == 'true'
+          && inputs.stub-review-verdict != ''
+        id: review_stub
+        env:
+          VERDICT: ${{ inputs.stub-review-verdict }}
+        run: |
+          {
+            printf 'verdict=%s\n' "$VERDICT"
+            printf 'reason=stubbed verdict for test mode\n'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve review verdict
+        # Single seam consumed by envelope/promote/marking steps below —
+        # avoids spreading `(real || stub)` expressions across every if:.
+        if: |
+          steps.self_mod_guard.outputs.blocked != 'true'
+          && steps.find_pr.outputs.found == 'true'
+        id: verdict
+        env:
+          REAL: ${{ steps.review.outputs.verdict }}
+          STUB: ${{ steps.review_stub.outputs.verdict }}
+        run: printf 'value=%s\n' "${REAL:-$STUB}" >> "$GITHUB_OUTPUT"
+
+      - name: Check merge envelope
+        if: |
+          steps.self_mod_guard.outputs.blocked != 'true'
+          && steps.find_pr.outputs.found == 'true'
+          && steps.verdict.outputs.value == 'approve'
+        id: envelope
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
+          AUTHOR_ALLOWLIST: ${{ inputs.pipeline-author-allowlist }}
+          # Stub seams — under stub-review-verdict the script skips its
+          # gh-cli calls and uses these values directly. The values
+          # together represent "minimum-passing envelope" for the
+          # approve-safe path; tests override PR_FILES via stub-pr-files
+          # to exercise gate 6.
+          PR_AUTHOR: ${{ inputs.stub-review-verdict != '' && 'github-actions[bot]' || '' }}
+          PR_FILES: ${{ inputs.stub-pr-files }}
+          REQUIRED_CHECKS_STATUS: ${{ inputs.stub-review-verdict != '' && 'pass' || '' }}
+          REPO_ALLOWS_SQUASH: ${{ inputs.stub-review-verdict != '' && 'true' || '' }}
+          REPO_ALLOWS_AUTO_MERGE: ${{ inputs.stub-review-verdict != '' && 'true' || '' }}
+        run: bash .claude-pipeline/scripts/check-merge-envelope.sh
+
+      - name: Promote draft to ready + enable auto-merge
+        if: |
+          steps.self_mod_guard.outputs.blocked != 'true'
+          && steps.find_pr.outputs.found == 'true'
+          && steps.verdict.outputs.value == 'approve'
+          && steps.envelope.outputs.envelope == 'pass'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
+        run: |
+          gh pr ready "$PR_NUMBER" --repo "$REPO"
+          gh pr merge "$PR_NUMBER" --repo "$REPO" --auto --squash
+
+      - name: Mark issue blocked when review or envelope refuses
+        # Fires on every refusal path: self-mod guard, missing PR,
+        # non-approve verdict, or envelope failure. post-auto-review-
+        # block.sh picks the right reason and either comments on the
+        # PR (when known) or falls back to the issue.
+        if: |
+          steps.self_mod_guard.outputs.blocked == 'true'
+          || steps.find_pr.outputs.found != 'true'
+          || steps.verdict.outputs.value != 'approve'
+          || (steps.verdict.outputs.value == 'approve' && steps.envelope.outputs.envelope != 'pass')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
+          FOUND: ${{ steps.find_pr.outputs.found }}
+          VERDICT: ${{ steps.verdict.outputs.value }}
+          ENVELOPE: ${{ steps.envelope.outputs.envelope }}
+          ENVELOPE_REASON: ${{ steps.envelope.outputs.reason }}
+          FAILED_GATES: ${{ steps.envelope.outputs.failed-gates }}
+          SELF_MOD_BLOCKED: ${{ steps.self_mod_guard.outputs.blocked }}
+        run: bash .claude-pipeline/scripts/post-auto-review-block.sh
+
+      - name: Verify gh mock log (test mode)
+        # Read the captured `gh` invocation log and emit whether
+        # `gh pr merge` was attempted. Workflow surfaces this as
+        # `auto-review-merge-attempted` so the act test can assert
+        # "no real merge call is made" — required by issue #16 AC.
+        # $GH_MOCK_LOG was set into the environment by the "Wire gh
+        # mock" step at the top of this job.
+        if: inputs.stub-review-verdict != '' && always()
+        id: verify_mock
+        run: bash .claude-pipeline/scripts/verify-gh-mock-merge.sh
+
+  pre_preview:
+    # Pre-preview mode (#77 / ADR-004): the agent reviews the freshly-
+    # opened draft PR; on `approve` the draft is promoted to ready and a
+    # HUMAN merges. No safety envelope and no auto-merge. Because
+    # promote-to-ready performs no merge, there is intentionally NO
+    # self-modification guard here (unlike auto_review) — promoting a draft
+    # on freaxnx01/agent-pipeline itself is safe, so this repo can dogfood
+    # the flow. Non-approve verdict or a missing PR leaves the PR draft and
+    # stamps ai:review-blocked. Mutually exclusive with auto_review via the
+    # implement-job gate (pre-preview wins when both labels are present).
+    name: Pre-preview PR for issue #${{ inputs.issue-number }}
+    needs: implement
+    if: |
+      (!inputs.stub-claude || inputs.stub-review-verdict != '')
+      && (!inputs.dry-run || inputs.stub-review-verdict != '')
+      && needs.implement.outputs.outcome == 'success'
+      && needs.implement.outputs.pre-preview-enabled == 'true'
+    runs-on: ${{ fromJSON(inputs.runner-labels) }}
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    outputs:
+      merge-attempted: ${{ steps.verify_mock.outputs.merge-attempted }}
+      ready-attempted: ${{ steps.verify_mock.outputs.ready-attempted }}
+    steps:
+      - name: Checkout consumer repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Checkout agent-pipeline scripts
+        if: ${{ !inputs.local-scripts }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ inputs.pipeline-ref }}
+          path: .claude-pipeline
+          sparse-checkout: |
+            scripts
+            tests/mocks
+            tests/fixtures
+
+      - name: Mirror local scripts to .claude-pipeline (self-test mode)
+        if: ${{ inputs.local-scripts }}
+        run: |
+          mkdir -p .claude-pipeline/scripts \
+                   .claude-pipeline/tests/mocks \
+                   .claude-pipeline/tests/fixtures
+          cp -r scripts/. .claude-pipeline/scripts/
+          if [[ -d tests/mocks ]]; then
+            cp -r tests/mocks/. .claude-pipeline/tests/mocks/
+          fi
+          if [[ -d tests/fixtures ]]; then
+            cp -r tests/fixtures/. .claude-pipeline/tests/fixtures/
+          fi
+
+      - name: Wire gh mock + stub PR JSON (test mode)
+        if: inputs.stub-review-verdict != ''
+        env:
+          WORKSPACE: ${{ github.workspace }}
+          RUNNER_TEMP_DIR: ${{ runner.temp }}
+        run: |
+          log="$RUNNER_TEMP_DIR/gh-mock.log"
+          : > "$log"
+          {
+            printf 'PATH=%s/.claude-pipeline/tests/mocks:%s\n' "$WORKSPACE" "$PATH"
+            printf 'GH_MOCK_LOG=%s\n' "$log"
+            printf 'PIPELINE_PRS_JSON=%s\n' \
+              '[{"number":9999,"isDraft":true,"headRefOid":"stubsha","author":{"login":"github-actions[bot]"}}]'
+          } >> "$GITHUB_ENV"
+
+      - name: Find pipeline-opened PR
+        id: find_pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          AUTHOR_ALLOWLIST: ${{ inputs.pipeline-author-allowlist }}
+        run: bash .claude-pipeline/scripts/find-pipeline-pr.sh
+
+      - name: Install Claude Code CLI
+        if: |
+          steps.find_pr.outputs.found == 'true'
+          && inputs.stub-review-verdict == ''
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run agent review
+        if: |
+          steps.find_pr.outputs.found == 'true'
+          && inputs.stub-review-verdict == ''
+        id: review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
+          HEAD_SHA: ${{ steps.find_pr.outputs.head-sha }}
+          AGENT: claude
+          AGENT_CMD: ${{ github.workspace }}/.claude-pipeline/scripts/lib/agent-cmd-claude.sh
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: bash .claude-pipeline/scripts/review-pr.sh
+
+      - name: Stub agent review (test mode)
+        if: |
+          steps.find_pr.outputs.found == 'true'
+          && inputs.stub-review-verdict != ''
+        id: review_stub
+        env:
+          VERDICT: ${{ inputs.stub-review-verdict }}
+        run: |
+          {
+            printf 'verdict=%s\n' "$VERDICT"
+            printf 'reason=stubbed verdict for test mode\n'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve review verdict
+        if: steps.find_pr.outputs.found == 'true'
+        id: verdict
+        env:
+          REAL: ${{ steps.review.outputs.verdict }}
+          STUB: ${{ steps.review_stub.outputs.verdict }}
+        run: printf 'value=%s\n' "${REAL:-$STUB}" >> "$GITHUB_OUTPUT"
+
+      - name: Promote draft to ready (pre-preview — no auto-merge)
+        if: |
+          steps.find_pr.outputs.found == 'true'
+          && steps.verdict.outputs.value == 'approve'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
+        run: |
+          # Tolerate a redundant `gh pr ready` (e.g. PR already ready) — a
+          # human still merges, so this must not fail the job.
+          gh pr ready "$PR_NUMBER" --repo "$REPO" || true
+          gh pr comment "$PR_NUMBER" --repo "$REPO" \
+            --body "Pre-reviewed ✓ — promoted to ready. Merge is yours (no auto-merge in pre-preview mode)."
+
+      - name: Mark issue blocked when review refuses or PR missing
+        if: |
+          steps.find_pr.outputs.found != 'true'
+          || steps.verdict.outputs.value != 'approve'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
+          FOUND: ${{ steps.find_pr.outputs.found }}
+          VERDICT: ${{ steps.verdict.outputs.value }}
+          MODE: pre-preview
+        run: bash .claude-pipeline/scripts/post-auto-review-block.sh
+
+      - name: Verify gh mock log (test mode)
+        # Surface merge-attempted (must be false) and ready-attempted
+        # (true on approve) so the act assertions can verify behavior.
+        if: inputs.stub-review-verdict != '' && always()
+        id: verify_mock
+        run: bash .claude-pipeline/scripts/verify-gh-mock-merge.sh

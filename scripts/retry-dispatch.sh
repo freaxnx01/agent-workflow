@@ -13,7 +13,7 @@
 #   GH_TOKEN            (or ambient gh auth)
 #
 # Optional environment variables:
-#   CONSUMER_WORKFLOW   Workflow filename to redispatch. Default: claude.yml.
+#   CONSUMER_WORKFLOW   Workflow filename to redispatch. Default: agent.yml.
 #   MAX_RETRIES_RATE    Default 3.
 #   MAX_RETRIES_TRANS   Default 3.
 #   MAX_RETRIES_TASK    Default 1.
@@ -46,7 +46,7 @@ require_env ATTEMPT
 require_env ISSUE_NUMBER
 require_env REPO
 
-CONSUMER_WORKFLOW="${CONSUMER_WORKFLOW:-claude.yml}"
+CONSUMER_WORKFLOW="${CONSUMER_WORKFLOW:-agent.yml}"
 MAX_RETRIES_RATE="${MAX_RETRIES_RATE:-3}"
 MAX_RETRIES_TRANS="${MAX_RETRIES_TRANS:-3}"
 MAX_RETRIES_TASK="${MAX_RETRIES_TASK:-1}"
