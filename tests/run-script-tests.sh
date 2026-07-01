@@ -329,6 +329,11 @@ out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
 assert_contains "$out" 'chosen: deepseek/deepseek-v3.2 (label model:deepseek-v32)' \
   "label model:deepseek-v32 + agent=opencode → deepseek-v32"
 
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
+       ISSUE_LABELS='model:qwen3-27b' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: qwen/qwen3.6-27b (label model:qwen3-27b)' \
+  "label model:qwen3-27b + agent=opencode → qwen3.6-27b"
+
 # Mismatch: a new OpenRouter label WITHOUT agent=opencode → warn + fall through
 out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=claude \
        ISSUE_LABELS='model:qwen-coder' \
