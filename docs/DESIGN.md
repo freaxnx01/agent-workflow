@@ -18,6 +18,10 @@ subscription, your model choices, and your existing `dotnet-ai-instructions` con
 ## Scope
 
 - **Personal repos only.** Work repos (`anim-bossinfo-ch`) are out of scope for now.
+- **CI side *and* operator console.** This repo owns both the CI implementation
+  (`.github/workflows`, `scripts`, fixtures) **and** the user-level slash-command
+  console (`commands/`) you drive the pipeline with — forge-agnostic across GitHub
+  Actions (now) and Forgejo Actions (later). See ADR-005.
 - **Modes #0 and #1 only.** Mode #2 (Copilot Coding Agent) is deferred — not needed
   for personal use, since the focus is on the Claude ecosystem.
 - **Mode #0**: do it now locally, no delegation. The skill must support deciding this.
@@ -28,7 +32,7 @@ subscription, your model choices, and your existing `dotnet-ai-instructions` con
 ### Three repos, distinct concerns
 
 ```text
-freaxnx01/agent-pipeline       # NEW — the CI side (workflows, scripts, fixtures, docs)
+freaxnx01/agent-pipeline       # the pipeline end-to-end: CI side (workflows, scripts, fixtures, docs) + operator console (commands/)
 freaxnx01/dotnet-ai-instructions # EXISTING — local Claude Code stack, /sync-ai-instr
 freaxnx01/<homelab-ansible>      # EXISTING — add github-actions-runner role here
 ```

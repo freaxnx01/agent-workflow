@@ -675,3 +675,42 @@ Add a third flow, **pre-preview**, as a `pre_preview` job parallel to
   approach C).
 + The reusable workflow gains `pre-preview` / `stub-pre-preview-enabled` inputs
   and `pre-preview-{merge,ready}-attempted` outputs.
+
+## ADR-005 — Operator console lives here; user-level vs project-scoped commands (2026-07-12)
+
+### Context
+
+The issue-workflow slash commands (forge routers, `gh:*`, `fj:*`, `enrich`,
+`route`, `work`, `capture-idea`) previously lived in `freaxnx01/config`, a repo
+scoped to "Claude Code configuration." In practice they are the human-facing
+front-end of *this* pipeline — they feed and drive it — so their home was wrong.
+`agent-pipeline` is also intended to become forge-agnostic (GitHub Actions now,
+Forgejo Actions later), which makes the `fj:*` half native to this repo, not
+foreign.
+
+### Decision
+
+1. **`agent-pipeline` = the pipeline end-to-end** — the CI side **plus** the
+   operator console. The console lives in a **new top-level `commands/`** directory.
+2. **Two command surfaces, deliberately distinct:**
+   - `commands/` — **user-level**. Symlinked into `~/.claude/commands/` by
+     `setup/link-commands.sh`; active from **any** repo. This is the console.
+   - `.claude/commands/` — **project-scoped** (`commit`, `push`, `ui-*`); active
+     only inside agent-pipeline. Unchanged.
+   Do not conflate them. A command that should work everywhere goes in `commands/`;
+   one that only makes sense inside this repo goes in `.claude/commands/`.
+3. **`config` stays the single one-URL bootstrap.** Its `setup/01-claude-commands.sh`
+   links the retained generic commands, then clones this repo (if absent) and calls
+   `setup/link-commands.sh`. This repo exposes the link step but does **not** grow a
+   competing machine bootstrap.
+4. Files were **copied** here and `git rm`'d from config (per-file history remains
+   in config's log); no cross-repo history graft.
+
+### Consequences
+
+- `agent-pipeline` now has a user-level surface it didn't before — documented in
+  `commands/README.md` and here so contributors don't confuse the two dirs.
+- The "one curl sets up a machine" promise survives, now spanning two repos; config's
+  bootstrap clones this repo idempotently and surfaces (not swallows) clone failure.
+- Building the Forgejo Actions CI side later has a natural home; the `fj:*` console
+  is already here waiting.
