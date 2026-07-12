@@ -59,6 +59,7 @@ while IFS= read -r f; do
   dest="$DEST_DIR/$rel"
   mkdir -p "$(dirname "$dest")"
   if [ "$mode" = "copy" ]; then
+    rm -f "$dest"        # dest may be a symlink from a prior install → cp would error
     cp -f "$f" "$dest"
     echo "  copied  $rel"
   else
