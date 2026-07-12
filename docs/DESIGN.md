@@ -164,6 +164,7 @@ agent-pipeline/
 │   ├── agent-implement.yml         # the reusable workflow consumers call
 │   ├── agent-implement.test.yml    # stubbed Claude step, for act-based testing
 │   └── lint.yml                     # actionlint + shellcheck on PRs
+├── commands/                        # user-level operator console (routers, gh/, fj/) — linked into ~/.claude/commands/
 ├── scripts/
 │   ├── classify-failure.sh          # rate_limit | transient | task_failure | bug
 │   ├── classify-task.sh             # haiku triage: opus | sonnet | haiku
