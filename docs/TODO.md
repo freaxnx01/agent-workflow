@@ -59,3 +59,13 @@ Mirrors the implementation order in [DESIGN.md](DESIGN.md). Strict order — don
 - [ ] 32. Explain in README how the GH Action Claude step (using the GH Claude secret from Subscription) works technically
 - [ ] 33. Describe all skills in README
 - [ ] 34. Show/describe relations to ai-instructions and bridge repos — Mermaid diagram in README showing the workflow
+
+## Slash commands — bootstrap UX
+
+Exists: `/sync-ai-instructions` (agent-skills plugin — bootstraps/refreshes `CLAUDE.md` + `.ai/*` in a project from `ai-instructions`).
+
+- [ ] 35. `/init-agent-pipeline` — bootstrap slash command that wires a project into agent-pipeline (consumer stub workflow, secrets checklist, `CLAUDE.md` note)
+- [ ] 36. `/init-all` — combines `/sync-ai-instructions` + `/init-agent-pipeline` into one bootstrap for a brand-new project
+- [ ] 37. more? — survey what else a new project needs bootstrapped before these two are considered complete
+- [ ] 38. Ensure the Superpowers spec/impl plan is copied into the issue body, not left as a file reference — if work spans different machines, the spec doc / impl plan file may not be committed and the referenced path is dead elsewhere
+- [ ] 39. Specs & impl docs: always commit them (don't leave as local-only working files)
