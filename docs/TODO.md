@@ -53,3 +53,9 @@ Mirrors the implementation order in [DESIGN.md](DESIGN.md). Strict order — don
 - [ ] 29. Skill enforces spec template
 - [ ] 30. Skill supports Mode #0 ("don't delegate, do it now") as valid outcome
 - [ ] 31. Skill surfaces negative findings explicitly in generated specs
+
+## Documentation
+
+- [ ] 32. Explain in README how the GH Action Claude step (using the GH Claude secret from Subscription) works technically
+- [ ] 33. Describe all skills in README
+- [ ] 34. Show/describe relations to ai-instructions and bridge repos — Mermaid diagram in README showing the workflow
