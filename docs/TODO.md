@@ -69,3 +69,4 @@ Exists: `/sync-ai-instructions` (agent-skills plugin — bootstraps/refreshes `C
 - [ ] 37. more? — survey what else a new project needs bootstrapped before these two are considered complete
 - [ ] 38. Ensure the Superpowers spec/impl plan is copied into the issue body, not left as a file reference — if work spans different machines, the spec doc / impl plan file may not be committed and the referenced path is dead elsewhere
 - [ ] 39. Specs & impl docs: always commit them (don't leave as local-only working files)
+- [ ] 40. New skill: turn a workflow idea into a new repo/project (scaffold + bootstrap in one step)
