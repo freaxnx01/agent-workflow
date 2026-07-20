@@ -107,7 +107,7 @@ The reusable workflow checks out its shared `scripts/` from
 `pipeline-repo`@`pipeline-ref`. GitHub's `github.workflow_ref` refers to the
 *caller's* workflow, so `@v1` in `uses:` does **not** propagate to that script
 checkout — it must be set explicitly, or scripts default to
-`freaxnx01/agent-workflow@main` and the run breaks.
+`freaxnx01/agent-pipeline@main` and the run breaks.
 
 ## Step 3 — (Optional) chain-dispatch stub
 
@@ -287,7 +287,7 @@ missed — both now documented canonically in `CONSUMER-SETUP.md §1`:
 
 Auto-merge needs PRs to trigger required checks; the ambient `GITHUB_TOKEN`
 can't (GitHub anti-recursion), so PR creation must use a GitHub App or PAT
-(agent-workflow #55). Pipeline side wired in agent-workflow PR #70 (optional
+(agent-pipeline #55). Pipeline side wired in agent-pipeline PR #70 (optional
 `PIPELINE_APP_ID` / `PIPELINE_APP_PRIVATE_KEY` → mints an installation token →
 agent opens the PR as the App).
 
