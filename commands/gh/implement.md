@@ -1,9 +1,9 @@
 ---
-description: Validate issue readiness, then label it ai-implement so the agent-pipeline picks it up and opens a draft PR
+description: Validate issue readiness, then label it ai-implement so the agent-workflow picks it up and opens a draft PR
 argument-hint: <issue number>
 ---
 
-Hand issue #$ARGUMENTS to the **agent-pipeline** by applying the `ai-implement` label.
+Hand issue #$ARGUMENTS to the **agent-workflow** by applying the `ai-implement` label.
 Strip any leading `#` from the argument.
 
 The pipeline trigger: `issues: labeled` → `claude.yml` in the current repo fires →
@@ -59,10 +59,10 @@ Replace `<N>` with the actual issue number.
 ## Apply the label
 
 Ensure the `ai-implement` label exists in the repo (create it if absent — color `#0075ca`,
-description "Trigger: agent-pipeline Claude implementation"):
+description "Trigger: agent-workflow Claude implementation"):
 
 ```bash
-gh label create ai-implement --color "0075ca" --description "Trigger: agent-pipeline Claude implementation" --force
+gh label create ai-implement --color "0075ca" --description "Trigger: agent-workflow Claude implementation" --force
 ```
 
 Then add it to the issue:
@@ -76,5 +76,5 @@ gh issue edit <N> --add-label ai-implement
 Print:
 
 - Issue number, title, and URL
-- "agent-pipeline triggered — Claude will open a draft PR shortly"
+- "agent-workflow triggered — Claude will open a draft PR shortly"
 - Remind the user to watch for a new PR and review it with `/gh:review` when it appears

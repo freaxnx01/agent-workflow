@@ -44,7 +44,7 @@ Then dispatch to the matching phase below.
 1. Re-open the spec at `spec=` to re-establish context.
 2. Invoke **superpowers:writing-plans** to produce the task-by-task implementation
    plan in the repo's tracked plans dir. Commit it and record `plan=<path>`.
-3. **Push** so both spec and plan are on the remote (the agent-pipeline checks them
+3. **Push** so both spec and plan are on the remote (the agent-workflow checks them
    out): `git push`. Verify it succeeded.
 4. **Phase boundary:** set `phase=issue`, hand off, stop.
 
@@ -59,7 +59,7 @@ Then dispatch to the matching phase below.
 2. Push if anything else is pending.
 3. **Done:** delete `.claude/enrich-phased.state` and `.claude/handoff.md`. Print the
    issue URL, the spec and plan paths, and: *"Issue is ready — run
-   `/gh:implement <issue>` to trigger the agent-pipeline."*
+   `/gh:implement <issue>` to trigger the agent-workflow."*
 
 ## Between phases (handoff protocol)
 
@@ -79,7 +79,7 @@ At each phase boundary, before stopping:
 
 ## Choosing a tracked path
 
-The agent-pipeline can only read files that are **committed and not git-ignored**.
+The agent-workflow can only read files that are **committed and not git-ignored**.
 Some repos `.gitignore` the superpowers docs dir. So before writing a spec/plan:
 
 - Pick an existing **tracked** specs/plans dir if present (e.g.

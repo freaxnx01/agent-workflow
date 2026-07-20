@@ -1,10 +1,10 @@
 ---
-description: Enrich an issue with a spec and implementation plan, then update the issue body so the agent-pipeline can implement it
+description: Enrich an issue with a spec and implementation plan, then update the issue body so the agent-workflow can implement it
 argument-hint: <issue number>
 ---
 
 Enrich GitHub issue #$ARGUMENTS (strip any leading `#`) so it is ready for the
-agent-pipeline. The pipeline reads only the issue **body** — everything the agent
+agent-workflow. The pipeline reads only the issue **body** — everything the agent
 needs must end up there.
 
 ## Step 1 — Read the issue
@@ -71,7 +71,7 @@ Print:
 
 - Issue URL
 - Paths to spec and plan files
-- "Issue is ready — run `/gh:implement $ARGUMENTS` to trigger the agent-pipeline."
+- "Issue is ready — run `/gh:implement $ARGUMENTS` to trigger the agent-workflow."
 
 ---
 

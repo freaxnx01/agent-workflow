@@ -1,4 +1,4 @@
-# agent-pipeline operator console — user-level slash commands
+# agent-workflow operator console — user-level slash commands
 
 These are **user-level** Claude Code slash commands: symlinked into
 `~/.claude/commands/` by [`../setup/link-commands.sh`](../setup/link-commands.sh),
@@ -8,7 +8,7 @@ GitHub Actions today (`gh:*`), Forgejo Actions later (`fj:*`).
 
 > **Not to be confused with** this repo's project-scoped
 > [`.claude/commands/`](../.claude/commands/) (`commit`, `push`, `ui-*`), which
-> are active only inside agent-pipeline. `commands/` here is user-level and global;
+> are active only inside agent-workflow. `commands/` here is user-level and global;
 > `.claude/commands/` is project-local. See `docs/DECISIONS.md` (ADR-005).
 
 ## Install
@@ -17,7 +17,7 @@ GitHub Actions today (`gh:*`), Forgejo Actions later (`fj:*`).
 calls `setup/link-commands.sh`). To install just the console directly:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/freaxnx01/agent-pipeline/main/setup/link-commands.sh | bash
+curl -fsSL https://raw.githubusercontent.com/freaxnx01/agent-workflow/main/setup/link-commands.sh | bash
 ```
 
 Pass `--copy` on filesystems without symlinks; `--no-sync` to relink from the
