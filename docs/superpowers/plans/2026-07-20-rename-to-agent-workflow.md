@@ -151,6 +151,17 @@ Values that flip at rename time — do not miss any:
 - Three `pipeline-repo` checkout defaults in `.github/workflows/`:
   `agent-implement.yml`, `chain-dispatch.yml`, `claude-implement.yml`
 
+In the **`config`** repo (Task 3 deliberately left all of these on the old name,
+since they resolve today):
+
+- `setup/01-claude-commands.sh`: `AP_REPO_URL`, `AP_REPO_DIR`, and the fallback
+  clone URL in the "link step not found" warning
+- `README.md`: the two repo link URLs
+- `claude/commands/README.md`: the link URL, the Windows copy path, and the
+  `agent-pipeline/commands/` prose reference
+- `claude/commands/update-commands.md`: the link URL, the parenthetical clone
+  path, and the `git -C ~/repos/.../agent-pipeline` command
+
 The ADR-002 self-modification guard keeps BOTH names through this task — it is
 the one value that must not flip here. Dropping the transitional arm is Task 6,
 after consumers are confirmed migrated and a rollback is no longer plausible.
