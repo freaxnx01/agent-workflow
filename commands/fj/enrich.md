@@ -76,14 +76,14 @@ The new body has:
 1. The original description (keep it — context for humans)
 2. An `## Acceptance Criteria` section with the approved AC as a `- [ ]` checklist
 3. A `## Spec & Implementation Plan` section with relative paths to the spec and plan
-   files (linked as markdown) plus: _"Read the plan before writing any code — it
+   files (linked as markdown) plus: *"Read the plan before writing any code — it
    contains the full task breakdown, file structure, TDD steps, and exact code to
-   produce."_
+   produce."*
 
 ## Step 7 — Confirm
 
-Print the issue URL, the spec and plan paths, and: _"Issue is ready — run
-`/fj:work $ARGUMENTS` to implement it locally."_
+Print the issue URL, the spec and plan paths, and: *"Issue is ready — run
+`/fj:work $ARGUMENTS` to implement it locally."*
 
 > When the self-hosted **Forgejo Actions** agent-pipeline exists (future tier), this
 > final pointer becomes "apply the `ai-implement` label / run `/fj:implement`" to

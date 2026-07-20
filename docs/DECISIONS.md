@@ -693,9 +693,9 @@ foreign.
 1. **`agent-pipeline` = the pipeline end-to-end** — the CI side **plus** the
    operator console. The console lives in a **new top-level `commands/`** directory.
 2. **Two command surfaces, deliberately distinct:**
-   - `commands/` — **user-level**. Symlinked into `~/.claude/commands/` by
+   + `commands/` — **user-level**. Symlinked into `~/.claude/commands/` by
      `setup/link-commands.sh`; active from **any** repo. This is the console.
-   - `.claude/commands/` — **project-scoped** (`commit`, `push`, `ui-*`); active
+   + `.claude/commands/` — **project-scoped** (`commit`, `push`, `ui-*`); active
      only inside agent-pipeline. Unchanged.
    Do not conflate them. A command that should work everywhere goes in `commands/`;
    one that only makes sense inside this repo goes in `.claude/commands/`.
@@ -708,9 +708,9 @@ foreign.
 
 ### Consequences
 
-- `agent-pipeline` now has a user-level surface it didn't before — documented in
++ `agent-pipeline` now has a user-level surface it didn't before — documented in
   `commands/README.md` and here so contributors don't confuse the two dirs.
-- The "one curl sets up a machine" promise survives, now spanning two repos; config's
++ The "one curl sets up a machine" promise survives, now spanning two repos; config's
   bootstrap clones this repo idempotently and surfaces (not swallows) clone failure.
-- Building the Forgejo Actions CI side later has a natural home; the `fj:*` console
++ Building the Forgejo Actions CI side later has a natural home; the `fj:*` console
   is already here waiting.

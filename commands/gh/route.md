@@ -12,6 +12,7 @@ offer to run it. Do **not** dispatch anything until I confirm.
 ```bash
 gh issue view <N> --comments --json number,title,state,labels,body,assignees
 ```
+
 Also note any linked spec/plan files and existing PRs. If it's closed, parked
 (`🧊 parked`), or already assigned to an agent, say so and stop.
 
@@ -49,6 +50,7 @@ Judge the issue on:
 | Want the label-pipeline (`claude.yml`) rather than a direct assignee | **`/gh:implement <N>`** | pipeline path; Claude opens a draft PR |
 
 **How the routes differ (say this when relevant):**
+
 - **`/gh:assign`** → hands the issue to a GitHub **coding agent** on its own branch/PR.
   Prefer **copilot** (the reliable trigger here); **claude** only when confirmed
   responsive in this repo.
@@ -94,6 +96,7 @@ agent-pipeline ref must include that `model:*` label (set listed in agent-pipeli
 ## Step 5 — Recommend, then offer to run
 
 Print:
+
 - A one-line verdict: the recommended route + the **exact command** to run. If the route
   is the agent-pipeline, include the chosen **agent + model** and the label set to apply.
 - 1–2 sentences of reasoning tied to what you saw in the issue (workflow choice **and**,

@@ -68,6 +68,7 @@ gh issue edit $ARGUMENTS --body "..."
 ## Step 7 — Confirm
 
 Print:
+
 - Issue URL
 - Paths to spec and plan files
 - "Issue is ready — run `/gh:implement $ARGUMENTS` to trigger the agent-pipeline."

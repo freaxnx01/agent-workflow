@@ -54,12 +54,12 @@ Then dispatch to the matching phase below.
    - the original description (keep it for humans),
    - an `## Acceptance Criteria` section as a `- [ ]` checklist,
    - a `## Spec & Implementation Plan` section linking the **relative paths** to
-     `spec=` and `plan=`, plus the line: _"Read the plan before writing any code — it
-     contains the full task breakdown, file structure, TDD steps, and exact code."_
+     `spec=` and `plan=`, plus the line: *"Read the plan before writing any code — it
+     contains the full task breakdown, file structure, TDD steps, and exact code."*
 2. Push if anything else is pending.
 3. **Done:** delete `.claude/enrich-phased.state` and `.claude/handoff.md`. Print the
-   issue URL, the spec and plan paths, and: _"Issue is ready — run
-   `/gh:implement <issue>` to trigger the agent-pipeline."_
+   issue URL, the spec and plan paths, and: *"Issue is ready — run
+   `/gh:implement <issue>` to trigger the agent-pipeline."*
 
 ## Between phases (handoff protocol)
 

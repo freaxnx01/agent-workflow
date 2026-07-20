@@ -66,12 +66,12 @@ Then dispatch to the matching phase below.
    - the original description (keep it for humans),
    - an `## Acceptance Criteria` section as a `- [ ]` checklist,
    - a `## Spec & Implementation Plan` section linking the **relative paths** to
-     `spec=` and `plan=`, plus: _"Read the plan before writing any code — it contains
-     the full task breakdown, file structure, TDD steps, and exact code."_
+     `spec=` and `plan=`, plus: *"Read the plan before writing any code — it contains
+     the full task breakdown, file structure, TDD steps, and exact code."*
 2. Push if anything else is pending.
 3. **Done:** delete `.claude/fj-enrich-phased.state` and `.claude/handoff.md`. Print
-   the issue URL, the spec and plan paths, and: _"Issue is ready — run
-   `/fj:work <issue>` to implement it locally."_
+   the issue URL, the spec and plan paths, and: *"Issue is ready — run
+   `/fj:work <issue>` to implement it locally."*
 
 > When the self-hosted **Forgejo Actions** agent-pipeline exists (future tier), the
 > final pointer becomes "apply `ai-implement` / run `/fj:implement`" instead.

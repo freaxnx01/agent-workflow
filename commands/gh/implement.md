@@ -74,6 +74,7 @@ gh issue edit <N> --add-label ai-implement
 ## Report
 
 Print:
+
 - Issue number, title, and URL
 - "agent-pipeline triggered — Claude will open a draft PR shortly"
 - Remind the user to watch for a new PR and review it with `/gh:review` when it appears
