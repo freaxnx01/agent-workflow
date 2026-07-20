@@ -47,9 +47,9 @@ on:
       pipeline-repo:
         description: |
           Owner/repo to fetch shared scripts from. Defaults to the
-          canonical `freaxnx01/agent-pipeline`.
+          canonical `freaxnx01/agent-workflow`.
         type: string
-        default: freaxnx01/agent-pipeline
+        default: freaxnx01/agent-workflow
       pipeline-ref:
         description: |
           Ref of `pipeline-repo` to check out. Defaults to `main`.
@@ -145,7 +145,7 @@ jobs:
       - name: Checkout consumer repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Checkout agent-pipeline scripts
+      - name: Checkout agent-workflow scripts
         if: ${{ !inputs.local-scripts }}
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:

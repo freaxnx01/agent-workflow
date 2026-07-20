@@ -30,12 +30,12 @@ on:
         default: 30
       pipeline-repo:
         description: |
-          Owner/repo for the agent-pipeline checkout that supplies shared
-          scripts. Defaults to the canonical 'freaxnx01/agent-pipeline'.
+          Owner/repo for the agent-workflow checkout that supplies shared
+          scripts. Defaults to the canonical 'freaxnx01/agent-workflow'.
           Override only for self-tests (the test workflow points this at the
           repo currently being PR-tested so it works on fork PRs and act).
         type: string
-        default: freaxnx01/agent-pipeline
+        default: freaxnx01/agent-workflow
       pipeline-ref:
         description: |
           Ref of `pipeline-repo` to check out for shared scripts. Defaults
@@ -273,7 +273,7 @@ jobs:
           app-id: ${{ secrets.PIPELINE_APP_ID }}
           private-key: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
 
-      - name: Checkout agent-pipeline scripts
+      - name: Checkout agent-workflow scripts
         if: ${{ !inputs.local-scripts }}
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
@@ -678,7 +678,7 @@ jobs:
         # for check-merge-envelope.sh to read.
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Checkout agent-pipeline scripts
+      - name: Checkout agent-workflow scripts
         if: ${{ !inputs.local-scripts }}
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
@@ -729,14 +729,14 @@ jobs:
               '[{"number":9999,"isDraft":true,"headRefOid":"stubsha","author":{"login":"github-actions[bot]"}}]'
           } >> "$GITHUB_ENV"
 
-      - name: Self-modification guard (ADR-002 — agent-pipeline itself)
+      - name: Self-modification guard (ADR-002 — agent-workflow itself)
         # The pipeline's own scripts/workflows/decisions ARE the pipeline;
         # an auto-merged PR here could change the gates applied to itself.
         # Refuse to promote regardless of input/label state. Hardcoded
         # per ADR-002.
         #
         # Bypassed under stub-review-verdict (Layer-2 act tests) so the
-        # agent-pipeline repo can exercise its own auto-merge paths
+        # agent-workflow repo can exercise its own auto-merge paths
         # without the guard masking every assert. Production callers
         # never set stub-review-verdict — the guard remains effective
         # on every real run.
@@ -745,7 +745,7 @@ jobs:
           REPO: ${{ github.repository }}
           STUB: ${{ inputs.stub-review-verdict }}
         run: |
-          if [[ -z "$STUB" && "$REPO" == 'freaxnx01/agent-pipeline' ]]; then
+          if [[ -z "$STUB" && "$REPO" == 'freaxnx01/agent-workflow' ]]; then
             printf 'self-mod-guard: blocking auto-merge on %s per ADR-002\n' "$REPO"
             printf 'blocked=true\n' >> "$GITHUB_OUTPUT"
           else
@@ -902,7 +902,7 @@ jobs:
     # HUMAN merges. No safety envelope and no auto-merge. Because
     # promote-to-ready performs no merge, there is intentionally NO
     # self-modification guard here (unlike auto_review) — promoting a draft
-    # on freaxnx01/agent-pipeline itself is safe, so this repo can dogfood
+    # on freaxnx01/agent-workflow itself is safe, so this repo can dogfood
     # the flow. Non-approve verdict or a missing PR leaves the PR draft and
     # stamps ai:review-blocked. Mutually exclusive with auto_review via the
     # implement-job gate (pre-preview wins when both labels are present).
@@ -926,7 +926,7 @@ jobs:
       - name: Checkout consumer repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
-      - name: Checkout agent-pipeline scripts
+      - name: Checkout agent-workflow scripts
         if: ${{ !inputs.local-scripts }}
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
