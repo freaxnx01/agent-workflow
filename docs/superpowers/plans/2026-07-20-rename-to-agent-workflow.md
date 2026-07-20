@@ -132,8 +132,10 @@ Values that flip at rename time — do not miss any:
 - `scripts/onboard-consumer.sh`: `PIPELINE_REPO`
 - Three `pipeline-repo` checkout defaults in `.github/workflows/`:
   `agent-implement.yml`, `chain-dispatch.yml`, `claude-implement.yml`
-- `agent-implement.yml`'s ADR-002 self-modification guard: drop the
-  transitional `agent-pipeline` arm, leaving only `agent-workflow`
+
+The ADR-002 self-modification guard keeps BOTH names through this task — it is
+the one value that must not flip here. Dropping the transitional arm is Task 6,
+after consumers are confirmed migrated and a rollback is no longer plausible.
 
 `verify:` `gh repo view freaxnx01/agent-workflow` resolves; old URL redirects;
 `git -C … fetch` works from the moved path; `git worktree list` clean;
@@ -159,9 +161,8 @@ nothing outside history docs.
 Cut `v1.7.0`, move the `v1` tag. Update `CHANGELOG.md` under `[Unreleased]`
 with the rename and a migration note for external readers. Once Task 5's
 consumers are confirmed migrated, drop the transitional `agent-pipeline` arm
-of the ADR-002 self-mod guard's `$REPO` comparison and flip the
-`pipeline-repo` checkout default back to `agent-workflow` in
-`.github/workflows/*.yml` (see Task 2's `verify:` note).
+of the ADR-002 self-mod guard's `$REPO` comparison (the checkout defaults
+already flipped in Task 4).
 
 `verify:` `@v1` resolves under the new name; `git-cliff` output includes the
 migration note; `grep -n "agent-pipeline" .github/workflows/*.yml` returns
