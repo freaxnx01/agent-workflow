@@ -19,3 +19,6 @@ gate-tests/**/bin/
 gate-tests/**/obj/
 gate-tests/**/StrykerOutput/
 *.Metrics.xml
+
+# Local session artifact written by /handoff, read by /pickup — never committed.
+.claude/handoff.md
