@@ -1,13 +1,13 @@
-# Runbook: Wire quicktask-vikunja into the agent-pipeline
+# Runbook: Wire quicktask-vikunja into the agent-workflow
 
-> Handoff from a web session (scoped to `freaxnx01/agent-pipeline` only) to a
+> Handoff from a web session (scoped to `freaxnx01/agent-workflow` only) to a
 > local Claude Code CLI session that has access to **both** repos
-> (`agent-pipeline` + `quicktask-vikunja`). This file is the source of truth for
+> (`agent-workflow` + `quicktask-vikunja`). This file is the source of truth for
 > finishing the wiring and running the first Issue→PR pipeline run.
 
 ## TL;DR
 
-`agent-pipeline` is the reusable-workflow pipeline. `quicktask-vikunja` is a
+`agent-workflow` is the reusable-workflow pipeline. `quicktask-vikunja` is a
 Flutter/Dart Android share-target app (the consumer). Goal: run a real
 `ai-implement` Issue→PR pipeline run against quicktask-vikunja.
 
@@ -15,9 +15,9 @@ Remaining work is **all on the quicktask-vikunja side** (the web session could n
 reach it). Three things: add a secret, commit the consumer stub, create+label an
 issue.
 
-## State already done (in agent-pipeline)
+## State already done (in agent-workflow)
 
-- ✅ A **`v1` branch** was created on `freaxnx01/agent-pipeline` pointing at
+- ✅ A **`v1` branch** was created on `freaxnx01/agent-workflow` pointing at
   `67e831b0c4c353770ce743c7038dd6b6a8d2e550` (main at handoff time).
   `uses: ...@v1` now resolves to it.
   - ⚠️ It is a **branch, not a SemVer tag**. The web session could not push tags
@@ -31,7 +31,7 @@ The CI stack convention is "reusable workflows are versioned by git **tag**", wi
 a moving `vMAJOR` tag. Replace the stand-in branch with proper tags:
 
 ```bash
-cd <agent-pipeline checkout>
+cd <agent-workflow checkout>
 git fetch origin
 SHA=67e831b0c4c353770ce743c7038dd6b6a8d2e550   # or: git rev-parse origin/main, if unchanged
 
@@ -61,7 +61,7 @@ Settings → Secrets and variables → Actions → New repository secret:
 - **Value:** generate via `claude setup-token` against your Max subscription.
 
 (Public repo → GitHub-hosted runners only. Never attach a self-hosted runner here —
-fork-PR attack surface. This is a non-negotiable constraint in agent-pipeline's
+fork-PR attack surface. This is a non-negotiable constraint in agent-workflow's
 DESIGN.md.)
 
 ## Step 2 — Commit the consumer stub
@@ -85,18 +85,18 @@ jobs:
     if: >-
       (github.event_name == 'issues' && github.event.label.name == 'ai-implement')
       || github.event_name == 'workflow_dispatch'
-    uses: freaxnx01/agent-pipeline/.github/workflows/agent-implement.yml@v1
+    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     with:
       issue-number: ${{ github.event.issue.number || inputs.issue-number }}
       runner-labels: '["ubuntu-latest"]'      # public repo → GitHub-hosted only
       default-model: claude-opus-4-7
-      # ── REQUIRED for agent-pipeline consumers ──
+      # ── REQUIRED for agent-workflow consumers ──
       # The reusable workflow defaults pipeline-repo/ref to
-      # freaxnx01/agent-pipeline@main (the project's original name). Override
+      # freaxnx01/agent-workflow@main (the project's original name). Override
       # both so the shared-scripts cross-repo checkout resolves to THIS pipeline.
-      pipeline-repo: freaxnx01/agent-pipeline
+      pipeline-repo: freaxnx01/agent-workflow
       pipeline-ref: v1
       # auto-review omitted → draft-PR-only posture (safe first run)
 ```
@@ -107,7 +107,7 @@ The reusable workflow checks out its shared `scripts/` from
 `pipeline-repo`@`pipeline-ref`. GitHub's `github.workflow_ref` refers to the
 *caller's* workflow, so `@v1` in `uses:` does **not** propagate to that script
 checkout — it must be set explicitly, or scripts default to
-`freaxnx01/agent-pipeline@main` and the run breaks.
+`freaxnx01/agent-workflow@main` and the run breaks.
 
 ## Step 3 — (Optional) chain-dispatch stub
 
@@ -131,10 +131,10 @@ jobs:
     if: >-
       github.event.pull_request.merged == true
       && contains(github.event.pull_request.labels.*.name, 'ai-implement')
-    uses: freaxnx01/agent-pipeline/.github/workflows/chain-dispatch.yml@v1
+    uses: freaxnx01/agent-workflow/.github/workflows/chain-dispatch.yml@v1
     with:
       closed-pr-number: ${{ github.event.pull_request.number }}
-      pipeline-repo: freaxnx01/agent-pipeline
+      pipeline-repo: freaxnx01/agent-workflow
       pipeline-ref: v1
     secrets:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -183,7 +183,7 @@ Flutter/Dart Android share-target app for Vikunja. Keep all source
 quotes paraphrased. Conventional Commits for the commit message.
 ```
 
-Optional: run `bash scripts/ensure-issue-labels.sh` (from an agent-pipeline
+Optional: run `bash scripts/ensure-issue-labels.sh` (from an agent-workflow
 checkout, against quicktask-vikunja) first to pre-create labels tidily. The
 pipeline self-heals labels anyway.
 
@@ -198,10 +198,10 @@ Applying the `ai-implement` label triggers the workflow. Expect:
 - Labels stamped: `ai:running` → `ai:done` / `ai:failed`, plus `ctx:*`.
 
 Draft-only is intended (no `auto-review`). To enable auto-merge later, see
-`agent-pipeline/docs/CONSUMER-SETUP.md §2` and wire a required vulnerable-dependency
+`agent-workflow/docs/CONSUMER-SETUP.md §2` and wire a required vulnerable-dependency
 status check first (ADR-002 gate 5).
 
-## Reference docs (in agent-pipeline)
+## Reference docs (in agent-workflow)
 
 - `docs/CONSUMER-SETUP.md` — full consumer wiring (minimum stub, auto-review,
   OpenCode backend, chaining).
@@ -211,15 +211,15 @@ status check first (ADR-002 gate 5).
 ## Gotchas captured this session
 
 1. The reusable workflow defaults `pipeline-repo`/`pipeline-ref` to
-   `freaxnx01/agent-pipeline@main` — the **old project name**. **Fixed on
-   `main`** by #68 (default is now `freaxnx01/agent-pipeline`), **but the fix is
+   `freaxnx01/agent-workflow@main` — the **old project name**. **Fixed on
+   `main`** by #68 (default is now `freaxnx01/agent-workflow`), **but the fix is
    not yet in any tag** — see "Tag state" below. So:
    - Pinning `@main` → the override is now optional (default resolves correctly).
    - Pinning `@v1` (or `@v1.3.1`) → the override is **still mandatory**; those
-     tags predate #68 and still default to the dead `agent-pipeline`.
+     tags predate #68 and still default to the dead `agent-workflow`.
    Keep `pipeline-repo`/`pipeline-ref` in the stub regardless — it's correct
    under every pin and costs nothing.
-2. No tags existed on agent-pipeline at first handoff; `@v1` initially worked
+2. No tags existed on agent-workflow at first handoff; `@v1` initially worked
    only via a stand-in branch. Tags now exist (see "Tag state").
 3. quicktask-vikunja had **zero open issues** and **no consumer stub** at handoff
    — both created/added in Steps 2 & 4.
@@ -233,7 +233,7 @@ status check first (ADR-002 gate 5).
 
 `main` HEAD is `f2d1247` (#68, the rename fix). Existing tags — `v1` (moving),
 `v1.0.0`, `v1.3.0`, `v1.3.1` — **all predate #68** and still carry the old
-`freaxnx01/agent-pipeline` defaults + the self-mod-guard mismatch.
+`freaxnx01/agent-workflow` defaults + the self-mod-guard mismatch.
 
 **Action (needs push access):** advance the release tags past #68 so `@v1`
 consumers get the fix, e.g.:
@@ -241,7 +241,7 @@ consumers get the fix, e.g.:
 ```bash
 git fetch origin
 SHA=$(git rev-parse origin/main)           # f2d1247 or later
-git tag -fa v1.3.2 "$SHA" -m "fix: rename refs to agent-pipeline (#68)"
+git tag -fa v1.3.2 "$SHA" -m "fix: rename refs to agent-workflow (#68)"
 git tag -fa v1      "$SHA" -m "v1 → v1.3.2"
 git push origin v1.3.2
 git push -f origin v1                       # moving major tag
@@ -287,7 +287,7 @@ missed — both now documented canonically in `CONSUMER-SETUP.md §1`:
 
 Auto-merge needs PRs to trigger required checks; the ambient `GITHUB_TOKEN`
 can't (GitHub anti-recursion), so PR creation must use a GitHub App or PAT
-(agent-pipeline #55). Pipeline side wired in agent-pipeline PR #70 (optional
+(agent-workflow #55). Pipeline side wired in agent-workflow PR #70 (optional
 `PIPELINE_APP_ID` / `PIPELINE_APP_PRIVATE_KEY` → mints an installation token →
 agent opens the PR as the App).
 

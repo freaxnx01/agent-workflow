@@ -4,7 +4,7 @@ Mirrors the implementation order in [DESIGN.md](DESIGN.md). Strict order — don
 
 ## Phase 1: Foundations (Layer 0/1 testing)
 
-- [x] 1. Create `agent-pipeline` repo (private at first; flip public when stable)
+- [x] 1. Create `agent-workflow` repo (private at first; flip public when stable)
 - [x] 2. Set up `actionlint` + `shellcheck` lint workflow
 - [x] 3. Build `scripts/post-run-report.sh` with extracted bash, env-driven
 - [x] 4. Build fixture set (~6 JSON files covering success/failure/edge cases)
@@ -64,8 +64,8 @@ Mirrors the implementation order in [DESIGN.md](DESIGN.md). Strict order — don
 
 Exists: `/sync-ai-instructions` (agent-skills plugin — bootstraps/refreshes `CLAUDE.md` + `.ai/*` in a project from `ai-instructions`).
 
-- [ ] 35. `/init-agent-pipeline` — bootstrap slash command that wires a project into agent-pipeline (consumer stub workflow, secrets checklist, `CLAUDE.md` note)
-- [ ] 36. `/init-all` — combines `/sync-ai-instructions` + `/init-agent-pipeline` into one bootstrap for a brand-new project
+- [ ] 35. `/init-agent-workflow` — bootstrap slash command that wires a project into agent-workflow (consumer stub workflow, secrets checklist, `CLAUDE.md` note)
+- [ ] 36. `/init-all` — combines `/sync-ai-instructions` + `/init-agent-workflow` into one bootstrap for a brand-new project
 - [ ] 37. more? — survey what else a new project needs bootstrapped before these two are considered complete
 - [ ] 38. Ensure the Superpowers spec/impl plan is copied into the issue body, not left as a file reference — if work spans different machines, the spec doc / impl plan file may not be committed and the referenced path is dead elsewhere
 - [ ] 39. Specs & impl docs: always commit them (don't leave as local-only working files)
