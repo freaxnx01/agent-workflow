@@ -41,7 +41,7 @@ does a real review, not a diff skim:
 
 Post each review as a **comment-type** review (works on drafts; never auto-approve):
 
-```
+```bash
 gh pr review <N> --comment --body-file <file>
 ```
 

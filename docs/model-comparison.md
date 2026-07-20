@@ -41,8 +41,8 @@ max 100); order by `count` desc then `author` asc; response
 matching. Invalid / non-numeric paging → `400`. Carried Round 2's anti-blind-spot criteria
 (EF-Core translatable, compiles cleanly, don't delete existing endpoints).
 
-First outing for **`qwen3.6-27b`** (`qwen/qwen3.6-27b`, added to the roster in agent-pipeline
-#112), head-to-head against the Round-2 winner `gpt-oss-120b` on an identical spec.
+First outing for **`qwen3.6-27b`** (`qwen/qwen3.6-27b`, added to the roster in
+agent-pipeline #112), head-to-head against the Round-2 winner `gpt-oss-120b` on an identical spec.
 
 | Rank | Model | OpenRouter slug | Result | Notes |
 |---|---|---|---|---|
