@@ -16,6 +16,11 @@ globs:
   - "**/*.md"
 
 ignores:
+  # Git worktrees live under .worktrees/ (gitignored, see CLAUDE.md). The config
+  # globs above override any file list passed on the command line, so without
+  # this a local run lints every worktree checkout too — hundreds of phantom
+  # errors that CI never sees, since a fresh checkout has no worktrees.
+  - ".worktrees/**"
   - "CLAUDE.md"
   - "SKILL.md"
   - ".github/copilot-instructions.md"
