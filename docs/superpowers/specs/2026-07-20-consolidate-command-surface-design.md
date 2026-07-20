@@ -138,6 +138,10 @@ remains of `config`.
   consumers pin. Command edits would churn a consumer-facing changelog. Mitigate:
   scope `cliff.toml` to exclude `commands/` and `setup/`, or use a `chore(console)`
   type filtered from release notes.
+- **Imported lint debt blocks the merge gate.** Files arrive from an unlinted repo
+  into one with a blocking `pre-commit` job. Quantified in open decision §4 — 10
+  errors, 3 files, of which 2 genuinely carry over. Must be fixed inside the
+  moving PR.
 - **Per-file history** stays in `config`'s log (same as ADR-005 §4 — copy +
   `git rm`, no history graft). Accepted precedent.
 - **Low reversibility on naming.** Renaming `agent-pipeline` later breaks every
@@ -166,6 +170,36 @@ These block acceptance:
    from its hook is worse than today's split.
 3. **Scope order.** Drain `dotfiles` first (recommended), or move the 12 first
    and treat the drain as follow-up?
+4. **Markdownlint reconciliation.** `config` has **no** markdownlint config, no
+   pre-commit hook, and no lint workflow — its only CI is `add-to-project.yml`.
+   So this is not two configs disagreeing; it is one repo that lints and one that
+   never has. Every file moved here arrives unlinted and lands in a repo whose
+   `pre-commit` gate blocks merges.
+
+   This is not hypothetical. The 2026-07-12 console move imported **18 errors**
+   and helped keep `main` red for three weeks (cleared in #119), and moving the
+   single `/process-feedback` file re-broke the gate on the very next PR (#118),
+   caught only because the branch was rebased onto a now-green `main`.
+
+   Measured cost for the remaining 12, linted against this repo's
+   `.markdownlint-cli2.yaml` — **10 errors in 3 files**:
+
+   | File | Errors | Rules |
+   |---|---|---|
+   | `README.md` | 8 | MD032 ×5, MD036 ×3 |
+   | `wt/status.md` | 1 | MD040 |
+   | `commands.md` | 1 | MD032 |
+
+   Nine of the twelve command files are already clean, and `README.md` is
+   rewritten by the move anyway — so the real carry-over is **2 errors**.
+   Small, but it must be fixed *in the moving PR*, not after, or `main` goes red
+   again and every unrelated PR is blocked behind it.
+
+   Decide: fix-on-arrival (fold into the move PR, recommended), or give `config`
+   its own markdownlint + pre-commit setup first so files are clean before they
+   travel? The latter is more correct and more work; it only pays off if `config`
+   survives this consolidation as a going concern, which under Option A it
+   largely does not.
 
 ## Immediate, decision-independent
 
