@@ -126,6 +126,15 @@ The local move invalidates the `.worktrees/div` worktree's gitdir pointer —
 the exact orphaning that produced `.worktrees/misc`. Re-point or remove it
 deliberately; do not leave it dangling.
 
+Values that flip at rename time — do not miss any:
+
+- `setup/link-commands.sh`: curl bootstrap URL, `REPO_URL`, `REPO_DIR`
+- `scripts/onboard-consumer.sh`: `PIPELINE_REPO`
+- Three `pipeline-repo` checkout defaults in `.github/workflows/`:
+  `agent-implement.yml`, `chain-dispatch.yml`, `claude-implement.yml`
+- `agent-implement.yml`'s ADR-002 self-modification guard: drop the
+  transitional `agent-pipeline` arm, leaving only `agent-workflow`
+
 `verify:` `gh repo view freaxnx01/agent-workflow` resolves; old URL redirects;
 `git -C … fetch` works from the moved path; `git worktree list` clean;
 re-run the install → 46 commands, 0 broken.
