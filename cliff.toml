@@ -1,4 +1,4 @@
-# cliff.toml — git-cliff configuration for agent-pipeline.
+# cliff.toml — git-cliff configuration for agent-workflow.
 # Docs: https://git-cliff.org/docs/configuration
 # Keep-a-Changelog style, grouped from Conventional Commits.
 
@@ -30,7 +30,7 @@ trim = true
 footer = ""
 # Linkify the version heading to its GitHub release tag.
 postprocessors = [
-  { pattern = '\[(\d+\.\d+\.\d+)\] - ', replace = "[${1}](https://github.com/freaxnx01/agent-pipeline/releases/tag/v${1}) - " },
+  { pattern = '\[(\d+\.\d+\.\d+)\] - ', replace = "[${1}](https://github.com/freaxnx01/agent-workflow/releases/tag/v${1}) - " },
 ]
 
 [git]

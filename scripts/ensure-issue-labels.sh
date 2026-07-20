@@ -48,7 +48,7 @@ create() {
   fi
 }
 
-create ai-implement 1D76DB 'Trigger the agent-pipeline to implement this issue'
+create ai-implement 1D76DB 'Trigger the agent-workflow to implement this issue'
 
 create ai:running FBCA04 'Pipeline run in progress'
 create ai:done    0E8A16 'Pipeline run completed successfully'
