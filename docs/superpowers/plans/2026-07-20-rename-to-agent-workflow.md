@@ -92,14 +92,19 @@ naming-brainstorm bullets) and `docs/ai-notes/**` (dated session notes, quoted
 commit/tag messages — text that narrates the *past*, not this repo's current
 or future identity), plus the deliberately-retained transitional
 `agent-pipeline` arm of the ADR-002 self-mod guard's `$REPO` comparison, the
-`pipeline-repo` checkout default in `.github/workflows/*.yml`,
+three `pipeline-repo` checkout defaults in `.github/workflows/*.yml`,
 `setup/link-commands.sh` (curl bootstrap URL, `REPO_URL`, `REPO_DIR`),
-`scripts/onboard-consumer.sh` (`PIPELINE_REPO`), and `commands/README.md`
-(curl bootstrap URL). Those references resolve against `github.repository` /
-GitHub's API, a cloned repo's remote, or a live URL fetch at run time, all of
-which still resolve to `agent-pipeline` until Task 4 (the rename itself)
-lands — flipping them here would fail closed (guard), fail outright
-(checkout), or install nothing (curl bootstrap) on every run between this
+`scripts/onboard-consumer.sh` (`PIPELINE_REPO`), `commands/README.md`
+(curl bootstrap URL), `docs/CONSUMER-SETUP.md` (the transitional note telling
+consumers which name to use until the rename lands), and
+`.github/actions/dotnet-quality/README.md` (the
+consumer `uses:` example — this action is the repo's second public entry
+point, consumed by `flowhub` and `FlowHub-CAS-AISE`). Those references resolve
+against `github.repository` / GitHub's API, a cloned repo's remote, or a live
+URL fetch at run time, all of which still resolve to `agent-pipeline` until
+Task 4 (the rename itself) lands — flipping them here would fail closed
+(guard), fail outright (checkout), install nothing (curl bootstrap), or send
+consumers to a 404ing action (`dotnet-quality`) on every run between this
 task and Task 4. They flip in Task 4, when `github.repository` and the
 bootstrap URL actually resolve to `agent-workflow`; Task 6 carries only the
 follow-up to drop the now-dead `agent-pipeline` arm of the guard, since the
@@ -137,6 +142,12 @@ Values that flip at rename time — do not miss any:
 - `setup/link-commands.sh`: curl bootstrap URL, `REPO_URL`, `REPO_DIR`
 - `scripts/onboard-consumer.sh`: `PIPELINE_REPO`
 - `commands/README.md`: curl bootstrap URL
+- `.github/actions/dotnet-quality/README.md`: the consumer `uses:` example —
+  this composite action is the repo's second public entry point, consumed by
+  `flowhub` and `FlowHub-CAS-AISE`
+- `scripts/lib/chain-audit-comment.md`: the ADR-003 doc link (posted verbatim
+  into consumer PR comments by the pipeline at runtime — publicly visible)
+- `commands/gh/route.md`: the model-comparison doc link
 - Three `pipeline-repo` checkout defaults in `.github/workflows/`:
   `agent-implement.yml`, `chain-dispatch.yml`, `claude-implement.yml`
 
