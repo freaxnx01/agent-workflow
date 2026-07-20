@@ -53,3 +53,14 @@ Mirrors the implementation order in [DESIGN.md](DESIGN.md). Strict order — don
 - [ ] 29. Skill enforces spec template
 - [ ] 30. Skill supports Mode #0 ("don't delegate, do it now") as valid outcome
 - [ ] 31. Skill surfaces negative findings explicitly in generated specs
+
+## Phase 8: Issue prioritization algorithm
+
+Design agreed 2026-07-20, implementation not started. Full handover:
+[ai-notes/issue-prioritization-algorithm.md](ai-notes/issue-prioritization-algorithm.md).
+
+- [ ] 32. Resolve the four open decisions (quick-win vs bugs-first, tiered vs weighted, urgency curve, confidence scale)
+- [ ] 33. Add the per-issue fields — GH Projects v2 (Due date / Effort / Commitment), ADO TargetDate / Story Points / Commitment
+- [ ] 34. Implement fetch + normalize into `{ id, source, title, category, impact, confidence, effort, due_date, commitment }`
+- [ ] 35. Implement scoring: `slack` → `urgency` → `ice` → `score`, plus tiering and the at-risk-contractual override
+- [ ] 36. Emit the ranked list (CSV / Markdown / console) and run the Pareto gut-check on the top ~20%
