@@ -6,15 +6,19 @@
 # repo's PROJECT-SCOPED .claude/commands/ (commit, push, ui-*), which are active
 # only inside agent-pipeline itself.
 #
-# Default is symlink (a `git pull` here then updates every machine instantly);
-# pass --copy where symlinks are awkward (native Windows). Pass --no-sync to skip
-# the clone/pull and just (re)link from the current working tree — used by tests
-# and by config's linker once it has already synced.
+# Default is COPY, deliberately: the symlink variant points into this repo's
+# WORKING TREE, so the console would silently follow whatever branch this checkout
+# is on — and vanish entirely on any branch predating the console (see ADR-005's
+# hazard note in docs/DECISIONS.md). Copies are pinned until an explicit re-run.
+# Trade-off: `git pull` here no longer updates your commands; re-run this script.
+# Pass --link to opt back into symlinks while actively editing commands.
+# Pass --no-sync to skip the clone/pull and just (re)install from the current
+# working tree — used by tests and by config's linker once it has already synced.
 #
-# Idempotent: re-running refreshes the links/copies. Safe to run on every machine.
+# Idempotent: re-running refreshes the copies/links. Safe to run on every machine.
 #
 # Usage (existing machine, repo already cloned):
-#   ~/repos/github/freaxnx01/public/agent-pipeline/setup/link-commands.sh [--copy] [--no-sync]
+#   ~/repos/github/freaxnx01/public/agent-pipeline/setup/link-commands.sh [--link] [--no-sync]
 #
 # Usage (new machine, nothing cloned yet — single-line bootstrap):
 #   curl -fsSL https://raw.githubusercontent.com/freaxnx01/agent-pipeline/main/setup/link-commands.sh | bash
@@ -26,11 +30,12 @@ REPO_DIR="$HOME/repos/github/freaxnx01/public/agent-pipeline"
 SRC_DIR="$REPO_DIR/commands"
 DEST_DIR="$HOME/.claude/commands"
 
-mode="link"
+mode="copy"
 sync=1
 for arg in "$@"; do
   case "$arg" in
-    --copy)    mode="copy" ;;
+    --copy)    mode="copy" ;;   # accepted for compatibility; already the default
+    --link)    mode="link" ;;
     --no-sync) sync=0 ;;
   esac
 done
