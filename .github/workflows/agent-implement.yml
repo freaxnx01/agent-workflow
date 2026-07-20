@@ -35,7 +35,10 @@ on:
           Override only for self-tests (the test workflow points this at the
           repo currently being PR-tested so it works on fork PRs and act).
         type: string
-        default: freaxnx01/agent-workflow
+        # Transitional: freaxnx01/agent-workflow doesn't exist on GitHub until
+        # the rename lands (ADR-006) — actions/checkout would fail against it.
+        # Flip to freaxnx01/agent-workflow once the rename is verified.
+        default: freaxnx01/agent-pipeline
       pipeline-ref:
         description: |
           Ref of `pipeline-repo` to check out for shared scripts. Defaults
@@ -745,7 +748,10 @@ jobs:
           REPO: ${{ github.repository }}
           STUB: ${{ inputs.stub-review-verdict }}
         run: |
-          if [[ -z "$STUB" && "$REPO" == 'freaxnx01/agent-workflow' ]]; then
+          # Transitional: match both names until the freaxnx01/agent-pipeline ->
+          # freaxnx01/agent-workflow rename lands (ADR-006). Drop the
+          # agent-pipeline arm once github.repository resolves to agent-workflow.
+          if [[ -z "$STUB" && ( "$REPO" == 'freaxnx01/agent-workflow' || "$REPO" == 'freaxnx01/agent-pipeline' ) ]]; then
             printf 'self-mod-guard: blocking auto-merge on %s per ADR-002\n' "$REPO"
             printf 'blocked=true\n' >> "$GITHUB_OUTPUT"
           else
