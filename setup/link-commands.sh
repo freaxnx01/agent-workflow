@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # setup/link-commands.sh
 #
-# Link (or copy) agent-pipeline's USER-LEVEL operator-console slash commands into
+# Link (or copy) agent-workflow's USER-LEVEL operator-console slash commands into
 # ~/.claude/commands/ so they work from ANY repo. These are DISTINCT from this
 # repo's PROJECT-SCOPED .claude/commands/ (commit, push, ui-*), which are active
-# only inside agent-pipeline itself.
+# only inside agent-workflow itself.
 #
 # Default is COPY, deliberately: the symlink variant points into this repo's
 # WORKING TREE, so the console would silently follow whatever branch this checkout
@@ -18,13 +18,15 @@
 # Idempotent: re-running refreshes the copies/links. Safe to run on every machine.
 #
 # Usage (existing machine, repo already cloned):
-#   ~/repos/github/freaxnx01/public/agent-pipeline/setup/link-commands.sh [--link] [--no-sync]
+#   ~/repos/github/freaxnx01/public/agent-workflow/setup/link-commands.sh [--link] [--no-sync]
 #
 # Usage (new machine, nothing cloned yet — single-line bootstrap):
 #   curl -fsSL https://raw.githubusercontent.com/freaxnx01/agent-pipeline/main/setup/link-commands.sh | bash
 
 set -euo pipefail
 
+# Transitional: agent-workflow doesn't exist on GitHub / locally until the
+# rename lands (plan Task 4). Flip these three to agent-workflow then.
 REPO_URL="https://github.com/freaxnx01/agent-pipeline.git"
 REPO_DIR="$HOME/repos/github/freaxnx01/public/agent-pipeline"
 SRC_DIR="$REPO_DIR/commands"
@@ -40,10 +42,10 @@ for arg in "$@"; do
   esac
 done
 
-# 1) Clone or fast-forward the agent-pipeline repo at the canonical path (unless --no-sync).
+# 1) Clone or fast-forward the agent-workflow repo at the canonical path (unless --no-sync).
 if [ "$sync" = 1 ]; then
   if [ ! -d "$REPO_DIR/.git" ]; then
-    echo "→ cloning agent-pipeline repo to $REPO_DIR"
+    echo "→ cloning agent-workflow repo to $REPO_DIR"
     mkdir -p "$(dirname "$REPO_DIR")"
     git clone "$REPO_URL" "$REPO_DIR"
   else
@@ -57,7 +59,7 @@ mkdir -p "$DEST_DIR"
 
 # 3) Install each command .md, preserving subdirs (which become /namespace:cmd).
 #    Skip any README.md at the top level or inside namespace dirs.
-echo "→ installing agent-pipeline console commands into $DEST_DIR ($mode)"
+echo "→ installing agent-workflow console commands into $DEST_DIR ($mode)"
 while IFS= read -r f; do
   rel="${f#"$SRC_DIR"/}"
   case "$rel" in README.md|*/README.md) continue ;; esac
@@ -73,4 +75,4 @@ while IFS= read -r f; do
   fi
 done < <(find "$SRC_DIR" -type f -name '*.md')
 
-echo "✓ done — agent-pipeline console commands installed (e.g. /gh:enrich, /route, /capture-idea)"
+echo "✓ done — agent-workflow console commands installed (e.g. /gh:enrich, /route, /capture-idea)"

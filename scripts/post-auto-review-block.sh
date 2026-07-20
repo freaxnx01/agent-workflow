@@ -63,7 +63,7 @@ case "$MODE" in
 esac
 
 if [[ "$SELF_MOD_BLOCKED" == 'true' ]]; then
-  reason='self-modification guard (ADR-002) refused promotion on agent-pipeline itself'
+  reason='self-modification guard (ADR-002) refused promotion on agent-workflow itself'
 elif [[ "$FOUND" != 'true' ]]; then
   reason='auto-review could not find a pipeline-opened draft PR for this issue (expected "Closes #N" in PR body from an allowlisted author)'
 elif [[ "$VERDICT" != 'approve' ]]; then

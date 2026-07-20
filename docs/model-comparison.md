@@ -12,7 +12,7 @@ model roster in [`CONSUMER-SETUP.md`](CONSUMER-SETUP.md#per-issue-model-labels).
 
 ## Why this lives here
 
-The comparison evaluates the **agent-pipeline's own model roster** — the `agent:*` / `model:*`
+The comparison evaluates the **agent-workflow's own model roster** — the `agent:*` / `model:*`
 label routing (`scripts/classify-task.sh`), the OpenCode tool-use requirement, and the
 result-shape contract (ADR-001). It guides model selection for *every* consumer of the
 pipeline, so the canonical report belongs here rather than in any one consumer repo. The
@@ -42,7 +42,7 @@ matching. Invalid / non-numeric paging → `400`. Carried Round 2's anti-blind-s
 (EF-Core translatable, compiles cleanly, don't delete existing endpoints).
 
 First outing for **`qwen3.6-27b`** (`qwen/qwen3.6-27b`, added to the roster in
-agent-pipeline #112), head-to-head against the Round-2 winner `gpt-oss-120b` on an identical spec.
+agent-workflow #112), head-to-head against the Round-2 winner `gpt-oss-120b` on an identical spec.
 
 | Rank | Model | OpenRouter slug | Result | Notes |
 |---|---|---|---|---|
@@ -131,7 +131,7 @@ tool calls → no edits).
 
 ## Pipeline bugs surfaced
 
-Filed on agent-pipeline during the runs:
+Filed on agent-workflow during the runs:
 
 - **#99** — OpenCode runs commit a stray submodule gitlink (`.claude-pipeline`, `mode 160000`)
   into the consumer PR via a broad `git add`. **Fixed** by #101.

@@ -78,16 +78,39 @@ updated explicitly; per-file history unaffected).
 ### Task 2 — internal live references
 
 Update the 28 files here **except** `docs/superpowers/**` and `CHANGELOG.md`
-entries describing past releases. Includes `setup/link-commands.sh`
-(`REPO_URL`, `REPO_DIR`), `scripts/onboard-consumer.sh`, `justfile`,
-`docs/DESIGN.md`, `docs/CONSUMER-SETUP.md`, `commands/**`, `commands/README.md`.
+entries describing past releases. Includes `setup/link-commands.sh` (prose and
+comments only — its curl bootstrap URL, `REPO_URL`, and `REPO_DIR` are Task
+4's), `scripts/onboard-consumer.sh`, `justfile`, `docs/DESIGN.md`,
+`docs/CONSUMER-SETUP.md`, `commands/**`, `commands/README.md`.
 
 Also update the consolidation spec per the carve-out above: its target repo
 becomes `agent-workflow`, and open decision §1 is marked resolved by ADR-006.
 
 `verify:` `rg 'agent-pipeline' --glob '!docs/superpowers/**' --glob '!CHANGELOG.md'`
-returns only intentional historical mentions; `shellcheck -x` clean;
-`just test` (Layer-1 fixtures) green; lint + gate-selftest green in CI.
+returns only: historical prose in `docs/DESIGN.md` (the April 2026
+naming-brainstorm bullets) and `docs/ai-notes/**` (dated session notes, quoted
+commit/tag messages — text that narrates the *past*, not this repo's current
+or future identity), plus the deliberately-retained transitional
+`agent-pipeline` arm of the ADR-002 self-mod guard's `$REPO` comparison, the
+three `pipeline-repo` checkout defaults in `.github/workflows/*.yml`,
+`setup/link-commands.sh` (curl bootstrap URL, `REPO_URL`, `REPO_DIR`),
+`scripts/onboard-consumer.sh` (`PIPELINE_REPO`), `commands/README.md`
+(curl bootstrap URL), `docs/CONSUMER-SETUP.md` (the transitional note telling
+consumers which name to use until the rename lands), and
+`.github/actions/dotnet-quality/README.md` (the
+consumer `uses:` example — this action is the repo's second public entry
+point, consumed by `flowhub` and `FlowHub-CAS-AISE`). Those references resolve
+against `github.repository` / GitHub's API, a cloned repo's remote, or a live
+URL fetch at run time, all of which still resolve to `agent-pipeline` until
+Task 4 (the rename itself) lands — flipping them here would fail closed
+(guard), fail outright (checkout), install nothing (curl bootstrap), or send
+consumers to a 404ing action (`dotnet-quality`) on every run between this
+task and Task 4. They flip in Task 4, when `github.repository` and the
+bootstrap URL actually resolve to `agent-workflow`; Task 6 carries only the
+follow-up to drop the now-dead `agent-pipeline` arm of the guard, since the
+checkout defaults already flip in Task 4.
+`shellcheck -x` clean; `just test` (Layer-1 fixtures) green; lint +
+gate-selftest green in CI.
 
 ### Task 3 — `config`'s live references
 
@@ -114,6 +137,35 @@ The local move invalidates the `.worktrees/div` worktree's gitdir pointer —
 the exact orphaning that produced `.worktrees/misc`. Re-point or remove it
 deliberately; do not leave it dangling.
 
+Values that flip at rename time — do not miss any:
+
+- `setup/link-commands.sh`: curl bootstrap URL, `REPO_URL`, `REPO_DIR`
+- `scripts/onboard-consumer.sh`: `PIPELINE_REPO`
+- `commands/README.md`: curl bootstrap URL
+- `.github/actions/dotnet-quality/README.md`: the consumer `uses:` example —
+  this composite action is the repo's second public entry point, consumed by
+  `flowhub` and `FlowHub-CAS-AISE`
+- `scripts/lib/chain-audit-comment.md`: the ADR-003 doc link (posted verbatim
+  into consumer PR comments by the pipeline at runtime — publicly visible)
+- `commands/gh/route.md`: the model-comparison doc link
+- Three `pipeline-repo` checkout defaults in `.github/workflows/`:
+  `agent-implement.yml`, `chain-dispatch.yml`, `claude-implement.yml`
+
+In the **`config`** repo (Task 3 deliberately left all of these on the old name,
+since they resolve today):
+
+- `setup/01-claude-commands.sh`: `AP_REPO_URL`, `AP_REPO_DIR`, and the fallback
+  clone URL in the "link step not found" warning
+- `README.md`: the two repo link URLs
+- `claude/commands/README.md`: the link URL, the Windows copy path, and the
+  `agent-pipeline/commands/` prose reference
+- `claude/commands/update-commands.md`: the link URL, the parenthetical clone
+  path, and the `git -C ~/repos/.../agent-pipeline` command
+
+The ADR-002 self-modification guard keeps BOTH names through this task — it is
+the one value that must not flip here. Dropping the transitional arm is Task 6,
+after consumers are confirmed migrated and a rollback is no longer plausible.
+
 `verify:` `gh repo view freaxnx01/agent-workflow` resolves; old URL redirects;
 `git -C … fetch` works from the moved path; `git worktree list` clean;
 re-run the install → 46 commands, 0 broken.
@@ -136,10 +188,14 @@ nothing outside history docs.
 ### Task 6 — release
 
 Cut `v1.7.0`, move the `v1` tag. Update `CHANGELOG.md` under `[Unreleased]`
-with the rename and a migration note for external readers.
+with the rename and a migration note for external readers. Once Task 5's
+consumers are confirmed migrated, drop the transitional `agent-pipeline` arm
+of the ADR-002 self-mod guard's `$REPO` comparison (the checkout defaults
+already flipped in Task 4).
 
 `verify:` `@v1` resolves under the new name; `git-cliff` output includes the
-migration note.
+migration note; `grep -n "agent-pipeline" .github/workflows/*.yml` returns
+nothing.
 
 ## Rollback
 

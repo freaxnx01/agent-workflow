@@ -1,5 +1,5 @@
 ---
-description: Recommend how to implement an issue — gh:work / gh:assign copilot|claude / gh:implement (+ agent-pipeline model) — by complexity & readiness
+description: Recommend how to implement an issue — gh:work / gh:assign copilot|claude / gh:implement (+ agent-workflow model) — by complexity & readiness
 argument-hint: <issue number>
 ---
 
@@ -55,7 +55,7 @@ Judge the issue on:
   Prefer **copilot** (the reliable trigger here); **claude** only when confirmed
   responsive in this repo.
 - **`/gh:implement`** → applies the `ai-implement` label, which fires the repo's
-  **agent-pipeline** (`claude.yml`) → Claude implements and opens a draft PR.
+  **agent-workflow** (`claude.yml`) → Claude implements and opens a draft PR.
 - **`/gh:work`** → **local, in this session**: brainstorm → plan → worktree →
   subagent-driven. Best when you want to stay in the loop or the work isn't
   cloud-friendly.
@@ -63,13 +63,13 @@ Judge the issue on:
 A rough rule of thumb: **mechanical → Copilot**, **needs real judgement → Claude**,
 **needs your machine or your eyes → local `/gh:work`**, **not ready → enrich first**.
 
-## Step 4b — If the route is the agent-pipeline, also pick the model
+## Step 4b — If the route is the agent-workflow, also pick the model
 
-Only when the chosen route is **`/gh:implement`** (the `claude.yml` agent-pipeline).
+Only when the chosen route is **`/gh:implement`** (the `claude.yml` agent-workflow).
 That pipeline can run either **Claude Code** or **OpenCode → OpenRouter**, selected by
 `agent:*` + `model:*` labels (label beats the repo's `default-model`). Pick from the
 policy below by the **shape** of the work, derived from the OpenCode×OpenRouter model
-comparison (provenance: the living [model-comparison report](https://github.com/freaxnx01/agent-pipeline/blob/main/docs/model-comparison.md) in agent-pipeline `docs/`).
+comparison (provenance: the living [model-comparison report](https://github.com/freaxnx01/agent-workflow/blob/main/docs/model-comparison.md) in agent-workflow `docs/`).
 
 > **OpenCode needs tool-use models.** Never route OpenCode to `model:qwen-coder`
 > (no tool endpoint) or `model:codestral` (emits malformed tool calls → no edits).
@@ -83,7 +83,7 @@ comparison (provenance: the living [model-comparison report](https://github.com/
 | Ambiguous / high-stakes / large refactor | `agent:claude` + `model:sonnet` (or `model:opus` if truly high-stakes) | Reliability and judgement over cost |
 
 Before recommending an OpenCode model, sanity-check the repo can honour it: the pinned
-agent-pipeline ref must include that `model:*` label (set listed in agent-pipeline
+agent-workflow ref must include that `model:*` label (set listed in agent-workflow
 `docs/CONSUMER-SETUP.md`) and `OPENROUTER_API_KEY` must be set. If not, fall back to
 `agent:claude` + `model:sonnet` and say why. Running it means adding the chosen
 `agent:*` + `model:*` **alongside** `ai-implement` in one `gh issue edit`.
@@ -98,13 +98,13 @@ agent-pipeline ref must include that `model:*` label (set listed in agent-pipeli
 Print:
 
 - A one-line verdict: the recommended route + the **exact command** to run. If the route
-  is the agent-pipeline, include the chosen **agent + model** and the label set to apply.
+  is the agent-workflow, include the chosen **agent + model** and the label set to apply.
 - 1–2 sentences of reasoning tied to what you saw in the issue (workflow choice **and**,
   for the pipeline route, the model choice + rough cost).
 - The runner-up route and when it'd be better.
 
 Then ask if I want you to run the recommended command now. Only run it after I confirm.
-For the agent-pipeline route, "run it" means applying the `agent:*` + `model:*` +
+For the agent-workflow route, "run it" means applying the `agent:*` + `model:*` +
 `ai-implement` labels (the readiness gate from `/gh:implement` still applies first).
 
 ## Tools

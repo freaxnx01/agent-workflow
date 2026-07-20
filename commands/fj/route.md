@@ -49,7 +49,7 @@ verification, hardware, or back-and-forth design iteration).
 | Ready · anything implementable | **`/fj:work <N>`** (local, in-session) | brainstorm → plan → worktree → subagent-driven; you stay in the loop |
 
 > **No cloud coding-agent route on Forgejo (yet).** GitHub's `/gh:assign`
-> (Copilot/Claude bots) and `/gh:implement` (the `claude.yml` agent-pipeline) have
+> (Copilot/Claude bots) and `/gh:implement` (the `claude.yml` agent-workflow) have
 > **no native Forgejo equivalent**. The plan is to add a self-hosted **Forgejo
 > Actions** pipeline (label → runner runs Claude Code → opens a PR) as a future
 > tier; until that runner + `ANTHROPIC_API_KEY` secret exist, **every implementable

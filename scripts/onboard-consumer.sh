@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# onboard-consumer.sh — Bring a consumer repo onto the agent-pipeline in one
+# onboard-consumer.sh — Bring a consumer repo onto the agent-workflow in one
 # command. Automates the §0–§4 checklist in docs/CONSUMER-SETUP.md:
 #
 #   1. Pre-flight   — resolve repo visibility + default branch; refuse to wire
@@ -55,7 +55,7 @@
 #       --no-stub               Skip the PR; do secret + labels + settings only.
 #       --no-settings           Skip repo-settings changes.
 #       --branch <name>         Branch for the stub PR.
-#                               Default 'chore/onboard-agent-pipeline'.
+#                               Default 'chore/onboard-agent-workflow'.
 #       --dry-run               Print what would happen; make no changes.
 #
 # SECURITY — "the token should be usable only by me, not my colleagues":
@@ -94,9 +94,11 @@ AUTO_REVIEW=false
 CHAIN=false
 NO_STUB=false
 NO_SETTINGS=false
-BRANCH='chore/onboard-agent-pipeline'
+BRANCH='chore/onboard-agent-workflow'
 DRY_RUN=false
 
+# Transitional: agent-workflow doesn't exist on GitHub until the rename lands
+# (plan Task 4). Flip to freaxnx01/agent-workflow once the rename is verified.
 PIPELINE_REPO='freaxnx01/agent-pipeline'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -372,12 +374,12 @@ else
   info "Committing consumer stub on branch $BRANCH"
   ensure_branch
   build_agent_yml | put_file ".github/workflows/agent.yml" \
-    "ci(agent-pipeline): add consumer stub"
+    "ci(agent-workflow): add consumer stub"
   if [[ "$CHAIN" == true ]]; then
     build_chain_yml | put_file ".github/workflows/chain-dispatch.yml" \
-      "ci(agent-pipeline): add chain-dispatch stub"
+      "ci(agent-workflow): add chain-dispatch stub"
   fi
-  open_pr "ci: onboard onto agent-pipeline"
+  open_pr "ci: onboard onto agent-workflow"
 fi
 
 info "Done. Next: review the PR, merge it, then label a smoke-test issue 'ai-implement'."

@@ -1,6 +1,6 @@
 # Consolidate the personal command surface into one repo
 
-**Status:** Draft — four open decisions block acceptance (§6)
+**Status:** Draft — three open decisions block acceptance (§6)
 **Date:** 2026-07-20
 **Relates to:** ADR-005 (operator console lives here), PR #117 (`--copy` default),
 PR #118 + config#42 (`/process-feedback` relocated), PR #119 (lint debt cleared)
@@ -12,7 +12,7 @@ does not describe either side.
 
 | Repo | Count | Install | Charter |
 |---|---|---|---|
-| `agent-pipeline` — `commands/` | 35 | copied (PR #117) | issue-workflow console |
+| `agent-workflow` — `commands/` | 35 | copied (PR #117) | issue-workflow console |
 | `config` — `claude/commands/` | 11 | symlinked | "Claude Code configuration **plus other personal config**" |
 
 Three symptoms:
@@ -78,14 +78,14 @@ their other halves (a hook, a partial) live in `config` and are installed by its
 
 ## Design
 
-### Option A — consolidate all 46 into `agent-pipeline` (proposed)
+### Option A — consolidate all 46 into `agent-workflow` (proposed)
 
 Move the 11 into `commands/`. `config` retains partials, hooks, `oh-my-posh/`,
 `windows/`, and the bootstrap. `setup/01-claude-commands.sh` keeps its clone +
 delegate step and stops installing commands of its own.
 
 The `/handoff` hook moves too — a command and its hook must not be split across
-repos. That means `agent-pipeline` grows a hooks surface, and `config`'s
+repos. That means `agent-workflow` grows a hooks surface, and `config`'s
 `setup/02-claude-hooks.sh` delegates the same way `01` already does.
 
 - **For:** one home, one lookup, no recurring placement debate; the misplacement
@@ -118,7 +118,7 @@ only discoverability.
 the blocking objection — but `config` should shed `oh-my-posh/` and `windows/`
 into `dotfiles` either way, since that content is unrelated to both candidates
 and its presence is what made `config` incoherent to begin with. Doing B's drain
-first makes A a clean two-repo end state (`agent-pipeline` = all workflow +
+first makes A a clean two-repo end state (`agent-workflow` = all workflow +
 commands + hooks; `dotfiles` = machine setup + bootstrap) rather than leaving a
 `config` shim behind.
 
@@ -136,7 +136,7 @@ remains of `config`.
 - **Hook migration is the risky step**, not the command moves. `handoff-resume.sh`
   is wired into `settings.json` by `setup/02-claude-hooks.sh` and needs `jq` at
   runtime. A half-migrated state breaks `SessionStart(clear)` silently.
-- **Changelog noise.** `agent-pipeline` is SemVer-tagged with a moving `v1` that
+- **Changelog noise.** `agent-workflow` is SemVer-tagged with a moving `v1` that
   consumers pin. Command edits would churn a consumer-facing changelog. Mitigate:
   scope `cliff.toml` to exclude `commands/` and `setup/`, or use a `chore(console)`
   type filtered from release notes.
@@ -167,6 +167,9 @@ These block acceptance:
 1. **Name.** Does `agent-pipeline` become the home for non-pipeline commands
    under its current name, or is a rename part of this work? Renaming has a
    consumer-visible cost (§ blast radius) and must be settled first.
+   **Resolved by [ADR-006](../../DECISIONS.md#adr-006--rename-agent-pipeline-to-agent-workflow-2026-07-20):**
+   the repo is renamed to `agent-workflow`, settling the naming question ahead
+   of this consolidation.
 2. **Hook ownership.** Confirm the `SessionStart` hook moves with `/handoff`.
    If hooks stay in `config`, Option A is off the table — splitting a command
    from its hook is worse than today's split.

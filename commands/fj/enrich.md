@@ -85,7 +85,7 @@ The new body has:
 Print the issue URL, the spec and plan paths, and: *"Issue is ready — run
 `/fj:work $ARGUMENTS` to implement it locally."*
 
-> When the self-hosted **Forgejo Actions** agent-pipeline exists (future tier), this
+> When the self-hosted **Forgejo Actions** agent-workflow exists (future tier), this
 > final pointer becomes "apply the `ai-implement` label / run `/fj:implement`" to
 > trigger the runner instead — update this step then.
 

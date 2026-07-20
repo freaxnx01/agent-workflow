@@ -73,7 +73,7 @@ Then dispatch to the matching phase below.
    the issue URL, the spec and plan paths, and: *"Issue is ready — run
    `/fj:work <issue>` to implement it locally."*
 
-> When the self-hosted **Forgejo Actions** agent-pipeline exists (future tier), the
+> When the self-hosted **Forgejo Actions** agent-workflow exists (future tier), the
 > final pointer becomes "apply `ai-implement` / run `/fj:implement`" instead.
 
 ## Between phases (handoff protocol)

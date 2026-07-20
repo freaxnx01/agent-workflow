@@ -1,6 +1,6 @@
 # Consumer Setup
 
-How to wire `agent-pipeline` into a consumer repo. Three flows:
+How to wire `agent-workflow` into a consumer repo. Three flows:
 
 1. **Minimum stub** — labeled-issue → draft PR (no auto-merge).
 2. **Auto-review + auto-merge** — labeled-issue → draft PR → agent review → squash-merge, inside ADR-002's safety envelope.
@@ -88,7 +88,7 @@ after several clean draft-only runs, enable auto-merge per §2 — including the
 ### Gotchas (learned in practice)
 
 1. **`pipeline-repo` / `pipeline-ref` MUST be overridden** when the pipeline repo
-   isn't `freaxnx01/agent-pipeline`. They default to that name, the cross-repo
+   isn't `freaxnx01/agent-workflow`. They default to that name, the cross-repo
    `scripts/` checkout uses them, and `@v1` in `uses:` does **not** propagate to
    that checkout (GitHub's `workflow_ref` points at the caller). Mismatch breaks
    the run at the scripts step.
@@ -114,6 +114,10 @@ after several clean draft-only runs, enable auto-merge per §2 — including the
 
 ## 1. Minimum stub
 
+> **Rename in progress:** the `agent-workflow` references below are the
+> post-rename end state. Until the rename lands, this repo is still
+> `freaxnx01/agent-pipeline` — use that name in `uses:` until then.
+>
 > **Migrating from `claude-implement.yml`?** The reusable workflow was renamed
 > `claude-implement.yml` → `agent-implement.yml`. The old path is kept as a thin
 > forwarding shim (same inputs/secrets/outputs) so existing `@v1` callers keep
@@ -146,7 +150,7 @@ permissions:            # the reusable jobs need these; a caller can't grant a
 jobs:
   claude:
     if: github.event.label.name == 'ai-implement'
-    uses: freaxnx01/agent-pipeline/.github/workflows/agent-implement.yml@v1
+    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     with:
@@ -203,7 +207,7 @@ App* (triggers required checks; stable bot login). To enable:
    ```yaml
    jobs:
      claude:
-       uses: freaxnx01/agent-pipeline/.github/workflows/agent-implement.yml@v1
+       uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
        with:
          issue-number: ${{ github.event.issue.number }}
          auto-review: true
@@ -245,7 +249,7 @@ Caveats:
 # .github/workflows/agent.yml
 jobs:
   claude:
-    uses: freaxnx01/agent-pipeline/.github/workflows/agent-implement.yml@v1
+    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
     with:
       issue-number: ${{ github.event.issue.number }}
       auto-review: true        # per-repo opt-in (ADR-002 gate 3)
@@ -317,7 +321,7 @@ Choose the agent at the call site or per-issue:
 # .github/workflows/agent.yml
 jobs:
   claude:
-    uses: freaxnx01/agent-pipeline/.github/workflows/agent-implement.yml@v1
+    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
     with:
       issue-number: ${{ github.event.issue.number }}
       agent: opencode             # ← workflow-input default for this repo
@@ -395,7 +399,7 @@ jobs:
     if: |
       github.event.pull_request.merged == true
       && contains(github.event.pull_request.labels.*.name, 'ai-implement')
-    uses: freaxnx01/agent-pipeline/.github/workflows/chain-dispatch.yml@v1
+    uses: freaxnx01/agent-workflow/.github/workflows/chain-dispatch.yml@v1
     with:
       closed-pr-number: ${{ github.event.pull_request.number }}
       # `target-workflow` defaults to agent.yml — override if your
@@ -442,8 +446,8 @@ Check the workflow run for the `auto_review` job. It only triggers when:
 - the issue carries `ai-auto-review`
 - the `implement` job's `auto-review-enabled` output is `true`
 
-If all four hold and the job still didn't run, the issue is in workflow plumbing — file an issue against `agent-pipeline`.
+If all four hold and the job still didn't run, the issue is in workflow plumbing — file an issue against `agent-workflow`.
 
 ### Self-modification guard
 
-The `freaxnx01/agent-pipeline` repo itself never auto-merges, regardless of input or label state — ADR-002 §"Self-modification / dogfooding". Hardcoded; no way to disable. If you forked `agent-pipeline`, update the guard's hardcoded repo string before enabling `auto-review: true` on the fork.
+The `freaxnx01/agent-workflow` repo itself never auto-merges, regardless of input or label state — ADR-002 §"Self-modification / dogfooding". Hardcoded; no way to disable. If you forked `agent-workflow`, update the guard's hardcoded repo string before enabling `auto-review: true` on the fork.

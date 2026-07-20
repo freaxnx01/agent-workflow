@@ -726,3 +726,50 @@ foreign.
   while actively editing commands. Trade-off accepted: `git pull` here no longer
   updates the installed commands — re-run the link step. `config`'s command surface
   was never exposed to this — that repo is effectively always on `main`.
+
+---
+
+## ADR-006 — Rename `agent-pipeline` to `agent-workflow` (2026-07-20)
+
+### Context
+
+ADR-005 reframed this repo as "CI + operator console" but kept the name
+`agent-pipeline`. `docs/superpowers/specs/2026-07-20-consolidate-command-surface-design.md`
+proposes moving the remaining 11 commands here from `freaxnx01/config` —
+`/wt:status`, `/wt:finish`, `/handoff`, `/pickup`, `/wrap-up`, `/loose-ends`
+and friends, which are session-hygiene and git-worktree helpers, in no sense
+a "pipeline." Landing them here would make `agent-pipeline` describe a
+shrinking fraction of its own contents — the same naming failure that spec
+diagnoses in `config` ("Claude Code configuration plus other personal
+config"). This ADR answers that spec's open decision §1 and supersedes
+ADR-005's naming consequence.
+
+### Decision
+
+Rename `freaxnx01/agent-pipeline` to `freaxnx01/agent-workflow`.
+`agent-workflow` covers both halves without strain: the CI that implements
+labeled issues, and the operator console that feeds it.
+
+### Consequences
+
++ GitHub's rename redirect keeps consumer CI working, but it is
+  **transitional only** — it dies silently the moment any repo claims the
+  name `freaxnx01/agent-pipeline`. Every consumer must still be updated
+  explicitly; the redirect buys time, not correctness.
++ Six consumer repos depend on this one across 10 workflow files: flowhub,
+  FlowHub-CAS-AISE, quotes, quicktask-vikunja, bridge,
+  agent-action-sandbox.
++ `.github/actions/dotnet-quality` is a **second public entry point** — a
+  composite action consumed by flowhub and FlowHub-CAS-AISE — that
+  `docs/CONSUMER-SETUP.md` has never documented. The rename must cover it
+  too, not just the reusable workflows.
++ Three consumers pin `@main` (flowhub, FlowHub-CAS-AISE,
+  agent-action-sandbox), contrary to this repo's own CI stack overlay; they
+  follow whatever lands on the branch and are the most exposed to the
+  rename.
++ Per-file git history is unaffected by a GitHub rename — unlike the
+  copy + `git rm` approach ADR-005 §4 used for the console move, no history
+  graft is needed here.
++ Renaming the repo moves the local clone directory, which invalidates the
+  gitdir pointer of any worktree under it — the mechanism that orphaned
+  `.worktrees/misc`, removed under this exact failure on 2026-07-20.

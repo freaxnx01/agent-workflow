@@ -5,7 +5,7 @@ name: Claude Implement (reusable, DEPRECATED)
 # The reusable workflow was renamed `claude-implement.yml` → `agent-implement.yml`
 # as part of the claude→agent rename. This file is kept only so consumers still
 # pinning
-#   uses: freaxnx01/agent-pipeline/.github/workflows/claude-implement.yml@v1
+#   uses: freaxnx01/agent-workflow/.github/workflows/claude-implement.yml@v1
 # keep loading instead of hard-failing with "workflow not found". It forwards
 # every input, secret, and output verbatim to `agent-implement.yml` and adds no
 # behaviour of its own (`uses: ./...` resolves against this repo+ref, so an
@@ -39,6 +39,9 @@ on:
         default: 30
       pipeline-repo:
         type: string
+        # Transitional: freaxnx01/agent-workflow doesn't exist on GitHub until
+        # the rename lands (ADR-006) — actions/checkout would fail against it.
+        # Flip to freaxnx01/agent-workflow once the rename is verified.
         default: freaxnx01/agent-pipeline
       pipeline-ref:
         type: string
