@@ -114,6 +114,10 @@ after several clean draft-only runs, enable auto-merge per §2 — including the
 
 ## 1. Minimum stub
 
+> **Rename in progress:** the `agent-workflow` references below are the
+> post-rename end state. Until the rename lands, this repo is still
+> `freaxnx01/agent-pipeline` — use that name in `uses:` until then.
+>
 > **Migrating from `claude-implement.yml`?** The reusable workflow was renamed
 > `claude-implement.yml` → `agent-implement.yml`. The old path is kept as a thin
 > forwarding shim (same inputs/secrets/outputs) so existing `@v1` callers keep

@@ -167,7 +167,7 @@ These block acceptance:
 1. **Name.** Does `agent-pipeline` become the home for non-pipeline commands
    under its current name, or is a rename part of this work? Renaming has a
    consumer-visible cost (§ blast radius) and must be settled first.
-   **Resolved by [ADR-006](../../DECISIONS.md#adr-006--rename-agent-pipeline-to-agent-workflow):**
+   **Resolved by [ADR-006](../../DECISIONS.md#adr-006--rename-agent-pipeline-to-agent-workflow-2026-07-20):**
    the repo is renamed to `agent-workflow`, settling the naming question ahead
    of this consolidation.
 2. **Hook ownership.** Confirm the `SessionStart` hook moves with `/handoff`.

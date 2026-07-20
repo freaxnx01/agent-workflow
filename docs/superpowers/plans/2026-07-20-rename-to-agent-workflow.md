@@ -78,9 +78,10 @@ updated explicitly; per-file history unaffected).
 ### Task 2 — internal live references
 
 Update the 28 files here **except** `docs/superpowers/**` and `CHANGELOG.md`
-entries describing past releases. Includes `setup/link-commands.sh`
-(`REPO_URL`, `REPO_DIR`), `scripts/onboard-consumer.sh`, `justfile`,
-`docs/DESIGN.md`, `docs/CONSUMER-SETUP.md`, `commands/**`, `commands/README.md`.
+entries describing past releases. Includes `setup/link-commands.sh` (prose and
+comments only — its curl bootstrap URL, `REPO_URL`, and `REPO_DIR` are Task
+4's), `scripts/onboard-consumer.sh`, `justfile`, `docs/DESIGN.md`,
+`docs/CONSUMER-SETUP.md`, `commands/**`, `commands/README.md`.
 
 Also update the consolidation spec per the carve-out above: its target repo
 becomes `agent-workflow`, and open decision §1 is marked resolved by ADR-006.
@@ -90,14 +91,19 @@ returns only: historical prose in `docs/DESIGN.md` (the April 2026
 naming-brainstorm bullets) and `docs/ai-notes/**` (dated session notes, quoted
 commit/tag messages — text that narrates the *past*, not this repo's current
 or future identity), plus the deliberately-retained transitional
-`agent-pipeline` arm of the ADR-002 self-mod guard's `$REPO` comparison and
-the `pipeline-repo` checkout default in `.github/workflows/*.yml`. Those two
-transitional references resolve against `github.repository` / GitHub's API at
-run time, which still reports `agent-pipeline` until Task 4 (the rename
-itself) lands — flipping them here would fail closed (guard) or fail outright
-(checkout) on every run between this task and Task 4. They flip when
-`github.repository` actually reports `agent-workflow`, not in Task 2; Task 6
-carries the follow-up to drop the now-dead `agent-pipeline` arm/default.
+`agent-pipeline` arm of the ADR-002 self-mod guard's `$REPO` comparison, the
+`pipeline-repo` checkout default in `.github/workflows/*.yml`,
+`setup/link-commands.sh` (curl bootstrap URL, `REPO_URL`, `REPO_DIR`),
+`scripts/onboard-consumer.sh` (`PIPELINE_REPO`), and `commands/README.md`
+(curl bootstrap URL). Those references resolve against `github.repository` /
+GitHub's API, a cloned repo's remote, or a live URL fetch at run time, all of
+which still resolve to `agent-pipeline` until Task 4 (the rename itself)
+lands — flipping them here would fail closed (guard), fail outright
+(checkout), or install nothing (curl bootstrap) on every run between this
+task and Task 4. They flip in Task 4, when `github.repository` and the
+bootstrap URL actually resolve to `agent-workflow`; Task 6 carries only the
+follow-up to drop the now-dead `agent-pipeline` arm of the guard, since the
+checkout defaults already flip in Task 4.
 `shellcheck -x` clean; `just test` (Layer-1 fixtures) green; lint +
 gate-selftest green in CI.
 
@@ -130,6 +136,7 @@ Values that flip at rename time — do not miss any:
 
 - `setup/link-commands.sh`: curl bootstrap URL, `REPO_URL`, `REPO_DIR`
 - `scripts/onboard-consumer.sh`: `PIPELINE_REPO`
+- `commands/README.md`: curl bootstrap URL
 - Three `pipeline-repo` checkout defaults in `.github/workflows/`:
   `agent-implement.yml`, `chain-dispatch.yml`, `claude-implement.yml`
 

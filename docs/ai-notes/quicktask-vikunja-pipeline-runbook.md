@@ -94,7 +94,7 @@ jobs:
       default-model: claude-opus-4-7
       # ── REQUIRED for agent-workflow consumers ──
       # The reusable workflow defaults pipeline-repo/ref to
-      # freaxnx01/agent-workflow@main (the project's original name). Override
+      # freaxnx01/agent-pipeline@main (the project's original name). Override
       # both so the shared-scripts cross-repo checkout resolves to THIS pipeline.
       pipeline-repo: freaxnx01/agent-workflow
       pipeline-ref: v1
