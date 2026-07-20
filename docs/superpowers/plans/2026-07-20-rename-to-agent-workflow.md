@@ -86,8 +86,20 @@ Also update the consolidation spec per the carve-out above: its target repo
 becomes `agent-workflow`, and open decision §1 is marked resolved by ADR-006.
 
 `verify:` `rg 'agent-pipeline' --glob '!docs/superpowers/**' --glob '!CHANGELOG.md'`
-returns only intentional historical mentions; `shellcheck -x` clean;
-`just test` (Layer-1 fixtures) green; lint + gate-selftest green in CI.
+returns only: historical prose in `docs/DESIGN.md` (the April 2026
+naming-brainstorm bullets) and `docs/ai-notes/**` (dated session notes, quoted
+commit/tag messages — text that narrates the *past*, not this repo's current
+or future identity), plus the deliberately-retained transitional
+`agent-pipeline` arm of the ADR-002 self-mod guard's `$REPO` comparison and
+the `pipeline-repo` checkout default in `.github/workflows/*.yml`. Those two
+transitional references resolve against `github.repository` / GitHub's API at
+run time, which still reports `agent-pipeline` until Task 4 (the rename
+itself) lands — flipping them here would fail closed (guard) or fail outright
+(checkout) on every run between this task and Task 4. They flip when
+`github.repository` actually reports `agent-workflow`, not in Task 2; Task 6
+carries the follow-up to drop the now-dead `agent-pipeline` arm/default.
+`shellcheck -x` clean; `just test` (Layer-1 fixtures) green; lint +
+gate-selftest green in CI.
 
 ### Task 3 — `config`'s live references
 
@@ -136,10 +148,15 @@ nothing outside history docs.
 ### Task 6 — release
 
 Cut `v1.7.0`, move the `v1` tag. Update `CHANGELOG.md` under `[Unreleased]`
-with the rename and a migration note for external readers.
+with the rename and a migration note for external readers. Once Task 5's
+consumers are confirmed migrated, drop the transitional `agent-pipeline` arm
+of the ADR-002 self-mod guard's `$REPO` comparison and flip the
+`pipeline-repo` checkout default back to `agent-workflow` in
+`.github/workflows/*.yml` (see Task 2's `verify:` note).
 
 `verify:` `@v1` resolves under the new name; `git-cliff` output includes the
-migration note.
+migration note; `grep -n "agent-pipeline" .github/workflows/*.yml` returns
+nothing.
 
 ## Rollback
 
