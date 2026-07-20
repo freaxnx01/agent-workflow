@@ -764,13 +764,12 @@ labeled issues, and the operator console that feeds it.
   `docs/CONSUMER-SETUP.md` has never documented. The rename must cover it
   too, not just the reusable workflows.
 + Three consumers pin `@main` (flowhub, FlowHub-CAS-AISE,
-  agent-action-sandbox), which this repo's own CI stack overlay forbids.
-  They are the most exposed to the redirect's silent failure mode and are
-  updated first.
+  agent-action-sandbox), contrary to this repo's own CI stack overlay; they
+  follow whatever lands on the branch and are the most exposed to the
+  rename.
 + Per-file git history is unaffected by a GitHub rename — unlike the
   copy + `git rm` approach ADR-005 §4 used for the console move, no history
   graft is needed here.
-+ The local clone directory also moves, which invalidates any git
-  worktree's gitdir pointer. This is the exact mechanism that orphaned a
-  `.worktrees/misc` directory found in this repo; every existing worktree
-  must be recreated after the rename, not just relinked.
++ Renaming the repo moves the local clone directory, which invalidates the
+  gitdir pointer of any worktree under it — the mechanism that orphaned
+  `.worktrees/misc`, removed under this exact failure on 2026-07-20.
