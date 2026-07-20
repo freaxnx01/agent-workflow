@@ -367,10 +367,10 @@ These were considered and explicitly deferred:
 ## Open questions for the next session
 
 - Exact Ansible role layout for the runner LXC (depends on existing homelab role conventions)
-- Whether `agent-workflow` should be public from day 1 or flip later
-- Naming: `agent-workflow` vs `ci-claude` vs `claude-actions` — pick one
+- Whether `agent-pipeline` should be public from day 1 or flip later
+- Naming: `agent-pipeline` vs `ci-claude` vs `claude-actions` — pick one
 - Where the `delegate-to-gh` skill lives long-term: in `dotnet-ai-instructions`
-  (alongside other personal skills) or in `agent-workflow`? Probably the former.
+  (alongside other personal skills) or in `agent-pipeline`? Probably the former.
 
 ## Critical constraints — non-negotiable
 
