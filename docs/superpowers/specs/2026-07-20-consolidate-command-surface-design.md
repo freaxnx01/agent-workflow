@@ -1,8 +1,9 @@
 # Consolidate the personal command surface into one repo
 
-**Status:** Draft — three open decisions block acceptance (§6)
+**Status:** Draft — four open decisions block acceptance (§6)
 **Date:** 2026-07-20
-**Relates to:** ADR-005 (operator console lives here), PR #117 (`--copy` default)
+**Relates to:** ADR-005 (operator console lives here), PR #117 (`--copy` default),
+PR #118 + config#42 (`/process-feedback` relocated), PR #119 (lint debt cleared)
 
 ## Problem
 
@@ -11,8 +12,8 @@ does not describe either side.
 
 | Repo | Count | Install | Charter |
 |---|---|---|---|
-| `agent-pipeline` — `commands/` | 34 | copied (PR #117) | issue-workflow console |
-| `config` — `claude/commands/` | 12 | symlinked | "Claude Code configuration **plus other personal config**" |
+| `agent-pipeline` — `commands/` | 35 | copied (PR #117) | issue-workflow console |
+| `config` — `claude/commands/` | 11 | symlinked | "Claude Code configuration **plus other personal config**" |
 
 Three symptoms:
 
@@ -21,10 +22,12 @@ Three symptoms:
    describes only the second half. Slash commands are not configuration at all —
    they are tooling that happens to install by copying files, which is what made
    `config` look like a plausible home in the first place.
-2. **The mis-file is ongoing, not historical.** `/process-feedback` landed in
+2. **The misplacement is ongoing, not historical.** `/process-feedback` landed in
    `config` on 2026-07-16 — six commits after the batch that moved the console
    *out*. It triages notes into tracker Issues and `TODO.md`: console work by any
    reading. `config` is still the default gravity well for anything Claude-shaped.
+   (Relocated on 2026-07-20 by #118 + config#42, which is why the counts above read
+   35/11 rather than 34/12.)
 3. **Two places to look.** Every "where does this command live?" question costs a
    lookup, and every new command re-opens the placement debate.
 
@@ -59,7 +62,7 @@ Both are real but neither is structural.
   different mechanism from `~/.claude/commands/` on your machines. Rejected.
 - Renaming any repo. Noted as a consequence (§5), not proposed here.
 
-## The 12 in question
+## The 11 in question
 
 | Group | Commands | Assessment |
 |---|---|---|
@@ -68,7 +71,6 @@ Both are real but neither is structural.
 | Session hygiene | `/loose-ends` `/clear-check` `/todo` `/wrap-up` | Claude Code behaviour, forge-agnostic |
 | Meta | `/commands` `/update-commands` | manage the install itself |
 | Superpowers | `/subagent-driven` | pairs with a `config` CLAUDE.md partial |
-| Feedback | `/process-feedback` | **mis-filed**: console work, belongs here regardless of this spec |
 
 Only `/handoff`+`/pickup` and `/subagent-driven` need more than a file move —
 their other halves (a hook, a partial) live in `config` and are installed by its
@@ -78,7 +80,7 @@ their other halves (a hook, a partial) live in `config` and are installed by its
 
 ### Option A — consolidate all 46 into `agent-pipeline` (proposed)
 
-Move the 12 into `commands/`. `config` retains partials, hooks, `oh-my-posh/`,
+Move the 11 into `commands/`. `config` retains partials, hooks, `oh-my-posh/`,
 `windows/`, and the bootstrap. `setup/01-claude-commands.sh` keeps its clone +
 delegate step and stops installing commands of its own.
 
@@ -86,7 +88,7 @@ The `/handoff` hook moves too — a command and its hook must not be split acros
 repos. That means `agent-pipeline` grows a hooks surface, and `config`'s
 `setup/02-claude-hooks.sh` delegates the same way `01` already does.
 
-- **For:** one home, one lookup, no recurring placement debate; the mis-file
+- **For:** one home, one lookup, no recurring placement debate; the misplacement
   problem cannot recur.
 - **Against:** `agent-pipeline`'s name then covers worktree helpers and session
   hygiene, which are not a pipeline. Trades `config`'s naming lie for a new one.
@@ -120,7 +122,7 @@ first makes A a clean two-repo end state (`agent-pipeline` = all workflow +
 commands + hooks; `dotfiles` = machine setup + bootstrap) rather than leaving a
 `config` shim behind.
 
-Sequence: drain `dotfiles` → move the 12 + the hook → collapse or rename what
+Sequence: drain `dotfiles` → move the 11 + the hook → collapse or rename what
 remains of `config`.
 
 ## Blast radius / risks
@@ -181,7 +183,7 @@ These block acceptance:
    single `/process-feedback` file re-broke the gate on the very next PR (#118),
    caught only because the branch was rebased onto a now-green `main`.
 
-   Measured cost for the remaining 12, linted against this repo's
+   Measured cost for the remaining 11, linted against this repo's
    `.markdownlint-cli2.yaml` — **10 errors in 3 files**:
 
    | File | Errors | Rules |
@@ -190,7 +192,7 @@ These block acceptance:
    | `wt/status.md` | 1 | MD040 |
    | `commands.md` | 1 | MD032 |
 
-   Nine of the twelve command files are already clean, and `README.md` is
+   Nine of the eleven command files are already clean, and `README.md` is
    rewritten by the move anyway — so the real carry-over is **2 errors**.
    Small, but it must be fixed *in the moving PR*, not after, or `main` goes red
    again and every unrelated PR is blocked behind it.
@@ -201,7 +203,7 @@ These block acceptance:
    survives this consolidation as a going concern, which under Option A it
    largely does not.
 
-## Immediate, decision-independent
+## Done
 
-`/process-feedback` → `commands/`. It is console work, four days old, and
-correct under every option above.
+`/process-feedback` → `commands/` — landed 2026-07-20 via #118 + config#42. It was
+console work, four days old, and correct under every option above.
