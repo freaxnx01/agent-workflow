@@ -714,3 +714,15 @@ foreign.
   bootstrap clones this repo idempotently and surfaces (not swallows) clone failure.
 + Building the Forgejo Actions CI side later has a natural home; the `fj:*` console
   is already here waiting.
++ **Hazard — the console is coupled to this repo's checked-out branch.** The symlinks
+  point into the *working tree* (`commands/…`), not at a fixed revision, so the
+  user-level console silently becomes whatever the agent-pipeline checkout currently
+  has: editing a command on a feature branch changes it globally, and checking out any
+  branch that predates this ADR makes all 34 commands **dangling symlinks in every
+  repo**. Observed on 2026-07-20: a checkout parked on a pre-move feature branch left
+  33 broken links until `main` was restored and the link step re-run. **Resolved the
+  same day: `setup/link-commands.sh` now defaults to `--copy`**, so the console is
+  pinned at install time and survives any checkout; `--link` opts back into symlinks
+  while actively editing commands. Trade-off accepted: `git pull` here no longer
+  updates the installed commands — re-run the link step. `config`'s command surface
+  was never exposed to this — that repo is effectively always on `main`.
