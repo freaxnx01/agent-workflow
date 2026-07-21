@@ -3,3 +3,10 @@
 # do not "correct" it to "unparsable".
 [default.extend-words]
 unparseable = "unparseable"
+
+[default]
+# Git SHAs in docs are hex, not prose: `ba94ff4` tripped "ba → by/be" when the
+# merge commits for #132/#46 were recorded in docs/TODO.md. Scoped to
+# backtick-wrapped hex so it cannot mask a real typo in ordinary text — an
+# allowlist entry per SHA would grow without bound.
+extend-ignore-re = ["`[0-9a-f]{7,40}`"]
