@@ -21,14 +21,13 @@
 #   ~/repos/github/freaxnx01/public/agent-workflow/setup/link-commands.sh [--link] [--no-sync]
 #
 # Usage (new machine, nothing cloned yet — single-line bootstrap):
-#   curl -fsSL https://raw.githubusercontent.com/freaxnx01/agent-pipeline/main/setup/link-commands.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/freaxnx01/agent-workflow/main/setup/link-commands.sh | bash
 
 set -euo pipefail
 
 # Transitional: agent-workflow doesn't exist on GitHub / locally until the
-# rename lands (plan Task 4). Flip these three to agent-workflow then.
-REPO_URL="https://github.com/freaxnx01/agent-pipeline.git"
-REPO_DIR="$HOME/repos/github/freaxnx01/public/agent-pipeline"
+REPO_URL="https://github.com/freaxnx01/agent-workflow.git"
+REPO_DIR="$HOME/repos/github/freaxnx01/public/agent-workflow"
 SRC_DIR="$REPO_DIR/commands"
 DEST_DIR="$HOME/.claude/commands"
 

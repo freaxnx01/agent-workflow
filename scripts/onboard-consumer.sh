@@ -97,9 +97,8 @@ NO_SETTINGS=false
 BRANCH='chore/onboard-agent-workflow'
 DRY_RUN=false
 
-# Transitional: agent-workflow doesn't exist on GitHub until the rename lands
 # (plan Task 4). Flip to freaxnx01/agent-workflow once the rename is verified.
-PIPELINE_REPO='freaxnx01/agent-pipeline'
+PIPELINE_REPO='freaxnx01/agent-workflow'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---- helpers ---------------------------------------------------------------

@@ -38,7 +38,7 @@ on:
         # Transitional: freaxnx01/agent-workflow doesn't exist on GitHub until
         # the rename lands (ADR-006) — actions/checkout would fail against it.
         # Flip to freaxnx01/agent-workflow once the rename is verified.
-        default: freaxnx01/agent-pipeline
+        default: freaxnx01/agent-workflow
       pipeline-ref:
         description: |
           Ref of `pipeline-repo` to check out for shared scripts. Defaults

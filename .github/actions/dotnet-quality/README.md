@@ -67,7 +67,7 @@ jobs:
       - uses: actions/setup-dotnet@9a946fdbd5fb07b82b2f5a4466058b876ab72bb2  # v5.3.0
         with:
           dotnet-version: 10.0.x
-      - uses: freaxnx01/agent-pipeline/.github/actions/dotnet-quality@v1
+      - uses: freaxnx01/agent-workflow/.github/actions/dotnet-quality@v1
         with:
           solution: MyApp.sln
           test-project: tests/MyApp.Tests/MyApp.Tests.csproj
