@@ -1733,6 +1733,92 @@ assert_contains "$out" 'recovered=false'   "  → not counted as recovered (it p
 ec="$(run_capture_ec env REPO=o/r IS_ERROR=false bash "$VERIFY")"
 assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 
+# --- setup/link-partials.sh -------------------------------------------------
+
+section "setup/link-partials.sh"
+
+LINK_PARTIALS="$ROOT/setup/link-partials.sh"
+
+# Fresh machine: empty HOME -> block created, all three partials imported.
+lp_home1="$(mktemp -d)"
+env HOME="$lp_home1" bash "$LINK_PARTIALS" --no-sync >/dev/null 2>&1
+lp_md1="$(cat "$lp_home1/.claude/CLAUDE.md")"
+assert_contains "$lp_md1" \
+  "<!-- BEGIN provisioned:claude-partials (managed by setup/link-partials.sh) -->" \
+  "fresh HOME -> managed block created"
+assert_contains "$lp_md1" \
+  "@~/repos/github/freaxnx01/public/agent-workflow/partials/task-checklist.md" \
+  "fresh HOME -> task-checklist imported"
+assert_contains "$lp_md1" \
+  "@~/repos/github/freaxnx01/public/agent-workflow/partials/skill-authoring.md" \
+  "fresh HOME -> skill-authoring imported"
+assert_contains "$lp_md1" \
+  "@~/repos/github/freaxnx01/public/agent-workflow/partials/subagent-driven-default.md" \
+  "fresh HOME -> subagent-driven-default imported"
+assert_not_contains "$lp_md1" "partials/README.md" \
+  "fresh HOME -> README.md is not imported"
+
+# Idempotency: two consecutive runs leave CLAUDE.md byte-identical.
+cp "$lp_home1/.claude/CLAUDE.md" "$lp_home1/snapshot"
+env HOME="$lp_home1" bash "$LINK_PARTIALS" --no-sync >/dev/null 2>&1
+if diff -q "$lp_home1/snapshot" "$lp_home1/.claude/CLAUDE.md" >/dev/null 2>&1; then
+  pass "re-run is byte-idempotent"
+else
+  fail "re-run is byte-idempotent" \
+    "$(diff "$lp_home1/snapshot" "$lp_home1/.claude/CLAUDE.md" | head -5)"
+fi
+
+# Migration: seeded legacy block + a stray config/claude line, plus unrelated
+# user content that must survive verbatim and in order.
+lp_home2="$(mktemp -d)"
+mkdir -p "$lp_home2/.claude"
+cat > "$lp_home2/.claude/CLAUDE.md" <<'LP_EOF'
+# My personal instructions
+
+Always be concise.
+
+<!-- BEGIN provisioned:claude-partials (managed by setup/00-claude-partials.sh) -->
+@~/repos/github/freaxnx01/public/config/claude/task-checklist.md
+@~/repos/github/freaxnx01/public/config/claude/skill-authoring.md
+<!-- END provisioned:claude-partials -->
+
+## A later section
+
+@~/repos/github/freaxnx01/public/config/claude/subagent-driven-default.md
+
+Trailing user note.
+LP_EOF
+env HOME="$lp_home2" bash "$LINK_PARTIALS" --no-sync >/dev/null 2>&1
+lp_md2="$(cat "$lp_home2/.claude/CLAUDE.md")"
+
+assert_not_contains "$lp_md2" "config/claude" \
+  "migration -> zero config/claude references remain"
+assert_not_contains "$lp_md2" "00-claude-partials.sh" \
+  "migration -> legacy marker swept"
+assert_equals "$(grep -c 'BEGIN provisioned:claude-partials' "$lp_home2/.claude/CLAUDE.md")" "1" \
+  "migration -> exactly one managed block"
+assert_contains "$lp_md2" \
+  "@~/repos/github/freaxnx01/public/agent-workflow/partials/task-checklist.md" \
+  "migration -> new paths present"
+
+# Non-destructive: unrelated user content survives, order preserved.
+assert_contains "$lp_md2" "# My personal instructions" "migration -> user heading survives"
+assert_contains "$lp_md2" "Always be concise."         "migration -> user prose survives"
+assert_contains "$lp_md2" "## A later section"         "migration -> later section survives"
+assert_contains "$lp_md2" "Trailing user note."        "migration -> trailing note survives"
+lp_seq="$(grep -o 'My personal instructions\|A later section\|Trailing user note' \
+  "$lp_home2/.claude/CLAUDE.md" | tr '\n' '|')"
+assert_equals "$lp_seq" "My personal instructions|A later section|Trailing user note|" \
+  "migration -> user content order preserved"
+
+# Guard: an empty partials/ must hard-fail, never report success having copied nothing.
+lp_scratch="$(mktemp -d)"
+mkdir -p "$lp_scratch/setup" "$lp_scratch/partials"
+cp "$LINK_PARTIALS" "$lp_scratch/setup/link-partials.sh"
+lp_home3="$(mktemp -d)"
+lp_ec="$(run_capture_ec env HOME="$lp_home3" bash "$lp_scratch/setup/link-partials.sh" --no-sync)"
+assert_equals "$lp_ec" "1" "empty partials/ -> hard fail, not silent success"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"
