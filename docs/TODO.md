@@ -70,3 +70,26 @@ Exists: `/sync-ai-instructions` (agent-skills plugin — bootstraps/refreshes `C
 - [ ] 38. Ensure the Superpowers spec/impl plan is copied into the issue body, not left as a file reference — if work spans different machines, the spec doc / impl plan file may not be committed and the referenced path is dead elsewhere
 - [ ] 39. Specs & impl docs: always commit them (don't leave as local-only working files)
 - [ ] 40. New skill: turn a workflow idea into a new repo/project (scaffold + bootstrap in one step)
+
+## Deferred — decide with the user before starting
+
+- [ ] **`config` still does two jobs.** Its README describes "Claude Code
+  configuration **plus other personal config** (oh-my-posh, Windows)". After the
+  2026-07-21 consolidation it holds only CLAUDE.md partials + the bootstrap, so
+  `oh-my-posh/` and `windows/` are the odd ones out. Decoupled from the command
+  surface by decision §3 of
+  `docs/superpowers/specs/2026-07-20-consolidate-command-surface-design.md` —
+  independent cleanup, not a prerequisite for anything.
+
+  **The user asked to be consulted on how to proceed before this is started**
+  (2026-07-21). `dotfiles` is no longer a candidate destination — it was archived
+  the same day. So the open question is where that content goes: a new repo, a
+  subdirectory rename inside `config`, or leave it and fix the README instead.
+
+- [ ] **`FlowHub-CAS-AISE` #186** — last `agent-pipeline` reference in any repo.
+  Blocked on its own `AngleSharp 1.2.0` advisory, not on us. The user will
+  handle that repo manually; no action needed here.
+
+- [ ] **Optional hygiene** (spec-recorded, non-blocking): give `config` its own
+  markdownlint + pre-commit; scope `cliff.toml` so `commands/` edits don't churn
+  a consumer-facing changelog.
