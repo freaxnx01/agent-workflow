@@ -13,12 +13,13 @@ installer delegates both commands and hooks to agent-workflow.
 
 Steps:
 
-1. Run the idempotent config installer. It pulls `config` for the partials, then
-   clones/pulls agent-workflow and reinstalls every command (as copies) and the
-   hooks via its link steps — so one command refreshes everything:
+1. Run the idempotent config installers. They pull `config` for the partials, then
+   clone/pull agent-workflow and reinstall every command (as copies), the skills
+   and the hooks via its link steps — so one step refreshes everything:
 
    ```bash
    bash ~/repos/github/freaxnx01/public/config/setup/01-claude-commands.sh
+   bash ~/repos/github/freaxnx01/public/config/setup/03-claude-skills.sh
    ```
 
 2. Report concisely which commands were added, changed, or removed since before the

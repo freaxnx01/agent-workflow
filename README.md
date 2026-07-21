@@ -131,14 +131,37 @@ bash ~/repos/github/freaxnx01/public/config/setup/01-claude-commands.sh
 ```
 
 `/update-commands` is a thin wrapper around exactly that, and reports what changed.
-`config` remains the one-URL machine bootstrap; its installer delegates both commands
-and hooks to this repo.
+`config` remains the one-URL machine bootstrap; its installer delegates commands,
+skills and hooks to this repo.
 
 | To refresh | Run |
 |---|---|
-| User-level commands + hooks (source 1) | `/update-commands` |
+| User-level commands + skills + hooks (source 1) | `/update-commands` |
 | Plugin skills (source 2) | `/plugin` update, then `/reload-plugins` |
 | A project's synced files (source 3) | `/sync-ai-instructions <stack>` in that project |
+
+---
+
+## Skills
+
+`skills/` holds **user-level agent skills** — a directory per skill containing
+`SKILL.md`, installed to `~/.claude/skills/` by
+[`setup/link-skills.sh`](setup/link-skills.sh) with the same copy-by-default
+mechanics as the commands.
+
+```text
+skills/
+  processing-test-feedback/SKILL.md   → invoked by /process-feedback
+```
+
+These are **not** the plugin skills from `agent-skills` (source 2 above). The split is
+ownership: the marketplace publishes *sharable, non-personal* skills, while a skill
+that calls `/gh:new`, `/fj:new` and this repo's `area:*` label conventions is only
+meaningful alongside the console — so it ships with the console.
+
+A command that delegates to a skill (`/process-feedback` → `processing-test-feedback`)
+only works if both are installed. Keeping them in one repo behind one installer is what
+makes that hold on a fresh machine.
 
 ---
 
