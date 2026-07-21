@@ -25,8 +25,8 @@ which source a command came from tells you where to edit it and how to refresh i
 |---|---|---|---|---|
 | 1 | `freaxnx01/agent-workflow` → `commands/**` | `~/.claude/commands/**` | **copied** by [`setup/link-commands.sh`](setup/link-commands.sh) | **Every repo** on the machine |
 | 2 | `freaxnx01/agent-skills` (marketplace `freax-agent-skills`) | `~/.claude/plugins/cache/freax-agent-skills/` | `/plugin install` | **Every repo** |
-| 3 | Any project's own `.claude/commands/**` | — (read in place) | committed to that repo | **That repo only** |
-| 4 | `freaxnx01/ai-instructions` → `.ai/skills/**` | target project's `.claude/commands/**` | written by `/sync-ai-instructions` | The synced repo only |
+| 3 | `freaxnx01/ai-instructions` → `.ai/skills/**` | target project's `.claude/commands/**` | written by `/sync-ai-instructions` | The synced repo only |
+| 4 | Any project's own `.claude/commands/**` | — (read in place) | committed to that repo | **That repo only** |
 
 ### 1 — This repo: the user-level console
 
@@ -88,20 +88,40 @@ installed at: ~/.claude/plugins/cache/freax-agent-skills/
 Plugin-provided commands are global like the user-level ones, but they update through
 `/plugin` — **not** through `/update-commands`.
 
-### 3 — Project-scoped commands
+### 3 — Commands delivered by `/sync-ai-instructions`
 
-A repo may ship its own `.claude/commands/`, active only inside that repo. This repo
-does: `/commit`, `/push`, `ui-*`. So does `ai-instructions`. They are read in place —
-nothing installs or copies them, and they do not follow you to other repos.
+`ai-instructions` keeps shared skills under `.ai/skills/`: `commit`, `push`, and the
+four-phase UI workflow. Running `/sync-ai-instructions <stack>` in a target project
+writes them into that project's `.claude/commands/`, alongside the assembled
+`CLAUDE.md`. Once written they behave as source 4 — project-scoped, committed to the
+consuming repo.
+
+The `ui-*` set is a **gated sequence**, not four independent commands. Each phase has
+an approval gate; the next phase refuses to start until the previous one is approved,
+and no component code is written before the wireframe is signed off:
+
+| Phase | Command | Produces | Gate |
+|---|---|---|---|
+| 1 | `/ui-brainstorm` | ASCII wireframe → `docs/design/<feature>/wireframe.md` | Wireframe approved |
+| 2 | `/ui-flow` | Mermaid flow diagrams | Diagrams approved |
+| 3 | `/ui-build` | Component code — shell → logic → interactions → polish | — |
+| 4 | `/ui-review` | Review against wireframe, flows and conventions | Checklist passes |
+
+They are stack-neutral: component-library vocabulary (MudBlazor, shadcn/ui, Flutter
+widgets, …) comes from the project's active `.ai/stacks/<stack>.md` overlay, which is
+why the same four files work in every consuming repo.
+
+### 4 — Project-scoped commands
+
+A repo may ship its own `.claude/commands/`, active only inside that repo — whether
+written by hand or delivered by source 3. They are read in place: nothing installs or
+copies them, and they do not follow you to other repos.
+
+This repo ships `/commit`, `/push` and the `ui-*` phases in
+[`.claude/commands/`](.claude/commands/); `ai-instructions` ships the same set plus
+`/release-notes`.
 
 When a name collides with a user-level command, the project-scoped one wins.
-
-### 4 — Commands delivered by `/sync-ai-instructions`
-
-`ai-instructions` keeps shared skills under `.ai/skills/` (`commit`, `push`, `ui-*`).
-Running `/sync-ai-instructions <stack>` in a target project writes them into that
-project's `.claude/commands/`, alongside the assembled `CLAUDE.md`. They then behave as
-source 3 — project-scoped, committed to the consuming repo.
 
 ### Refreshing
 
@@ -118,7 +138,7 @@ and hooks to this repo.
 |---|---|
 | User-level commands + hooks (source 1) | `/update-commands` |
 | Plugin skills (source 2) | `/plugin` update, then `/reload-plugins` |
-| A project's synced files (source 4) | `/sync-ai-instructions <stack>` in that project |
+| A project's synced files (source 3) | `/sync-ai-instructions <stack>` in that project |
 
 ---
 
