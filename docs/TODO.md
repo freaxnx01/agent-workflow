@@ -86,7 +86,7 @@ copy and reinstalling from `main`.
   it is newer, it needs a follow-up commit, not a clobber.
 
 - [ ] **Run `config/setup/bootstrap.sh` on that machine** so it picks up the skill.
-  Until then `/process-feedback` resolves to nothing there — the exact failure #132
+  Until then the `processing-test-feedback` skill is missing there — the exact failure #132
   fixed here.
 
 - [ ] **First solo `/update-commands` run still unexercised.** The copy that ran this

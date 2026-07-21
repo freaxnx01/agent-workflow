@@ -119,4 +119,4 @@ done
 # 6) Record what we installed, so the next run knows what it may prune.
 printf '%s\n' "${current[@]}" > "$MANIFEST"
 
-echo "✓ done — agent-workflow skills installed (e.g. processing-test-feedback, used by /process-feedback)"
+echo "✓ done — agent-workflow skills installed (e.g. processing-test-feedback)"
