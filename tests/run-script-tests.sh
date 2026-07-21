@@ -1819,6 +1819,51 @@ lp_home3="$(mktemp -d)"
 lp_ec="$(run_capture_ec env HOME="$lp_home3" bash "$lp_scratch/setup/link-partials.sh" --no-sync)"
 assert_equals "$lp_ec" "1" "empty partials/ -> hard fail, not silent success"
 
+# --- setup/bootstrap.sh -----------------------------------------------------
+
+section "setup/bootstrap.sh"
+
+BOOTSTRAP="$ROOT/setup/bootstrap.sh"
+
+# link-commands.sh resolves its source from $HOME (not BASH_SOURCE), so a scratch
+# HOME needs the canonical path to point back at the real checkout.
+bs_home="$(mktemp -d)"
+mkdir -p "$bs_home/repos/github/freaxnx01/public"
+ln -s "$ROOT" "$bs_home/repos/github/freaxnx01/public/agent-workflow"
+
+# Default (no flags): commands are COPIED (link-commands.sh's default since ADR-005).
+bs_out="$(env HOME="$bs_home" bash "$BOOTSTRAP" --no-sync 2>&1)"
+assert_contains "$bs_out" "copied" "bootstrap default -> commands copied"
+assert_contains "$bs_out" "normalizing" "bootstrap -> link-partials step ran"
+assert_contains "$bs_out" "installing hooks" "bootstrap -> link-hooks step ran"
+assert_contains "$bs_out" "installing agent-workflow skills" "bootstrap -> link-skills step ran"
+assert_contains "$(cat "$bs_home/.claude/CLAUDE.md")" \
+  "@~/repos/github/freaxnx01/public/agent-workflow/partials/task-checklist.md" \
+  "bootstrap -> partials landed in CLAUDE.md"
+
+# Argument passthrough: --link must survive bootstrap -> link-commands.sh and
+# flip the observable install mode. This is the channel --copy also travels.
+bs_home2="$(mktemp -d)"
+mkdir -p "$bs_home2/repos/github/freaxnx01/public"
+ln -s "$ROOT" "$bs_home2/repos/github/freaxnx01/public/agent-workflow"
+bs_out2="$(env HOME="$bs_home2" bash "$BOOTSTRAP" --no-sync --link 2>&1)"
+assert_contains "$bs_out2" "linked" "--link passes through bootstrap to link-commands"
+# NOTE: link-hooks.sh always copies (hooks are never symlinked -- see its own
+# header comment), so it unconditionally prints "  copied  handoff-resume.sh"
+# regardless of --link. A raw "  copied  " substring check over the FULL
+# bootstrap output would therefore always fail, hook step included. Assert on
+# link-commands.sh's own mode banner ("(copy)" vs "(link)") instead, which is
+# the precise signal for "commands were not copied".
+assert_not_contains "$bs_out2" "(copy)" "--link -> nothing copied"
+
+# --copy is accepted end-to-end (it is already the default, so it is a no-op --
+# but the flag must not error, since old notes and the deprecation stub pass it).
+bs_home3="$(mktemp -d)"
+mkdir -p "$bs_home3/repos/github/freaxnx01/public"
+ln -s "$ROOT" "$bs_home3/repos/github/freaxnx01/public/agent-workflow"
+bs_ec="$(run_capture_ec env HOME="$bs_home3" bash "$BOOTSTRAP" --no-sync --copy)"
+assert_equals "$bs_ec" "0" "--copy accepted end-to-end"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"
