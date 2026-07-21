@@ -17,7 +17,7 @@ GitHub Actions today (`gh:*`), Forgejo Actions later (`fj:*`).
 calls `setup/link-commands.sh`). To install just the console directly:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/freaxnx01/agent-pipeline/main/setup/link-commands.sh | bash
+curl -fsSL https://raw.githubusercontent.com/freaxnx01/agent-workflow/main/setup/link-commands.sh | bash
 ```
 
 Pass `--copy` on filesystems without symlinks; `--no-sync` to relink from the
