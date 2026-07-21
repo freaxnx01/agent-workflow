@@ -87,10 +87,13 @@ if ! jq empty "$SETTINGS" >/dev/null 2>&1; then
   exit 0
 fi
 
-if jq -e --arg cmd "$CMD" \
-     '.hooks.SessionStart[]?.hooks[]?|select(.command == $cmd)' \
-     "$SETTINGS" >/dev/null 2>&1; then
-  echo "  settings.json already wired — no change"
+# Match by script BASENAME, not the exact command string: an existing entry
+# written with an absolute path (or a different $HOME spelling) still counts as
+# present. Exact-string matching would inject a near-duplicate and fire the
+# resume hook twice. Ported from config's 02-claude-hooks.sh, which got this right.
+present='([ (.hooks.SessionStart // [])[] | select(.matcher? == "clear") | .hooks[]? | .command? | select(. != null) | select(test("handoff-resume\\.sh")) ] | length) > 0'
+if jq -e "$present" "$SETTINGS" >/dev/null 2>&1; then
+  echo "  settings.json already wires the hook — no change"
 else
   cp -f "$SETTINGS" "$SETTINGS.bak"
   tmp="$(mktemp)"
