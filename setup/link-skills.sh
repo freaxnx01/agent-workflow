@@ -36,6 +36,9 @@ REPO_DIR="$HOME/repos/github/freaxnx01/public/agent-workflow"
 # over a missing dir would copy nothing while still reporting success.
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../skills" && pwd)"
 DEST_DIR="$HOME/.claude/skills"
+# Records the skill names this installer wrote, so a later run can prune the ones
+# that disappear upstream without ever touching skills it didn't install.
+MANIFEST="$DEST_DIR/.agent-workflow-skills"
 
 mode="copy"
 sync=1
@@ -62,29 +65,58 @@ fi
 # 2) Make sure ~/.claude/skills/ exists.
 mkdir -p "$DEST_DIR"
 
-# 3) Install each skill file, preserving the skill's directory structure.
-#    Skip any README.md at the top level (a skill's own SKILL.md is the entry point).
-echo "→ installing agent-workflow skills into $DEST_DIR ($mode)"
-installed=0
-while IFS= read -r f; do
-  rel="${f#"$SRC_DIR"/}"
-  case "$rel" in README.md) continue ;; esac
-  dest="$DEST_DIR/$rel"
-  mkdir -p "$(dirname "$dest")"
-  if [ "$mode" = "copy" ]; then
-    rm -f "$dest"        # dest may be a symlink from a prior install → cp would error
-    cp -f "$f" "$dest"
-    echo "  copied  $rel"
-  else
-    ln -sfn "$f" "$dest"
-    echo "  linked  $rel"
-  fi
-  installed=$((installed + 1))
-done < <(find "$SRC_DIR" -type f | sort)
+# 3) Enumerate the skills this checkout ships. A skill is a top-level directory,
+#    so a stray README.md beside them is ignored without a special case.
+current=()
+while IFS= read -r d; do
+  current+=("$(basename "$d")")
+done < <(find "$SRC_DIR" -mindepth 1 -maxdepth 1 -type d | sort)
 
-if [ "$installed" -eq 0 ]; then
-  echo "✗ no skill files found in $SRC_DIR" >&2
+if [ "${#current[@]}" -eq 0 ]; then
+  echo "✗ no skills found in $SRC_DIR" >&2
   exit 1
 fi
+
+# 4) Prune skills we previously installed that no longer exist upstream.
+#
+#    Unlike a stale slash command, which lies dormant until typed, a stale SKILL.md
+#    keeps matching on its description and firing forever — with no upstream file
+#    left to edit. So this installer removes what it orphans.
+#
+#    Only names recorded in OUR OWN manifest are ever removed. A skill you wrote by
+#    hand, or one installed by anything else, is never in the manifest and so is
+#    never touched.
+if [ -f "$MANIFEST" ]; then
+  while IFS= read -r name; do
+    case "$name" in ''|.|..|*/*) continue ;; esac   # ignore junk; never traverse out
+    for c in "${current[@]}"; do [ "$c" = "$name" ] && continue 2; done
+    if [ -d "${DEST_DIR:?}/$name" ]; then
+      rm -rf -- "${DEST_DIR:?}/$name"
+      echo "  pruned  $name (gone upstream)"
+    fi
+  done < "$MANIFEST"
+fi
+
+# 5) Install each skill, refreshing its directory from scratch so a file dropped
+#    upstream (a retired references/*.md) doesn't linger inside a surviving skill.
+echo "→ installing agent-workflow skills into $DEST_DIR ($mode)"
+for name in "${current[@]}"; do
+  rm -rf -- "${DEST_DIR:?}/$name"
+  while IFS= read -r f; do
+    rel="${f#"$SRC_DIR"/}"
+    dest="$DEST_DIR/$rel"
+    mkdir -p "$(dirname "$dest")"
+    if [ "$mode" = "copy" ]; then
+      cp -f "$f" "$dest"
+      echo "  copied  $rel"
+    else
+      ln -sfn "$f" "$dest"
+      echo "  linked  $rel"
+    fi
+  done < <(find "$SRC_DIR/$name" -type f | sort)
+done
+
+# 6) Record what we installed, so the next run knows what it may prune.
+printf '%s\n' "${current[@]}" > "$MANIFEST"
 
 echo "✓ done — agent-workflow skills installed (e.g. processing-test-feedback, used by /process-feedback)"
