@@ -1,6 +1,6 @@
 # agent-workflow — user-level slash commands
 
-These are **user-level** Claude Code slash commands: symlinked into
+These are **user-level** Claude Code slash commands: installed into
 `~/.claude/commands/` by [`../setup/link-commands.sh`](../setup/link-commands.sh),
 so they work from **any** repo. They are the human-facing front-end of this
 pipeline — the issue→PR workflow you drive it with — and are **forge-agnostic**:
@@ -20,8 +20,14 @@ calls `setup/link-commands.sh`). To install just the console directly:
 curl -fsSL https://raw.githubusercontent.com/freaxnx01/agent-workflow/main/setup/link-commands.sh | bash
 ```
 
-Pass `--copy` on filesystems without symlinks; `--no-sync` to relink from the
-current working tree without pulling.
+Installs as **copies** by default, so the console stays pinned until an explicit
+re-run rather than following whatever branch this checkout is on — meaning `git pull`
+here does *not* update your commands. Pass `--link` to opt into symlinks while
+actively editing commands; `--no-sync` to reinstall from the current working tree
+without pulling. (`--copy` is accepted as a no-op.)
+
+See the [root README](../README.md#slash-commands--where-they-come-from-and-how-they-get-there)
+for how this fits alongside the plugin and project-scoped command sources.
 
 ## Commands
 
