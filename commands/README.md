@@ -1,4 +1,4 @@
-# agent-workflow operator console — user-level slash commands
+# agent-workflow — user-level slash commands
 
 These are **user-level** Claude Code slash commands: symlinked into
 `~/.claude/commands/` by [`../setup/link-commands.sh`](../setup/link-commands.sh),
@@ -24,6 +24,17 @@ Pass `--copy` on filesystems without symlinks; `--no-sync` to relink from the
 current working tree without pulling.
 
 ## Commands
+
+**Session hygiene**: `/loose-ends` · `/clear-check` · `/todo` · `/wrap-up`
+
+**Phase handoff** (pairs with the `SessionStart(clear)` hook in `hooks/`):
+`/handoff` · `/pickup`
+
+**Worktree** (`wt/`): `/wt:status` · `/wt:finish`
+
+**Meta**: `/commands` · `/update-commands`
+
+**Superpowers**: `/subagent-driven`
 
 **Forge routers** (auto-detect GitHub vs Forgejo from the `origin` remote, then
 delegate to the matching `gh:`/`fj:` command):
