@@ -5,15 +5,77 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.7.0](https://github.com/freaxnx01/agent-workflow/releases/tag/v1.7.0) - 2026-07-21
+
+### Changed — repository renamed
+
+**`freaxnx01/agent-pipeline` is now `freaxnx01/agent-workflow`** (ADR-006). The repo
+outgrew its name: it carries the operator console (issue-workflow slash commands)
+alongside the CI, and neither `/wt:status` nor `/wrap-up` is a pipeline.
+
+**Migration.** Update the owner/repo segment of your `uses:` references; keep your
+pin exactly as it is:
+
+```yaml
+# before
+uses: freaxnx01/agent-pipeline/.github/workflows/agent-implement.yml@v1
+# after
+uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
+```
+
+The same applies to the `dotnet-quality` composite action and to any explicit
+`pipeline-repo:` input, whose default is now `freaxnx01/agent-workflow`.
+
+GitHub's rename redirect keeps existing references working, so **nothing breaks
+immediately** — but it is a transitional safety net, not an end state: it stops
+working the moment any repo claims the old name. Update at your convenience.
+
+### Added
+
+- **dotnet-quality:** Composite action + self-validating gate-tests (#88)
+- **lint:** Actionlint gate + selftest fixture in agent-pipeline (#90)
+- **dotnet-quality:** Add run-method-size input to skip Linux-broken metrics step (#93)
+- **classify-task:** Add 5 OpenRouter coding-model labels (#95)
+- **classify-task:** Add 5 tool-use-capable coding-model labels (#98)
+- **models:** Make Claude Sonnet 5 the default model
+- **commands:** Adopt issue-workflow operator console from config
+- **setup:** Add user-level console linker (link-commands.sh)
+- **commands:** Adopt /process-feedback into the console (#118)
+
+### Changed
+
+- **workflows:** Rename `claude-*` workflows to `agent-*` (#106)
 
 ### Fixed
 
-- **pipeline:** Runs that complete without opening a PR are no longer reported as `ai:done` — the implement job verifies the PR exists, recovers the orphan branch when possible, and marks `ai:failed` otherwise (#100)
+- **labels:** Ensure the ai-implement trigger label exists (#82)
+- **classify-task:** Use exact OpenRouter catalog slugs for model labels (#96)
+- **claude-implement:** Pass resolved agent to triage step (#97)
+- **opencode:** Stop leaking .claude-pipeline gitlink into consumer PRs (#99) (#101)
+- **pipeline:** PR-aware run status with recovery (#100) (#104)
+- **setup:** Make --copy idempotent over a prior symlink install
+- **lint:** Clear markdownlint debt blocking every PR (#119)
+- **setup:** Default console install to --copy, not symlink (#117)
+- **rename:** Revert three references missed in #123 (#124)
 
 ### Documentation
 
-- Add living OpenCode × OpenRouter model-comparison report (`docs/model-comparison.md`) and link it from `CONSUMER-SETUP.md`
+- **ai:** Regenerate AI instructions from ai-instructions@5e6ab78 (#86)
+- **model-comparison:** Promote OpenCode×OpenRouter report to canonical living doc (#102)
+- **#100:** Spec + implementation plan for PR-aware run status (#103)
+- **specs:** Design for agent-skills workflow plugin
+- **specs:** Add self-improvement loop to agent-skills design
+- **plans:** Phase 0+1 implementation plan for agent-skills
+- **model-comparison:** Add Round 3 — .NET authors endpoint (qwen3.6-27b debut) (#113)
+- Reframe agent-pipeline as CI + operator console (ADR-005)
+- **design:** List top-level commands/ (user console) in repo-structure tree
+- **todo:** Add README documentation tasks
+- **todo:** Add slash-cmd bootstrap and spec-commit TODOs
+- **todo:** Add new-skill idea for workflow-to-repo scaffolding
+- **spec:** Consolidate the personal command surface into one repo (#120)
+- **plan:** Rename agent-pipeline to agent-workflow (#122)
+
+## [Unreleased]
 
 ## [1.6.0](https://github.com/freaxnx01/agent-pipeline/releases/tag/v1.6.0) - 2026-06-05
 
