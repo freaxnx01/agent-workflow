@@ -748,10 +748,7 @@ jobs:
           REPO: ${{ github.repository }}
           STUB: ${{ inputs.stub-review-verdict }}
         run: |
-          # Transitional: match both names until the freaxnx01/agent-pipeline ->
-          # freaxnx01/agent-workflow rename lands (ADR-006). Drop the
-          # agent-pipeline arm once github.repository resolves to agent-workflow.
-          if [[ -z "$STUB" && ( "$REPO" == 'freaxnx01/agent-workflow' || "$REPO" == 'freaxnx01/agent-pipeline' ) ]]; then
+          if [[ -z "$STUB" && "$REPO" == 'freaxnx01/agent-workflow' ]]; then
             printf 'self-mod-guard: blocking auto-merge on %s per ADR-002\n' "$REPO"
             printf 'blocked=true\n' >> "$GITHUB_OUTPUT"
           else
