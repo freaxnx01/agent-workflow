@@ -31,6 +31,11 @@ acting before the human has seen the plan.
 **Not for:** a single well-formed bug report (just file it), or writing an issue body
 (that's `/gh:enrich` / `/fj:enrich`).
 
+**Invoked with no notes** (e.g. a bare `/processing-test-feedback`): don't ask for input
+yet — first scan `docs/ai-notes/feedback/` for a worklog with unfinished entries and
+offer to resume it (see Persistence). Only if there's nothing to resume, ask for the
+notes to be pasted.
+
 ## Procedure
 
 ### 1. Detect the tracker and gather repo signals (once, up front)
