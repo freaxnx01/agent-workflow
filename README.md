@@ -147,7 +147,14 @@ skills and hooks to this repo.
 `skills/` holds **user-level agent skills** — a directory per skill containing
 `SKILL.md`, installed to `~/.claude/skills/` by
 [`setup/link-skills.sh`](setup/link-skills.sh) with the same copy-by-default
-mechanics as the commands.
+mechanics as the commands, plus one difference: **it prunes.**
+
+A stale slash command lies dormant until you type it. A stale `SKILL.md` keeps
+matching on its description and firing forever, with no upstream file left to edit —
+so the installer removes skills it previously wrote once they disappear upstream, and
+refreshes each skill directory from scratch so retired `references/` files don't
+linger. It tracks what it installed in `~/.claude/skills/.agent-workflow-skills` and
+will only ever remove names listed there; a hand-written skill is never touched.
 
 ```text
 skills/
