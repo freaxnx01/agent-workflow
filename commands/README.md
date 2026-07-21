@@ -50,9 +50,10 @@ delegate to the matching `gh:`/`fj:` command):
 **Idea capture** (forge-agnostic, local — precedes the issue funnel):
 `/capture-idea <idea>` — jot an idea into the current repo's `docs/ideas.md`.
 
-**Feedback intake** (forge-agnostic — feeds the issue funnel):
-`/process-feedback <notes>` — triage a batch of tester notes into Issue /
-`TODO.md` / implement-now, with dedup and a resumable worklog.
+> **Feedback intake** is no longer a command. Paste tester notes and the
+> [`processing-test-feedback`](../skills/processing-test-feedback/SKILL.md) skill
+> engages on its own — or invoke it as `/processing-test-feedback`. It triages a
+> batch into Issue / `TODO.md` / implement-now with dedup and a resumable worklog.
 
 **GitHub** (`gh/`): `/gh:new` · `/gh:issues` · `/gh:parked` · `/gh:triage` ·
 `/gh:enrich` · `/gh:enrich-phased` · `/gh:route` · `/gh:work` · `/gh:assign` ·

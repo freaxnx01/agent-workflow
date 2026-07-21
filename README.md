@@ -9,7 +9,7 @@ Two halves, one repo (see [ADR-005](docs/DECISIONS.md)):
 | Half | Lives in | What it is |
 |---|---|---|
 | **CI pipeline** | `.github/workflows/`, `.github/actions/`, `scripts/`, `gate-tests/` | Reusable workflows a consumer repo calls with a ~15-line stub, plus the quality gates and their self-tests |
-| **Operator console** | `commands/`, `hooks/`, `setup/` | 46 forge-agnostic slash commands + the `handoff-resume` hook, installed once into `~/.claude/` and available in every repo |
+| **Operator console** | `commands/`, `skills/`, `hooks/`, `setup/` | 45 forge-agnostic slash commands, the user-level skills, and the `handoff-resume` hook — installed once into `~/.claude/` and available in every repo |
 
 Design notes: [`docs/DESIGN.md`](docs/DESIGN.md) · decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md) · consumer onboarding: [`docs/CONSUMER-SETUP.md`](docs/CONSUMER-SETUP.md)
 
@@ -40,7 +40,7 @@ commands/
   wt/    → /wt:status  /wt:finish
   *.md   → /handoff  /pickup  /todo  /wrap-up  /loose-ends  /clear-check
            /issues  /prs  /triage  /route  /work  (forge routers)
-           /capture-idea  /process-feedback  /commands  /update-commands
+           /capture-idea  /commands  /update-commands
 ```
 
 `setup/link-commands.sh` installs them into `~/.claude/commands/`, preserving the
@@ -158,7 +158,7 @@ will only ever remove names listed there; a hand-written skill is never touched.
 
 ```text
 skills/
-  processing-test-feedback/SKILL.md   → invoked by /process-feedback
+  processing-test-feedback/SKILL.md   → /processing-test-feedback
 ```
 
 These are **not** the plugin skills from `agent-skills` (source 2 above). The split is
@@ -166,9 +166,11 @@ ownership: the marketplace publishes *sharable, non-personal* skills, while a sk
 that calls `/gh:new`, `/fj:new` and this repo's `area:*` label conventions is only
 meaningful alongside the console — so it ships with the console.
 
-A command that delegates to a skill (`/process-feedback` → `processing-test-feedback`)
-only works if both are installed. Keeping them in one repo behind one installer is what
-makes that hold on a fresh machine.
+**Skill or command?** A command is a prompt you invoke by name and nothing else. A skill
+is invocable *and* self-triggering — Claude matches its `description` against what you're
+actually doing, so `processing-test-feedback` engages when you paste a batch of tester
+notes without you naming it. Work with a defined procedure worth following unprompted
+belongs in `skills/`; a short, explicit action belongs in `commands/`.
 
 ---
 
