@@ -149,4 +149,4 @@ and hooks to this repo.
 | [`agent-workflow`](https://github.com/freaxnx01/agent-workflow) | **This repo** — CI pipeline + user-level command console |
 | [`agent-skills`](https://github.com/freaxnx01/agent-skills) | Plugin marketplace: `sync-ai-instructions`, `propose-ai-instructions` |
 | [`ai-instructions`](https://github.com/freaxnx01/ai-instructions) | Agent instruction content: `base-instructions.md` + per-stack overlays |
-| `config` | One-URL machine bootstrap; CLAUDE.md partials; delegates command/hook install here |
+| [`config`](https://github.com/freaxnx01/config) | One-URL machine bootstrap; CLAUDE.md partials; delegates command/hook install here |
