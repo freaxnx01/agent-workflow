@@ -71,6 +71,37 @@ Exists: `/sync-ai-instructions` (agent-skills plugin — bootstraps/refreshes `C
 - [ ] 39. Specs & impl docs: always commit them (don't leave as local-only working files)
 - [ ] 40. New skill: turn a workflow idea into a new repo/project (scaffold + bootstrap in one step)
 
+## Skill surface — session 2026-07-21
+
+Landed this session: `skills/` as a third artifact type alongside `commands/` and
+`hooks/`, via #132 (`setup/link-skills.sh`, `processing-test-feedback`) and
+freaxnx01/config#46 (`setup/03-claude-skills.sh` delegator + `bootstrap.sh` wiring).
+Both merged (`ba94ff4`, `eedc366`) and verified end-to-end by deleting the installed
+copy and reinstalling from `main`.
+
+- [ ] **Verify the other machine's `processing-test-feedback`.** The `SKILL.md` now on
+  `main` was committed from the WSL box; another machine may carry a newer draft that
+  would be silently overwritten by the installer. Diff it against
+  `skills/processing-test-feedback/SKILL.md` before running the installer there — if
+  it is newer, it needs a follow-up commit, not a clobber.
+
+- [ ] **Run `config/setup/bootstrap.sh` on that machine** so it picks up the skill.
+  Until then `/process-feedback` resolves to nothing there — the exact failure #132
+  fixed here.
+
+- [ ] **First solo `/update-commands` run still unexercised.** The copy that ran this
+  session was stale and knew only step `01`, so `03-claude-skills.sh` had to be invoked
+  by hand. `commands/update-commands.md` now carries both steps; the next run is the
+  first to exercise the skills step unaided. Confirm it does before trusting it on a
+  fresh machine.
+
+- [ ] **Fetch gotcha is documented only in `~/.claude/CLAUDE.md`** (unversioned — that
+  path is not a git repo, so it exists on the WSL box alone). A plain `git fetch`
+  against a *public* repo hangs until timeout when a credential helper is inherited in
+  a non-TTY subshell; `git -c credential.helper= fetch` fixes it. The user declined
+  promoting this to a `config/claude/` partial (2026-07-21), so it will not reach other
+  machines — revisit only if it bites somewhere else.
+
 ## Deferred — decide with the user before starting
 
 - [ ] **`config` still does two jobs.** Its README describes "Claude Code
