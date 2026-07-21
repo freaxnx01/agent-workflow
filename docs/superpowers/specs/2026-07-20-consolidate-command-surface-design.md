@@ -1,6 +1,6 @@
 # Consolidate the personal command surface into one repo
 
-**Status:** Draft — three open decisions block acceptance (§6)
+**Status:** Accepted — all four decisions resolved (§1 by ADR-006; §2–§4 on 2026-07-21)
 **Date:** 2026-07-20
 **Relates to:** ADR-005 (operator console lives here), PR #117 (`--copy` default),
 PR #118 + config#42 (`/process-feedback` relocated), PR #119 (lint debt cleared)
@@ -96,16 +96,22 @@ repos. That means `agent-workflow` grows a hooks surface, and `config`'s
 
 ### Option B — drain `config` into the existing `dotfiles` repo
 
-`freaxnx01/dotfiles` exists and is **empty**. Move `oh-my-posh/` and `windows/`
-there; `config` keeps only Claude Code material and its README loses the "plus"
-clause. The command split stays as ADR-005 left it, but now sits on a boundary
-that honestly describes both sides: *pipeline console* vs *Claude Code
-configuration*.
+**Correction (2026-07-21):** an earlier draft of this spec called
+`freaxnx01/dotfiles` "empty". It is not. It is an abandoned **chezmoi** repo
+created 2026-03-25 and untouched since (created and pushed four seconds apart),
+containing `private_dot_claude/` with `commands/`, `skills/`, `settings.json`
+and `empty_CLAUDE.md`. chezmoi is not installed on the working host and there is
+no local source directory.
 
-- **For:** fixes the root cause (`config` doing two jobs) rather than relocating
-  a symptom; no new repo; smallest diff; both names become honest.
-- **Against:** does **not** deliver the stated goal of one repo. Two lookups
-  remain.
+That makes it a **third, competing mechanism for managing `~/.claude`** —
+alongside `config`'s shell installers and `agent-workflow`'s link step — not a
+blank destination. Draining `oh-my-posh/` and `windows/` into it would mix
+paradigms (chezmoi source-state naming vs plain files + installers) and revive
+tooling nobody uses.
+
+- **For:** would fix `config` doing two jobs; no new repo needed.
+- **Against:** does **not** deliver the stated goal of one repo; and the
+  destination carries an unresolved tooling question of its own.
 
 ### Option C — status quo plus cross-references
 
@@ -114,16 +120,18 @@ only discoverability.
 
 ### Recommendation
 
-**A, preceded by B's cheap half.** The stated goal is one repo, and #117 cleared
-the blocking objection — but `config` should shed `oh-my-posh/` and `windows/`
-into `dotfiles` either way, since that content is unrelated to both candidates
-and its presence is what made `config` incoherent to begin with. Doing B's drain
-first makes A a clean two-repo end state (`agent-workflow` = all workflow +
-commands + hooks; `dotfiles` = machine setup + bootstrap) rather than leaving a
-`config` shim behind.
+**A, and do not touch `dotfiles` yet** (revised 2026-07-21).
 
-Sequence: drain `dotfiles` → move the 11 + the hook → collapse or rename what
-remains of `config`.
+The original recommendation was "A preceded by B's cheap half," on the belief
+that `dotfiles` was an empty destination. It is not (see Option B), so the drain
+is no longer cheap: it forces a decision about whether chezmoi is adopted,
+which is unrelated to the command surface and would block a move that is
+otherwise ready.
+
+Sequence: move the 11 + the hook into `agent-workflow` → then decide `dotfiles`
+separately (adopt chezmoi and migrate to it, or archive the repo and keep the
+installer model). `config`'s "plus other personal config" incoherence is real
+but is now a **separate** piece of work, not a prerequisite.
 
 ## Blast radius / risks
 
@@ -133,9 +141,12 @@ remains of `config`.
   following the old README breaks. Mitigate: keep `config`'s bootstrap as a
   redirecting shim for one cycle, and verify on a scratch container before
   retiring it.
-- **Hook migration is the risky step**, not the command moves. `handoff-resume.sh`
-  is wired into `settings.json` by `setup/02-claude-hooks.sh` and needs `jq` at
-  runtime. A half-migrated state breaks `SessionStart(clear)` silently.
+- ~~**Hook migration is the risky step.**~~ **Downgraded 2026-07-21** — see
+  decision §2. `settings.json` points at the *installed* path
+  (`$HOME/.claude/hooks/handoff-resume.sh`), never at the repo, so the hook's
+  source repo can change without touching `settings.json` at all. `jq` remains a
+  runtime dependency. The residual risk is ordinary: `02-claude-hooks.sh` must
+  gain its delegation step in the same cycle the source moves.
 - **Changelog noise.** `agent-workflow` is SemVer-tagged with a moving `v1` that
   consumers pin. Command edits would churn a consumer-facing changelog. Mitigate:
   scope `cliff.toml` to exclude `commands/` and `setup/`, or use a `chore(console)`
@@ -160,9 +171,9 @@ remains of `config`.
 5. Each repo's README describes everything in it without a "plus other …" clause.
 6. `/process-feedback` lives with the console.
 
-## Open decisions
+## Decisions
 
-These block acceptance:
+All four are resolved; none blocks execution.
 
 1. **Name.** Does `agent-pipeline` become the home for non-pipeline commands
    under its current name, or is a rename part of this work? Renaming has a
@@ -170,11 +181,26 @@ These block acceptance:
    **Resolved by [ADR-006](../../DECISIONS.md#adr-006--rename-agent-pipeline-to-agent-workflow-2026-07-20):**
    the repo is renamed to `agent-workflow`, settling the naming question ahead
    of this consolidation.
-2. **Hook ownership.** Confirm the `SessionStart` hook moves with `/handoff`.
-   If hooks stay in `config`, Option A is off the table — splitting a command
-   from its hook is worse than today's split.
-3. **Scope order.** Drain `dotfiles` first (recommended), or move the 12 first
-   and treat the drain as follow-up?
+2. **Hook ownership.** ~~Confirm the `SessionStart` hook moves with `/handoff`.~~
+
+   **Resolved (2026-07-21): the hook moves.** Investigation downgraded this from
+   "the risky step" to a one-line change. `setup/02-claude-hooks.sh` **copies**
+   `handoff-resume.sh` to `~/.claude/hooks/` and wires `settings.json` to the
+   *installed* path (`$HOME/.claude/hooks/handoff-resume.sh`) — never to the repo
+   path. The source repo is therefore invisible to `settings.json`: moving it
+   means changing that script's `SRC` and adding a delegation step exactly like
+   `01-claude-commands.sh` already does for the console. No `settings.json`
+   migration, no half-migrated state to fear. `jq` stays a runtime dependency
+   either way.
+3. **Scope order.** ~~Drain `dotfiles` first, or move the 11 first?~~
+
+   **Resolved (2026-07-21): move the 11 first; `dotfiles` is deferred and
+   decoupled.** The premise of draining first was that `dotfiles` was an empty
+   destination. It is an abandoned chezmoi repo that already claims `~/.claude`
+   (see Option B), so the drain now carries its own unresolved question — adopt
+   chezmoi, or archive it — which has nothing to do with the command surface and
+   must not gate it. `config` keeping `oh-my-posh/` and `windows/` for now is
+   untidy but harmless.
 4. **Markdownlint reconciliation.** `config` has **no** markdownlint config, no
    pre-commit hook, and no lint workflow — its only CI is `add-to-project.yml`.
    So this is not two configs disagreeing; it is one repo that lints and one that
@@ -200,11 +226,17 @@ These block acceptance:
    Small, but it must be fixed *in the moving PR*, not after, or `main` goes red
    again and every unrelated PR is blocked behind it.
 
-   Decide: fix-on-arrival (fold into the move PR, recommended), or give `config`
-   its own markdownlint + pre-commit setup first so files are clean before they
-   travel? The latter is more correct and more work; it only pays off if `config`
-   survives this consolidation as a going concern, which under Option A it
-   largely does not.
+   **Resolved (2026-07-21): fix-on-arrival, inside the moving PR.** Two errors
+   genuinely carry over — not worth standing up a lint toolchain to catch. The
+   deciding evidence is behavioural: this class of debt has now broken `main`
+   twice (the 2026-07-12 console move, and `/process-feedback` in #118, caught
+   only because that branch happened to be rebased onto a freshly-green `main`).
+   Fixing inside the moving PR is what prevents a third.
+
+   Follow-up, explicitly **not** a blocker: give `config` its own markdownlint +
+   pre-commit once it settles. Under the revised §3 it survives as the partials +
+   hooks + bootstrap repo, so it keeps enough markdown to be worth linting — but
+   that is hygiene for later.
 
 ## Done
 
