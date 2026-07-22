@@ -46,6 +46,16 @@ do not load twice. No manual edit of `~/.claude/CLAUDE.md` is needed.
 - **commands:** `/update-commands` runs this repo's bootstrap, not config's installer (#133)
 - **docs:** README documents the `partials/` surface and the new bootstrap URL (#133)
 
+### Also included since 1.7.0
+
+Merged into this release ahead of the #133 consolidation:
+
+- **commands:** consolidate the full user-level command surface into this repo (#128)
+- **skills:** `processing-test-feedback` skill + `setup/link-skills.sh` installer (#132)
+- **skills:** `/process-feedback` merged into the `processing-test-feedback` skill (#137)
+- **setup:** `link-skills.sh` prunes skills that disappear upstream (#135)
+- **setup:** match the `handoff-resume` hook by basename, not exact command string (#129)
+
 ## [1.7.0](https://github.com/freaxnx01/agent-workflow/releases/tag/v1.7.0) - 2026-07-21
 
 ### Changed — repository renamed
