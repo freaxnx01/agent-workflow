@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added — this repo is now the machine bootstrap
 
-**`partials/` and `setup/bootstrap.sh` move here from `freaxnx01/config`** (ADR-007,
-#133). agent-workflow now owns every Claude surface — partials, commands, hooks,
-skills — *and* the provisioning that installs them. No cross-repo clone remains.
+**`partials/` and `setup/bootstrap.sh` move here from `freaxnx01/config`**
+(ADR-007, #133). agent-workflow now owns every Claude surface — partials, commands,
+hooks, skills — *and* the provisioning that installs them. No cross-repo clone remains.
 
 New machine, one line:
 

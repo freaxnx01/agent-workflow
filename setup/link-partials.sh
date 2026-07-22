@@ -29,6 +29,8 @@ CLAUDE_MD="$HOME/.claude/CLAUDE.md"
 
 # Emitted with a literal ~ so Claude resolves it on whatever machine you're on
 # (WSL2/Linux and Windows both expand ~ to the home dir). Never $HOME-expanded.
+# shellcheck disable=SC2088  # the literal ~ is deliberate here — it is written
+# verbatim into CLAUDE.md for Claude to expand per-machine, not a path we resolve.
 CANON="~/repos/github/freaxnx01/public/agent-workflow/partials"
 
 BEGIN="<!-- BEGIN provisioned:claude-partials (managed by setup/link-partials.sh) -->"

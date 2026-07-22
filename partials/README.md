@@ -13,7 +13,7 @@ and picks up changes with a `git pull`.
 > `README.md` (this file) is **not** `@`-imported — the installer skips it. Any
 > other `*.md` dropped into this directory **is** imported automatically the
 > next time the installer runs, no code change required.
-
+>
 > Looking for **slash commands** (`/loose-ends`, `/clear-check`, `/handoff`,
 > `/pickup`, `/subagent-driven`)? As of 2026-07-21 every command lives in
 > [agent-workflow](https://github.com/freaxnx01/agent-workflow)`/commands/`,
