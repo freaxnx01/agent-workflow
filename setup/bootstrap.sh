@@ -31,7 +31,7 @@ for arg in "$@"; do
   esac
 done
 
-# Sync once here; each link step then runs with --no-sync so three consecutive
+# Sync once here; each link step then runs with --no-sync so four consecutive
 # pulls don't race the same checkout.
 if [ "$sync" = 1 ]; then
   if [ ! -d "$REPO_DIR/.git" ]; then
