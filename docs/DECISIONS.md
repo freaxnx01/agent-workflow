@@ -773,3 +773,63 @@ labeled issues, and the operator console that feeds it.
 + Renaming the repo moves the local clone directory, which invalidates the
   gitdir pointer of any worktree under it — the mechanism that orphaned
   `.worktrees/misc`, removed under this exact failure on 2026-07-20.
+
+---
+
+## ADR-007 — agent-workflow owns Claude content and its provisioning (2026-07-21)
+
+### Context
+
+ADR-005 moved the operator console here but left `config` as the bootstrap
+orchestrator; #128 moved the remaining commands and the `handoff-resume` hook.
+What stayed behind was the awkward part: `config` held the three CLAUDE.md
+partials and all five setup scripts, so it owned the provisioning contract for a
+surface that lives entirely here. Three of its five scripts existed only to clone
+this repo and call its link steps.
+
+Moving `setup/` alone would not remove that cross-repo clone — it would
+**invert** it: `00-claude-partials.sh` `@`-imports config's own `claude/*.md`, so
+a relocated bootstrap would have to clone `config` to find them. Only moving the
+partials and the bootstrap together eliminates the dependency.
+
+### Decision
+
+1. **`partials/` is a new top-level surface here**, alongside `commands/` and
+   `hooks/`. `setup/link-partials.sh` installs it.
+2. **`setup/bootstrap.sh` moves here** and becomes the one-URL machine entry
+   point. It clones nothing but this repo, and chains four link steps —
+   partials, commands, hooks, skills. The skills content already lived here
+   (`setup/link-skills.sh`, shipped earlier under #132); config's
+   `03-claude-skills.sh` shim merely cloned this repo to run it, so folding it
+   into the unified bootstrap removes the last cross-repo skills clone.
+3. **`config/setup/01-claude-commands.sh`, `02-claude-hooks.sh` and
+   `03-claude-skills.sh` are deleted** — pure shims once `bootstrap.sh` sits
+   beside the link steps they delegated to.
+4. **The old bootstrap URL keeps working** via a deprecation stub in `config` that
+   forwards arguments and prints the new URL. Old notes and muscle memory do not
+   break.
+5. **Files are copied, not history-grafted** — per-file history stays in `config`'s
+   log, as in ADR-005 §4.
+
+### Consequences
+
++ `config` becomes an honest machine-setup repo: shell, prompt, Windows tooling.
+  Its README no longer has to describe two unrelated jobs.
++ **Sequencing is load-bearing.** The `agent-workflow` PR must land before the
+  `config` PR; reversing it leaves a window where no bootstrap works.
++ **Migration is silent if botched.** `link-partials.sh` sweeps the legacy marker
+  block and stray `config/claude` `@`-lines, because the installer only strips
+  markers it matches exactly — and the `config` clone stays on disk, so a
+  surviving old block loads a second, duplicate set of instructions with no error
+  and no missing file. Covered by a migration test; the sweep can be removed once
+  every machine has run the new installer at least once.
++ `setup/` gains its **first test coverage** (24 assertions in
+  `tests/run-script-tests.sh`). It was entirely untested before.
++ **`BASH_SOURCE` is unset under `curl … | bash`.** `link-partials.sh` therefore
+  resolves its source dir relative to `BASH_SOURCE` *with a fallback* to the
+  canonical path. `link-hooks.sh` uses the relative form alone and advertises a
+  `curl` usage in its header — a latent bug, left unfixed here to keep this change
+  scoped; worth a follow-up.
++ **`link-commands.sh` still derives its source dir from `$HOME`**, so it cannot
+  run against a scratch `$HOME`; the bootstrap test symlinks the real checkout in.
+  Also left for a follow-up.

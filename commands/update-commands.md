@@ -1,5 +1,5 @@
 ---
-description: Update my user-level slash commands and hooks from agent-workflow (pull + reinstall)
+description: Update my user-level slash commands, hooks, and skills from agent-workflow (pull + reinstall)
 ---
 
 Update my personal user-level Claude Code slash commands and hooks. **All 45 commands
@@ -8,29 +8,27 @@ now live in one repo**, [freaxnx01/agent-workflow](https://github.com/freaxnx01/
 the generic session-hygiene, handoff/pickup and `wt:*` commands, and the
 `handoff-resume` hook.
 
-`config` keeps the CLAUDE.md partials and remains the one-URL machine bootstrap; its
-installer delegates both commands and hooks to agent-workflow.
+`agent-workflow` now owns the CLAUDE.md partials, the commands, the hooks, the skills, and the
+one-URL machine bootstrap; `config` no longer takes part in any of this.
 
 Steps:
 
-1. Run the idempotent config installers. They pull `config` for the partials, then
-   clone/pull agent-workflow and reinstall every command (as copies), the skills
-   and the hooks via its link steps — so one step refreshes everything:
+1. Run the idempotent bootstrap. It pulls agent-workflow once, then runs all four
+   link steps — partials, commands (as copies), hooks, and skills — so one step refreshes
+   everything:
 
    ```bash
-   bash ~/repos/github/freaxnx01/public/config/setup/01-claude-commands.sh
-   bash ~/repos/github/freaxnx01/public/config/setup/03-claude-skills.sh
+   bash ~/repos/github/freaxnx01/public/agent-workflow/setup/bootstrap.sh
    ```
 
 2. Report concisely which commands were added, changed, or removed since before the
-   pull. Use the installer output plus, for whichever repos fast-forwarded:
+   pull. Use the installer output plus:
 
    ```bash
-   git -C ~/repos/github/freaxnx01/public/config         log --oneline @{1}.. 2>/dev/null
    git -C ~/repos/github/freaxnx01/public/agent-workflow log --oneline @{1}.. 2>/dev/null
    ```
 
-   If nothing changed in either, just say "Already up to date."
+   If nothing changed, just say "Already up to date."
 
 Notes:
 

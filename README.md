@@ -66,6 +66,19 @@ Hooks follow the same pattern: [`setup/link-hooks.sh`](setup/link-hooks.sh) copi
 `~/.claude/settings.json` (backing the file up first). The copy under `$HOME` is what
 executes, not the file in this repo.
 
+`partials/` follows the same pattern for CLAUDE.md content: three `@`-imported
+fragments, installed by [`setup/link-partials.sh`](setup/link-partials.sh) into
+`~/.claude/CLAUDE.md`, so they apply to every project on the machine.
+`partials/README.md` is not imported — it documents the directory for humans. New
+`*.md` files dropped into `partials/` are picked up automatically on the next
+install.
+
+New machine, one line:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/freaxnx01/agent-workflow/main/setup/bootstrap.sh | bash
+```
+
 Full command list: [`commands/README.md`](commands/README.md).
 
 ### 2 — Plugin skills from `agent-skills`
@@ -126,13 +139,13 @@ When a name collides with a user-level command, the project-scoped one wins.
 ### Refreshing
 
 ```bash
-# sources 1 + config partials + hooks — one idempotent installer
-bash ~/repos/github/freaxnx01/public/config/setup/01-claude-commands.sh
+# partials + commands + hooks + skills — one idempotent installer, one repo
+bash ~/repos/github/freaxnx01/public/agent-workflow/setup/bootstrap.sh
 ```
 
 `/update-commands` is a thin wrapper around exactly that, and reports what changed.
-`config` remains the one-URL machine bootstrap; its installer delegates commands,
-skills and hooks to this repo.
+This repo is now the one-URL machine bootstrap: it owns the partials, the commands,
+the hooks and the skills, so nothing else is cloned.
 
 | To refresh | Run |
 |---|---|
@@ -181,4 +194,4 @@ belongs in `skills/`; a short, explicit action belongs in `commands/`.
 | [`agent-workflow`](https://github.com/freaxnx01/agent-workflow) | **This repo** — CI pipeline + user-level command console |
 | [`agent-skills`](https://github.com/freaxnx01/agent-skills) | Plugin marketplace: `sync-ai-instructions`, `propose-ai-instructions` |
 | [`ai-instructions`](https://github.com/freaxnx01/ai-instructions) | Agent instruction content: `base-instructions.md` + per-stack overlays |
-| [`config`](https://github.com/freaxnx01/config) | One-URL machine bootstrap; CLAUDE.md partials; delegates command/hook install here |
+| [`config`](https://github.com/freaxnx01/config) | Machine setup: shell, oh-my-posh prompt, Windows tooling. No Claude content |

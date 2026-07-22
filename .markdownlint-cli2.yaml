@@ -25,3 +25,7 @@ ignores:
   - "SKILL.md"
   - ".github/copilot-instructions.md"
   - "**/node_modules/**"
+  # Superpowers working docs (specs, plans, SDD scratch) are one-time process
+  # artifacts, not maintained prose — linting them is noise, same rationale as
+  # the generated-file excludes above.
+  - "docs/superpowers/**"

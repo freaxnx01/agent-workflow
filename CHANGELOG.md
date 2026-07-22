@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0](https://github.com/freaxnx01/agent-workflow/releases/tag/v1.8.0) - 2026-07-21
+
+### Added — this repo is now the machine bootstrap
+
+**`partials/` and `setup/bootstrap.sh` move here from `freaxnx01/config`**
+(ADR-007, #133). agent-workflow now owns every Claude surface — partials, commands,
+hooks, skills — *and* the provisioning that installs them. No cross-repo clone remains.
+
+New machine, one line:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/freaxnx01/agent-workflow/main/setup/bootstrap.sh | bash
+```
+
+The old `config` URL still works — it forwards, and prints the new one.
+
+**Existing machines:** re-run the bootstrap above (or `/update-commands`). The
+installer sweeps the old `config`-era marker block automatically, so the partials
+do not load twice. No manual edit of `~/.claude/CLAUDE.md` is needed.
+
+- **setup:** `partials/` surface + `link-partials.sh` with legacy-block migration (#133)
+- **setup:** `bootstrap.sh` moves here; verbatim flag passthrough to all link steps (#133)
+- **tests:** first coverage for `setup/` — 24 assertions (#133)
+
+### Changed
+
+- **commands:** `/update-commands` runs this repo's bootstrap, not config's installer (#133)
+- **docs:** README documents the `partials/` surface and the new bootstrap URL (#133)
+
 ## [1.7.0](https://github.com/freaxnx01/agent-workflow/releases/tag/v1.7.0) - 2026-07-21
 
 ### Changed — repository renamed
