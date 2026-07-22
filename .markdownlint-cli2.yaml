@@ -29,3 +29,6 @@ ignores:
   # artifacts, not maintained prose — linting them is noise, same rationale as
   # the generated-file excludes above.
   - "docs/superpowers/**"
+  # AI agent working notes (see CLAUDE.md "Documentation Structure") — transient
+  # session records, same rationale as the superpowers docs above.
+  - "docs/ai-notes/**"
