@@ -23,7 +23,14 @@ then stop:
    using whichever tool exists: `clip.exe` (WSL2/Windows), `pbcopy` (macOS),
    `wl-copy` or `xclip` (Linux).
 
-4. **Tell me what to do next.** End by printing the artifact path and this exact
+4. **Commit and push.** Stage the artifact from step 1 and `.claude/handoff.md`,
+   commit with a conventional message (e.g. `docs(handoff): save phase for
+   resume`), and push to the current branch's remote. Do this without asking —
+   handoff files are always meant to be durable, not left as local-only,
+   uncommitted state. If there is no remote or push fails, say so and continue;
+   don't block the handoff on it.
+
+5. **Tell me what to do next.** End by printing the artifact path and this exact
    instruction: run `/clear`, then `/pickup` (or paste the clipboard) to resume.
    Note that you cannot run `/clear` yourself — that keystroke is mine.
 
