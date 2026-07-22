@@ -1,6 +1,13 @@
-# UI Brainstorm — Phase 1 of 4
+---
+description: Design a new UI screen or component using ASCII wireframes (Phase 1 of 4)
+---
 
-You are helping design a new UI screen or component. Use the active stack overlay (`.ai/stacks/<stack>.md`) for component-library-specific vocabulary and conventions — this skill itself is stack-neutral.
+You are helping design a new UI screen or component. This is Phase 1 of the 4-phase
+UI workflow (`/ui:brainstorm` → `/ui:flow` → `/ui:build` → `/ui:review`).
+
+This command is stack-neutral. If the project has a synced stack overlay
+(`.ai/stacks/<stack>.md`), use it for component-library vocabulary and conventions;
+otherwise infer conventions from the existing codebase.
 
 **Target:** $ARGUMENTS
 
@@ -44,7 +51,7 @@ Use box-drawing characters for clarity:
 ### Step 3 — Wait for approval
 
 Do NOT proceed to Mermaid diagrams or code.
-End with: "Does this wireframe match your intent? Approve to continue to Phase 2 (/ui-flow)."
+End with: "Does this wireframe match your intent? Approve to continue to Phase 2 (/ui:flow)."
 
 ---
 

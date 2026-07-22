@@ -1,6 +1,15 @@
-# UI Build — Phase 3 of 4
+---
+description: Build the approved UI component step by step (Phase 3 of 4)
+---
 
-The wireframe and flow diagrams are approved. Now build the component. This skill is stack-neutral — follow the active stack overlay (`.ai/stacks/<stack>.md`) for component-library specifics (which layout/form/dialog/loading components to prefer, file naming, code-behind conventions).
+The wireframe and flow diagrams are approved. Now build the component. This is
+Phase 3 of the 4-phase UI workflow (`/ui:brainstorm` → `/ui:flow` → `/ui:build`
+→ `/ui:review`).
+
+This command is stack-neutral. If the project has a synced stack overlay
+(`.ai/stacks/<stack>.md`), follow it for component-library specifics (which
+layout/form/dialog/loading components to prefer, file naming, code-behind
+conventions); otherwise infer conventions from the existing codebase.
 
 **Target:** $ARGUMENTS
 

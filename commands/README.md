@@ -7,7 +7,7 @@ pipeline — the issue→PR workflow you drive it with — and are **forge-agnos
 GitHub Actions today (`gh:*`), Forgejo Actions later (`fj:*`).
 
 > **Not to be confused with** this repo's project-scoped
-> [`.claude/commands/`](../.claude/commands/) (`commit`, `push`, `ui-*`), which
+> [`.claude/commands/`](../.claude/commands/) (`commit`, `push`), which
 > are active only inside agent-workflow. `commands/` here is user-level and global;
 > `.claude/commands/` is project-local. See `docs/DECISIONS.md` (ADR-005).
 
@@ -37,6 +37,13 @@ for how this fits alongside the plugin and project-scoped command sources.
 `/handoff` · `/pickup`
 
 **Worktree** (`wt/`): `/wt:status` · `/wt:finish`
+
+**UI workflow** (`ui/`): `/ui:brainstorm` · `/ui:flow` · `/ui:build` · `/ui:review` —
+a **gated four-phase sequence**, not four independent commands. Each phase has an
+approval gate; the next refuses to start until the previous one is signed off, and no
+component code is written before the wireframe is approved. Stack-neutral: component-library
+vocabulary (MudBlazor, shadcn/ui, Flutter widgets, …) comes from the project's active
+`.ai/stacks/<stack>.md` overlay when one is synced, otherwise from the existing codebase.
 
 **Meta**: `/commands` · `/update-commands`
 

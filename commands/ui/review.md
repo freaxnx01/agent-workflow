@@ -1,6 +1,14 @@
-# UI Review — Phase 4 of 4
+---
+description: Review the implemented component against wireframe, flow diagrams, and conventions (Phase 4 of 4)
+---
 
-Review the implemented component against the approved wireframe, flow diagrams, and project conventions. This skill is stack-neutral — cross-reference component-library preferences and file-layout rules against the active stack overlay (`.ai/stacks/<stack>.md`).
+Review the implemented component against the approved wireframe, flow diagrams, and
+project conventions. This is Phase 4 of the 4-phase UI workflow (`/ui:brainstorm` →
+`/ui:flow` → `/ui:build` → `/ui:review`).
+
+This command is stack-neutral. If the project has a synced stack overlay
+(`.ai/stacks/<stack>.md`), cross-reference component-library preferences and
+file-layout rules against it; otherwise infer conventions from the existing codebase.
 
 **Target:** $ARGUMENTS
 
