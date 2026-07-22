@@ -103,26 +103,16 @@ Plugin-provided commands are global like the user-level ones, but they update th
 
 ### 3 — Commands delivered by `/sync-ai-instructions`
 
-`ai-instructions` keeps shared skills under `.ai/skills/`: `commit`, `push`, and the
-four-phase UI workflow. Running `/sync-ai-instructions <stack>` in a target project
-writes them into that project's `.claude/commands/`, alongside the assembled
-`CLAUDE.md`. Once written they behave as source 4 — project-scoped, committed to the
-consuming repo.
+`ai-instructions` keeps shared skills under `.ai/skills/`: `commit` and `push`.
+Running `/sync-ai-instructions <stack>` in a target project writes them into that
+project's `.claude/commands/`, alongside the assembled `CLAUDE.md`. Once written they
+behave as source 4 — project-scoped, committed to the consuming repo.
 
-The `ui-*` set is a **gated sequence**, not four independent commands. Each phase has
-an approval gate; the next phase refuses to start until the previous one is approved,
-and no component code is written before the wireframe is signed off:
-
-| Phase | Command | Produces | Gate |
-|---|---|---|---|
-| 1 | `/ui-brainstorm` | ASCII wireframe → `docs/design/<feature>/wireframe.md` | Wireframe approved |
-| 2 | `/ui-flow` | Mermaid flow diagrams | Diagrams approved |
-| 3 | `/ui-build` | Component code — shell → logic → interactions → polish | — |
-| 4 | `/ui-review` | Review against wireframe, flows and conventions | Checklist passes |
-
-They are stack-neutral: component-library vocabulary (MudBlazor, shadcn/ui, Flutter
-widgets, …) comes from the project's active `.ai/stacks/<stack>.md` overlay, which is
-why the same four files work in every consuming repo.
+> The **four-phase UI workflow** (`/ui:brainstorm` → `/ui:flow` → `/ui:build` →
+> `/ui:review`) used to ship here via sync. It now lives in the console as the `ui/`
+> namespace (source 1) — global, installed once into `~/.claude/commands/`, so it
+> works in every repo without a per-project sync. See
+> [`commands/README.md`](commands/README.md) for the gated-sequence details.
 
 ### 4 — Project-scoped commands
 
@@ -130,9 +120,9 @@ A repo may ship its own `.claude/commands/`, active only inside that repo — wh
 written by hand or delivered by source 3. They are read in place: nothing installs or
 copies them, and they do not follow you to other repos.
 
-This repo ships `/commit`, `/push` and the `ui-*` phases in
-[`.claude/commands/`](.claude/commands/); `ai-instructions` ships the same set plus
-`/release-notes`.
+This repo ships `/commit` and `/push` in
+[`.claude/commands/`](.claude/commands/); `ai-instructions` ships the same pair plus
+`/release-notes`. (The `ui-*` phases moved to the global console — see source 1.)
 
 When a name collides with a user-level command, the project-scoped one wins.
 

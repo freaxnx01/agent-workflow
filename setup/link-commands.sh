@@ -3,7 +3,7 @@
 #
 # Link (or copy) agent-workflow's USER-LEVEL operator-console slash commands into
 # ~/.claude/commands/ so they work from ANY repo. These are DISTINCT from this
-# repo's PROJECT-SCOPED .claude/commands/ (commit, push, ui-*), which are active
+# repo's PROJECT-SCOPED .claude/commands/ (commit, push), which are active
 # only inside agent-workflow itself.
 #
 # Default is COPY, deliberately: the symlink variant points into this repo's

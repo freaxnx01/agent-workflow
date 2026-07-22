@@ -1,6 +1,14 @@
-# UI Flow — Phase 2 of 4
+---
+description: Map UI logic with Mermaid flow diagrams (Phase 2 of 4)
+---
 
-The ASCII wireframe from Phase 1 has been approved. Now map the logic before any code is written. This skill is stack-neutral — use the active stack overlay (`.ai/stacks/<stack>.md`) for component-library naming in the component map.
+The ASCII wireframe from Phase 1 has been approved. Now map the logic before any
+code is written. This is Phase 2 of the 4-phase UI workflow (`/ui:brainstorm` →
+`/ui:flow` → `/ui:build` → `/ui:review`).
+
+This command is stack-neutral. If the project has a synced stack overlay
+(`.ai/stacks/<stack>.md`), use its component-library naming in the component map;
+otherwise infer names from the existing codebase.
 
 **Target:** $ARGUMENTS
 
@@ -29,7 +37,8 @@ Generate a Mermaid diagram showing:
 - Which services are injected and where
 - API calls: which component triggers them
 
-Use the component-library names from the active stack overlay (e.g. `MudDataGrid` for .NET/Blazor) in the component map.
+Use the component-library names from the active stack overlay (e.g. `MudDataGrid`
+for .NET/Blazor) in the component map when one is present.
 
 ### Step 3 — Screen inventory check
 
@@ -38,7 +47,7 @@ List any additional screens or dialogs implied by this flow that were not in the
 ### Step 4 — Wait for approval
 
 Do NOT write any component code.
-End with: "Do these diagrams capture the intended logic? Approve to continue to Phase 3 (/ui-build)."
+End with: "Do these diagrams capture the intended logic? Approve to continue to Phase 3 (/ui:build)."
 
 ---
 
