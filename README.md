@@ -66,12 +66,12 @@ Hooks follow the same pattern: [`setup/link-hooks.sh`](setup/link-hooks.sh) copi
 `~/.claude/settings.json` (backing the file up first). The copy under `$HOME` is what
 executes, not the file in this repo.
 
-`partials/` follows the same pattern for CLAUDE.md content: three `@`-imported
+`partials/` follows the same pattern for CLAUDE.md content: `@`-imported
 fragments, installed by [`setup/link-partials.sh`](setup/link-partials.sh) into
-`~/.claude/CLAUDE.md`, so they apply to every project on the machine.
-`partials/README.md` is not imported — it documents the directory for humans. New
-`*.md` files dropped into `partials/` are picked up automatically on the next
-install.
+`~/.claude/CLAUDE.md`, so they apply to every project on the machine. See
+[`partials/README.md`](partials/README.md) for what each fragment does — that file
+isn't itself imported, it documents the directory for humans. New `*.md` files
+dropped into `partials/` are picked up automatically on the next install.
 
 New machine, one line:
 

@@ -9,6 +9,7 @@ and picks up changes with a `git pull`.
 | [`task-checklist.md`](task-checklist.md) | Makes Claude present action items it hands back to you as `- [ ]` Markdown checkboxes. |
 | [`skill-authoring.md`](skill-authoring.md) | When creating or editing a skill, makes it **self-improving** — appends a "fix blockers and update yourself" instruction to the skill body (plus the don't-be-prescriptive / mention-tools rules). |
 | [`subagent-driven-default.md`](subagent-driven-default.md) | Makes Claude execute approved implementation plans with `superpowers:subagent-driven-development` **by default** (unless told otherwise). Pairs with the [`/subagent-driven`](https://github.com/freaxnx01/agent-workflow/blob/main/commands/subagent-driven.md) command for explicit re-assertion. |
+| [`scope-boundary.md`](scope-boundary.md) | Keeps sessions from drifting: state scope up front, treat incidental findings as discoveries to capture (not auto-tasks), ask before expanding scope, and cap open threads at two. |
 
 > `README.md` (this file) is **not** `@`-imported — the installer skips it. Any
 > other `*.md` dropped into this directory **is** imported automatically the
