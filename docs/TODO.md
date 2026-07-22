@@ -85,15 +85,15 @@ copy and reinstalling from `main`.
   `skills/processing-test-feedback/SKILL.md` before running the installer there — if
   it is newer, it needs a follow-up commit, not a clobber.
 
-- [ ] **Run `config/setup/bootstrap.sh` on that machine** so it picks up the skill.
-  Until then the `processing-test-feedback` skill is missing there — the exact failure #132
-  fixed here.
+- [ ] **Run `agent-workflow/setup/bootstrap.sh` on that machine** so it picks up the
+  skill. Until then the `processing-test-feedback` skill is missing there — the exact
+  failure #132 fixed here.
 
 - [ ] **First solo `/update-commands` run still unexercised.** The copy that ran this
-  session was stale and knew only step `01`, so `03-claude-skills.sh` had to be invoked
-  by hand. `commands/update-commands.md` now carries both steps; the next run is the
-  first to exercise the skills step unaided. Confirm it does before trusting it on a
-  fresh machine.
+  session was stale and knew only step `01`, so the skills step had to be invoked by
+  hand. `commands/update-commands.md` now runs the unified `setup/bootstrap.sh`, which
+  chains the skills step; the next run is the first to exercise it unaided. Confirm it
+  does before trusting it on a fresh machine.
 
 - [ ] **Fetch gotcha is documented only in `~/.claude/CLAUDE.md`** (unversioned — that
   path is not a git repo, so it exists on the WSL box alone). A plain `git fetch`
@@ -102,20 +102,20 @@ copy and reinstalling from `main`.
   promoting this to a `config/claude/` partial (2026-07-21), so it will not reach other
   machines — revisit only if it bites somewhere else.
 
+- [ ] `link-hooks.sh` and `link-commands.sh` source-dir resolution — the first
+  breaks under `curl | bash` (BASH_SOURCE unset), the second cannot run against a
+  scratch `$HOME`. `link-partials.sh` has the correct pattern; port it (ADR-007).
+
 ## Deferred — decide with the user before starting
 
-- [ ] **`config` still does two jobs.** Its README describes "Claude Code
-  configuration **plus other personal config** (oh-my-posh, Windows)". After the
-  2026-07-21 consolidation it holds only CLAUDE.md partials + the bootstrap, so
-  `oh-my-posh/` and `windows/` are the odd ones out. Decoupled from the command
-  surface by decision §3 of
-  `docs/superpowers/specs/2026-07-20-consolidate-command-surface-design.md` —
-  independent cleanup, not a prerequisite for anything.
+- [ ] **`config`'s remaining content has no clear home.** ADR-007 removed all
+  Claude content and the bootstrap from `config`, leaving `oh-my-posh/` (3 files)
+  and `windows/` (8 files) — both installed manually. The repo name no longer
+  describes them.
 
-  **The user asked to be consulted on how to proceed before this is started**
-  (2026-07-21). `dotfiles` is no longer a candidate destination — it was archived
-  the same day. So the open question is where that content goes: a new repo, a
-  subdirectory rename inside `config`, or leave it and fix the README instead.
+  **The user asked to be consulted before this is started** (2026-07-21).
+  `dotfiles` is not a candidate — it was archived the same day. Open question:
+  a new repo, a rename, or leave it and fix the README.
 
 - [ ] **`FlowHub-CAS-AISE` #186** — last `agent-pipeline` reference in any repo.
   Blocked on its own `AngleSharp 1.2.0` advisory, not on us. The user will
