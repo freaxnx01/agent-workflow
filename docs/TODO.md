@@ -106,12 +106,31 @@ copy and reinstalling from `main`.
   breaks under `curl | bash` (BASH_SOURCE unset), the second cannot run against a
   scratch `$HOME`. `link-partials.sh` has the correct pattern; port it (ADR-007).
 
+## Provisioning consolidation — #133 (landed 2026-07-22)
+
+Done. `agent-workflow` now owns every Claude surface *and* its provisioning
+(ADR-007): `partials/` + `setup/link-partials.sh`, and `setup/bootstrap.sh` chaining
+all four link steps (partials, commands, hooks, skills). `config` handed it all
+off — `claude/` and its four setup scripts deleted, `setup/bootstrap.sh` reduced to
+a forwarding deprecation stub so the old one-line URL still works. `1.7.0` → `1.8.0`.
+
+Both PRs merged and verified end-to-end against a scratch `$HOME` via the live old
+`config` URL (deprecation notice → forwards → all four surfaces install, exit 0):
+
+- [x] agent-workflow **#138** (`414a56d`) — partials, `bootstrap.sh`, `/update-commands`, ADR-007
+- [x] config **#47** (`7a51155`) — deletions + forwarding stub + README rewrite
+
+Left open by design, tracked elsewhere (not closed by this):
+
+- `link-hooks.sh` / `link-commands.sh` source-dir resolution — the ADR-007 follow-up above.
+- `config`'s remaining content (`oh-my-posh/`, `windows/`) still has no clear home — see Deferred.
+
 ## Deferred — decide with the user before starting
 
 - [ ] **`config`'s remaining content has no clear home.** ADR-007 removed all
-  Claude content and the bootstrap from `config`, leaving `oh-my-posh/` (3 files)
-  and `windows/` (8 files) — both installed manually. The repo name no longer
-  describes them.
+  Claude content and the bootstrap from `config` (config #47, merged 2026-07-22),
+  leaving `oh-my-posh/` (3 files) and `windows/` (8 files) — both installed
+  manually. The repo name no longer describes them.
 
   **The user asked to be consulted before this is started** (2026-07-21).
   `dotfiles` is not a candidate — it was archived the same day. Open question:
