@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **docs:** working note for the 2026-07-21 skills-delivery session under `docs/ai-notes/` (#139)
+- **docs:** #133 provisioning-consolidation completion record in `docs/TODO.md` (#141)
+
+### Changed
+
+- **build:** markdownlint now ignores transient agent working docs — `docs/ai-notes/**` and `docs/superpowers/**` (#139)
+
 ## [1.8.0](https://github.com/freaxnx01/agent-workflow/releases/tag/v1.8.0) - 2026-07-21
 
 ### Added — this repo is now the machine bootstrap
@@ -103,8 +114,6 @@ working the moment any repo claims the old name. Update at your convenience.
 - **todo:** Add new-skill idea for workflow-to-repo scaffolding
 - **spec:** Consolidate the personal command surface into one repo (#120)
 - **plan:** Rename agent-pipeline to agent-workflow (#122)
-
-## [Unreleased]
 
 ## [1.6.0](https://github.com/freaxnx01/agent-pipeline/releases/tag/v1.6.0) - 2026-06-05
 
