@@ -53,12 +53,18 @@ Do this before reading the notes — it builds both the **topic vocabulary** and
   are precise topic anchors — prefer them over paraphrase.
 - Keep a short list of **code/feature areas** to verify claims against later.
 
-### 2. Split into atomic entries, and capture attachments
+### 2. Split into atomic entries, capture attachments, and preserve source text
 
 One concern per entry, regardless of how the notes are formatted — bullets (`-`, `*`),
 plain newline-separated lines, or blank-line-separated paragraphs all work. Treat each
 line/bullet/paragraph as one note; if a note carries two concerns ("X is broken *and* it'd
 be nice if Y"), split it into two entries. Number them.
+
+For every entry, keep its exact original wording — this is the entry's **Source**, carried
+into the Issue/TODO.md output in step 5 so a reader can see which raw tester note produced
+it. When one raw line splits into two entries, both entries carry that same line as their
+Source. Tag the `## Raw notes` appendix (see Persistence) with the entry number(s) each
+line maps to (e.g. `[#08]`), so the Source text is still resolvable after a session resume.
 
 If an entry has **screenshots or videos**, persist them now (see Attachments) — an
 ephemeral pasted image is lost next session, which breaks the persistence guarantee.
@@ -99,8 +105,12 @@ right channel, and mark each entry `done` in the worklog as you go:
   label. One issue per entry. Use a Conventional-Commits-style title (`fix(...)`,
   `feat(...)`). Embed each attachment in the body (`![](<committed asset path>)` for images,
   a link for videos); if the tracker needs a true upload, flag it for the human to drag in.
+  Every issue body ends with a `## Source` section quoting the entry's verbatim Source note
+  from step 2 — required, so a reader knows which raw tester note produced this issue.
 - **TODO.md** → append `- [ ]` under the matching `## <Topic>` section (create the section
   if none fits), in the existing prose style. Link any attachment by its committed path.
+  Add an indented sub-line under the bullet quoting the entry's verbatim Source note, e.g.
+  `  - Source: "<verbatim original note>"` — required, same traceability as Issues.
 - **Immediate** → implement now, surgically (see the base clean-code / surgical-edit rules),
   then record what you changed. The attachment is the repro evidence — keep it in the worklog.
 - **No action** → nothing to create; the rationale (issue link / "already fixed") is the
@@ -153,8 +163,9 @@ A batch may span sessions. State lives in a committed worklog, not just the chat
   - a header line with overall `status: awaiting-approval | approved | done`;
   - the triage table with the `Att.` column plus a trailing **Status** column per entry
     (`pending` → `approved` → `done` / `skipped`);
-  - a `## Raw notes` appendix preserving the original pasted notes verbatim, so the batch
-    is fully reconstructable in a fresh session;
+  - a `## Raw notes` appendix preserving the original pasted notes verbatim, each line or
+    paragraph tagged with its entry number(s) (e.g. `[#08]`), so the batch is fully
+    reconstructable **and** each entry's Source is resolvable after a session resume;
   - attachments live under `assets/<worklog-slug>/` next to the worklog and are referenced
     by relative path — so a fresh session recovers both the notes and their media.
 - Update the worklog at each transition (proposed, approved, each entry acted). A new
