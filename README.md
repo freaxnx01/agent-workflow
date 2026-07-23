@@ -68,10 +68,18 @@ executes, not the file in this repo.
 
 `partials/` follows the same pattern for CLAUDE.md content: `@`-imported
 fragments, installed by [`setup/link-partials.sh`](setup/link-partials.sh) into
-`~/.claude/CLAUDE.md`, so they apply to every project on the machine. See
-[`partials/README.md`](partials/README.md) for what each fragment does — that file
-isn't itself imported, it documents the directory for humans. New `*.md` files
-dropped into `partials/` are picked up automatically on the next install.
+`~/.claude/CLAUDE.md`, so they apply to every project on the machine. New `*.md`
+files dropped into `partials/` are picked up automatically on the next install.
+
+| File | Good for |
+|---|---|
+| [`task-checklist.md`](partials/task-checklist.md) | Getting action items back as `- [ ]` Markdown checkboxes instead of prose, so they're easy to tick off and reference by number. |
+| [`skill-authoring.md`](partials/skill-authoring.md) | Making self-authored skills self-improving — each one is told to fix its own blockers and write the fix back into `SKILL.md` for next time. |
+| [`subagent-driven-default.md`](partials/subagent-driven-default.md) | Defaulting implementation-plan execution to `superpowers:subagent-driven-development` instead of inline work, without having to ask for it each time. |
+| [`scope-boundary.md`](partials/scope-boundary.md) | Avoiding scope creep — state scope up front, treat incidental findings as discoveries to capture (not auto-tasks), and ask before a fix chain drifts into a different project. |
+
+See [`partials/README.md`](partials/README.md) for setup and verification steps —
+that file isn't itself imported, it documents the directory for humans.
 
 New machine, one line:
 
