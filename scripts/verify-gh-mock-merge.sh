@@ -2,10 +2,10 @@
 #
 # verify-gh-mock-merge.sh — Inspect the gh-mock invocation log and emit
 # `merge-attempted=true|false` and `ready-attempted=true|false` to
-# $GITHUB_OUTPUT. Called by the `auto_review` job's final step under
+# $GITHUB_OUTPUT. Called by the `ai_review_ai_merge` job's final step under
 # stub-review-verdict mode (the issue-#16 act test's assertion surface).
-# The pre_preview job uses `ready-attempted` to distinguish the approve
-# path (ready=true, merge=false) from the block path (both false).
+# The ai_review_human_merge job uses `ready-attempted` to distinguish the
+# approve path (ready=true, merge=false) from the block path (both false).
 #
 # The mock log is written by tests/mocks/gh (one space-joined argv line
 # per invocation, always exits 0). We grep for an invocation that starts
@@ -34,7 +34,7 @@ if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
   printf 'merge-attempted=%s\n' "$attempted" >> "$GITHUB_OUTPUT"
 fi
 
-# Pre-preview promotes the draft with `gh pr ready` (no merge). Report
+# The human-merge flow promotes the draft with `gh pr ready` (no merge). Report
 # whether that happened so the act assertions can distinguish the
 # approve path (ready=true, merge=false) from the block path (both false).
 if [[ -n "$log" && -r "$log" ]] && grep -qE '^pr ready ' "$log"; then

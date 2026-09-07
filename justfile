@@ -119,7 +119,7 @@ clean:
 
 # Pass the repo as owner/repo, then any onboard-consumer.sh flags after it:
 #   just onboard freaxnx01/bridge --no-secret
-#   just onboard freaxnx01/bridge --secret-cmd 'pass show claude/oauth' --auto-review
+#   just onboard freaxnx01/bridge --secret-cmd 'pass show claude/oauth' --ai-review-ai-merge
 # Auth: the script's gh calls use the ambient credential. For a repo whose owner
 # differs from your default login, run under that owner's credential, e.g.
 #   direnv exec ~/repos/github/freaxnx01 just onboard freaxnx01/bridge --no-secret

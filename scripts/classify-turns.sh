@@ -82,14 +82,21 @@ if [[ -z "$chosen" ]]; then
     ISSUE_BODY="$(gh issue view "$ISSUE_NUMBER" --repo "$REPO" --json title,body --jq '.title + "\n" + .body')"
   fi
 
-  if printf '%s' "$ISSUE_BODY" | grep -qi '^## Implementation Plan'; then
+  # Feed grep via a here-string, NOT `printf ... | grep -q`. `grep -q` exits
+  # on its first match, so the writer is often still going: printf then dies
+  # of SIGPIPE and `set -o pipefail` turns a SUCCESSFUL match into a false
+  # condition, silently downgrading a big enriched plan to the default
+  # budget. Lost ~42% of the time on the 57KB body of #280 (which burned a
+  # full run at 50 turns instead of 160). A here-string has no pipe and no
+  # race. See tests/fixtures/issue-body-large-plan.md.
+  if grep -qi '^## Implementation Plan' <<< "$ISSUE_BODY"; then
     # `grep -c` exits 1 on zero matches (a heading level other than "### Task
     # N", or a plan with no numbered task headings at all) -- under
     # set -euo pipefail that would kill this whole script silently before it
     # writes anything to $GITHUB_OUTPUT, aborting the implement job before
     # the implementer ever runs. `-c` still prints "0" on no match; the
     # `|| true` only neutralizes the exit code.
-    task_count="$(printf '%s' "$ISSUE_BODY" | grep -cE '^### Task [0-9]+' || true)"
+    task_count="$(grep -cE '^### Task [0-9]+' <<< "$ISSUE_BODY" || true)"
     if   (( task_count >= 6 )); then chosen=160; reason="heuristic: ${task_count} plan tasks"
     elif (( task_count >= 4 )); then chosen=120; reason="heuristic: ${task_count} plan tasks"
     elif (( task_count >= 2 )); then chosen=80;  reason="heuristic: ${task_count} plan tasks"

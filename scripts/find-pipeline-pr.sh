@@ -18,7 +18,7 @@
 #                      enforces this in check-merge-envelope.sh; we apply
 #                      it here so that an unrelated higher-numbered draft
 #                      PR (e.g. opened by a third party to hijack the
-#                      auto-review target) is filtered out before we
+#                      review target) is filtered out before we
 #                      ever spend an agent turn on it.
 #   PIPELINE_PRS_JSON  Skip the `gh pr list` call and parse this JSON
 #                      blob instead. Used by Layer-1 tests.
@@ -77,7 +77,7 @@ fetch_prs() {
 # author is in the allowlist. Highest-numbered acts as a most-recent
 # tiebreaker if a previous failed run left a stale draft. The author
 # filter blocks a third-party-opened higher-numbered draft from
-# hijacking the auto-review target.
+# hijacking the review target.
 #
 # Author logins are normalized before the allowlist check: `gh pr list --json
 # author` reports the GitHub-Actions bot as `app/github-actions`, while the REST

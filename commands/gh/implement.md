@@ -84,19 +84,21 @@ description "Trigger: agent-workflow Claude implementation"):
 gh label create ai-implement --color "0075ca" --description "Trigger: agent-workflow Claude implementation" --force
 ```
 
-**Check whether the repo's `agent.yml` has `pre-preview: true` wired**
-(`grep -q "pre-preview: true" .github/workflows/agent.yml` if checked out locally, or
+**Check whether the repo's `agent.yml` wires the AI-review / human-merge flow**
+(`grep -qE "(ai-review-human-merge|pre-preview): true" .github/workflows/agent.yml`
+if checked out locally, or
 `gh api repos/<owner>/<repo>/contents/.github/workflows/agent.yml --jq '.content' | base64 -d`
-otherwise). If it does, also apply `ai-pre-preview` (created by
+otherwise — match either spelling, since `pre-preview` is deprecated but still
+honoured until v3). If it does, also apply `ai-review-human-merge` (created by
 `ensure-issue-labels.sh` during onboarding — assume it already exists rather than
-re-creating it) so the pipeline's own agent review (ADR-004) runs automatically
-after the draft PR opens:
+re-creating it) so the pipeline's own agent review (ADR-004, named by ADR-009)
+runs automatically after the draft PR opens:
 
 ```bash
-gh issue edit <N> --add-label ai-implement --add-label ai-pre-preview
+gh issue edit <N> --add-label ai-implement --add-label ai-review-human-merge
 ```
 
-If the repo does **not** have `pre-preview: true` wired, apply just `ai-implement`
+If the repo does **not** wire that flow, apply just `ai-implement`
 (the extra label would be an inert no-op, but don't apply labels a repo's pipeline
 doesn't act on):
 
@@ -110,7 +112,7 @@ Print:
 
 - Issue number, title, and URL
 - "agent-workflow triggered — Claude will open a draft PR shortly"
-- If pre-preview is wired: "the pipeline will review its own PR automatically and
+- If the human-merge flow is wired: "the pipeline will review its own PR automatically and
   promote it from draft to ready on approve — no `/gh:review` needed unless it
   gets blocked (`ai:review-blocked` label) or you want a second opinion"
 - If not: remind the user to watch for a new PR and review it with `/gh:review`

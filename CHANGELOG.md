@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Deprecated
+
+- **naming:** the inputs `auto-review` / `pre-preview`, the labels
+  `ai-auto-review` / `ai-pre-preview`, and the output `auto-review-enabled`
+  still work but emit a warning annotation naming the replacement.
+  **Removed in v3.** See the migration section in `docs/CONSUMER-SETUP.md`.
+
 ### Removed
 
 - **commands:** Remove `/gh:done` `/gh:enrich` `/gh:enrich-phased` `/gh:issues`
@@ -86,6 +93,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **naming:** the two review flows are named for their actor pair —
+  `auto-review` → `ai-review-ai-merge` and `pre-preview` →
+  `ai-review-human-merge` — across workflow inputs, issue labels, job ids and
+  the two gate scripts (ADR-009). Behaviour and precedence are unchanged.
 - **triage:** `/triage` now drops parked (`🧊 parked`) and `roadmap`
   issues in the query itself, and shows each issue's milestone + due date
   alongside its body length. Milestone is displayed, **not** sorted on — the

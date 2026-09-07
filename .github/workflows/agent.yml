@@ -1,10 +1,10 @@
 # Production caller — dogfoods this pipeline on its OWN issues.
 #
 # Trigger: apply the `ai-implement` label to an issue. The agent implements it
-# and opens a draft PR. Because `pre-preview: true` is set here, an issue that
-# ALSO carries `ai-pre-preview` runs the pre-preview flow (ADR-004): the agent
+# and opens a draft PR. Because `ai-review-human-merge: true` is set here, an issue that
+# ALSO carries `ai-review-human-merge` runs that flow (ADR-004, named by ADR-009): the agent
 # reviews its own draft PR and, on approve, promotes it to ready for a HUMAN to
-# merge — no envelope, no auto-merge. Issues without `ai-pre-preview` get the
+# merge — no envelope, no auto-merge. Issues without `ai-review-human-merge` get the
 # plain draft-only flow (#1).
 #
 # Self-dogfood specifics:
@@ -38,6 +38,18 @@ jobs:
       runner-labels: '["ubuntu-latest"]'
       default-model: claude-sonnet-5
       local-scripts: true
-      pre-preview: true
+      ai-review-human-merge: true
+      # The action's own default is 10 minutes, which kills a multi-task plan
+      # mid-implementation while max_turns is nowhere near spent (#280 died
+      # there twice). At the ~7.7s/turn this repo actually measures, the
+      # 160-turn tier classify-turns.sh can hand out needs ~20 minutes, so a
+      # cap below that makes the top tiers unreachable. 25 was measured too
+      # small in turn: #280's 8-task plan reached only task 3 of 8 before the
+      # 25-minute cap killed it. Stays under timeout-minutes below, so the
+      # process cap trips first and the job still reports a result.
+      claude-timeout-minutes: 55
+      # The reusable workflow defaults the job cap to 30, which would trip
+      # before the process cap above and kill the job without a run report.
+      timeout-minutes: 60
       self-fix: true
       self-fix-max-iterations: 2

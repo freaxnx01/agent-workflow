@@ -14,14 +14,14 @@ number,title,author,isDraft,headRefName` — include drafts (agent PRs are usual
 drafts), but skip a PR that is already approved with no open threads. Always say
 which PRs you picked before starting.
 
-**Skip a PR the pipeline's own pre-preview (ADR-004) already reviewed and
-approved** — check for a "Pre-reviewed ✓ — promoted to ready" comment from the
-pipeline on the PR (`gh pr view <N> --json comments`). That means an agent
+**Skip a PR the pipeline's own AI-review / human-merge flow (ADR-004) already
+reviewed and approved** — check for a "Reviewed ✓ — promoted to ready" comment
+from the pipeline on the PR (`gh pr view <N> --json comments`). That means an agent
 already reviewed this exact diff and a human just needs to merge; running this
 manual pass again is redundant unless the user explicitly wants a second
-opinion. If the linked issue instead carries `ai:review-blocked`, pre-preview
+opinion. If the linked issue instead carries `ai:review-blocked`, that flow
 ran and found problems (left the PR draft) — still worth this manual pass, and
-say so, since pre-preview's own verdict/reason is useful context to fold in
+say so, since its own verdict/reason is useful context to fold in
 rather than re-derive from scratch.
 
 ## Reviewing (one reviewer per PR, in parallel)

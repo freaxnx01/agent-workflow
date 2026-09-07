@@ -137,6 +137,11 @@ the normalized JSON, not on agent identity.
 
 ## ADR-002 — Auto-review and auto-merge safety envelope (2026-05-23)
 
+**Superseded in part (2026-09-03):** the names `auto-review` /
+`ai-auto-review` / `auto_review` are replaced by `ai-review-ai-merge` per
+ADR-009. The decision itself — the review and the merge safety envelope —
+is unchanged.
+
 **Status:** Accepted — supersedes constraint #4 ("Draft PRs only") in
 `docs/DESIGN.md`.
 **Tracking:** [#12](https://github.com/freaxnx01/agent-pipeline/issues/12) under epic [#3](https://github.com/freaxnx01/agent-pipeline/issues/3)
@@ -695,6 +700,11 @@ maintainer must manually re-dispatch the next issue in the chain.
 
 ## ADR-004 — Pre-preview mode (agent self-review → human merge) (2026-06-04)
 
+**Superseded in part (2026-09-03):** the names `pre-preview` /
+`ai-pre-preview` / `pre_preview` are replaced by `ai-review-human-merge`
+per ADR-009. The decision itself — agent review, human merge, no envelope —
+is unchanged.
+
 **Status:** Accepted
 **Tracking:** [#77](https://github.com/freaxnx01/agent-pipeline/issues/77)
 
@@ -990,3 +1000,67 @@ answer; a live pipeline run was out of scope for this evaluation (issue #160).
 + Follow-up: [#171](https://github.com/freaxnx01/agent-workflow/issues/171)
   — a scoped sandbox-repo spike to test headless reachability directly, filed
   rather than executed here.
+
+---
+
+## ADR-009 — Actor-pair naming for the review flows (2026-09-03)
+
+**Status:** Accepted
+**Tracking:** [#280](https://github.com/freaxnx01/agent-workflow/issues/280)
+**Supersedes naming in:** ADR-002, ADR-004
+
+### Context
+
+The pipeline has three end-states after it opens a draft PR: a raw draft, an
+agent review that auto-merges (ADR-002), and an agent review that promotes
+the draft to ready for a human to merge (ADR-004).
+
+Neither of the two review flows was named for what distinguishes it.
+`pre-preview` names a *stage* — and a doubled one, a thing before a preview
+— when the actual differentiator is **who merges**. `auto-review` has the
+mirror problem: it names the review half and stays silent on the automatic
+merge, the half that carries all the risk. Reading a list of issue labels,
+nothing told a maintainer which flow ends with a machine pushing to `main`.
+
+### Decision
+
+Name each flow by its actor pair — who reviews, who merges. Both flows are
+AI-reviewed, so the names differ in the second half, which is the axis that
+matters.
+
+| Surface | was | is |
+|---|---|---|
+| Input / label | `auto-review` / `ai-auto-review` | `ai-review-ai-merge` |
+| Input / label | `pre-preview` / `ai-pre-preview` | `ai-review-human-merge` |
+| Job id | `auto_review` / `pre_preview` | `ai_review_ai_merge` / `ai_review_human_merge` |
+| Gate script | `check-auto-review-gate.sh` / `check-preview-gate.sh` | `check-ai-merge-gate.sh` / `check-human-merge-gate.sh` |
+| Gate env var | `INPUT_AUTO_REVIEW` / `INPUT_PRE_PREVIEW` | `INPUT_AI_REVIEW_AI_MERGE` / `INPUT_AI_REVIEW_HUMAN_MERGE` |
+| `post-auto-review-block.sh` `MODE=` | `auto-review` / `pre-preview` | `ai-merge` / `human-merge` |
+| `onboard-consumer.sh` flag | `--auto-review` / `--pre-preview` | `--ai-review-ai-merge` / `--ai-review-human-merge` |
+
+Precedence is unchanged: an issue enabling both runs `ai_review_human_merge`
+and suppresses `ai_review_ai_merge`. Under the new names that reads as a
+sentence rather than needing the comment that used to explain it.
+
+### Consequences
+
++ **Deprecated, removed in v3:** the inputs `auto-review` / `pre-preview`,
+  the labels `ai-auto-review` / `ai-pre-preview`, and the output
+  `auto-review-enabled`. Each gate script honours the old spelling and emits
+  a `::warning::` annotation naming the replacement. Test-only stub inputs
+  and assertion outputs were renamed outright — their only consumer is this
+  repo's own act suite.
++ `ensure-issue-labels.sh` creates only the new labels. Old labels already
+  present are never deleted (the gates still honour them) and the pipeline
+  never mutates labels on an issue — `docs/CONSUMER-SETUP.md` documents the
+  bulk relabel for a maintainer to run.
++ Design history under `docs/superpowers/`, released `CHANGELOG.md` entries,
+  and the bodies of ADR-002 and ADR-004 keep the old names. Supersession is
+  a follow-on entry, never an edit. **A grep for `pre-preview` still returns
+  hits after this lands, by design.**
++ ADR-006 lists six consumer repos; flowhub, FlowHub-CAS-AISE and
+  agent-action-sandbox pin `@main` and pick this up on merge with no action
+  from them. That is why the inputs and labels are aliased rather than cut.
++ `claude-implement.yml`, the v1 compatibility shim, keeps its public input
+  and output **keys** v1-spelled — that is its purpose — and only moves its
+  values to the renamed downstream outputs.

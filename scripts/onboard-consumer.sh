@@ -9,7 +9,7 @@
 #                     OPENROUTER_API_KEY) as a repo OR org secret. The value is
 #                     read from a command or stdin and never echoed.
 #   3. Labels       — run ensure-issue-labels.sh against the target repo.
-#   4. Repo settings— enable "Actions can create PRs"; for --auto-review also
+#   4. Repo settings— enable "Actions can create PRs"; for --ai-review-ai-merge also
 #                     enable allow-auto-merge + allow-squash-merge.
 #   5. Consumer stub— commit .github/workflows/agent.yml (and chain-dispatch.yml
 #                     with --chain) — via the GitHub API, no local clone
@@ -52,19 +52,22 @@
 #       --model <model>         default-model input. Default 'claude-sonnet-5'.
 #       --runner-labels '<json>' JSON array of runner labels.
 #                               Default '["ubuntu-latest"]'.
-#       --auto-review           Wire auto-review: true and enable the repo
-#                               settings auto-merge needs (ADR-002 gate 7).
-#                               Mutually exclusive with --pre-preview at
-#                               the per-issue label level (pre-preview
-#                               wins if an issue carries both).
-#       --pre-preview           Wire pre-preview: true (ADR-004) — after the
-#                               pipeline opens a draft PR, an agent reviews
-#                               it (review-model input, default
-#                               claude-opus-5, independent of the
-#                               implementation model) and promotes draft
-#                               to ready on approve. No auto-merge, ever —
-#                               a human still merges. Per-issue opt-in via
-#                               the ai-pre-preview label (not applied here).
+#       --ai-review-ai-merge    Wire ai-review-ai-merge: true and enable the
+#                               repo settings auto-merge needs (ADR-002
+#                               gate 7). The AI reviews the PR and merges it
+#                               on approve+green. Per-issue opt-in via the
+#                               ai-review-ai-merge label (not applied here).
+#                               Loses to --ai-review-human-merge at the
+#                               per-issue level when an issue enables both.
+#       --ai-review-human-merge Wire ai-review-human-merge: true (ADR-004,
+#                               named by ADR-009) — after the pipeline opens
+#                               a draft PR, the AI reviews it (review-model
+#                               input, default claude-opus-5, independent of
+#                               the implementation model) and promotes draft
+#                               to ready on approve. No auto-merge, ever — a
+#                               HUMAN merges. Per-issue opt-in via the
+#                               ai-review-human-merge label (not applied
+#                               here).
 #       --chain                 Also commit chain-dispatch.yml (ADR-003).
 #       --no-stub               Skip the stub commit entirely; do secret +
 #                               labels + settings only.
@@ -108,8 +111,8 @@ REF='v1'
 AGENT='claude'
 MODEL='claude-sonnet-5'
 RUNNER_LABELS='["ubuntu-latest"]'
-AUTO_REVIEW=false
-PRE_PREVIEW=false
+AI_MERGE=false
+HUMAN_MERGE=false
 CHAIN=false
 NO_STUB=false
 DIRECT_TO_MAIN=true
@@ -159,8 +162,8 @@ while [[ $# -gt 0 ]]; do
     --agent)              AGENT="${2:?}"; shift 2 ;;
     --model)              MODEL="${2:?}"; shift 2 ;;
     --runner-labels)      RUNNER_LABELS="${2:?}"; shift 2 ;;
-    --auto-review)        AUTO_REVIEW=true; shift ;;
-    --pre-preview)        PRE_PREVIEW=true; shift ;;
+    --ai-review-ai-merge)    AI_MERGE=true; shift ;;
+    --ai-review-human-merge) HUMAN_MERGE=true; shift ;;
     --chain)              CHAIN=true; shift ;;
     --no-stub)            NO_STUB=true; shift ;;
     --no-settings)        NO_SETTINGS=true; shift ;;
@@ -274,7 +277,7 @@ else
   run gh api -X PUT "repos/$REPO/actions/permissions/workflow" \
     -F can_approve_pull_request_reviews=true >/dev/null
 
-  if [[ "$AUTO_REVIEW" == true ]]; then
+  if [[ "$AI_MERGE" == true ]]; then
     info "Enabling allow-auto-merge + allow-squash-merge (ADR-002 gate 7)"
     run gh api -X PATCH "repos/$REPO" \
       -F allow_auto_merge=true -F allow_squash_merge=true >/dev/null
@@ -296,8 +299,8 @@ build_agent_yml() {
   with_block+=$'\n      default-model: '"$MODEL"
   with_block+=$'\n      pipeline-ref: '"$REF"
   [[ "$AGENT" == opencode ]] && with_block+=$'\n      agent: opencode'
-  [[ "$AUTO_REVIEW" == true ]] && with_block+=$'\n      auto-review: true'
-  [[ "$PRE_PREVIEW" == true ]] && with_block+=$'\n      pre-preview: true'
+  [[ "$AI_MERGE" == true ]] && with_block+=$'\n      ai-review-ai-merge: true'
+  [[ "$HUMAN_MERGE" == true ]] && with_block+=$'\n      ai-review-human-merge: true'
 
   cat <<YAML
 name: Claude

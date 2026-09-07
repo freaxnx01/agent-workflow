@@ -32,3 +32,10 @@ ignores:
   # AI agent working notes (see CLAUDE.md "Documentation Structure") — transient
   # session records, same rationale as the superpowers docs above.
   - "docs/ai-notes/**"
+  # Test fixtures are captured inputs, not authored prose. They are copies of
+  # what a real system produced (a GitHub issue body, an API response), and
+  # their value is being byte-for-byte faithful to it. Reformatting one to
+  # satisfy a style rule corrupts the very thing it records — and for
+  # issue-body-large-plan.md it would change the file's size, which is the
+  # property the classify-turns SIGPIPE regression test depends on.
+  - "tests/fixtures/**"

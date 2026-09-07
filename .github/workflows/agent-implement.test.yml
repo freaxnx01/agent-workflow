@@ -221,12 +221,12 @@ jobs:
           echo "opencode-task-failure OK: failure=$FAILURE retry=$RETRY"
 
   # ─── Auto-review path (issue #16) ─────────────────────────────────────────
-  # Four calls drive the auto_review job through every verdict/envelope
+  # Four calls drive the ai_review_ai_merge job through every verdict/envelope
   # branch. The PATH-shimmed gh mock captures `gh pr merge` calls so the
   # `merge-attempted` output asserts "no real merge under act".
 
-  call-auto-review-approve-safe:
-    name: Reusable workflow — auto-review approve + safe envelope
+  call-ai-merge-approve-safe:
+    name: Reusable workflow — ai-merge approve + safe envelope
     uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9003
@@ -234,9 +234,9 @@ jobs:
       local-scripts: true
       stub-claude: true
       stub-fixture: success
-      auto-review: true
+      ai-review-ai-merge: true
       dry-run: true
-      stub-auto-review-enabled: true
+      stub-ai-merge-enabled: true
       stub-review-verdict: approve
       stub-pr-files: |
         src/foo.ts
@@ -244,8 +244,8 @@ jobs:
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
 
-  call-auto-review-approve-unsafe-github:
-    name: Reusable workflow — auto-review approve + .github/ touch (envelope blocks)
+  call-ai-merge-approve-unsafe-github:
+    name: Reusable workflow — ai-merge approve + .github/ touch (envelope blocks)
     uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9004
@@ -253,9 +253,9 @@ jobs:
       local-scripts: true
       stub-claude: true
       stub-fixture: success
-      auto-review: true
+      ai-review-ai-merge: true
       dry-run: true
-      stub-auto-review-enabled: true
+      stub-ai-merge-enabled: true
       stub-review-verdict: approve
       stub-pr-files: |
         src/foo.ts
@@ -263,8 +263,8 @@ jobs:
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
 
-  call-auto-review-request-changes:
-    name: Reusable workflow — auto-review request_changes
+  call-ai-merge-request-changes:
+    name: Reusable workflow — ai-merge request_changes
     uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9005
@@ -272,17 +272,17 @@ jobs:
       local-scripts: true
       stub-claude: true
       stub-fixture: success
-      auto-review: true
+      ai-review-ai-merge: true
       dry-run: true
-      stub-auto-review-enabled: true
+      stub-ai-merge-enabled: true
       stub-review-verdict: request_changes
       stub-pr-files: |
         src/foo.ts
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
 
-  call-auto-review-block:
-    name: Reusable workflow — auto-review block
+  call-ai-merge-block:
+    name: Reusable workflow — ai-merge block
     uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9006
@@ -290,9 +290,9 @@ jobs:
       local-scripts: true
       stub-claude: true
       stub-fixture: success
-      auto-review: true
+      ai-review-ai-merge: true
       dry-run: true
-      stub-auto-review-enabled: true
+      stub-ai-merge-enabled: true
       stub-review-verdict: block
       stub-pr-files: |
         src/foo.ts
@@ -303,10 +303,10 @@ jobs:
   # Pre-preview reviews the draft PR and, on approve, runs `gh pr ready`
   # (promote) but never `gh pr merge`. The gh mock captures both so the
   # asserts can check ready=true / merge=false on approve, and both=false
-  # on block. The precedence call sets BOTH gates; pre-preview must win.
+  # on block. The precedence call sets BOTH gates; human-merge must win.
 
-  call-pre-preview-approve:
-    name: Reusable workflow — pre-preview approve
+  call-human-merge-approve:
+    name: Reusable workflow — human-merge approve
     uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9007
@@ -314,15 +314,15 @@ jobs:
       local-scripts: true
       stub-claude: true
       stub-fixture: success
-      pre-preview: true
+      ai-review-human-merge: true
       dry-run: true
-      stub-pre-preview-enabled: true
+      stub-human-merge-enabled: true
       stub-review-verdict: approve
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
 
-  call-pre-preview-block:
-    name: Reusable workflow — pre-preview block
+  call-human-merge-block:
+    name: Reusable workflow — human-merge block
     uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9008
@@ -330,15 +330,15 @@ jobs:
       local-scripts: true
       stub-claude: true
       stub-fixture: success
-      pre-preview: true
+      ai-review-human-merge: true
       dry-run: true
-      stub-pre-preview-enabled: true
+      stub-human-merge-enabled: true
       stub-review-verdict: block
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
 
-  call-pre-preview-precedence:
-    name: Reusable workflow — pre-preview wins over auto-review
+  call-human-merge-precedence:
+    name: Reusable workflow — human-merge wins over ai-merge
     uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9009
@@ -346,11 +346,11 @@ jobs:
       local-scripts: true
       stub-claude: true
       stub-fixture: success
-      auto-review: true
-      pre-preview: true
+      ai-review-ai-merge: true
+      ai-review-human-merge: true
       dry-run: true
-      stub-auto-review-enabled: true
-      stub-pre-preview-enabled: true
+      stub-ai-merge-enabled: true
+      stub-human-merge-enabled: true
       stub-review-verdict: approve
       stub-pr-files: |
         src/foo.ts
@@ -364,8 +364,8 @@ jobs:
   # the workflow's wiring: gating, the final-verdict resolution, and the
   # promote/block steps reading from it correctly.
 
-  call-pre-preview-self-fix-approve:
-    name: Reusable workflow — pre-preview self-fix fixes then approves
+  call-human-merge-self-fix-approve:
+    name: Reusable workflow — human-merge self-fix fixes then approves
     uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9010
@@ -373,9 +373,9 @@ jobs:
       local-scripts: true
       stub-claude: true
       stub-fixture: success
-      pre-preview: true
+      ai-review-human-merge: true
       dry-run: true
-      stub-pre-preview-enabled: true
+      stub-human-merge-enabled: true
       stub-review-verdict: request_changes
       self-fix: true
       self-fix-max-iterations: 3
@@ -383,8 +383,8 @@ jobs:
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
 
-  call-pre-preview-self-fix-exhausted:
-    name: Reusable workflow — pre-preview self-fix cap exhausted
+  call-human-merge-self-fix-exhausted:
+    name: Reusable workflow — human-merge self-fix cap exhausted
     uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9014
@@ -392,9 +392,9 @@ jobs:
       local-scripts: true
       stub-claude: true
       stub-fixture: success
-      pre-preview: true
+      ai-review-human-merge: true
       dry-run: true
-      stub-pre-preview-enabled: true
+      stub-human-merge-enabled: true
       stub-review-verdict: request_changes
       self-fix: true
       self-fix-max-iterations: 2
@@ -402,8 +402,8 @@ jobs:
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
 
-  call-auto-review-self-fix-approve:
-    name: Reusable workflow — auto-review self-fix fixes then approves
+  call-ai-merge-self-fix-approve:
+    name: Reusable workflow — ai-merge self-fix fixes then approves
     uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9020
@@ -411,9 +411,9 @@ jobs:
       local-scripts: true
       stub-claude: true
       stub-fixture: success
-      auto-review: true
+      ai-review-ai-merge: true
       dry-run: true
-      stub-auto-review-enabled: true
+      stub-ai-merge-enabled: true
       stub-review-verdict: request_changes
       stub-pr-files: |
         src/foo.ts
@@ -423,8 +423,8 @@ jobs:
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
 
-  call-auto-review-self-fix-exhausted:
-    name: Reusable workflow — auto-review self-fix cap exhausted
+  call-ai-merge-self-fix-exhausted:
+    name: Reusable workflow — ai-merge self-fix cap exhausted
     uses: ./.github/workflows/agent-implement.yml
     with:
       issue-number: 9021
@@ -432,9 +432,9 @@ jobs:
       local-scripts: true
       stub-claude: true
       stub-fixture: success
-      auto-review: true
+      ai-review-ai-merge: true
       dry-run: true
-      stub-auto-review-enabled: true
+      stub-ai-merge-enabled: true
       stub-review-verdict: request_changes
       stub-pr-files: |
         src/foo.ts
@@ -444,15 +444,15 @@ jobs:
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
 
-  verify-auto-review-approve-safe:
+  verify-ai-merge-approve-safe:
     name: Assert approve + safe → merge attempted
-    needs: call-auto-review-approve-safe
+    needs: call-ai-merge-approve-safe
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     env:
-      ATTEMPTED: ${{ needs.call-auto-review-approve-safe.outputs.auto-review-merge-attempted }}
+      ATTEMPTED: ${{ needs.call-ai-merge-approve-safe.outputs.ai-review-ai-merge-merge-attempted }}
     steps:
       - name: Assert gh pr merge was attempted (against the mock, not real GitHub)
         run: |
@@ -460,15 +460,15 @@ jobs:
             || { echo "::error::merge-attempted=$ATTEMPTED (want true)"; exit 1; }
           echo "approve+safe OK: merge-attempted=$ATTEMPTED"
 
-  verify-auto-review-approve-unsafe-github:
+  verify-ai-merge-approve-unsafe-github:
     name: Assert approve + .github/ touch → envelope blocks, no merge attempted
-    needs: call-auto-review-approve-unsafe-github
+    needs: call-ai-merge-approve-unsafe-github
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     env:
-      ATTEMPTED: ${{ needs.call-auto-review-approve-unsafe-github.outputs.auto-review-merge-attempted }}
+      ATTEMPTED: ${{ needs.call-ai-merge-approve-unsafe-github.outputs.ai-review-ai-merge-merge-attempted }}
     steps:
       - name: Assert gh pr merge was NOT attempted
         run: |
@@ -476,15 +476,15 @@ jobs:
             || { echo "::error::merge-attempted=$ATTEMPTED (want false — .github/ touch must block)"; exit 1; }
           echo "approve+unsafe(.github/) OK: merge-attempted=$ATTEMPTED"
 
-  verify-auto-review-request-changes:
+  verify-ai-merge-request-changes:
     name: Assert request_changes → no merge attempted
-    needs: call-auto-review-request-changes
+    needs: call-ai-merge-request-changes
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     env:
-      ATTEMPTED: ${{ needs.call-auto-review-request-changes.outputs.auto-review-merge-attempted }}
+      ATTEMPTED: ${{ needs.call-ai-merge-request-changes.outputs.ai-review-ai-merge-merge-attempted }}
     steps:
       - name: Assert gh pr merge was NOT attempted
         run: |
@@ -492,15 +492,15 @@ jobs:
             || { echo "::error::merge-attempted=$ATTEMPTED (want false — request_changes must block)"; exit 1; }
           echo "request_changes OK: merge-attempted=$ATTEMPTED"
 
-  verify-auto-review-block:
+  verify-ai-merge-block:
     name: Assert block → no merge attempted
-    needs: call-auto-review-block
+    needs: call-ai-merge-block
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     env:
-      ATTEMPTED: ${{ needs.call-auto-review-block.outputs.auto-review-merge-attempted }}
+      ATTEMPTED: ${{ needs.call-ai-merge-block.outputs.ai-review-ai-merge-merge-attempted }}
     steps:
       - name: Assert gh pr merge was NOT attempted
         run: |
@@ -508,35 +508,35 @@ jobs:
             || { echo "::error::merge-attempted=$ATTEMPTED (want false — block verdict must block)"; exit 1; }
           echo "block OK: merge-attempted=$ATTEMPTED"
 
-  verify-pre-preview-approve:
-    name: Assert pre-preview approve → promoted, no merge
-    needs: call-pre-preview-approve
+  verify-human-merge-approve:
+    name: Assert human-merge approve → promoted, no merge
+    needs: call-human-merge-approve
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     env:
-      READY:     ${{ needs.call-pre-preview-approve.outputs.pre-preview-ready-attempted }}
-      ATTEMPTED: ${{ needs.call-pre-preview-approve.outputs.pre-preview-merge-attempted }}
+      READY:     ${{ needs.call-human-merge-approve.outputs.ai-review-human-merge-ready-attempted }}
+      ATTEMPTED: ${{ needs.call-human-merge-approve.outputs.ai-review-human-merge-merge-attempted }}
     steps:
       - name: Assert gh pr ready called and gh pr merge NOT called
         run: |
           fail=0
           [[ "$READY" == "true" ]]      || { echo "::error::ready-attempted=$READY (want true — approve must promote)"; fail=1; }
-          [[ "$ATTEMPTED" == "false" ]] || { echo "::error::merge-attempted=$ATTEMPTED (want false — pre-preview never merges)"; fail=1; }
+          [[ "$ATTEMPTED" == "false" ]] || { echo "::error::merge-attempted=$ATTEMPTED (want false — human-merge never merges)"; fail=1; }
           (( fail == 0 )) || exit 1
-          echo "pre-preview approve OK: ready=$READY merge=$ATTEMPTED"
+          echo "human-merge approve OK: ready=$READY merge=$ATTEMPTED"
 
-  verify-pre-preview-block:
-    name: Assert pre-preview block → draft, no promote, no merge
-    needs: call-pre-preview-block
+  verify-human-merge-block:
+    name: Assert human-merge block → draft, no promote, no merge
+    needs: call-human-merge-block
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     env:
-      READY:     ${{ needs.call-pre-preview-block.outputs.pre-preview-ready-attempted }}
-      ATTEMPTED: ${{ needs.call-pre-preview-block.outputs.pre-preview-merge-attempted }}
+      READY:     ${{ needs.call-human-merge-block.outputs.ai-review-human-merge-ready-attempted }}
+      ATTEMPTED: ${{ needs.call-human-merge-block.outputs.ai-review-human-merge-merge-attempted }}
     steps:
       - name: Assert neither gh pr ready nor gh pr merge was called
         run: |
@@ -544,40 +544,40 @@ jobs:
           [[ "$READY" == "false" ]]     || { echo "::error::ready-attempted=$READY (want false — block must NOT promote)"; fail=1; }
           [[ "$ATTEMPTED" == "false" ]] || { echo "::error::merge-attempted=$ATTEMPTED (want false)"; fail=1; }
           (( fail == 0 )) || exit 1
-          echo "pre-preview block OK: ready=$READY merge=$ATTEMPTED"
+          echo "human-merge block OK: ready=$READY merge=$ATTEMPTED"
 
-  verify-pre-preview-precedence:
-    name: Assert pre-preview wins → promoted, no merge
-    needs: call-pre-preview-precedence
+  verify-human-merge-precedence:
+    name: Assert human-merge wins → promoted, no merge
+    needs: call-human-merge-precedence
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     env:
-      READY:           ${{ needs.call-pre-preview-precedence.outputs.pre-preview-ready-attempted }}
-      PREVIEW_MERGE:   ${{ needs.call-pre-preview-precedence.outputs.pre-preview-merge-attempted }}
-      AUTO_MERGE:      ${{ needs.call-pre-preview-precedence.outputs.auto-review-merge-attempted }}
+      READY:           ${{ needs.call-human-merge-precedence.outputs.ai-review-human-merge-ready-attempted }}
+      PREVIEW_MERGE:   ${{ needs.call-human-merge-precedence.outputs.ai-review-human-merge-merge-attempted }}
+      AUTO_MERGE:      ${{ needs.call-human-merge-precedence.outputs.ai-review-ai-merge-merge-attempted }}
     steps:
-      - name: Assert pre-preview ran and nothing auto-merged
+      - name: Assert human-merge ran and nothing auto-merged
         run: |
           fail=0
-          [[ "$READY" == "true" ]]          || { echo "::error::ready-attempted=$READY (want true — pre-preview should run and promote)"; fail=1; }
-          [[ "$PREVIEW_MERGE" == "false" ]] || { echo "::error::pre-preview-merge-attempted=$PREVIEW_MERGE (want false)"; fail=1; }
-          [[ "$AUTO_MERGE" != "true" ]]     || { echo "::error::auto-review-merge-attempted=$AUTO_MERGE (want not-true — auto_review must be suppressed)"; fail=1; }
+          [[ "$READY" == "true" ]]          || { echo "::error::ready-attempted=$READY (want true — human-merge should run and promote)"; fail=1; }
+          [[ "$PREVIEW_MERGE" == "false" ]] || { echo "::error::ai-review-human-merge-merge-attempted=$PREVIEW_MERGE (want false)"; fail=1; }
+          [[ "$AUTO_MERGE" != "true" ]]     || { echo "::error::ai-review-ai-merge-merge-attempted=$AUTO_MERGE (want not-true — ai_review_ai_merge must be suppressed)"; fail=1; }
           (( fail == 0 )) || exit 1
           echo "precedence OK: ready=$READY preview-merge=$PREVIEW_MERGE auto-merge=$AUTO_MERGE"
 
-  verify-pre-preview-self-fix-approve:
+  verify-human-merge-self-fix-approve:
     name: Assert self-fix fixes then approves → promoted, no merge
-    needs: call-pre-preview-self-fix-approve
+    needs: call-human-merge-self-fix-approve
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     env:
-      READY:      ${{ needs.call-pre-preview-self-fix-approve.outputs.pre-preview-ready-attempted }}
-      ATTEMPTED:  ${{ needs.call-pre-preview-self-fix-approve.outputs.pre-preview-merge-attempted }}
-      ITERATIONS: ${{ needs.call-pre-preview-self-fix-approve.outputs.pre-preview-self-fix-iterations-used }}
+      READY:      ${{ needs.call-human-merge-self-fix-approve.outputs.ai-review-human-merge-ready-attempted }}
+      ATTEMPTED:  ${{ needs.call-human-merge-self-fix-approve.outputs.ai-review-human-merge-merge-attempted }}
+      ITERATIONS: ${{ needs.call-human-merge-self-fix-approve.outputs.ai-review-human-merge-self-fix-iterations-used }}
     steps:
       - name: Assert promoted after 2 self-fix iterations, still no merge
         run: |
@@ -588,17 +588,17 @@ jobs:
           (( fail == 0 )) || exit 1
           echo "self-fix approve OK: ready=$READY merge=$ATTEMPTED iterations=$ITERATIONS"
 
-  verify-pre-preview-self-fix-exhausted:
+  verify-human-merge-self-fix-exhausted:
     name: Assert self-fix cap exhausted → draft, no promote, no merge
-    needs: call-pre-preview-self-fix-exhausted
+    needs: call-human-merge-self-fix-exhausted
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     env:
-      READY:      ${{ needs.call-pre-preview-self-fix-exhausted.outputs.pre-preview-ready-attempted }}
-      ATTEMPTED:  ${{ needs.call-pre-preview-self-fix-exhausted.outputs.pre-preview-merge-attempted }}
-      ITERATIONS: ${{ needs.call-pre-preview-self-fix-exhausted.outputs.pre-preview-self-fix-iterations-used }}
+      READY:      ${{ needs.call-human-merge-self-fix-exhausted.outputs.ai-review-human-merge-ready-attempted }}
+      ATTEMPTED:  ${{ needs.call-human-merge-self-fix-exhausted.outputs.ai-review-human-merge-merge-attempted }}
+      ITERATIONS: ${{ needs.call-human-merge-self-fix-exhausted.outputs.ai-review-human-merge-self-fix-iterations-used }}
     steps:
       - name: Assert not promoted after cap exhausted, still no merge
         run: |
@@ -609,16 +609,16 @@ jobs:
           (( fail == 0 )) || exit 1
           echo "self-fix cap-exhausted OK: ready=$READY merge=$ATTEMPTED iterations=$ITERATIONS"
 
-  verify-auto-review-self-fix-approve:
-    name: Assert auto-review self-fix fixes then approves → merge attempted
-    needs: call-auto-review-self-fix-approve
+  verify-ai-merge-self-fix-approve:
+    name: Assert ai-merge self-fix fixes then approves → merge attempted
+    needs: call-ai-merge-self-fix-approve
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     env:
-      ATTEMPTED:  ${{ needs.call-auto-review-self-fix-approve.outputs.auto-review-merge-attempted }}
-      ITERATIONS: ${{ needs.call-auto-review-self-fix-approve.outputs.auto-review-self-fix-iterations-used }}
+      ATTEMPTED:  ${{ needs.call-ai-merge-self-fix-approve.outputs.ai-review-ai-merge-merge-attempted }}
+      ITERATIONS: ${{ needs.call-ai-merge-self-fix-approve.outputs.ai-review-ai-merge-self-fix-iterations-used }}
     steps:
       - name: Assert merge attempted after 2 self-fix iterations
         run: |
@@ -626,7 +626,7 @@ jobs:
           [[ "$ATTEMPTED" == "true" ]] || { echo "::error::merge-attempted=$ATTEMPTED (want true — self-fix approve + safe envelope must merge)"; fail=1; }
           [[ "$ITERATIONS" == "2" ]]   || { echo "::error::self-fix-iterations-used=$ITERATIONS (want 2)"; fail=1; }
           (( fail == 0 )) || exit 1
-          echo "auto-review self-fix approve OK: merge=$ATTEMPTED iterations=$ITERATIONS"
+          echo "ai-merge self-fix approve OK: merge=$ATTEMPTED iterations=$ITERATIONS"
 
       - name: Checkout agent-implement.yml for a static guard check
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -638,7 +638,7 @@ jobs:
       - name: Assert the wait step still guards against stub mode
         # Static check, not a runtime behavior check (#238 final review):
         # a runtime hang inside the wait step would be bounded by the
-        # CALLED workflow's own auto_review job timeout (15 min), not by
+        # CALLED workflow's own ai_review_ai_merge job timeout (15 min), not by
         # this verify job's timeout-minutes (5, above) -- this job only
         # starts after that job finishes, so it structurally cannot
         # observe a hang there. Instead, check the source directly: the
@@ -656,16 +656,16 @@ jobs:
           fi
           echo "guard clause present -- wait step still correctly skips under stub-review-verdict"
 
-  verify-auto-review-self-fix-exhausted:
-    name: Assert auto-review self-fix cap exhausted → no merge
-    needs: call-auto-review-self-fix-exhausted
+  verify-ai-merge-self-fix-exhausted:
+    name: Assert ai-merge self-fix cap exhausted → no merge
+    needs: call-ai-merge-self-fix-exhausted
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
     env:
-      ATTEMPTED:  ${{ needs.call-auto-review-self-fix-exhausted.outputs.auto-review-merge-attempted }}
-      ITERATIONS: ${{ needs.call-auto-review-self-fix-exhausted.outputs.auto-review-self-fix-iterations-used }}
+      ATTEMPTED:  ${{ needs.call-ai-merge-self-fix-exhausted.outputs.ai-review-ai-merge-merge-attempted }}
+      ITERATIONS: ${{ needs.call-ai-merge-self-fix-exhausted.outputs.ai-review-ai-merge-self-fix-iterations-used }}
     steps:
       - name: Assert no merge after cap exhausted
         run: |
@@ -673,4 +673,4 @@ jobs:
           [[ "$ATTEMPTED" == "false" ]] || { echo "::error::merge-attempted=$ATTEMPTED (want false — cap-exhausted must NOT merge)"; fail=1; }
           [[ "$ITERATIONS" == "2" ]]    || { echo "::error::self-fix-iterations-used=$ITERATIONS (want 2 — cap reached)"; fail=1; }
           (( fail == 0 )) || exit 1
-          echo "auto-review self-fix cap-exhausted OK: merge=$ATTEMPTED iterations=$ITERATIONS"
+          echo "ai-merge self-fix cap-exhausted OK: merge=$ATTEMPTED iterations=$ITERATIONS"

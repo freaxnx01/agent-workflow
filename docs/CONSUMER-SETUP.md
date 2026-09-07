@@ -4,7 +4,7 @@ How to wire `agent-workflow` into a consumer repo. Three flows:
 
 1. **Minimum stub** — labeled-issue → draft PR (no auto-merge).
 2. **Auto-review + auto-merge** — labeled-issue → draft PR → agent review → squash-merge, inside ADR-002's safety envelope.
-3. **Pre-preview** — labeled-issue → draft PR → agent reviews its own PR → on approve, promote draft→ready; a human merges. No envelope, no auto-merge. Opt in with `pre-preview: true` + the `ai-pre-preview` label. On `request_changes` from either this flow or auto-review above, optionally opt into a bounded self-fix pass with `self-fix: true` (+ `self-fix-max-iterations`, default 2) — the *original implementer's* agent (Claude or OpenCode, whichever wrote the PR) attempts to fix its own findings and re-review before falling back to `ai:review-blocked`. See ADR-004.
+3. **AI review, human merge** — labeled-issue → draft PR → agent reviews its own PR → on approve, promote draft→ready; a human merges. No envelope, no auto-merge. Opt in with `ai-review-human-merge: true` + the `ai-review-human-merge` label. On `request_changes` from either this flow or the AI-merge flow above, optionally opt into a bounded self-fix pass with `self-fix: true` (+ `self-fix-max-iterations`, default 2) — the *original implementer's* agent (Claude or OpenCode, whichever wrote the PR) attempts to fix its own findings and re-review before falling back to `ai:review-blocked`. See ADR-004.
 
 > **Agent selection — two independent mechanisms, don't conflate them:**
 >
@@ -179,7 +179,7 @@ Apply `ai-implement` to an issue; Claude opens a draft PR. That's it.
 
 ## 2. Auto-review + auto-merge
 
-The auto-merge flow promotes the draft → ready → `gh pr merge --auto --squash` **only when every gate in [ADR-002](DECISIONS.md#adr-002--auto-review-and-auto-merge-safety-envelope) is satisfied**. Failing any gate leaves the PR draft and stamps `ai:review-blocked` on the originating issue.
+The AI-merge flow promotes the draft → ready → `gh pr merge --auto --squash` **only when every gate in [ADR-002](DECISIONS.md#adr-002--auto-review-and-auto-merge-safety-envelope) is satisfied**. Failing any gate leaves the PR draft and stamps `ai:review-blocked` on the originating issue.
 
 > **Auto-merge requires a GitHub App or PAT for PR creation — the ambient
 > `GITHUB_TOKEN` is not enough.** GitHub does **not** run workflows on PRs opened
@@ -211,7 +211,7 @@ App* (triggers required checks; stable bot login). To enable:
        uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
        with:
          issue-number: ${{ github.event.issue.number }}
-         auto-review: true
+         ai-review-ai-merge: true
          pipeline-author-allowlist: my-app[bot]
        secrets:
          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -253,12 +253,12 @@ jobs:
     uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
     with:
       issue-number: ${{ github.event.issue.number }}
-      auto-review: true        # per-repo opt-in (ADR-002 gate 3)
+      ai-review-ai-merge: true        # per-repo opt-in (ADR-002 gate 3)
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
-Then apply both `ai-implement` AND `ai-auto-review` to the issue (ADR-002 gate 2). Either alone leaves the PR draft.
+Then apply both `ai-implement` AND `ai-review-ai-merge` to the issue (ADR-002 gate 2). Either alone leaves the PR draft.
 
 ### Required: a dependency-vulnerability check
 
@@ -274,7 +274,7 @@ ADR-002 gate 5 ("all required status checks green") is the only thing standing b
 
 Mark it required under **Settings → Branches → Branch protection → Require status checks**.
 
-If no such check is required, `auto-review: true` lets a malicious dependency bump squash-merge into `main`. The pipeline does not block manifest changes itself — gate 6 only blocks `.github/` and secret files (full list in ADR-002 §2.6).
+If no such check is required, `ai-review-ai-merge: true` lets a malicious dependency bump squash-merge into `main`. The pipeline does not block manifest changes itself — gate 6 only blocks `.github/` and secret files (full list in ADR-002 §2.6).
 
 ### Optional: per-repo path blocklist
 
@@ -295,7 +295,7 @@ If your consumer repo uses a GitHub App or PAT for `gh pr create` instead of the
 
 ```yaml
 with:
-  auto-review: true
+  ai-review-ai-merge: true
   pipeline-author-allowlist: |
     github-actions[bot]
     my-app[bot]
@@ -305,8 +305,8 @@ Never set this to a value that matches arbitrary humans — gate 1's purpose is 
 
 ### Kill switches
 
-- **Per-repo:** `auto-review: false` at the call site.
-- **Per-issue:** remove `ai-auto-review` from the issue.
+- **Per-repo:** `ai-review-ai-merge: false` at the call site.
+- **Per-issue:** remove `ai-review-ai-merge` from the issue.
 
 Both only take effect on the next run; PRs that already armed `gh pr merge --auto` will still land once required checks pass. Disarm in-flight with `gh pr merge --disable-auto <PR>`.
 
@@ -380,13 +380,13 @@ Claude-path labels (`model:opus` / `model:sonnet` / `model:haiku`) are documente
 > fails with an explicit `OPENROUTER_API_KEY is not set` message instead.
 > Verify with `gh secret list -R <owner>/<repo>`.
 
-- The same `ai-auto-review` opt-in (§2) and chain semantics (§4 — below) apply regardless of which agent ran the implementation.
+- The same `ai-review-ai-merge` opt-in (§2) and chain semantics (§4 — below) apply regardless of which agent ran the implementation.
 
 ### What's left (multi-agent epic)
 
 Wiring the secret is just the first piece. The OpenCode CLI install (#8), classifier (#9), runner step (#10), and act fixtures (#11) land next. Until #10 merges, setting `agent: opencode` produces a no-op job per the workflow input docstring.
 
-## 4. Issue chaining (optional, requires auto-review)
+## 4. Issue chaining (optional, requires ai-review-ai-merge)
 
 When an auto-merged PR closes an issue, the pipeline can dispatch a follow-up issue that was `Blocked by:` it. Conventions live in [ADR-003](DECISIONS.md#adr-003--issue-chain-dispatch-on-auto-merge); this section is just the wiring.
 
@@ -446,19 +446,54 @@ Open an issue **titled exactly** `ai:chain-paused`. The dispatcher checks for th
 
 ### "Auto-merge held: …" comment on the PR
 
-The auto-review job ran, but a gate refused promotion. The comment names the reason. The originating issue gets `ai:review-blocked`. Take over manually: review the diff, fix any blocker, then `gh pr ready` + `gh pr merge --squash` yourself.
+The review job ran, but a gate refused promotion. The comment names the reason. The originating issue gets `ai:review-blocked`. Take over manually: review the diff, fix any blocker, then `gh pr ready` + `gh pr merge --squash` yourself.
 
-### Draft PR opens but no auto-review job runs
+### Draft PR opens but no review job runs
 
 Check the workflow run for the `auto_review` job. It only triggers when:
 
 - the `implement` job succeeded
-- `auto-review: true` was passed
-- the issue carries `ai-auto-review`
-- the `implement` job's `auto-review-enabled` output is `true`
+- `ai-review-ai-merge: true` was passed
+- the issue carries `ai-review-ai-merge`
+- the `implement` job's `ai-review-ai-merge-enabled` output is `true`
 
 If all four hold and the job still didn't run, the issue is in workflow plumbing — file an issue against `agent-workflow`.
 
 ### Self-modification guard
 
-The `freaxnx01/agent-workflow` repo itself never auto-merges, regardless of input or label state — ADR-002 §"Self-modification / dogfooding". Hardcoded; no way to disable. If you forked `agent-workflow`, update the guard's hardcoded repo string before enabling `auto-review: true` on the fork.
+The `freaxnx01/agent-workflow` repo itself never auto-merges, regardless of input or label state — ADR-002 §"Self-modification / dogfooding". Hardcoded; no way to disable. If you forked `agent-workflow`, update the guard's hardcoded repo string before enabling `ai-review-ai-merge: true` on the fork.
+
+---
+
+## Migrating from `auto-review` / `pre-preview` (ADR-009)
+
+The pre-ADR-009 input and label names still work, but every run that uses
+one emits a warning annotation, and they are **removed in v3**. Two steps
+per repo.
+
+**1. Rename the inputs** in `.github/workflows/agent.yml`:
+
+```yaml
+auto-review: true    # ->  ai-review-ai-merge: true
+pre-preview: true    # ->  ai-review-human-merge: true
+```
+
+**2. Relabel open issues.** The pipeline never does this for you — it
+tolerates the old labels but does not rewrite labels a human applied. Run
+`scripts/ensure-issue-labels.sh` first so the new labels exist:
+
+```bash
+gh issue list --label ai-pre-preview --json number --jq '.[].number' \
+  | xargs -I{} gh issue edit {} \
+      --add-label ai-review-human-merge \
+      --remove-label ai-pre-preview
+
+gh issue list --label ai-auto-review --json number --jq '.[].number' \
+  | xargs -I{} gh issue edit {} \
+      --add-label ai-review-ai-merge \
+      --remove-label ai-auto-review
+```
+
+The old labels are left in place; delete them yourself once no issue carries
+one. Consumers still calling `claude-implement.yml` (the v1 shim) need no
+change: its public inputs and outputs keep their v1 names.

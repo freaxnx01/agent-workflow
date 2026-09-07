@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 #
-# self-fix-loop.sh — pre-preview's self-fix pass (#81 / ADR-004
+# self-fix-loop.sh — the review flows' self-fix pass (#81 / ADR-004
 # follow-up). On a `request_changes` verdict from the first review, runs
 # up to MAX_ITERATIONS fix→re-review cycles: FIX_CMD applies and commits
 # a fix, then REVIEW_SCRIPT re-reviews the new HEAD. Stops early on
-# `approve` or `block`. The caller (the pre_preview job) only invokes this
-# script when the first verdict is `request_changes` and self-fix is
-# enabled — a `block` or `approve` first verdict never reaches here.
+# `approve` or `block`. Invoked by whichever review job runs
+# (ai_review_ai_merge or ai_review_human_merge) only when the first
+# verdict is `request_changes` and self-fix is enabled — a `block` or
+# `approve` first verdict never reaches here.
 #
 # Required environment variables:
 #   PR_NUMBER         PR number

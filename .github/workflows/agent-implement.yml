@@ -17,8 +17,8 @@ on:
         default: claude-sonnet-5
       review-model:
         description: |
-          Model used for the agent review step in auto_review (ADR-002) and
-          pre_preview (ADR-004) — deliberately independent of the
+          Model used for the agent review step in ai_review_ai_merge (ADR-002)
+          and ai_review_human_merge (ADR-004) — deliberately independent of the
           implementation model. A stronger review model than the
           implementation model is a reasonable default: reviewing an
           existing diff for correctness/AC-coverage is a different task
@@ -127,33 +127,33 @@ on:
           real Claude API calls or waiting for real rate limits.
         type: string
         default: success
-      stub-auto-review-enabled:
+      stub-ai-merge-enabled:
         description: |
           Test-only. When `stub-claude: true`, forces the implement job's
-          `auto-review-enabled` output to this value instead of running
-          check-auto-review-gate.sh. Required for end-to-end act tests of
-          the auto_review job (the real gate requires a labeled GitHub
-          issue, which doesn't exist under act).
+          `ai-review-ai-merge-enabled` output to this value instead of
+          running check-ai-merge-gate.sh. Required for end-to-end act tests
+          of the ai_review_ai_merge job (the real gate requires a labeled
+          GitHub issue, which doesn't exist under act).
         type: boolean
         default: false
-      stub-pre-preview-enabled:
+      stub-human-merge-enabled:
         description: |
           Test-only. When `stub-claude: true`, forces the implement job's
-          `pre-preview-enabled` output to this value instead of running
-          check-preview-gate.sh. Required for end-to-end act tests of the
-          pre_preview job (the real gate requires a labeled GitHub issue,
-          which doesn't exist under act).
+          `ai-review-human-merge-enabled` output to this value instead of
+          running check-human-merge-gate.sh. Required for end-to-end act
+          tests of the ai_review_human_merge job (the real gate requires a
+          labeled GitHub issue, which doesn't exist under act).
         type: boolean
         default: false
       stub-review-verdict:
         description: |
-          Test-only. When non-empty, the auto_review job skips installing
+          Test-only. When non-empty, the ai_review_ai_merge job skips installing
           the Claude CLI and skips the real review-pr.sh invocation; it
           synthesizes a verdict directly. Value must be one of
           `approve | request_changes | block`. Also wires a PATH-shimmed
           `gh` mock so `gh pr ready` / `gh pr merge` / `gh pr comment` /
           `gh issue edit` calls are captured (not executed) and the new
-          `auto-review-merge-attempted` output reflects whether
+          `ai-review-ai-merge-merge-attempted` output reflects whether
           `gh pr merge` was invoked. Empty (default) runs the real path.
         type: string
         default: ''
@@ -175,27 +175,42 @@ on:
         default: 1
       auto-review:
         description: |
-          Per-repo opt-in for the auto-review + auto-merge flow (epic #3).
-          When true AND the issue carries the `ai-auto-review` label, the
-          `auto_review` job runs. Default false preserves the original
-          "draft PRs only" posture. The full safety envelope is enforced
-          in `check-merge-envelope.sh` per ADR-002.
+          DEPRECATED (ADR-009, removed in v3) — use `ai-review-ai-merge`.
+          Still honoured by check-ai-merge-gate.sh, which emits a warning
+          annotation when this is the only spelling set.
+        type: boolean
+        default: false
+      ai-review-ai-merge:
+        description: |
+          Per-repo opt-in for the AI-review + AI-merge flow (epic #3,
+          ADR-002; named by ADR-009). When true AND the issue carries the
+          `ai-review-ai-merge` label, the `ai_review_ai_merge` job runs.
+          Default false preserves the original "draft PRs only" posture.
+          The full safety envelope is enforced in `check-merge-envelope.sh`.
         type: boolean
         default: false
       pre-preview:
         description: |
-          Per-repo opt-in for pre-preview mode (#77 / ADR-004). When true
-          AND the issue carries the `ai-pre-preview` label, the
-          `pre_preview` job reviews the freshly-opened draft PR and, on
-          approve, promotes it to ready for a HUMAN to merge — no safety
-          envelope, no auto-merge. If an issue also carries
-          `ai-auto-review`, pre-preview wins (the auto_review job is
-          suppressed).
+          DEPRECATED (ADR-009, removed in v3) — use
+          `ai-review-human-merge`. Still honoured by
+          check-human-merge-gate.sh, which emits a warning annotation when
+          this is the only spelling set.
+        type: boolean
+        default: false
+      ai-review-human-merge:
+        description: |
+          Per-repo opt-in for the AI-review + human-merge flow (#77 /
+          ADR-004; named by ADR-009). When true AND the issue carries the
+          `ai-review-human-merge` label, the `ai_review_human_merge` job
+          reviews the freshly-opened draft PR and, on approve, promotes it
+          to ready for a HUMAN to merge — no safety envelope, no
+          auto-merge. If an issue also enables `ai-review-ai-merge`,
+          human-merge wins (the `ai_review_ai_merge` job is suppressed).
         type: boolean
         default: false
       self-fix:
         description: |
-          Opt-in for the review self-fix pass — pre-preview or auto-review,
+          Opt-in for the review self-fix pass — human-merge or ai-merge,
           whichever runs for this issue (#81/#193, ADR-004 follow-up). When
           true AND the first review's verdict is `request_changes`, the
           original implementer's agent attempts up to
@@ -273,45 +288,57 @@ on:
       retry-decision:
         description: '"retry" or "stop" from retry-dispatch.sh. Empty when class=success (retry-dispatch is skipped).'
         value: ${{ jobs.implement.outputs.retry-decision }}
+      ai-review-ai-merge-enabled:
+        description: |
+          "true" or "false" from check-ai-merge-gate.sh. The
+          ai_review_ai_merge job reads this via needs.implement.outputs.
+          Under stub-claude mode, sourced from `stub-ai-merge-enabled`.
+        value: ${{ jobs.implement.outputs.ai-review-ai-merge-enabled }}
       auto-review-enabled:
         description: |
-          "true" or "false" from check-auto-review-gate.sh. The auto-
-          review job reads this via needs.implement.outputs. Under stub-
-          claude mode, sourced from `stub-auto-review-enabled` instead.
-        value: ${{ jobs.implement.outputs.auto-review-enabled }}
-      auto-review-merge-attempted:
+          DEPRECATED (ADR-009, removed in v3) — alias of
+          `ai-review-ai-merge-enabled`, kept so existing callers keep
+          resolving.
+        value: ${{ jobs.implement.outputs.ai-review-ai-merge-enabled }}
+      ai-review-human-merge-enabled:
+        description: |
+          "true" or "false" from check-human-merge-gate.sh. The
+          ai_review_human_merge job reads this via needs.implement.outputs.
+          Under stub-claude mode, sourced from `stub-human-merge-enabled`.
+        value: ${{ jobs.implement.outputs.ai-review-human-merge-enabled }}
+      ai-review-ai-merge-merge-attempted:
         description: |
           "true" or "false" — whether `gh pr merge --auto --squash` was
-          invoked by the auto_review job. Populated only when
+          invoked by the ai_review_ai_merge job. Populated only when
           `stub-review-verdict` is set (the test workflow's assertion
           surface for "no real merge call is made under act"). Empty on
           real runs.
-        value: ${{ jobs.auto_review.outputs.merge-attempted }}
-      pre-preview-merge-attempted:
+        value: ${{ jobs.ai_review_ai_merge.outputs.merge-attempted }}
+      ai-review-human-merge-merge-attempted:
         description: |
           "true" or "false" — whether `gh pr merge` was invoked by the
-          pre_preview job. Always "false" on the pre-preview path (it never
+          ai_review_human_merge job. Always "false" on the human-merge path (it never
           merges); populated only when `stub-review-verdict` is set, as the
-          test workflow's "no merge in pre-preview" assertion surface.
-        value: ${{ jobs.pre_preview.outputs.merge-attempted }}
-      pre-preview-ready-attempted:
+          test workflow's "no merge in human-merge" assertion surface.
+        value: ${{ jobs.ai_review_human_merge.outputs.merge-attempted }}
+      ai-review-human-merge-ready-attempted:
         description: |
           "true" or "false" — whether `gh pr ready` (promote draft→ready)
-          was invoked by the pre_preview job. True on the approve path.
+          was invoked by the ai_review_human_merge job. True on the approve path.
           Populated only when `stub-review-verdict` is set.
-        value: ${{ jobs.pre_preview.outputs.ready-attempted }}
-      pre-preview-self-fix-iterations-used:
+        value: ${{ jobs.ai_review_human_merge.outputs.ready-attempted }}
+      ai-review-human-merge-self-fix-iterations-used:
         description: |
           Iterations actually used by the self-fix loop (0 if it never
           ran). Populated only when `stub-review-verdict` /
           `stub-self-fix-verdict-sequence` is set.
-        value: ${{ jobs.pre_preview.outputs.self-fix-iterations-used }}
-      auto-review-self-fix-iterations-used:
+        value: ${{ jobs.ai_review_human_merge.outputs.self-fix-iterations-used }}
+      ai-review-ai-merge-self-fix-iterations-used:
         description: |
-          Iterations actually used by the auto-review self-fix loop (0 if
+          Iterations actually used by the ai-merge self-fix loop (0 if
           it never ran). Populated only when `stub-review-verdict` /
           `stub-self-fix-verdict-sequence` is set.
-        value: ${{ jobs.auto_review.outputs.self-fix-iterations-used }}
+        value: ${{ jobs.ai_review_ai_merge.outputs.self-fix-iterations-used }}
 
 permissions:
   contents: read
@@ -335,8 +362,8 @@ jobs:
       num-turns:           ${{ steps.outputs.outputs.num-turns }}
       failure-class:       ${{ steps.classify_failure.outputs.class }}
       retry-decision:      ${{ steps.retry.outputs.decision }}
-      auto-review-enabled: ${{ steps.auto_review_gate.outputs.enabled || steps.auto_review_gate_stub.outputs.enabled }}
-      pre-preview-enabled: ${{ steps.preview_gate.outputs.enabled || steps.preview_gate_stub.outputs.enabled }}
+      ai-review-ai-merge-enabled:    ${{ steps.ai_merge_gate.outputs.enabled || steps.ai_merge_gate_stub.outputs.enabled }}
+      ai-review-human-merge-enabled: ${{ steps.human_merge_gate.outputs.enabled || steps.human_merge_gate_stub.outputs.enabled }}
       agent:               ${{ steps.classify_agent.outputs.agent || inputs.agent }}
       model:               ${{ steps.triage.outputs.model || inputs.default-model }}
     env:
@@ -470,44 +497,46 @@ jobs:
           DEFAULT_MAX_TURNS: ${{ inputs.max-turns }}
         run: bash .claude-pipeline/scripts/classify-turns.sh
 
-      - name: Check auto-review gate
+      - name: Check AI-merge gate
         if: ${{ !inputs.stub-claude }}
-        id: auto_review_gate
+        id: ai_merge_gate
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
+          INPUT_AI_REVIEW_AI_MERGE: ${{ inputs.ai-review-ai-merge }}
           INPUT_AUTO_REVIEW: ${{ inputs.auto-review }}
-        run: bash .claude-pipeline/scripts/check-auto-review-gate.sh
+        run: bash .claude-pipeline/scripts/check-ai-merge-gate.sh
 
-      - name: Stub auto-review gate (test mode)
-        # Mirrors check-auto-review-gate.sh's output under stub-claude=true
-        # so end-to-end act tests can drive the downstream auto_review job
-        # without a real labeled GitHub issue.
+      - name: Stub AI-merge gate (test mode)
+        # Mirrors check-ai-merge-gate.sh's output under stub-claude=true so
+        # end-to-end act tests can drive the downstream ai_review_ai_merge
+        # job without a real labeled GitHub issue.
         if: ${{ inputs.stub-claude }}
-        id: auto_review_gate_stub
+        id: ai_merge_gate_stub
         env:
-          ENABLED: ${{ inputs.stub-auto-review-enabled }}
+          ENABLED: ${{ inputs.stub-ai-merge-enabled }}
         run: printf 'enabled=%s\n' "$ENABLED" >> "$GITHUB_OUTPUT"
 
-      - name: Check pre-preview gate
+      - name: Check human-merge gate
         if: ${{ !inputs.stub-claude }}
-        id: preview_gate
+        id: human_merge_gate
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
+          INPUT_AI_REVIEW_HUMAN_MERGE: ${{ inputs.ai-review-human-merge }}
           INPUT_PRE_PREVIEW: ${{ inputs.pre-preview }}
-        run: bash .claude-pipeline/scripts/check-preview-gate.sh
+        run: bash .claude-pipeline/scripts/check-human-merge-gate.sh
 
-      - name: Stub pre-preview gate (test mode)
-        # Mirrors check-preview-gate.sh's output under stub-claude=true so
-        # end-to-end act tests can drive the pre_preview job without a real
-        # labeled GitHub issue.
+      - name: Stub human-merge gate (test mode)
+        # Mirrors check-human-merge-gate.sh's output under stub-claude=true
+        # so end-to-end act tests can drive the ai_review_human_merge job
+        # without a real labeled GitHub issue.
         if: ${{ inputs.stub-claude }}
-        id: preview_gate_stub
+        id: human_merge_gate_stub
         env:
-          ENABLED: ${{ inputs.stub-pre-preview-enabled }}
+          ENABLED: ${{ inputs.stub-human-merge-enabled }}
         run: printf 'enabled=%s\n' "$ENABLED" >> "$GITHUB_OUTPUT"
 
       - name: Run Claude Code
@@ -765,19 +794,19 @@ jobs:
           PR_PRESENT: ${{ steps.verify_pr.outputs.pr-present }}
         run: bash .claude-pipeline/scripts/post-run-report.sh
 
-  auto_review:
+  ai_review_ai_merge:
     # ADR-002: agent-driven review on the freshly-opened draft PR, with
     # gates 1/5/6/7 enforced in scripts/check-merge-envelope.sh. Verdict
     # !=approve or any failed gate leaves the PR draft and stamps
     # ai:review-blocked on the originating issue.
-    name: Auto-review PR for issue #${{ inputs.issue-number }}
+    name: AI review, AI merge — PR for issue #${{ inputs.issue-number }}
     needs: implement
     if: |
       (!inputs.stub-claude || inputs.stub-review-verdict != '')
       && (!inputs.dry-run || inputs.stub-review-verdict != '')
       && needs.implement.outputs.outcome == 'success'
-      && needs.implement.outputs.auto-review-enabled == 'true'
-      && needs.implement.outputs.pre-preview-enabled != 'true'
+      && needs.implement.outputs.ai-review-ai-merge-enabled == 'true'
+      && needs.implement.outputs.ai-review-human-merge-enabled != 'true'
     runs-on: ${{ fromJSON(inputs.runner-labels) }}
     timeout-minutes: 15
     permissions:
@@ -942,7 +971,7 @@ jobs:
         run: printf 'value=%s\n' "${REAL:-$STUB}" >> "$GITHUB_OUTPUT"
 
       - name: Ensure OpenCode toolchain (self-fix)
-        # See the equivalent step in pre_preview (#193) — same reasoning.
+        # See the equivalent step in ai_review_human_merge (#193) — same reasoning.
         if: |
           steps.self_mod_guard.outputs.blocked != 'true'
           && steps.find_pr.outputs.found == 'true'
@@ -953,7 +982,7 @@ jobs:
           AGENT: opencode
         run: bash .claude-pipeline/scripts/ensure-toolchain.sh
 
-      - name: Self-fix loop (auto-review optional self-fix pass)
+      - name: Self-fix loop (AI-merge optional self-fix pass)
         if: |
           steps.self_mod_guard.outputs.blocked != 'true'
           && steps.find_pr.outputs.found == 'true'
@@ -1095,7 +1124,7 @@ jobs:
       - name: Verify gh mock log (test mode)
         # Read the captured `gh` invocation log and emit whether
         # `gh pr merge` was attempted. Workflow surfaces this as
-        # `auto-review-merge-attempted` so the act test can assert
+        # `ai-review-ai-merge-merge-attempted` so the act test can assert
         # "no real merge call is made" — required by issue #16 AC.
         # $GH_MOCK_LOG was set into the environment by the "Wire gh
         # mock" step at the top of this job.
@@ -1103,23 +1132,23 @@ jobs:
         id: verify_mock
         run: bash .claude-pipeline/scripts/verify-gh-mock-merge.sh
 
-  pre_preview:
+  ai_review_human_merge:
     # Pre-preview mode (#77 / ADR-004): the agent reviews the freshly-
     # opened draft PR; on `approve` the draft is promoted to ready and a
     # HUMAN merges. No safety envelope and no auto-merge. Because
     # promote-to-ready performs no merge, there is intentionally NO
-    # self-modification guard here (unlike auto_review) — promoting a draft
+    # self-modification guard here (unlike ai_review_ai_merge) — promoting a draft
     # on freaxnx01/agent-workflow itself is safe, so this repo can dogfood
     # the flow. Non-approve verdict or a missing PR leaves the PR draft and
-    # stamps ai:review-blocked. Mutually exclusive with auto_review via the
-    # implement-job gate (pre-preview wins when both labels are present).
-    name: Pre-preview PR for issue #${{ inputs.issue-number }}
+    # stamps ai:review-blocked. Mutually exclusive with ai_review_ai_merge via
+    # the implement-job gate (human-merge wins when both labels are present).
+    name: AI review, human merge — PR for issue #${{ inputs.issue-number }}
     needs: implement
     if: |
       (!inputs.stub-claude || inputs.stub-review-verdict != '')
       && (!inputs.dry-run || inputs.stub-review-verdict != '')
       && needs.implement.outputs.outcome == 'success'
-      && needs.implement.outputs.pre-preview-enabled == 'true'
+      && needs.implement.outputs.ai-review-human-merge-enabled == 'true'
     runs-on: ${{ fromJSON(inputs.runner-labels) }}
     timeout-minutes: 10
     permissions:
@@ -1241,7 +1270,7 @@ jobs:
           AGENT: opencode
         run: bash .claude-pipeline/scripts/ensure-toolchain.sh
 
-      - name: Self-fix loop (pre-preview optional self-fix pass)
+      - name: Self-fix loop (human-merge optional self-fix pass)
         if: |
           steps.find_pr.outputs.found == 'true'
           && steps.verdict.outputs.value == 'request_changes'
@@ -1279,7 +1308,7 @@ jobs:
             printf 'iterations-used=%s\n' "${LOOP_ITERATIONS:-0}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Promote draft to ready (pre-preview — no auto-merge)
+      - name: Promote draft to ready (human-merge — no auto-merge)
         if: |
           steps.find_pr.outputs.found == 'true'
           && steps.final.outputs.verdict == 'approve'
@@ -1292,7 +1321,7 @@ jobs:
           # human still merges, so this must not fail the job.
           gh pr ready "$PR_NUMBER" --repo "$REPO" || true
           gh pr comment "$PR_NUMBER" --repo "$REPO" \
-            --body "Pre-reviewed ✓ — promoted to ready. Merge is yours (no auto-merge in pre-preview mode)."
+            --body "Reviewed ✓ — promoted to ready. Merge is yours."
 
       - name: Mark issue blocked when review refuses or PR missing
         if: |
@@ -1307,7 +1336,7 @@ jobs:
           VERDICT: ${{ steps.final.outputs.verdict }}
           SELF_FIX_ITERATIONS: ${{ steps.final.outputs.iterations-used }}
           SELF_FIX_MAX: ${{ inputs.self-fix-max-iterations }}
-          MODE: pre-preview
+          MODE: human-merge
         run: bash .claude-pipeline/scripts/post-auto-review-block.sh
 
       - name: Verify gh mock log (test mode)

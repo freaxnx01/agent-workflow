@@ -13,11 +13,19 @@
 #   selectors  agent:claude, agent:opencode
 #              — read by classify-agent.sh to override the workflow input
 #                (see ADR-001 in docs/DECISIONS.md)
-#   gates      ai-auto-review, ai-pre-preview, ai-chain, ai:chain-paused
-#              — read by auto-review (epic #3) and chain-dispatch
-#                (epic #4) workflows; user-applied opt-ins / kill switch
+#   gates      ai-review-ai-merge, ai-review-human-merge, ai-chain, ai:chain-paused
+#              — read by the review flows (epic #3, ADR-009) and
+#                chain-dispatch (epic #4) workflows; user-applied opt-ins /
+#                kill switch. The pre-ADR-009 names ai-auto-review and
+#                ai-pre-preview are still honoured by the gates until v3,
+#                but are no longer created here.
+#   budget     turns:50, turns:80, turns:120, turns:160
+#              — read by classify-turns.sh as an explicit stage-1 override of
+#                the task-count heuristic; `gh issue edit --add-label` fails
+#                outright on a label that does not exist, so the documented
+#                override is unusable until these are created
 #   outcome    ai:review-blocked
-#              — written by the auto-review job (ADR-002, epic #3) when
+#              — written by either review job (ADR-002, epic #3) when
 #                the safety envelope or verdict leaves the PR draft
 #   coordination enrichment-ongoing
 #              — read/written by /enrich (Step 1.5 / 2.5 / 6) to prevent two
@@ -62,10 +70,15 @@ create ctx:high   D73A4A 'Peak context utilization 75%+ (consider trimming)'
 create agent:claude    0075CA 'Force the Claude Code agent for this run'
 create agent:opencode  0075CA 'Force the OpenCode (OpenRouter) agent for this run'
 
-create ai-auto-review  0E8A16 'Run auto-review after PR opens; auto-merge on approve+green'
-create ai-pre-preview  1D76DB 'Run agent pre-review after PR opens; promote to ready for human merge (no auto-merge)'
+create ai-review-ai-merge     0E8A16 'AI reviews the PR and auto-merges on approve+green'
+create ai-review-human-merge  1D76DB 'AI reviews the PR and promotes it to ready; a human merges'
 create ai-chain        0E8A16 'Eligible for chain-dispatch when blockers resolve'
 create ai:chain-paused D73A4A 'Repo-wide kill switch for chain-dispatch'
+
+create turns:50  5319E7 'Override the agent turn budget to 50 (classify-turns.sh stage 1)'
+create turns:80  5319E7 'Override the agent turn budget to 80 (classify-turns.sh stage 1)'
+create turns:120 5319E7 'Override the agent turn budget to 120 (classify-turns.sh stage 1)'
+create turns:160 5319E7 'Override the agent turn budget to 160 (classify-turns.sh stage 1)'
 
 create ai:review-blocked D73A4A 'Auto-review left the PR draft; human action required'
 
