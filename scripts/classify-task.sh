@@ -9,7 +9,7 @@
 #                    model:deepseek-v3 / model:qwen-coder /
 #                    model:gemini-flash / model:deepseek-r1 /
 #                    model:llama-4-maverick / model:qwen3-coder /
-#                    model:gpt-oss-120b / model:glm-flash /
+#                    model:glm / model:glm-flash /
 #                    model:minimax-m2 / model:deepseek-v32 /
 #                    model:qwen3-27b
 #      OpenRouter labels are only meaningful when `agent: opencode` runs;
@@ -69,6 +69,28 @@ fi
 
 DEFAULT_MODEL="${DEFAULT_MODEL:-claude-sonnet-5}"
 AGENT="${AGENT:-claude}"
+ESCALATE_MODEL="${ESCALATE_MODEL:-claude-sonnet-5}"
+
+# A repo whose default-model is an OpenRouter id (the fleet default is
+# z-ai/glm-5.2) still resolves to AGENT=claude whenever a retry escalates, or
+# when OPENROUTER_API_KEY is unavailable. Handing an OpenRouter id to the Claude
+# CLI is fatal, so the Claude path substitutes the Claude-family escalation
+# model. Claude model ids are exactly those starting `claude-`.
+if [[ "$AGENT" == "claude" && "$DEFAULT_MODEL" != claude-* ]]; then
+  printf 'note: DEFAULT_MODEL %q is not a Claude model; using %q on the claude agent\n' \
+    "$DEFAULT_MODEL" "$ESCALATE_MODEL" >&2
+  DEFAULT_MODEL="$ESCALATE_MODEL"
+fi
+
+# The mirror case: OpenRouter cannot resolve a Claude id. A consumer that pinned
+# only `default-model` and inherited the flipped `agent: opencode` default would
+# otherwise fail every run.
+OPENROUTER_FALLBACK_MODEL="${OPENROUTER_FALLBACK_MODEL:-z-ai/glm-5.2}"
+if [[ "$AGENT" != "claude" && "$DEFAULT_MODEL" == claude-* ]]; then
+  printf 'note: DEFAULT_MODEL %q is a Claude model; using %q on the %s agent\n' \
+    "$DEFAULT_MODEL" "$OPENROUTER_FALLBACK_MODEL" "$AGENT" >&2
+  DEFAULT_MODEL="$OPENROUTER_FALLBACK_MODEL"
+fi
 
 # --- 1) explicit override label -------------------------------------------
 
@@ -86,7 +108,7 @@ label_is_compatible() {
     model:opus|model:sonnet|model:haiku)
       [[ "$AGENT" == "claude" ]]
       ;;
-    model:mistral-large|model:codestral|model:deepseek-v3|model:qwen-coder|model:gemini-flash|model:deepseek-r1|model:llama-4-maverick|model:qwen3-coder|model:gpt-oss-120b|model:glm-flash|model:minimax-m2|model:deepseek-v32|model:qwen3-27b)
+    model:mistral-large|model:codestral|model:deepseek-v3|model:qwen-coder|model:gemini-flash|model:deepseek-r1|model:llama-4-maverick|model:qwen3-coder|model:glm|model:glm-flash|model:minimax-m2|model:deepseek-v32|model:qwen3-27b)
       [[ "$AGENT" == "opencode" ]]
       ;;
     *)
@@ -99,7 +121,7 @@ chosen=''
 reason=''
 while IFS= read -r label; do
   case "$label" in
-    model:opus|model:sonnet|model:haiku|model:mistral-large|model:codestral|model:deepseek-v3|model:qwen-coder|model:gemini-flash|model:deepseek-r1|model:llama-4-maverick|model:qwen3-coder|model:gpt-oss-120b|model:glm-flash|model:minimax-m2|model:deepseek-v32|model:qwen3-27b)
+    model:opus|model:sonnet|model:haiku|model:mistral-large|model:codestral|model:deepseek-v3|model:qwen-coder|model:gemini-flash|model:deepseek-r1|model:llama-4-maverick|model:qwen3-coder|model:glm|model:glm-flash|model:minimax-m2|model:deepseek-v32|model:qwen3-27b)
       if ! label_is_compatible "$label"; then
         printf 'warn: label %s incompatible with AGENT=%s; falling through to default\n' \
           "$label" "$AGENT" >&2
@@ -107,6 +129,15 @@ while IFS= read -r label; do
       fi
       ;;
   esac
+  # Retired models: recognised so the operator gets a reason, never selected.
+  # gpt-oss-120b shipped 2 of 10 runs across the fleet — the worst measured
+  # rate of any model with a real sample. See docs/model-comparison.md.
+  if [[ "$label" == "model:gpt-oss-120b" ]]; then
+    printf 'warn: label %s names a retired model (2/10 successful runs measured); falling through to default\n' \
+      "$label" >&2
+    continue
+  fi
+
   case "$label" in
     model:opus)           chosen=claude-opus-5;                 reason='label model:opus' ;;
     model:sonnet)         chosen=claude-sonnet-5;                 reason='label model:sonnet' ;;
@@ -119,7 +150,7 @@ while IFS= read -r label; do
     model:deepseek-r1)    chosen=deepseek/deepseek-r1-0528;        reason='label model:deepseek-r1' ;;
     model:llama-4-maverick) chosen=meta-llama/llama-4-maverick;    reason='label model:llama-4-maverick' ;;
     model:qwen3-coder)    chosen=qwen/qwen3-coder-30b-a3b-instruct; reason='label model:qwen3-coder' ;;
-    model:gpt-oss-120b)   chosen=openai/gpt-oss-120b;              reason='label model:gpt-oss-120b' ;;
+    model:glm)            chosen=z-ai/glm-5.2;                     reason='label model:glm' ;;
     model:glm-flash)      chosen=z-ai/glm-4.7-flash;               reason='label model:glm-flash' ;;
     model:minimax-m2)     chosen=minimax/minimax-m2.5;             reason='label model:minimax-m2' ;;
     model:deepseek-v32)   chosen=deepseek/deepseek-v3.2;           reason='label model:deepseek-v32' ;;

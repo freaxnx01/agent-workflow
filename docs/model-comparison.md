@@ -117,13 +117,24 @@ Round 2 tightened the spec with two criteria that round 1 exposed as universal b
      `ai:done`) — e.g. `codestral`.
    - Always verify tool support before adding a model to the roster.
 
+## Retired models
+
+**`gpt-oss-120b` — retired 2026-09-03.** It won the Round-2 benchmark decisively, but
+across the whole fleet it shipped only **2 of 10 dispatched runs (20%)** — the worst
+measured rate of any model with a real sample, against ~65% for the fleet as a whole.
+`classify-task.sh` no longer selects it; the `model:gpt-oss-120b` label is still
+recognised, but warns and falls through to the repo's `default-model`.
+
+This is the clearest evidence so far for the caveat already recorded below: a
+single benchmark round does not predict sustained performance.
+
 ## Selection policy (derived)
 
 | Task shape | Recommend | Why |
 |---|---|---|
-| Straightforward feature / endpoint / CRUD | `agent:opencode` + `model:gpt-oss-120b` | Won Round 2 — cleanest output, ~100× cheaper than Opus |
+| Straightforward feature / endpoint / CRUD | `agent:opencode` + `model:minimax-m2` | `model:gpt-oss-120b` won Round 2 but is **retired** — see the fleet note below |
 | Validation- / architecture-heavy | `agent:opencode` + `model:gemini-flash` | Most idiomatic structure (DTOs, model-binding validation) |
-| Bugfix / small mechanical | `agent:opencode` + `model:gpt-oss-120b` | Cheap and reliable for bounded changes; escalate if it stalls |
+| Bugfix / small mechanical | `agent:opencode` (repo `default-model`) | Cheap for bounded changes; escalate if it stalls |
 | Ambiguous / high-stakes / large refactor | `agent:claude` + `model:sonnet` (or `model:opus`) | Reliability and judgement over cost |
 
 Never route OpenCode to `model:qwen-coder` (no tool endpoint) or `model:codestral` (malformed

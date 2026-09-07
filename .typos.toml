@@ -3,6 +3,10 @@
 # do not "correct" it to "unparsable".
 [default.extend-words]
 unparseable = "unparseable"
+# `Nd` is the placeholder in /ai-stats' `--since Nd / Nw / Nm` window syntax
+# (N days / weeks / months). typos reads it as a misspelling of "And" and
+# silently rewrites the flag's documentation into nonsense.
+Nd = "Nd"
 
 [default]
 # Git SHAs in docs are hex, not prose: `ba94ff4` tripped "ba → by/be" when the

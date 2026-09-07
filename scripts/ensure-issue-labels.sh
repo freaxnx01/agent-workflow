@@ -75,6 +75,8 @@ create ai-review-human-merge  1D76DB 'AI reviews the PR and promotes it to ready
 create ai-chain        0E8A16 'Eligible for chain-dispatch when blockers resolve'
 create ai:chain-paused D73A4A 'Repo-wide kill switch for chain-dispatch'
 
+create '🧊 parked' BFD4F2 'Parked for a human — agent attempt cap reached'
+
 create turns:50  5319E7 'Override the agent turn budget to 50 (classify-turns.sh stage 1)'
 create turns:80  5319E7 'Override the agent turn budget to 80 (classify-turns.sh stage 1)'
 create turns:120 5319E7 'Override the agent turn budget to 120 (classify-turns.sh stage 1)'

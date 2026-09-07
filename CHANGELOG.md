@@ -27,6 +27,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **ci:** `verify-or-recover-pr.sh` now **salvages uncommitted work**. A run that
+  exited cleanly without opening a PR used to discard whatever it left in the
+  workspace — the largest measured failure mode (24 of 48 failures across the
+  fleet, reported as "run completed but no PR was opened"). Its work is now
+  committed to a `salvage/issue-<n>` branch and opened as a draft PR. The run
+  report flags it as `success (salvaged: ...)` so it is not counted as a clean
+  success. Salvage is scoped to the clean-exit case; a genuine agent error is
+  still owned by the existing handling, and the git writes only run inside
+  GitHub Actions.
+
+- **ci:** Add `scripts/check-attempt-cap.sh` and a `max-attempts` workflow input
+  (default 2). After the cap, an issue is **parked for a human** instead of
+  redispatched — measured across the fleet, extra attempts do not improve the
+  odds, and the dispatches spent on issues that never shipped were pure loss.
+  Set `max-attempts: 0` to disable.
+
+- **ci:** **Escalate to Claude on retry.** From attempt 2 onwards a run switches
+  to Claude (`escalate-on-retry`, default true; `escalate-model`, default
+  `claude-sonnet-5`). A model that failed a job once rarely succeeds on an
+  identical second run, so the retry is spent on a stronger agent instead. An
+  explicit `agent:*` label still wins. Combined with the attempt cap this gives
+  a fixed ladder: cheap attempt, Claude attempt, park.
+
+- **ci:** Record whether an issue carried an `## Implementation Plan` when it was
+  dispatched. The workflow stamps it, `post-run-report.sh` renders it as
+  `**Plan:** enriched|none`, and `/ai-stats` groups ship rate and attempts by it
+  — so the pipeline can finally answer whether enrichment predicts shipping.
+  Runs from before this change report as `unknown`.
+
+- **models:** Add the `model:glm` label for `z-ai/glm-5.2`.
+
+- **commands:** Add `/ai-stats` — reports ai-implement dispatch statistics for the
+  current repo (`--all` for every repo under the owner). Reconstructs each dispatch
+  from `ai-implement` label events plus the `## ai-implement run` comments
+  `post-run-report.sh` already posts, so no new bookkeeping is needed. Reports ship
+  rate per issue and per dispatch, spend per shipped issue, an A-F grade per issue,
+  and OK-rate/cost breakdowns by coding agent and by model. Backed by
+  `scripts/lib/ai-stats.sh` and Layer-1 fixture tests in
+  `tests/run-ai-stats-tests.sh`.
+
 - **issues:** `/issues` takes an optional milestone argument, matching
   `/triage`'s — `/issues <name>` scopes the list to one milestone (exact title,
   else a unique case-insensitive substring), and `/issues pick` lists the open
@@ -92,6 +132,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comment; `/issues` now points here instead of a raw `gh` invocation (#175)
 
 ### Changed
+
+- **models:** **Flip the default implementation agent and model** to
+  `opencode` + `z-ai/glm-5.2`. Across the fleet glm-5.2 shipped 15 of 18 runs
+  (83%) for $4.25 total, against 59% for `claude-opus-4-7` at $181.70 — the
+  cheap OpenRouter models carry ordinary work at a better rate for a fraction
+  of the cost. Two guards make the flip safe: `classify-agent.sh` falls back to
+  Claude when `OPENROUTER_API_KEY` is unavailable, and `classify-task.sh`
+  substitutes a compatible model whenever the resolved agent and the configured
+  `default-model` come from different families (either direction).
+  **BREAKING CHANGE:** consumers who relied on the implicit Claude default now
+  run on OpenCode where an OpenRouter key exists. Pin `agent: claude` to keep
+  the old behaviour. agent-workflow's own `agent.yml` dogfoods the new defaults
+  and now forwards `OPENROUTER_API_KEY` to the reusable workflow — without that
+  forwarding the credential guard silently keeps every run on Claude.
+
+- **models:** **Retire `gpt-oss-120b`** from the selection policy. It won the
+  Round-2 benchmark, but shipped only 2 of 10 dispatched runs (20%) across the
+  fleet — the worst measured rate of any model with a real sample.
+  `classify-task.sh` no longer selects it; the `model:gpt-oss-120b` label is
+  still recognised but warns and falls through to the repo's `default-model`.
+  **BREAKING CHANGE:** issues relying on that label now run on `default-model`.
+
+- **commands:** `/ai-stats` excludes `*-sandbox` repos from its totals by
+  default — a sandbox absorbs failed runs, so its zeroes are noise. Excluded
+  repos are still reported under an **Excluded** heading rather than dropped
+  silently. `--exclude <glob>` replaces the defaults, `--no-exclude` clears them,
+  and a repo named with `--repo` always counts.
 
 - **naming:** the two review flows are named for their actor pair —
   `auto-review` → `ai-review-ai-merge` and `pre-preview` →

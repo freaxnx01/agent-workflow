@@ -56,6 +56,8 @@ EXECUTION_FILE="${EXECUTION_FILE:-}"
 MODEL="${MODEL:-}"   # resolved model (steps.triage.outputs.model) — optional
 AGENT="${AGENT:-}"   # resolved agent (steps.classify_agent.outputs.agent) — optional
 MAX_TURNS="${MAX_TURNS:-}"   # configured turn budget (steps.triage_turns.outputs.turns) — optional
+SALVAGED="${SALVAGED:-}"     # "true" when the PR came from verify-or-recover-pr.sh salvage
+HAS_PLAN="${HAS_PLAN:-}"     # "true"/"false": did the issue body carry an "## Implementation Plan"
 
 [[ -r "$RESULT_FILE" ]] || {
   printf 'error: RESULT_FILE not readable: %s\n' "$RESULT_FILE" >&2
@@ -202,9 +204,15 @@ CACHE_DENOM=$(( CACHE_READ + INPUT_TOKENS + CACHE_CREATE ))
 TOTAL_TOKENS=$(( INPUT_TOKENS + OUTPUT_TOKENS + CACHE_READ + CACHE_CREATE ))
 
 # Optional "Model · Agent" line (#59). Empty when neither is provided.
+# Plan is appended when known, so /ai-stats can correlate enrichment with
+# shipping. Left off entirely when unset, keeping older reports parseable.
 MODEL_AGENT_LINE=''
 if [[ -n "$MODEL" || -n "$AGENT" ]]; then
   MODEL_AGENT_LINE="**Model:** ${MODEL:-n/a} · **Agent:** ${AGENT:-n/a}"
+  case "$HAS_PLAN" in
+    true)  MODEL_AGENT_LINE+=" · **Plan:** enriched" ;;
+    false) MODEL_AGENT_LINE+=" · **Plan:** none" ;;
+  esac
 fi
 CACHE_HIT_PCT="$(pct "$CACHE_READ" "$CACHE_DENOM")"
 
@@ -228,6 +236,14 @@ elif [[ "${PR_PRESENT:-}" == "false" ]]; then
   STATUS_TEXT='failed: run completed but no PR was opened'
   STATUS_LABEL='ai:failed'
   STATUS_LABEL_OPPOSITE='ai:done'
+elif [[ "${SALVAGED:-}" == "true" ]]; then
+  # The run never opened a PR itself; verify-or-recover-pr.sh committed the work
+  # it left behind and opened one. Reviewable, but not the same thing as a clean
+  # success — say so, or the stats count it as one.
+  STATUS_EMOJI=':white_check_mark:'
+  STATUS_TEXT='success (salvaged: uncommitted work committed for review)'
+  STATUS_LABEL='ai:done'
+  STATUS_LABEL_OPPOSITE='ai:failed'
 else
   STATUS_EMOJI=':white_check_mark:'
   STATUS_TEXT='success'

@@ -84,9 +84,9 @@ comparison (provenance: the living [model-comparison report](https://github.com/
 
 | Task shape | Recommend | Why |
 |---|---|---|
-| Straightforward feature / endpoint / CRUD | `agent:opencode` + `model:gpt-oss-120b` (~0.03/0.15) | Won the .NET endpoint comparison — cleanest output, ~100× cheaper than Opus |
+| Straightforward feature / endpoint / CRUD | `agent:opencode` + `model:minimax-m2` | Tool-use coder; the repo's `default-model` is the safe fallback. `model:gpt-oss-120b` is **retired** — it won a single benchmark round but shipped only 2 of 10 real runs |
 | Validation- / architecture-heavy | `agent:opencode` + `model:gemini-flash` (~0.10/0.40) | Most idiomatic structure (DTOs, model-binding validation) in the comparison |
-| Bugfix / small mechanical | `agent:opencode` + `model:gpt-oss-120b` | Cheap and reliable for bounded changes; escalate if it stalls |
+| Bugfix / small mechanical | `agent:opencode` (repo `default-model`) | Cheap for bounded changes; escalate if it stalls |
 | Ambiguous / high-stakes / large refactor | `agent:claude` + `model:sonnet` (or `model:opus` if truly high-stakes) | Reliability and judgement over cost |
 
 Before recommending an OpenCode model, sanity-check the repo can honour it: the pinned

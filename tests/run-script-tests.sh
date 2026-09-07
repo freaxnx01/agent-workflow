@@ -313,10 +313,61 @@ out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
 assert_contains "$out" 'chosen: qwen/qwen3-coder-30b-a3b-instruct (label model:qwen3-coder)' \
   "label model:qwen3-coder + agent=opencode → qwen3-coder"
 
-out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
-       ISSUE_LABELS='model:gpt-oss-120b' bash "$CLASSIFY")"
-assert_contains "$out" 'chosen: openai/gpt-oss-120b (label model:gpt-oss-120b)' \
-  "label model:gpt-oss-120b + agent=opencode → gpt-oss-120b"
+# A retry escalates the AGENT to claude, but DEFAULT_MODEL still holds the
+# repo's cheap OpenRouter default. Handing that id to Claude is fatal, so the
+# Claude path substitutes ESCALATE_MODEL.
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=claude DEFAULT_MODEL=z-ai/glm-5.2 \
+       ISSUE_BODY='add an endpoint' ISSUE_LABELS='ai-implement' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-sonnet-5' \
+  "agent=claude + OpenRouter default → substitutes the Claude escalation model"
+assert_not_contains "$out" 'chosen: z-ai/glm-5.2' \
+  "agent=claude never runs on an OpenRouter model id"
+
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=claude DEFAULT_MODEL=z-ai/glm-5.2 \
+       ESCALATE_MODEL=claude-opus-5 ISSUE_BODY='add an endpoint' \
+       ISSUE_LABELS='ai-implement' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-opus-5' "ESCALATE_MODEL is configurable"
+
+# The mirror case: flipping the default agent to opencode leaves any consumer
+# that pinned only `default-model: claude-sonnet-5` pointing opencode at a
+# Claude id, which OpenRouter cannot resolve.
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode DEFAULT_MODEL=claude-sonnet-5 \
+       ISSUE_BODY='add an endpoint' ISSUE_LABELS='ai-implement' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: z-ai/glm-5.2' \
+  "agent=opencode + Claude default → substitutes the OpenRouter default"
+assert_not_contains "$out" 'chosen: claude-sonnet-5' \
+  "agent=opencode never runs on a Claude model id"
+
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode DEFAULT_MODEL=claude-sonnet-5 \
+       OPENROUTER_FALLBACK_MODEL=z-ai/glm-4.7-flash \
+       ISSUE_BODY='add an endpoint' ISSUE_LABELS='ai-implement' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: z-ai/glm-4.7-flash' "the OpenRouter fallback is configurable"
+
+# A Claude default on the Claude path is left exactly as it was.
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=claude DEFAULT_MODEL=claude-haiku-4-5 \
+       ISSUE_BODY='add an endpoint' ISSUE_LABELS='ai-implement' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-haiku-4-5' "a Claude default is untouched"
+
+# glm-5.2 is the best-measured OpenRouter model on the fleet (15 of 18 runs
+# shipped at $4.25 total) and is the new default; it needs a label too.
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode ISSUE_LABELS='model:glm' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: z-ai/glm-5.2 (label model:glm)' \
+  "label model:glm + agent=opencode → glm-5.2"
+
+# gpt-oss-120b is retired: 2 successful runs out of 10 across the fleet, the
+# worst rate of any model with a meaningful sample. The label is kept as a
+# recognised name so it warns instead of silently falling through as a typo.
+# ISSUE_BODY is pinned so the fall-through reaches the heuristic without the
+# script shelling out to `gh issue view` for the body.
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode DEFAULT_MODEL=z-ai/glm-4.7-flash \
+       ISSUE_BODY='add an endpoint' \
+       ISSUE_LABELS='model:gpt-oss-120b' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'retired' \
+  "label model:gpt-oss-120b → warns that the model is retired"
+assert_not_contains "$out" 'chosen: openai/gpt-oss-120b' \
+  "label model:gpt-oss-120b → never selects the retired model"
+assert_contains "$out" 'chosen: z-ai/glm-4.7-flash' \
+  "label model:gpt-oss-120b → falls back to DEFAULT_MODEL"
 
 out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
        ISSUE_LABELS='model:glm-flash' bash "$CLASSIFY")"
@@ -523,8 +574,9 @@ CLASSIFY_AGENT="$ROOT/scripts/classify-agent.sh"
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='agent:claude' bash "$CLASSIFY_AGENT")"
 assert_contains "$out" 'chosen: claude (label agent:claude)'     "label agent:claude → claude"
 
-# Override: agent:opencode label
-out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='agent:opencode' bash "$CLASSIFY_AGENT")"
+# Override: agent:opencode label. HAS_OPENROUTER_KEY is pinned because the
+# credential guard below sends opencode to claude when no key is available.
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='agent:opencode' HAS_OPENROUTER_KEY=true bash "$CLASSIFY_AGENT")"
 assert_contains "$out" 'chosen: opencode (label agent:opencode)' "label agent:opencode → opencode"
 
 # Default input (no label, no DEFAULT_AGENT) → claude
@@ -532,12 +584,54 @@ out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' bash "$CLASSIFY_AGENT
 assert_contains "$out" 'chosen: claude (workflow input default (claude))' "no label, no DEFAULT_AGENT → claude"
 
 # Input fallback: DEFAULT_AGENT=opencode
-out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' DEFAULT_AGENT=opencode bash "$CLASSIFY_AGENT")"
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' DEFAULT_AGENT=opencode HAS_OPENROUTER_KEY=true bash "$CLASSIFY_AGENT")"
 assert_contains "$out" 'chosen: opencode (workflow input default (opencode))' "no label, DEFAULT_AGENT=opencode → opencode"
 
 # Label beats input
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='agent:claude' DEFAULT_AGENT=opencode bash "$CLASSIFY_AGENT")"
 assert_contains "$out" 'chosen: claude (label agent:claude)'     "label agent:claude beats DEFAULT_AGENT=opencode"
+
+# --- retry escalation -------------------------------------------------------
+#
+# Attempt 1 runs the cheap default; if it fails, attempt 2 escalates to Claude.
+# Across the fleet the cheap OpenRouter models carry ordinary work at a better
+# rate than Claude for a fraction of the cost, but when one of them cannot do a
+# job, spending a second cheap run on it is the losing move.
+
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' DEFAULT_AGENT=opencode \
+       HAS_OPENROUTER_KEY=true ATTEMPT=2 bash "$CLASSIFY_AGENT")"
+assert_contains "$out" 'chosen: claude'   "attempt 2 escalates to claude"
+assert_contains "$out" 'escalation'       "escalation is named as the reason"
+
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' DEFAULT_AGENT=opencode \
+       HAS_OPENROUTER_KEY=true ATTEMPT=1 bash "$CLASSIFY_AGENT")"
+assert_contains "$out" 'chosen: opencode' "attempt 1 stays on the cheap default"
+
+# An explicit label still wins over escalation — the operator asked for it.
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='agent:opencode' DEFAULT_AGENT=opencode \
+       HAS_OPENROUTER_KEY=true ATTEMPT=3 bash "$CLASSIFY_AGENT")"
+assert_contains "$out" 'chosen: opencode (label agent:opencode)' "label beats retry escalation"
+
+# Escalation can be turned off.
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' DEFAULT_AGENT=opencode \
+       HAS_OPENROUTER_KEY=true ATTEMPT=2 ESCALATE_ON_RETRY=false bash "$CLASSIFY_AGENT")"
+assert_contains "$out" 'chosen: opencode' "ESCALATE_ON_RETRY=false keeps the default agent"
+
+# --- credential-aware fallback ----------------------------------------------
+#
+# opencode needs an OpenRouter credential. With the default agent flipped to
+# opencode, a consumer repo that only holds a Claude token would otherwise fail
+# every single run on a missing secret.
+
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' DEFAULT_AGENT=opencode \
+       HAS_OPENROUTER_KEY=false bash "$CLASSIFY_AGENT")"
+assert_contains "$out" 'chosen: claude'      "no OpenRouter key → falls back to claude"
+assert_contains "$out" 'OPENROUTER_API_KEY'  "the fallback names the missing secret"
+
+# The fallback also applies to an explicit label — a label cannot conjure a secret.
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='agent:opencode' \
+       HAS_OPENROUTER_KEY=false bash "$CLASSIFY_AGENT")"
+assert_contains "$out" 'chosen: claude'      "label agent:opencode without a key → claude"
 
 # Invalid DEFAULT_AGENT → exit 2
 ec="$(run_capture_ec env ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' DEFAULT_AGENT=mistral bash "$CLASSIFY_AGENT")"
@@ -2420,14 +2514,18 @@ assert_contains "$out" 'pr-present=true'    "no PR + branch → pr-present after
 assert_contains "$out" 'pr create'          "recovery calls gh pr create"
 assert_contains "$out" 'Closes #42'         "recovery PR body closes the issue"
 
-# No PR + no usable branch → pr-present=false, no recovery attempt.
+# No PR + no usable branch + nothing left uncommitted → pr-present=false, no
+# recovery attempt. WORKTREE_DIRTY is pinned here rather than left to the real
+# checkout's state: with work left behind, the salvage path below takes over.
 out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
-        PIPELINE_PRS_JSON='[]' BRANCH=main BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true)"
+        PIPELINE_PRS_JSON='[]' BRANCH=main BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        WORKTREE_DIRTY=false)"
 assert_contains "$out" 'pr-present=false'   "branch == default → not recoverable"
 assert_not_contains "$out" 'pr create'      "default branch → never calls gh pr create"
 
 out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
-        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=false BRANCH_AHEAD=true)"
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=false BRANCH_AHEAD=true \
+        WORKTREE_DIRTY=false)"
 assert_contains "$out" 'pr-present=false'   "branch not pushed → pr-present=false"
 
 # No PR + branch, but gh pr create fails transiently then succeeds → recovered.
@@ -2462,6 +2560,151 @@ assert_contains "$out" 'recovered=false'   "  → not counted as recovered (it p
 
 # Missing required env → exit 2.
 ec="$(run_capture_ec env REPO=o/r IS_ERROR=false bash "$VERIFY")"
+assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
+
+# Whether the issue carried an "## Implementation Plan" is stamped on the run
+# report, so /ai-stats can answer whether enrichment actually predicts shipping.
+out="$(RESULT_FILE="$FIXTURES/result-success-cheap.json" ISSUE_NUMBER=42 \
+        WORKFLOW_RUN_URL=https://example.test/run/1 RENDER_ONLY=1 \
+        MODEL=claude-sonnet-5 AGENT=claude HAS_PLAN=true \
+        bash "$ROOT/scripts/post-run-report.sh")"
+assert_contains "$out" '**Plan:** enriched' "HAS_PLAN=true → reported as enriched"
+
+out="$(RESULT_FILE="$FIXTURES/result-success-cheap.json" ISSUE_NUMBER=42 \
+        WORKFLOW_RUN_URL=https://example.test/run/1 RENDER_ONLY=1 \
+        MODEL=claude-sonnet-5 AGENT=claude HAS_PLAN=false \
+        bash "$ROOT/scripts/post-run-report.sh")"
+assert_contains "$out" '**Plan:** none' "HAS_PLAN=false → reported as none"
+
+out="$(RESULT_FILE="$FIXTURES/result-success-cheap.json" ISSUE_NUMBER=42 \
+        WORKFLOW_RUN_URL=https://example.test/run/1 RENDER_ONLY=1 \
+        MODEL=claude-sonnet-5 AGENT=claude \
+        bash "$ROOT/scripts/post-run-report.sh")"
+assert_not_contains "$out" '**Plan:**' "HAS_PLAN unset → no Plan field (older runs stay parseable)"
+
+# A salvaged PR is reported as such, not as an ordinary success — otherwise the
+# /ai-stats ship rate counts salvage as if the agent had done it cleanly.
+out="$(RESULT_FILE="$FIXTURES/result-success-cheap.json" ISSUE_NUMBER=42 \
+        WORKFLOW_RUN_URL=https://example.test/run/1 RENDER_ONLY=1 SALVAGED=true \
+        bash "$ROOT/scripts/post-run-report.sh")"
+assert_contains "$out" 'success (salvaged' "post-run-report flags a salvaged PR"
+assert_contains "$out" 'ai:done'           "salvaged run still labels ai:done"
+
+out="$(RESULT_FILE="$FIXTURES/result-success-cheap.json" ISSUE_NUMBER=42 \
+        WORKFLOW_RUN_URL=https://example.test/run/1 RENDER_ONLY=1 \
+        bash "$ROOT/scripts/post-run-report.sh")"
+assert_not_contains "$out" 'salvaged'      "an ordinary success is not flagged as salvaged"
+
+# --- salvage: run finished cleanly but never committed ----------------------
+#
+# The single largest observed failure mode ("run completed but no PR was
+# opened", 24 of 48 failures across the fleet) is a run that did real work and
+# left it uncommitted in the workspace. Recovery used to bail because the branch
+# had nothing pushed, discarding the work. Salvage commits and pushes it so the
+# run ends in a reviewable draft PR instead of a silent loss.
+#
+# SALVAGE_APPLY=0 is the test seam: it skips the git add/commit/push writes but
+# still exercises the decision path and the gh pr create call. It is passed
+# explicitly on every case below — the script also refuses the writes outside
+# GitHub Actions, but a test must not depend on that second line of defence.
+
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=main BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        WORKTREE_DIRTY=true SALVAGE_APPLY=0)"
+assert_contains "$out" 'pr create'        "dirty worktree + no usable branch → salvage opens a PR"
+assert_contains "$out" 'pr-present=true'  "salvage → pr-present=true"
+assert_contains "$out" 'salvaged=true'    "salvage → salvaged=true"
+assert_contains "$out" 'Closes #42'       "salvage PR body closes the issue"
+assert_contains "$out" 'salvage/issue-42' "salvage pushes a dedicated salvage branch"
+
+# Branch exists but has no commits pushed — same salvage path.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=false \
+        WORKTREE_DIRTY=true SALVAGE_APPLY=0)"
+assert_contains "$out" 'salvaged=true'    "branch with no commits + dirty tree → salvaged"
+
+# Clean worktree → nothing to salvage, previous behaviour preserved.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=main BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        WORKTREE_DIRTY=false SALVAGE_APPLY=0)"
+assert_contains "$out" 'pr-present=false'  "clean worktree → no salvage"
+assert_contains "$out" 'salvaged=false'    "clean worktree → salvaged=false"
+assert_not_contains "$out" 'pr create'     "clean worktree → never calls gh pr create"
+
+# A genuine agent error is still owned by the existing handling — salvage is
+# scoped to the clean-exit-but-no-PR case it was measured against.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=true DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' WORKTREE_DIRTY=true SALVAGE_APPLY=0)"
+assert_contains "$out" 'salvaged=false'    "IS_ERROR=true → no salvage"
+assert_not_contains "$out" 'pr create'     "IS_ERROR=true → never calls gh pr create"
+
+# Outside GitHub Actions the git writes are refused even when nothing pins the
+# seam — an unpinned test run must never commit or push from a real checkout.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=main BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        WORKTREE_DIRTY=true GITHUB_ACTIONS=)"
+assert_contains "$out" 'salvaged=true' "salvage decision still reached outside CI"
+
+# Normal recovery (branch pushed and ahead) is not reported as a salvage.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        WORKTREE_DIRTY=true SALVAGE_APPLY=0)"
+assert_contains "$out" 'recovered=true'    "pushed branch → ordinary recovery"
+assert_contains "$out" 'salvaged=false'    "pushed branch → not a salvage"
+
+section "check-attempt-cap — stop redispatching an issue forever"
+
+CAP="$ROOT/scripts/check-attempt-cap.sh"
+
+cap_run() {
+  local go log; go="$(mktemp)"; log="$(mktemp)"
+  GITHUB_OUTPUT="$go" GH_MOCK_LOG="$log" PATH="$MOCKS:$PATH" "$@" bash "$CAP" >/dev/null 2>&1 || true
+  printf 'LOG<<%s>>\n' "$(tr '\n' ';' < "$log")"
+  cat "$go"; rm -f "$go" "$log"
+}
+
+run_report='{"body":"## ai-implement run\n\n**Outcome:** :x: failed"}'
+
+# No prior run reports → first attempt, proceed.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r ISSUE_COMMENTS_JSON='[]')"
+assert_contains "$out" 'proceed=true'   "no prior attempts → proceed"
+assert_contains "$out" 'attempt=1'      "no prior attempts → attempt 1"
+
+# One prior attempt → still under the cap of 2.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r ISSUE_COMMENTS_JSON="[$run_report]")"
+assert_contains "$out" 'proceed=true'   "one prior attempt → proceed"
+assert_contains "$out" 'attempt=2'      "one prior attempt → attempt 2"
+
+# Two prior attempts → cap reached, park instead of dispatching again.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r ISSUE_COMMENTS_JSON="[$run_report,$run_report]")"
+assert_contains "$out" 'proceed=false'  "two prior attempts → do not proceed"
+assert_contains "$out" 'attempt=3'      "two prior attempts → would be attempt 3"
+assert_contains "$out" 'issue edit'     "cap reached → edits the issue labels"
+assert_contains "$out" 'parked'         "cap reached → applies the parked label"
+assert_contains "$out" 'remove-label'   "cap reached → removes the dispatch label"
+assert_contains "$out" 'issue comment'  "cap reached → explains itself on the issue"
+assert_contains "$out" 'label create'   "cap reached → creates the park label if the repo lacks it"
+
+# Comments that are not run reports never count towards the cap.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r \
+        ISSUE_COMMENTS_JSON='[{"body":"just a comment"},{"body":"## something else"}]')"
+assert_contains "$out" 'proceed=true'   "unrelated comments do not count as attempts"
+assert_contains "$out" 'attempt=1'      "unrelated comments leave the attempt at 1"
+
+# MAX_ATTEMPTS is configurable.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r MAX_ATTEMPTS=4 \
+        ISSUE_COMMENTS_JSON="[$run_report,$run_report]")"
+assert_contains "$out" 'proceed=true'    "a raised MAX_ATTEMPTS keeps going"
+assert_contains "$out" 'max-attempts=4'  "reports the configured cap"
+
+# DRY_RUN decides without writing to GitHub.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 \
+        ISSUE_COMMENTS_JSON="[$run_report,$run_report]")"
+assert_contains "$out" 'proceed=false'   "DRY_RUN still decides"
+assert_not_contains "$out" 'issue edit'  "DRY_RUN makes no label writes"
+
+# Missing required env → exit 2.
+ec="$(run_capture_ec env REPO=o/r bash "$CAP")"
 assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 
 # --- setup/link-partials.sh -------------------------------------------------

@@ -12,9 +12,14 @@ on:
         type: string
         default: '["ubuntu-latest"]'
       default-model:
-        description: Model used when no `model:*` label is present on the issue.
+        description: |
+          Model used when no `model:*` label is present on the issue. Defaults
+          to the best-measured OpenRouter model on the fleet (15 of 18 runs
+          shipped, at a fraction of Claude's cost). Requires OPENROUTER_API_KEY;
+          without it classify-agent.sh falls back to the Claude path, so set
+          `default-model: claude-sonnet-5` too on a Claude-only consumer.
         type: string
-        default: claude-sonnet-5
+        default: z-ai/glm-5.2
       review-model:
         description: |
           Model used for the agent review step in ai_review_ai_merge (ADR-002)
@@ -34,9 +39,13 @@ on:
           Per-issue override via `agent:claude` / `agent:opencode` label.
           See docs/DECISIONS.md ADR-001 for the contract. NOTE: the
           `opencode` runner step is added in #10 — selecting it before then
-          produces a no-op job.
+          produces a no-op job. Defaults to `opencode`: it carries ordinary
+          work at a better measured rate than Claude for a fraction of the
+          cost. Runs fall back to Claude automatically when
+          OPENROUTER_API_KEY is unavailable, and escalate to Claude on retry
+          (see `escalate-on-retry`).
         type: string
-        default: claude
+        default: opencode
       timeout-minutes:
         description: Hard cap on the implementation job runtime.
         type: number
@@ -103,6 +112,25 @@ on:
           act, and as a manual escape hatch for inspection-only runs.
         type: boolean
         default: false
+      escalate-on-retry:
+        description: |
+          If true, attempt 2 onwards runs on Claude regardless of
+          `agent`/`default-model`. A model that failed a job once rarely
+          succeeds on a second identical run; escalating spends the retry on a
+          stronger agent instead. An explicit `agent:*` label still wins.
+        type: boolean
+        default: true
+      escalate-model:
+        description: Model used when a retry escalates to Claude.
+        type: string
+        default: claude-sonnet-5
+      max-attempts:
+        description: |
+          Attempts allowed on one issue before it is parked instead of
+          redispatched. An attempt is a `## ai-implement run` report already on
+          the issue. Set 0 to disable the cap.
+        type: number
+        default: 2
       local-scripts:
         description: |
           If true, skip the cross-repo checkout of `pipeline-repo` and instead
@@ -451,6 +479,24 @@ jobs:
           } > "$prompt_file"
           echo "prompt-file=$prompt_file" >> "$GITHUB_OUTPUT"
 
+          # Record whether the issue was enriched, so /ai-stats can correlate
+          # enrichment with whether the run ships.
+          if printf '%s' "$ctx" | grep -qi '^## Implementation Plan'; then
+            echo "has-plan=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "has-plan=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check attempt cap
+        if: ${{ !inputs.stub-claude && inputs.max-attempts > 0 }}
+        id: attempt_cap
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          REPO: ${{ github.repository }}
+          MAX_ATTEMPTS: ${{ inputs.max-attempts }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+        run: bash .claude-pipeline/scripts/check-attempt-cap.sh
+
       - name: Classify agent
         if: ${{ !inputs.stub-claude }}
         id: classify_agent
@@ -459,6 +505,10 @@ jobs:
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           DEFAULT_AGENT: ${{ inputs.agent }}
+          ATTEMPT: ${{ steps.attempt_cap.outputs.attempt || 1 }}
+          ESCALATE_ON_RETRY: ${{ inputs.escalate-on-retry }}
+          # Presence only — the secret itself is never passed to this step.
+          HAS_OPENROUTER_KEY: ${{ secrets.OPENROUTER_API_KEY != '' }}
         run: bash .claude-pipeline/scripts/classify-agent.sh
 
       - name: Ensure OpenCode toolchain
@@ -481,6 +531,7 @@ jobs:
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           DEFAULT_MODEL: ${{ inputs.default-model }}
+          ESCALATE_MODEL: ${{ inputs.escalate-model }}
           # Use the RESOLVED agent (label override included), not inputs.agent —
           # otherwise classify-task treats opencode model labels as incompatible
           # with the default AGENT=claude and falls back to DEFAULT_MODEL.
@@ -540,7 +591,7 @@ jobs:
         run: printf 'enabled=%s\n' "$ENABLED" >> "$GITHUB_OUTPUT"
 
       - name: Run Claude Code
-        if: ${{ !inputs.stub-claude && steps.classify_agent.outputs.agent == 'claude' }}
+        if: ${{ !inputs.stub-claude && steps.classify_agent.outputs.agent == 'claude' && steps.attempt_cap.outputs.proceed != 'false' }}
         id: claude_run
         # Step-level env propagates to the action's process.env, which the
         # action then spreads into the spawned `claude` subprocess. Belt-and-
@@ -577,6 +628,7 @@ jobs:
         if: |
           !inputs.stub-claude
           && steps.classify_agent.outputs.agent == 'opencode'
+          && steps.attempt_cap.outputs.proceed != 'false'
         id: opencode_run
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -676,6 +728,7 @@ jobs:
         env:
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           DEFAULT_MODEL: ${{ inputs.default-model }}
+          ESCALATE_MODEL: ${{ inputs.escalate-model }}
           STUB_FIXTURE: ${{ inputs.stub-fixture }}
         run: |
           out="${RUNNER_TEMP:-/tmp}/claude-result.json"
@@ -792,6 +845,8 @@ jobs:
           AGENT: ${{ steps.classify_agent.outputs.agent }}
           MAX_TURNS: ${{ steps.triage_turns.outputs.turns }}
           PR_PRESENT: ${{ steps.verify_pr.outputs.pr-present }}
+          SALVAGED: ${{ steps.verify_pr.outputs.salvaged }}
+          HAS_PLAN: ${{ steps.issue.outputs.has-plan }}
         run: bash .claude-pipeline/scripts/post-run-report.sh
 
   ai_review_ai_merge:
