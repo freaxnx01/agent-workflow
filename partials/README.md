@@ -10,7 +10,7 @@ and picks up changes with a `git pull`.
 | [`skill-authoring.md`](skill-authoring.md) | When creating or editing a skill, makes it **self-improving** — appends a "fix blockers and update yourself" instruction to the skill body (plus the don't-be-prescriptive / mention-tools rules). |
 | [`subagent-driven-default.md`](subagent-driven-default.md) | Makes Claude execute approved implementation plans with `superpowers:subagent-driven-development` **by default** (unless told otherwise) — except issue-based plans in agent-workflow-enabled repos, which dispatch via the issue body + `ai-implement` label (`/gh:implement`) instead. Pairs with the [`/subagent-driven`](https://github.com/freaxnx01/agent-workflow/blob/main/commands/subagent-driven.md) command for explicit re-assertion. |
 | [`scope-boundary.md`](scope-boundary.md) | Keeps sessions from drifting: state scope up front, treat incidental findings as discoveries to capture (not auto-tasks), ask before expanding scope, and cap open threads at two. |
-| [`response-formatting.md`](response-formatting.md) | Layout rules for answers: bold key terms, append a `TL;DR:` line past two sentences, turn comma-separated runs into one-per-line bullets, and blank-line-separate list items. |
+| [`response-formatting.md`](response-formatting.md) | Layout rules for answers: bold key terms, a `TL;DR:` line past two sentences (at the end once the answer scrolls, at the top when it fits on one screen), turn comma-separated runs into one-per-line bullets, and blank-line-separate list items. |
 
 > `README.md` (this file) is **not** `@`-imported — the installer skips it. Any
 > other `*.md` dropped into this directory **is** imported automatically the
