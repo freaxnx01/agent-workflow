@@ -65,15 +65,18 @@ on:
         default: 10
       max-turns:
         description: |
-          Default hard cap on Claude Code tool-use turns for the implement
-          step, used when the issue carries no `turns:<N>` label. A
-          `turns:50|80|120|160` label on the issue always overrides this
-          (classify-turns.sh); absent an override label, the same script
-          also sizes up automatically from the issue body's Implementation
-          Plan task count. Raise this repo-wide default for consumers whose
-          issues routinely need more than 50 turns (multiple files, several
-          edit locations in one file) to fully implement, test, commit, and
-          open a PR in one run.
+          Floor on Claude Code tool-use turns for the implement step, used
+          only when the issue's Implementation Plan holds no countable
+          `### Task N` headings. A `turns:50|80|120|160` label on the issue
+          always overrides this (classify-turns.sh); absent an override
+          label, the same script sizes up automatically from the issue
+          body's Implementation Plan task count, and an issue with no
+          Implementation Plan section at all gets that script's
+          `UNPLANNED_MAX_TURNS` (120) rather than this value — a never-
+          enriched issue has to pay for its own discovery. Raise this
+          repo-wide floor for consumers whose issues routinely need more
+          than 50 turns (multiple files, several edit locations in one file)
+          to fully implement, test, commit, and open a PR in one run.
 
           Tuned from one real run (game-tschau-sepp#9): a 4-task enriched
           plan actually used 110 turns to succeed after failing outright at

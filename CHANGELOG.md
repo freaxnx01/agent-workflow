@@ -160,6 +160,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   silently. `--exclude <glob>` replaces the defaults, `--no-exclude` clears them,
   and a repo named with `--repo` always counts.
 
+- **turns:** an issue with no `## Implementation Plan` section now gets
+  `UNPLANNED_MAX_TURNS` (120) instead of the `max-turns` floor (50). A
+  never-enriched issue has to pay for its own discovery before it can edit
+  anything, so it needs a *bigger* budget than a planned one, not the smallest
+  available. A `turns:<N>` label still overrides. `max-turns` is now only the
+  floor for a plan section with no countable `### Task N` headings (#260, #262).
+
+- **commands:** `/gh:implement` hard-stops on an issue with no
+  `## Implementation Plan` section — acceptance criteria alone no longer clear
+  the readiness gate. Run `/enrich` first, or dispatch deliberately with an
+  explicit `turns:50` label (#260, #262).
+
 - **naming:** the two review flows are named for their actor pair —
   `auto-review` → `ai-review-ai-merge` and `pre-preview` →
   `ai-review-human-merge` — across workflow inputs, issue labels, job ids and

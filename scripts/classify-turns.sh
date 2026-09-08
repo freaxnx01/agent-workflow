@@ -9,8 +9,18 @@
 #      `## Implementation Plan` section (the shape /enrich writes). More
 #      tasks means more file edits + test runs + a regression pass before
 #      the agent can commit/push/open a PR, so it needs a bigger budget.
-#      An issue with no Implementation Plan section (not enriched, or a
-#      trivial one-liner) falls through to DEFAULT_MAX_TURNS.
+#      An issue with NO Implementation Plan section at all (never enriched)
+#      gets UNPLANNED_MAX_TURNS instead -- see below.
+#
+# An un-enriched issue is not a small issue. With no plan, the agent has to do
+# the discovery an enriched plan would have handed it -- reading the codebase,
+# deciding the approach, sizing the change -- before it can edit anything, so
+# it needs MORE budget than a planned issue, not less. #260 and #262 were both
+# dispatched with no Implementation Plan, both landed on the 50-turn default,
+# and both burned 50/50 turns without opening a PR ($4.62 for nothing). Hence
+# UNPLANNED_MAX_TURNS (120), matching the 4-task tier rather than the floor.
+# An explicit `turns:<N>` label still wins, so an operator who knows an
+# un-enriched issue really is a one-liner can size it back down.
 #
 # Tiers tuned from one real run (game-tschau-sepp#9): a 4-task enriched plan
 # actually used 110 turns to succeed, after failing outright at a 30-turn
@@ -25,8 +35,11 @@
 #   GH_TOKEN      (or ambient gh auth)
 #
 # Optional environment variables:
-#   DEFAULT_MAX_TURNS  Fallback when no override label + no plan found.
+#   DEFAULT_MAX_TURNS  Fallback when an Implementation Plan section exists but
+#                      holds no `### Task N` headings to count.
 #                      Default: 50 (matches agent-implement.yml's own default).
+#   UNPLANNED_MAX_TURNS  Budget when the issue has no Implementation Plan
+#                      section at all. Default: 120.
 #   ISSUE_LABELS       Newline- or space-separated labels. If set, skips the
 #                      `gh issue view --json labels` call. Used by tests.
 #   ISSUE_BODY         Free-form issue title+body string. If set, skips the
@@ -57,6 +70,7 @@ if [[ -z "$REPO" ]]; then
 fi
 
 DEFAULT_MAX_TURNS="${DEFAULT_MAX_TURNS:-50}"
+UNPLANNED_MAX_TURNS="${UNPLANNED_MAX_TURNS:-120}"
 
 # --- 1) explicit override label -------------------------------------------
 
@@ -103,8 +117,8 @@ if [[ -z "$chosen" ]]; then
     else chosen="$DEFAULT_MAX_TURNS"; reason="heuristic: ${task_count} plan task(s), default budget enough"
     fi
   else
-    chosen="$DEFAULT_MAX_TURNS"
-    reason='heuristic: no Implementation Plan section found'
+    chosen="$UNPLANNED_MAX_TURNS"
+    reason='heuristic: no Implementation Plan section found, budgeting for discovery'
   fi
 fi
 

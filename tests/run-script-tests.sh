@@ -529,14 +529,33 @@ out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' ISSUE_BODY="$body_wro
 assert_contains "$out" 'chosen: 50 (heuristic: 0 plan task(s), default budget enough)' \
   "zero task-heading matches → falls through to DEFAULT_MAX_TURNS, not a crash"
 
-# No "## Implementation Plan" section at all → default
+# No "## Implementation Plan" section at all → UNPLANNED_MAX_TURNS, NOT the floor.
+# An un-enriched issue does not mean "small"; it means the agent has to do the
+# discovery an enriched plan would have handed it, which costs turns rather than
+# saving them. #260 and #262 were both dispatched un-enriched, both landed on the
+# old 50-turn default, and both burned 50/50 turns without opening a PR ($4.62
+# for nothing). Size the unknown up, not down.
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' ISSUE_BODY='Add a hello.md file' bash "$CLASSIFY_TURNS")"
-assert_contains "$out" 'chosen: 50 (heuristic: no Implementation Plan section found)' "no plan section → default"
+assert_contains "$out" 'chosen: 120 (heuristic: no Implementation Plan section found, budgeting for discovery)' \
+  "no plan section → unplanned budget, not the default floor"
 
-# DEFAULT_MAX_TURNS env override applied on the no-plan-section default branch
+# UNPLANNED_MAX_TURNS env override applied on the no-plan-section branch
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' ISSUE_BODY='Add a hello.md file' \
+       UNPLANNED_MAX_TURNS=160 bash "$CLASSIFY_TURNS")"
+assert_contains "$out" 'chosen: 160 (heuristic: no Implementation Plan section found, budgeting for discovery)' \
+  "UNPLANNED_MAX_TURNS env override applied"
+
+# An explicit turns:* label still wins over the unplanned budget (stage 1 beats
+# stage 2) -- an operator who deliberately sizes an un-enriched one-liner down
+# must not be overridden by the discovery budget.
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS=$'ai-implement\nturns:50' ISSUE_BODY='Add a hello.md file' bash "$CLASSIFY_TURNS")"
+assert_contains "$out" 'chosen: 50 (label turns:50)' "turns:50 label beats the unplanned budget"
+
+# DEFAULT_MAX_TURNS env override still applies on the plan-present-but-zero-tasks
+# branch (a plan section exists, so its size is known to be small).
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' ISSUE_BODY="$body_wrong_heading" \
        DEFAULT_MAX_TURNS=30 bash "$CLASSIFY_TURNS")"
-assert_contains "$out" 'chosen: 30 (heuristic: no Implementation Plan section found)' "DEFAULT_MAX_TURNS env override applied"
+assert_contains "$out" 'chosen: 30 (heuristic: 0 plan task(s), default budget enough)' "DEFAULT_MAX_TURNS env override applied"
 
 # Regression (#280): a LARGE body must classify by its plan, EVERY time.
 # `printf "$ISSUE_BODY" | grep -q` lets grep exit on the first match while
