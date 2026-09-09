@@ -56,8 +56,8 @@ the query below filters on:
 
 ```bash
 repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
-gh api "repos/$repo/milestones?state=open&sort=due_on&direction=asc&per_page=100" \
-  --jq '.[] | [.number, .title, (.due_on // "-"), .open_issues] | @tsv'
+gh api "repos/$repo/milestones?state=open&per_page=100" \
+  --jq 'sort_by(.due_on // "9999") | .[] | [.number, .title, (.due_on // "-"), .open_issues] | @tsv'
 ```
 
 `gh issue list` can't see PR links, so query the timeline via GraphQL and drop any issue that has an open linked PR (a `Closes #`/cross-reference or a development-linked PR still in flight), then drop any issue carrying the `🧊 parked` label, then any carrying the `roadmap` label.
