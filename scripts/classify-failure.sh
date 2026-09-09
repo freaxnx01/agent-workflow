@@ -36,7 +36,13 @@ is_error="$(jq -r '.is_error // false' "$RESULT_FILE")"
 subtype="$(jq -r '.subtype // ""' "$RESULT_FILE")"
 result_text="$(jq -r '.result // ""' "$RESULT_FILE")"
 
-if [[ "$is_error" != "true" ]]; then
+# A terminal `subtype` of error_* is authoritative even when is_error is false:
+# the CLI reports `error_max_turns` with `"is_error": false`, so keying off
+# is_error alone buckets a turn-budget exhaustion as a success and no retry is
+# ever offered. Mirrors the same guard in post-run-report.sh. An error_* subtype
+# the regexes below don't recognise falls through to `bug` — operator attention,
+# which is the right default for an outcome we cannot name.
+if [[ "$is_error" != "true" && "$subtype" != error_* ]]; then
   class=success
 elif printf '%s' "$result_text" | grep -qiE 'rate.?limit|"?429"?|too many requests|quota.?exceed|insufficient.credits'; then
   # `insufficient.credits` covers OpenRouter's account-balance error;
