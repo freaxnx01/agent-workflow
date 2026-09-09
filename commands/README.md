@@ -34,7 +34,10 @@ for how this fits alongside the plugin and project-scoped command sources.
 **Session hygiene**: `/loose-ends` · `/clear-check` · `/todo` · `/wrap-up`
 
 **Phase handoff** (pairs with the `SessionStart(clear)` hook in `hooks/`):
-`/handoff` · `/pickup`
+`/handoff` · `/pickup` — both regenerate the derived overview
+(`.claude/handoffs.md` per repo, `~/.claude/handoffs.md` per machine) via
+`scripts/lib/handoff-index.sh`, and both take `all` under Herdr to fan out across
+every open session.
 
 **Worktree** (`wt/`): `/wt:status` · `/wt:finish`
 

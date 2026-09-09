@@ -14,6 +14,26 @@
       Each disabled section carries a one-line "see git history" pointer at
       the exact spot to revert.
 
+## Handoff index follow-ups (discovered 2026-09-09 while adding `.claude/handoffs.md`, ADR-011)
+
+- [ ] `hooks/handoff-resume.sh` still reads the legacy unslugged
+      `$dir/.claude/handoff.md`, so the `SessionStart(clear)` context injection is
+      blind to every branch-slugged `.claude/handoff-<branch>.md` that `/handoff`
+      has written since. Options: resolve the current branch's slug in the hook, or
+      inject the derived `.claude/handoffs.md` index instead (the hook has `jq` and
+      the cwd, and the index is regenerated on every `/handoff`).
+- [ ] Stale committed handoffs on `main`, surfaced by the first index run:
+      `.claude/handoff-worktree-enrich.md` (2026-08-01, #193) and
+      `.claude/handoff-issue-198-199-forge-agnostic-commands.md` (2026-07-31, both
+      issues shipped), plus the pre-slug `.claude/handoff.md` (2026-07-27, points at
+      PR #187). `/pickup` is supposed to delete a handoff once its phase completes;
+      these three never were. Verify each is really done, then delete.
+- [ ] No CI job runs the Layer-1 suite. `just test` drives four
+      `tests/run-*-tests.sh` entry points locally, but the only workflows are
+      `lint` (pre-commit) and `gate-selftest` — a broken fixture test would go
+      green on a PR. (Also: `tests/run-link-skills-tests.sh` and
+      `tests/run-parse-enrich-args-tests.sh` are in neither `just test` nor CI.)
+
 ## Pipeline flake: `ensure-toolchain.sh` apt install hang (discovered 2026-08-17, issue #255 dispatch)
 
 - [ ] `agent-implement-test`'s "stub rate-limit (retry path)" matrix job hung on
