@@ -2312,6 +2312,34 @@ assert_equals "$(printf '%s' "$implement_bash" | grep -c 'add-label ai-implement
 
 assert_equals "$(grep -c 'assume it already exists' "$IMPLEMENT_MD" || true)" "0" \
   "gh:implement does not tell the operator to assume a label exists"
+section "agent-implement.yml — no install into a shared npm prefix (#302)"
+
+# `npm install -g` resolves to `npm config get prefix`, which on a typical runner is
+# /usr/local — shared across every job and every run on a PERSISTENT self-hosted
+# runner. If that prefix was ever written as root, a later `npm install -g` as the
+# runner user cannot rename the existing package directory and dies with
+# `EACCES / syscall rename` before the reviewer ever starts.
+#
+# Observed on anim-bossinfo-ch/BI-ArchiveUploader: the implement job succeeded and the
+# review job failed in the SAME run, on the same host, as the same user — because the
+# implement job delegates to anthropics/claude-code-base-action (which installs the CLI
+# itself) while the review/self-fix jobs shelled out to `npm install -g`. Not
+# intermittent: it fails 100% of the time once the prefix is root-owned.
+WF="$ROOT/.github/workflows/agent-implement.yml"
+
+# Strip YAML comments before asserting: the steps deliberately *explain* why
+# `npm install -g` is wrong, so matching the whole file would flag the explanation.
+# The guard is about what the job executes, not what it documents.
+wf_exec="$(grep -vE '^[[:space:]]*#' "$WF")"
+
+assert_equals "$(printf '%s' "$wf_exec" | grep -c 'npm install -g' || true)" "0" \
+  "agent-implement.yml never installs into the shared global npm prefix"
+
+assert_equals "$(grep -c 'npm install --prefix' "$WF" || true)" "2" \
+  "both CLI installs use a job-local prefix"
+
+assert_equals "$(grep -c 'GITHUB_PATH' "$WF" || true)" "2" \
+  "each job-local install puts its bin dir on PATH for later steps"
 
 section "retry-dispatch — policy decisions (DRY_RUN, no real dispatch)"
 
