@@ -39,6 +39,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   why a "named HTML entities for Outlook" rule does not contradict it: the two
   govern different formats (plain text vs. the HTML Word renders).
 
+- **commands:** `/handoff` and `/pickup` now maintain a **derived handoff
+  overview** — `.claude/handoffs.md` for the repo (all worktrees) and
+  `~/.claude/handoffs.md` for the machine (one section per repo) — rendered by the
+  new `scripts/lib/handoff-index.sh`. Rows carry branch, worktree, phase, next
+  step, save date, handoff file and resume line. The index is regenerated from the
+  committed per-branch `.claude/handoff-<branch>.md` files on every run, so it is
+  safe to write from many sessions at once; neither index is committed. Both
+  commands also gained a **Herdr `all` mode**: `/handoff all` hands off every live
+  `idle`/`done` agent in the Herdr session (skipping `working`/`blocked`/`unknown`,
+  orchestrator last) and `/pickup all` resumes every session that has a handoff,
+  reusing live panes only. See ADR-011.
+
 - **ci:** `verify-or-recover-pr.sh` now **salvages uncommitted work**. A run that
   exited cleanly without opening a PR used to discard whatever it left in the
   workspace — the largest measured failure mode (24 of 48 failures across the

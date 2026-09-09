@@ -21,6 +21,11 @@ ignores:
   # this a local run lints every worktree checkout too — hundreds of phantom
   # errors that CI never sees, since a fresh checkout has no worktrees.
   - ".worktrees/**"
+  # Derived handoff index (scripts/lib/handoff-index.sh, gitignored). Its cells
+  # quote whatever the handoff files say, so their emphasis style is not ours to
+  # fix — and pre-commit never sees it, being untracked. Same generated-file
+  # rationale as the excludes above.
+  - ".claude/handoffs.md"
   - "CLAUDE.md"
   - "SKILL.md"
   - ".github/copilot-instructions.md"
