@@ -1244,3 +1244,118 @@ repositories, so "all open sessions" is not a per-repo concept.
   would blow the suite's sub-five-second budget. No `herdr` mock is needed —
   the script touches only git and the filesystem; the fan-out itself is prompt-level
   policy in the two command docs.
+
+---
+
+## ADR-012 — Azure DevOps as a third forge: work items, iterations, PRs (2026-09-09)
+
+**Status:** Accepted
+**Tracking:** none — direct change, no issue
+
+### Context
+
+The issue commands were consolidated out of `gh:`/`fj:` namespaces into
+forge-agnostic files with one section per forge (#198/#199). Supporting Azure
+DevOps is therefore a third `## Azure DevOps` section in the 12 issue-related
+commands, not an `ado:` namespace — the question is only what the ADO objects
+*map to*, since three of them have no clean counterpart.
+
+**Work items are project-scoped.** A repo does not own them, so "the current
+repo's issues" — which both existing forges read straight off the git remote —
+has no direct translation and must be *chosen*.
+
+**Milestones have three candidate mappings**, and two are on the wrong axis.
+`docs/glossary.md` defines a milestone as the *when does this ship* axis carrying
+a due date, distinct from an epic (*what work, what scope*) and a label (*a filter
+tag*). Area Path is a what-component axis, i.e. label/epic territory; a parent
+Feature or Epic work item is the epic axis the glossary explicitly excludes.
+
+**State and type names are not fixed.** They come from the project's process
+template: Basic uses `To Do / Doing / Done`, Agile `New / Active / Resolved /
+Closed`, Scrum `New / Approved / Committed / Done / Removed`. Any hardcoded
+"closed states" list is therefore wrong on some templates, and
+`az boards work-item create --type` is a required argument with no portable default.
+
+### Decision
+
++ **Detect ADO from the hostname alone, before any auth probe.** `dev.azure.com`,
+  `ssh.dev.azure.com` and `*.visualstudio.com` collide with nothing, so there is no
+  ambiguity for a login check to resolve, and an unauthenticated machine still
+  routes to the ADO section — which is where a missing PAT gets reported, instead
+  of falling through to "unknown host" and naming the wrong CLI. Precedent: the
+  existing `github.com` fallback already detects without auth.
++ **`detect_forge` keeps its two-field `"<forge> <host>"` contract** and gains only
+  `azdo <host>`. Org/project/repo come from a separate `resolve_azdo_context`,
+  because widening the return value would break the 12 commands that parse it.
++ **`resolve_azdo_context` returns variables (`AZDO_ORG`/`AZDO_PROJECT`/`AZDO_REPO`),
+  not a line to split.** An ADO project name may contain spaces, arriving as `%20`
+  in the remote URL; the space-separated echo idiom would split such a name in half
+  at every call site.
++ **Scope by Area Path matching the repo name**, with an explicit guard and no
+  automatic fallback. When the query returns nothing, the command checks whether a
+  matching area exists and says so, then *asks* before widening. Silently widening
+  to project-wide would present other repos' work as this repo's, which in a
+  multi-repo project — the common ADO layout — is worse than an empty list.
++ **Milestone maps to Iteration Path.** It is the only candidate on the right axis,
+  it carries dates, and a work item has exactly one — preserving "at most one
+  milestone per issue".
++ **Derive closed states and valid types from project metadata**, via
+  `az devops invoke --area wit --resource workitemtypes`, using each state's
+  `category` (`Completed`/`Removed` mean not-open). Categories are
+  template-independent where state names are not, and the same single call also
+  answers the work-item-type question `/new` faces.
++ **PRs map to Azure Repos PRs, keyed on `active`.** The status vocabulary is
+  `active`/`completed`/`abandoned` with no `open`, and WIP means an **active**
+  linked PR.
++ **Derive PR↔work-item links from the first-class link API**
+  (`az repos pr work-item list`), iterating active PRs rather than work items.
+  This *replaces* Forgejo's `closes|fixes|resolves #N` regex scrape with an exact
+  lookup — the one place ADO is better than both existing forges.
++ **Out of scope, deliberately: the hybrid host case** — boards in ADO, code on
+  GitHub. `detect_forge` keys off the remote, so such a repo detects as `github`
+  and never reaches the ADO path. Supporting it means splitting "code host" from
+  "work-item backend" as orthogonal axes, reshaping dispatch in all 12 commands.
+  Recorded here so the limitation is known rather than rediscovered.
+
+### Consequences
+
++ `/issues` is the only command carrying an ADO section for now. The other 11
+  still detect `azdo` and will fall through without a matching section — a
+  deliberate seam, taken so a wrong scoping model would surface on one file
+  instead of twelve.
++ **The other 11 commands' "Unknown host" sections still name only
+  `gh auth login` / `tea login add`**, so an ADO user is pointed at the wrong CLI.
+  `/issues` is updated; the rest are 11 one-line edits, not yet made.
++ **Flags and command names were verified by running `--help` against `az` 2.87.0
+  with azure-devops 1.0.4; JSON field names, the `workitemtypes` response shape and
+  the WIQL clauses were not, for want of a reachable organization.** That is the
+  same epistemic status the `tea` sections carry, and this repo has been bitten by
+  it once already (`tea issues create` takes `--description`, not `--body`). The
+  ADO section says so inline and carries a self-improving footer.
++ **`/milestone new` will be a two-step operation on this forge.**
+  `az boards iteration project create` makes the node, but
+  `az boards iteration team add` is what makes it assignable — step one alone
+  yields an iteration nothing can be put in, so a naive port would report success
+  and leave assignment broken.
++ **`/milestone list` changes shape on this forge: iterations nest, GitHub
+  milestones are flat.** Compounding it, `--depth` defaults to **1** on both
+  `az boards iteration project list` and `az boards area project list`, so a naive
+  listing silently hides every nested sprint and area.
++ Iterations are **project-scoped**, so `/milestone new` mutates a tree shared by
+  every repo in the project and likely needs project-admin rights, where the
+  GitHub equivalent creates a repo-local object.
++ Iterations carry **two dates** (`--start-date`, `--finish-date`) against
+  GitHub's single `due_on`.
++ **Tag writes have no `--tags` flag.** `az boards work-item create` takes tags only
+  via `--fields "System.Tags=a;b"`, semicolon-delimited — relevant to `/new` when
+  it sets `needs-enrichment`.
++ **Tag filters match the bare word `parked`, not `🧊 parked`**, to keep a
+  non-ASCII literal out of a query string crossing `az`, REST and WIQL. A tag
+  merely containing "parked" would also be dropped; acceptable under a
+  one-parked-tag convention.
++ `/triage`'s "bugs first" ordering keys off a label today. On ADO the natural
+  signal is the work item **type** (`Bug` vs `User Story` vs `Task`) and a `bug`
+  tag may not exist at all — a semantic decision left for whoever ports `/triage`.
++ A third section makes these command files roughly 1.5× longer, and `/issues` is
+  now ~410 lines. Noted as a structural cost of the one-file-per-command,
+  one-section-per-forge shape; no restructuring proposed here.
