@@ -970,6 +970,21 @@ jobs:
           AUTHOR_ALLOWLIST: ${{ inputs.pipeline-author-allowlist }}
         run: bash .claude-pipeline/scripts/find-pipeline-pr.sh
 
+      - name: Check the PR will close its issue
+        # Diagnostic only, never fatal. GitHub does not form a closing-issue
+        # reference for a PR authored by the github-actions app, so `Closes #N` in a
+        # pipeline PR body is inert: merging does not close the issue, and /ai-stats
+        # reads the issue as never shipped because it keys off that same reference.
+        # Both were silent before this check (#303).
+        if: steps.find_pr.outputs.found == 'true'
+        continue-on-error: true
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash .claude-pipeline/scripts/check-issue-link.sh
+
       - name: Install Claude Code CLI
         # review-pr.sh's default AGENT_CMD invokes `claude`; this job
         # doesn't use anthropics/claude-code-base-action (which installs
@@ -1279,6 +1294,21 @@ jobs:
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           AUTHOR_ALLOWLIST: ${{ inputs.pipeline-author-allowlist }}
         run: bash .claude-pipeline/scripts/find-pipeline-pr.sh
+
+      - name: Check the PR will close its issue
+        # Diagnostic only, never fatal. GitHub does not form a closing-issue
+        # reference for a PR authored by the github-actions app, so `Closes #N` in a
+        # pipeline PR body is inert: merging does not close the issue, and /ai-stats
+        # reads the issue as never shipped because it keys off that same reference.
+        # Both were silent before this check (#303).
+        if: steps.find_pr.outputs.found == 'true'
+        continue-on-error: true
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash .claude-pipeline/scripts/check-issue-link.sh
 
       - name: Install Claude Code CLI
         if: |
