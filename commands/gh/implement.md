@@ -40,6 +40,32 @@ Claude Code implements the issue on a new branch and opens a draft PR.
    If it carries `needs-enrichment` or `❓ to-be-defined`, treat that as a hard stop
    (don't just warn — the label signals the issue is not ready).
 
+5. **Issue body has an `## Implementation Plan` section** — a mechanical check, not a
+   judgment call:
+
+   ```bash
+   gh issue view <N> --repo <owner/repo> --json body --jq .body \
+     | grep -qi '^## Implementation Plan' && echo ready || echo "NO PLAN"
+   ```
+
+   If it prints `NO PLAN`, **stop** — do not label. Tell the user the issue was never
+   enriched and to run `/enrich <N>` first.
+
+   This is a hard stop even when precondition 4 passed, because a readable proposal
+   plus acceptance criteria is *not* the same thing as a plan, and the pipeline reads
+   that exact heading twice:
+   - `classify-turns.sh` sizes the turn budget from the `### Task N` headings under it.
+     No section means no size estimate, and the run falls back to
+     `UNPLANNED_MAX_TURNS` — a blind guess, not a measurement.
+   - The agent gets no task decomposition, so it spends its budget rediscovering the
+     decomposition `/enrich` would have written down.
+
+   #260 and #262 both cleared precondition 4 on the strength of an `## Acceptance
+   criteria` section, were labeled with no plan, and each burned its full turn budget
+   without opening a PR — $4.62 of compute for nothing. If you deliberately want to
+   dispatch a genuinely trivial issue without enriching it, say so explicitly and
+   apply a `turns:50` label alongside `ai-implement` to keep the budget honest.
+
 ## Post the implementation contract
 
 Read `~/.claude/commands/gh/implementation-contract.md` and follow it: apply its

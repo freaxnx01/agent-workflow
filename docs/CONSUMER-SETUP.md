@@ -347,7 +347,8 @@ Pick the model per issue with a `model:*` label (alongside `agent:opencode`). Th
 | `model:deepseek-r1` | `deepseek/deepseek-r1-0528` | Reasoning model |
 | `model:llama-4-maverick` | `meta-llama/llama-4-maverick` | Meta open-weight |
 | `model:qwen3-coder` | `qwen/qwen3-coder-30b-a3b-instruct` | Qwen3 coder (tool-use capable, unlike 2.5-coder) |
-| `model:gpt-oss-120b` | `openai/gpt-oss-120b` | OpenAI open-weight, cheap |
+| ~~`model:gpt-oss-120b`~~ | `openai/gpt-oss-120b` | **Retired** — 2 of 10 runs shipped across the fleet. The label warns and falls back to `default-model`. See [model-comparison](model-comparison.md#retired-models) |
+| `model:glm` | `z-ai/glm-5.2` | **Fleet default** — best measured OpenRouter model (15 of 18 runs shipped) |
 | `model:glm-flash` | `z-ai/glm-4.7-flash` | GLM agentic coder |
 | `model:minimax-m2` | `minimax/minimax-m2.5` | Agentic/tool-use coder |
 | `model:deepseek-v32` | `deepseek/deepseek-v3.2` | Newer DeepSeek all-rounder |

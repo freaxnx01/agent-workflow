@@ -33,10 +33,19 @@ jobs:
     uses: ./.github/workflows/agent-implement.yml
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      # Required by the opencode path below. Without it classify-agent.sh's
+      # credential guard silently falls back to Claude, so the agent setting
+      # would look flipped while every run stayed on Claude.
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
     with:
       issue-number: ${{ github.event.issue.number }}
       runner-labels: '["ubuntu-latest"]'
-      default-model: claude-sonnet-5
+      # Dogfoods the fleet defaults: glm-5.2 shipped 15 of 18 runs at $4.25
+      # total, against 59% for claude-opus-4-7 at $181.70. Retries escalate to
+      # Claude (escalate-on-retry), and a missing OPENROUTER_API_KEY falls back
+      # to Claude rather than failing the run.
+      agent: opencode
+      default-model: z-ai/glm-5.2
       local-scripts: true
       ai-review-human-merge: true
       # The action's own default is 10 minutes, which kills a multi-task plan
