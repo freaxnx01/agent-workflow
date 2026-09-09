@@ -50,6 +50,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `idle`/`done` agent in the Herdr session (skipping `working`/`blocked`/`unknown`,
   orchestrator last) and `/pickup all` resumes every session that has a handoff,
   reusing live panes only. See ADR-011.
+- **azdo:** Detect Azure DevOps as a third forge and add an `## Azure DevOps`
+  section to `/issues`. `detect_forge` keeps its two-field contract and gains
+  `azdo <host>`, matched on hostname alone so an unauthenticated machine still
+  routes to the ADO section; a new `resolve_azdo_context` returns
+  `AZDO_ORG`/`AZDO_PROJECT`/`AZDO_REPO` as variables, since ADO project names may
+  contain spaces. Milestones map to **Iteration Path**, PRs key on **`active`**
+  (there is no `open`), and PR↔work-item links come from the first-class link API
+  rather than a `closes #N` regex. Closed states and work-item types are read from
+  the project's process template instead of hardcoded. See ADR-011 — including the
+  hybrid case (ADO boards + GitHub code) recorded as out of scope.
 
 - **ci:** `verify-or-recover-pr.sh` now **salvages uncommitted work**. A run that
   exited cleanly without opening a PR used to discard whatever it left in the

@@ -228,7 +228,188 @@ If you hit a blocker (repo not resolvable, `tea` login missing, PR-link regex
 misses a convention this repo uses), find a fix and update this command for the
 future.
 
+## Azure DevOps
+
+List open **work items** in the current project that are **not work-in-progress** —
+i.e. have no **active** pull request linked — **not parked** (no `🧊 parked` tag),
+and **not roadmap** (no `roadmap` tag) — **newest first**. Work items whose only
+linked PR is already `completed`/`abandoned` still count as not-WIP and are shown.
+
+### Two structural differences to hold on to
+
+Neither has an equivalent on GitHub or Forgejo, and both change the query shape:
+
+1. **Work items are project-scoped, not repo-scoped.** A repo does not own work
+   items, so "this repo's issues" has to be *chosen* rather than read off the
+   remote. This command scopes by **Area Path** matching the repo name (see the
+   guard below — the failure mode is silence, not an error).
+2. **There is no `az boards work-item list`.** The verbs are `create`, `delete`,
+   `show`, `update` only. Every listing goes through **WIQL** via
+   `az boards query --wiql`.
+
+### Azure DevOps access
+
+Needs `az` with the **`azure-devops` extension** (`az extension add --name
+azure-devops`). Authenticate by exporting a PAT as `AZURE_DEVOPS_EXT_PAT` —
+prefer an `.envrc` that direnv already allows over an interactive `az devops
+login`, and remember the agent shell does not fire direnv hooks, so reach it with
+`direnv exec <dir> …`. If neither a PAT nor a login is present, say so and point
+at the PAT env var; **don't** fall through to a bare `az` call whose auth prompt
+would hang.
+
+`az devops invoke` is the arbitrary-REST escape hatch here, the counterpart of
+`gh api` and `tea api`. Its own help warns the response shape is not fixed, so
+always pass `--output json` and parse defensively.
+
+Resolve org/project/repo from the remote with the shared helper — it handles the
+`dev.azure.com` https form, the `<org>@` variant, the scp-style and `ssh://`
+`v3/` forms, and legacy `<org>.visualstudio.com`:
+
+```bash
+source "$HOME/.claude/scripts/lib/detect-forge.sh"
+resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
+org_url="https://dev.azure.com/$AZDO_ORG"
+# Legacy remotes: if the remote host ends in .visualstudio.com and the call above
+# 404s, retry with org_url="https://$AZDO_ORG.visualstudio.com".
+echo "$AZDO_ORG / $AZDO_PROJECT / $AZDO_REPO"
+```
+
+> These are shell **variables**, deliberately, not a space-separated echo like
+> `detect_forge`'s: an ADO project name may legitimately contain spaces. Quote
+> every use of `"$AZDO_PROJECT"`.
+
+### Step 1 — read the states and types from the project, don't assume them
+
+**Do not hardcode a list of closed states.** State names are set by the project's
+process template, so any fixed list is wrong somewhere: Basic is `To Do / Doing /
+Done`, Agile is `New / Active / Resolved / Closed`, Scrum is `New / Approved /
+Committed / Done / Removed`. Read the project's own metadata instead and use each
+state's **`category`** — the categories are template-independent, and `Completed`
+and `Removed` are the ones that mean "not open":
+
+```bash
+az devops invoke --org "$org_url" --area wit --resource workitemtypes \
+  --route-parameters project="$AZDO_PROJECT" \
+  --api-version 7.1 --output json \
+  | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+closed = sorted({s["name"] for t in d.get("value", [])
+                 for s in t.get("states", [])
+                 if s.get("category") in ("Completed", "Removed")})
+print("|".join(closed))'
+```
+
+The same call also enumerates the valid **work item types**, which is what
+`/new` needs on this forge — one lookup answers both. Cache it per invocation
+rather than repeating it.
+
+### Step 2 — WIQL for the candidate work items
+
+Interpolate the closed-state list from step 1. `@project` resolves against
+`--project`, so the team-project clause needs no quoting of its own:
+
+```bash
+az boards query --org "$org_url" --project "$AZDO_PROJECT" --output json --wiql "
+SELECT [System.Id], [System.Title], [System.State], [System.Tags],
+       [System.IterationPath], [System.CreatedDate], [System.CreatedBy]
+FROM WorkItems
+WHERE [System.TeamProject] = @project
+  AND [System.AreaPath] UNDER '$AZDO_PROJECT\\$AZDO_REPO'
+  AND [System.State] NOT IN ('Closed', 'Done', 'Removed')
+  AND [System.Tags] NOT CONTAINS 'parked'
+  AND [System.Tags] NOT CONTAINS 'roadmap'
+ORDER BY [System.CreatedDate] DESC"
+```
+
+Two notes on the tag clauses:
+
+- They match the bare word **`parked`**, not the full `🧊 parked`, on purpose:
+  it keeps a non-ASCII literal out of a query string that crosses `az`, the REST
+  layer and WIQL's own parser. The cost is that a tag merely *containing*
+  "parked" would also be dropped — acceptable, since the convention is exactly
+  one parked tag.
+- `NOT CONTAINS` is a single WIQL operator; it is not spelled `NOT ... CONTAINS`.
+
+### Step 3 — the Area Path guard (do not skip this)
+
+Scoping by Area Path fails **silently**: a project that does not mirror repo names
+into its area tree returns zero rows, which is indistinguishable from "no open
+issues". So when step 2 comes back empty, check whether the area even exists
+before reporting nothing:
+
+```bash
+az boards area project list --org "$org_url" --project "$AZDO_PROJECT" \
+  --depth 3 --output json --query '[].name'
+```
+
+`--depth` **defaults to 1**, so nested areas are invisible without it — pass it.
+
+If no area matches `$AZDO_REPO`, say exactly that: *"no Area Path matching
+`<repo>` in project `<project>` — this project may not scope work items by repo."*
+Then **ask** whether to re-run project-wide. **Never widen automatically** — in a
+multi-repo project that silently presents other repos' work as this repo's.
+
+### Step 4 — drop the WIP ones
+
+Unlike Forgejo, links here are **first-class**, so this is a lookup rather than a
+regex over PR text — the one place ADO is better than both other forges. Iterate
+the **active PRs** (few) and collect their linked work items, rather than asking
+each work item for its PRs (many):
+
+```bash
+for pr in $(az repos pr list --org "$org_url" --project "$AZDO_PROJECT" \
+              --repository "$AZDO_REPO" --status active \
+              --output tsv --query '[].pullRequestId'); do
+  az repos pr work-item list --org "$org_url" --id "$pr" \
+    --output tsv --query '[].id'
+done | sort -u
+```
+
+`--status` takes **`active` / `completed` / `abandoned` / `all`** — there is no
+`open`. "Not WIP" means no **`active`** PR; a `completed` or `abandoned` one does
+not make a work item WIP. Drop any work item whose id appears in that list.
+
+### Step 5 — the milestone argument maps to Iteration Path
+
+A milestone on this forge is an **iteration** (see ADR-011 for why Iteration Path
+and not Area Path or a parent Feature). When the argument resolves to one, add a
+clause to the step-2 query:
+
+```bash
+az boards iteration project list --org "$org_url" --project "$AZDO_PROJECT" \
+  --depth 3 --output json --query '[].{name:name,path:path}'
+```
+
+```text
+AND [System.IterationPath] UNDER '<resolved iteration path>'
+```
+
+`--depth` defaults to 1 here too, and **iterations nest** — unlike a flat GitHub
+milestone — so a depth-1 listing hides the sprints that actually hold work items.
+Match the argument against the leaf **name**, but filter on the full **path**.
+
+Show a compact table — id, title, **iteration + finish date**, tags, age (relative), author. Render a work item with no iteration as `no milestone` rather than a blank column, so the column reads the same as on the other forges. No preamble. If there are none, just say so — and when an iteration was in scope, say which one, so "none" doesn't read as "nothing anywhere".
+
+My arguments:
+$ARGUMENTS
+
+### Azure DevOps blockers
+
+**Epistemic status: the command names and flags above were verified against `az`
+2.87.0 with azure-devops 1.0.4 by running `--help` on every one of them — but the
+JSON field names, the `workitemtypes` response shape and the WIQL clauses were
+*not* run against a live organization**, because none was reachable from the
+machine where this was written. That is the same status the `tea` sections carry,
+and this repo has already been bitten by it once (`tea issues create` takes
+`--description`, not `--body`).
+
+So: if a field name, an `az devops invoke` resource, or a WIQL operator turns out
+different in practice, **find the working form and update this command** — and
+drop the paragraph above once a live run has confirmed the whole path.
+
 ## Unknown host
 
-Report the detected host and that no authed GitHub or Forgejo login matched
-it; point at `gh auth login` / `tea login add`. Don't guess a forge.
+Report the detected host and that it matched no authed GitHub or Forgejo login
+and none of the Azure DevOps host forms; point at `gh auth login` /
+`tea login add` / `az devops login`. Don't guess a forge.
