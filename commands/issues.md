@@ -370,6 +370,12 @@ done | sort -u
 `open`. "Not WIP" means no **`active`** PR; a `completed` or `abandoned` one does
 not make a work item WIP. Drop any work item whose id appears in that list.
 
+An **empty result here is a legitimate answer** — it means no active PRs, so
+nothing is WIP and every candidate work item survives. Don't read it as a failed
+lookup. It is, however, indistinguishable from a wrong `--query` path (see the
+epistemic note at the end of this section), so if you expected WIP items and got
+none, verify the shape before trusting the empty set.
+
 ### Step 5 — the milestone argument maps to Iteration Path
 
 A milestone on this forge is an **iteration** (see ADR-011 for why Iteration Path
@@ -398,9 +404,17 @@ $ARGUMENTS
 
 **Epistemic status: the command names and flags above were verified against `az`
 2.87.0 with azure-devops 1.0.4 by running `--help` on every one of them — but the
-JSON field names, the `workitemtypes` response shape and the WIQL clauses were
-*not* run against a live organization**, because none was reachable from the
-machine where this was written. That is the same status the `tea` sections carry,
+JSON field names, the `workitemtypes` response shape, the WIQL clauses and every
+`--query` path were *not* run against a live organization**, because none was
+reachable from the machine where this was written.
+
+`--query` deserves singling out, because its failure is quiet. It is a global `az`
+argument, so it always *exists* — but a JMESPath like `[].pullRequestId` assumes
+the response is a **top-level array**, and if a command instead wraps its results
+in an object, the expression yields nothing and the step reports an empty result
+rather than an error. If any `--query` here comes back empty where the web UI shows
+data, re-run the same call with plain `--output json`, look at the real shape, and
+fix the path — that is the most likely thing on this page to be wrong. That is the same status the `tea` sections carry,
 and this repo has already been bitten by it once (`tea issues create` takes
 `--description`, not `--body`).
 
