@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **partials:** new `email-style.md` — mail drafts lead with a `TL;DR:` block
+  stating the actual conclusion, then stay short: the mail carries the conclusion
+  and the asks, not the reasoning chain that produced them. Detail is offered on
+  request rather than pasted in. Notes how this differs from the chat-answer
+  `TL;DR` rule, which repeats at the end of a long answer where a mail must not.
+
 - **partials:** new `german-correspondence.md` — capitalize German address
   pronouns (`Du`/`Dir`/`Dein…`, `Ihr`/`Euch`/`Euer…`), leave quoted foreign text
   verbatim, and write real umlauts (`ä ö ü`) instead of `ae oe ue`. Also records
