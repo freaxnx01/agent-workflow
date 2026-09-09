@@ -2286,6 +2286,33 @@ assert_equals "$ec" "2" "missing RESULT_FILE → exit 2"
 ec="$(run_capture_ec env RESULT_FILE=/no/such/file bash "$CLASSIFY_FAIL")"
 assert_equals "$ec" "64" "unreadable RESULT_FILE → exit 64"
 
+section "gh:implement — label application cannot deadlock the dispatch (#301)"
+
+# `gh issue edit` is atomic across `--add-label` flags: if ANY named label does not
+# exist in the repo, the whole call fails and NEITHER label is applied. Combining the
+# trigger label with the review-flow label therefore turns a missing review label into
+# "no run is ever triggered".
+#
+# That is a bootstrap deadlock, not a cosmetic bug: `ai-review-human-merge` is created
+# by ensure-issue-labels.sh, which the pipeline runs INSIDE the implement job
+# (agent-implement.yml, "Ensure issue labels"). So on a consumer onboarded before
+# ADR-009 the label only comes into existence once a run has already started — and the
+# run cannot start, because applying the label is what fails. Observed on
+# anim-bossinfo-ch/BI-ArchiveUploader: "failed to update 1 issue", both labels
+# unapplied, no run, no diagnostic naming the label.
+IMPLEMENT_MD="$ROOT/commands/gh/implement.md"
+
+# Only the ```bash fences are instructions. The doc deliberately shows the combined
+# form inside a ```text fence to demonstrate the failure, so scope the guard to bash
+# blocks rather than the whole file.
+implement_bash="$(awk '/^```bash$/{f=1;next} /^```$/{f=0} f' "$IMPLEMENT_MD")"
+
+assert_equals "$(printf '%s' "$implement_bash" | grep -c 'add-label ai-implement --add-label' || true)" "0" \
+  "gh:implement never combines --add-label flags in one runnable gh issue edit"
+
+assert_equals "$(grep -c 'assume it already exists' "$IMPLEMENT_MD" || true)" "0" \
+  "gh:implement does not tell the operator to assume a label exists"
+
 section "retry-dispatch — policy decisions (DRY_RUN, no real dispatch)"
 
 RETRY="$ROOT/scripts/retry-dispatch.sh"
