@@ -980,7 +980,16 @@ jobs:
           steps.self_mod_guard.outputs.blocked != 'true'
           && steps.find_pr.outputs.found == 'true'
           && inputs.stub-review-verdict == ''
-        run: npm install -g @anthropic-ai/claude-code
+        # Job-local prefix, never the shared global one. `npm install -g` resolves to
+        # `npm config get prefix` (/usr/local on a typical runner), which on a PERSISTENT
+        # self-hosted runner is shared across every job and every run. Once that prefix has
+        # been written as root, a later `npm install -g` as the runner user cannot rename
+        # the existing package directory and dies with `EACCES / syscall rename` before the
+        # reviewer starts — 100% of the time, not intermittently (#302). The implement job
+        # never hits this because claude-code-base-action installs the CLI itself.
+        run: |
+          npm install --prefix "$RUNNER_TEMP/claude-cli" @anthropic-ai/claude-code
+          printf '%s\n' "$RUNNER_TEMP/claude-cli/node_modules/.bin" >> "$GITHUB_PATH"
 
       - name: Run agent review
         if: |
@@ -1275,7 +1284,11 @@ jobs:
         if: |
           steps.find_pr.outputs.found == 'true'
           && inputs.stub-review-verdict == ''
-        run: npm install -g @anthropic-ai/claude-code
+        # Job-local prefix — see the note on the same step in the ai_review_human_merge
+        # job above (#302).
+        run: |
+          npm install --prefix "$RUNNER_TEMP/claude-cli" @anthropic-ai/claude-code
+          printf '%s\n' "$RUNNER_TEMP/claude-cli/node_modules/.bin" >> "$GITHUB_PATH"
 
       - name: Run agent review
         if: |
