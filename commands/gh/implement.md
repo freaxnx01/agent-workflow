@@ -115,13 +115,38 @@ gh label create ai-implement --color "0075ca" --description "Trigger: agent-work
 if checked out locally, or
 `gh api repos/<owner>/<repo>/contents/.github/workflows/agent.yml --jq '.content' | base64 -d`
 otherwise — match either spelling, since `pre-preview` is deprecated but still
-honoured until v3). If it does, also apply `ai-review-human-merge` (created by
-`ensure-issue-labels.sh` during onboarding — assume it already exists rather than
-re-creating it) so the pipeline's own agent review (ADR-004, named by ADR-009)
-runs automatically after the draft PR opens:
+honoured until v3). If it does, also apply `ai-review-human-merge` so the pipeline's
+own agent review (ADR-004, named by ADR-009) runs automatically after the draft PR
+opens.
+
+**Apply the trigger label in its own call, never combined with the review label.**
+`gh issue edit` is atomic across `--add-label` flags: if any named label does not exist
+in the repo, the whole call fails and **neither** label is applied — so a missing review
+label silently prevents the run from ever starting:
+
+```text
+$ gh issue edit 307 --add-label ai-implement --add-label ai-review-human-merge
+failed to update 1 issue
+$ gh issue view 307 --json labels --jq '[.labels[].name]'
+[]
+```
+
+That is a **bootstrap deadlock**, because `ai-review-human-merge` is created by
+`ensure-issue-labels.sh`, which the pipeline runs *inside* the implement job. On a
+consumer onboarded before ADR-009 the label only comes into existence once a run has
+started — and the run cannot start, because applying the label is what fails. Note the
+error names neither the label nor the reason.
+
+So: trigger first, review label second, tolerating both the new and the deprecated
+spelling:
 
 ```bash
-gh issue edit <N> --add-label ai-implement --add-label ai-review-human-merge
+gh issue edit <N> --add-label ai-implement
+
+gh issue edit <N> --add-label ai-review-human-merge \
+  || gh issue edit <N> --add-label ai-pre-preview \
+  || echo "note: neither review label exists in this repo — the PR will stay draft;
+run 'REPO=<owner/repo> bash scripts/ensure-issue-labels.sh' to create them"
 ```
 
 If the repo does **not** wire that flow, apply just `ai-implement`
@@ -130,6 +155,15 @@ doesn't act on):
 
 ```bash
 gh issue edit <N> --add-label ai-implement
+```
+
+**Upgrading a consumer across ADR-009.** A repo onboarded before the rename carries the
+old `ai-auto-review` / `ai-pre-preview` labels and not the new ones. Re-running the
+label script is idempotent (existing labels are preserved unchanged, colors included),
+so it is the right first step when a consumer's dispatch behaves oddly:
+
+```bash
+REPO=<owner/repo> bash scripts/ensure-issue-labels.sh
 ```
 
 ## Report
