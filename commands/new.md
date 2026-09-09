@@ -30,14 +30,9 @@ Create a GitHub issue in the current repo with `gh issue create`.
   pad. Add a short context line only if it's obvious from the repo.
 - **Label**: `needs-enrichment` (always). If that label doesn't exist yet, create
   it first (`gh label create needs-enrichment` with a sensible color), then retry.
-- **Milestone**: only if my notes name one — then pass it as `-m "<name>"`. If that
-  milestone doesn't exist yet, **ask** me before creating it (and ask for a due
-  date); never create one silently. If I give no due date, omit `-f due_on=…`
-  entirely — never pass an empty value. `gh milestone` doesn't exist — create it
-  with `gh api "repos/$repo/milestones" -f title="<name>" -f due_on="<date>T12:00:00Z"`
-  (`$repo` = `gh repo view --json nameWithOwner -q .nameWithOwner`), normalizing
-  the due date to **midday UTC** so a viewer's timezone can't roll it back a day.
-  If my notes don't name a milestone, don't set one and don't ask.
+- **Milestone**: see [Milestone selection (GitHub)](#milestone-selection-github)
+  below. It replaces the old "only if my notes name one, otherwise don't set one
+  and don't ask" rule.
 - Don't assign or add other labels unless I said so.
 
 Write the cleaned-up notes to a temp file first (`mktemp`) — `--body-file` needs a
@@ -56,6 +51,86 @@ dropping the label). If there's no `gh`/repo context, say so and stop.
 gh issue view <number> --json number,title,url,labels,milestone
 ```
 
+### Milestone selection (GitHub)
+
+**Four cases, in order — the first that matches wins.** Resolve the repo once:
+`repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)`.
+
+**1 — My notes name a milestone.** Pass it as `-m "<name>"`. If it doesn't exist
+yet, **ask** me before creating it (and ask for a due date); never create one
+silently. If I give no due date, omit `-f due_on=…` entirely — never pass an empty
+value. `gh milestone` doesn't exist, so create it with `gh api`, normalizing the due
+date to **midday UTC** so a viewer's timezone can't roll it back a day:
+
+```bash
+gh api "repos/$repo/milestones" -f title="<name>" -f due_on="<YYYY-MM-DD>T12:00:00Z"
+```
+
+If my notes name no milestone, read the open ones — **sorted locally**, see *The
+sort rule* below — and take case 2, 3, or 4 by how many came back:
+
+```bash
+gh api "repos/$repo/milestones?state=open&per_page=100" \
+  --jq 'sort_by(.due_on // "9999") | .[] | [.title, (.due_on // "-")] | @tsv'
+```
+
+**2 — Zero open milestones.** Offer to create the month's general bucket,
+`general-<month>-<year>` (e.g. `general-september-2026`), due the **30th of that
+month clamped to the month length**, so February lands on the 28th/29th:
+
+```bash
+month=$(LC_ALL=C date +%B | tr 'A-Z' 'a-z')   # locale-pinned — see below
+year=$(date +%Y)
+last_day=$(date -d "$(date +%Y-%m-01) +1 month -1 day" +%d)
+due_day=$(( last_day < 30 ? last_day : 30 ))
+
+gh api "repos/$repo/milestones" \
+  -f title="general-$month-$year" \
+  -f due_on="$year-$(date +%m)-${due_day}T12:00:00Z"
+```
+
+- **Confirm before creating** — show me the name and the due date and wait for a
+  yes. This keeps case 1's "never create one silently" rule intact rather than
+  carving an exception into it.
+- **Declining must not abort issue creation.** The issue is the deliverable, the
+  milestone is secondary: on a no, file the issue with no milestone and say so.
+- **`LC_ALL=C` is load-bearing.** Bare `date +%B` is locale-dependent and returns
+  `September` (capitalized) even on an English-ish setup, and a translated month
+  name elsewhere — either one creates `general-September-2026` once and forks the
+  naming permanently.
+- **A `422` with `already_exists` means the title is taken by a *closed*
+  milestone** — "zero open milestones" is still true. `/milestone`'s rule applies
+  verbatim: report the existing milestone and stop. No variant name, no reopen path.
+  File the issue with no milestone rather than blocking on it.
+
+**3 — Exactly one open milestone.** Assign it silently with `-m "<name>"`. The
+read-back must show it: a silent assignment is always *reported*, never implicit.
+
+**4 — Two or more open milestones.** Ask. Offer the titles in sorted order plus
+`none`, and the **first entry is the proposal** (pre-selected). Rules:
+
+- **Silence is never an assignment.** No answer means no milestone.
+- **`none` is always offered**, and is a legitimate answer — `roadmap` and
+  `🧊 parked` issues are *defined* by having no milestone.
+- This pre-selection does **not** contradict `/milestone triage`'s "No default
+  milestone, no inferring from labels or title". That rule forbids assigning
+  *without an explicit answer*, which this still requires. Don't "fix" the
+  apparent contradiction by removing the pre-selection.
+- A picker caps at four options, so above three open milestones it can't hold them
+  all plus `none` — fall back to a numbered plain-text list that names the first
+  entry as the proposal.
+
+**The sort rule.** `sort_by(.due_on // "9999")` — soonest due first, **undated
+last**. Do **not** use the API's own `sort=due_on&direction=asc`: it returns
+undated milestones **first**, which would propose an undated milestone over a
+dated one (verified 2026-09-09 against a repo holding one of each). The `"9999"`
+sentinel is the same idiom the Forgejo sections below already use.
+
+**`/new` never guesses roadmap/parked intent from my notes.** At creation time an
+issue carries only `needs-enrichment` — nothing adds those labels. The invariant
+is enforced on the way *into* those states instead: `/roadmap defer` and
+`/parked repark` strip the milestone.
+
 My notes:
 $ARGUMENTS
 
@@ -69,12 +144,9 @@ Create an issue in the current Forgejo repo with **`tea`** (login `git-home`).
   pad. Add a short context line only if it's obvious from the repo.
 - **Label**: `needs-enrichment` (always). If that label doesn't exist yet, create it
   first, then retry.
-- **Milestone**: only if my notes name one — then pass it as `-m "<name>"`. If that
-  milestone doesn't exist yet, **ask** me before creating it (and ask for a due
-  date, via `tea milestones create --login git-home --title … --deadline …`); never
-  create one silently. If I give no due date, omit `--deadline` entirely — never
-  pass an empty value. If my notes don't name a milestone, don't set one and don't
-  ask.
+- **Milestone**: see [Milestone selection (Forgejo)](#milestone-selection-forgejo)
+  below. It replaces the old "only if my notes name one, otherwise don't set one
+  and don't ask" rule.
 - Don't assign or add other labels unless I said so.
 
 ```bash
@@ -114,6 +186,57 @@ print(i["number"], i["title"], i.get("html_url") or "-", labels, m.get("title") 
 
 If there's no `tea` login or repo context (not inside a Forgejo clone, or remote
 isn't `git.home.freaxnx01.ch`), say so and stop.
+
+### Milestone selection (Forgejo)
+
+Same four cases as the GitHub section — **the first that matches wins** — with
+`tea` mechanics. The behavioural rules (confirm before creating, declining never
+aborts, silence is never an assignment, `none` always offered, no roadmap/parked
+guessing) are identical and are not restated here; read them there.
+
+**1 — My notes name a milestone.** Pass it as `-m "<name>"`. If it doesn't exist
+yet, **ask** before creating it (and ask for a due date); never create one
+silently. If I give no due date, omit `--deadline` entirely — never pass an empty
+value.
+
+Otherwise read the open milestones. This is the existing `/milestone list` idiom,
+and its `"9999"` sentinel is already the sort rule — soonest due first, **undated
+last**:
+
+```bash
+tea api --login git-home "repos/$repo/milestones?state=open&limit=50" | python3 -c '
+import sys, json
+for m in sorted(json.load(sys.stdin), key=lambda x: x.get("due_on") or "9999"):
+    print(m["title"], m.get("due_on") or "-", sep="\t")'
+```
+
+**2 — Zero open milestones.** Offer to create `general-<month>-<year>`, due the
+**30th clamped to the month length**. Forgejo has **no `already_exists` guard**
+(unlike GitHub's `422`), so check for a closed one of that name first — same rule
+as `/milestone new`: on a match, report it and stop, no variant name.
+
+```bash
+month=$(LC_ALL=C date +%B | tr 'A-Z' 'a-z')   # locale-pinned, see the GitHub section
+year=$(date +%Y)
+last_day=$(date -d "$(date +%Y-%m-01) +1 month -1 day" +%d)
+due_day=$(( last_day < 30 ? last_day : 30 ))
+
+tea milestones create --login git-home \
+  --title "general-$month-$year" \
+  --deadline "$year-$(date +%m)-$due_day"
+```
+
+`--deadline` takes a bare `YYYY-MM-DD` — `tea` parses loose date strings itself, so
+there is no midday-UTC normalization to do here. That asymmetry with the GitHub
+side is deliberate, not an omission.
+
+**3 — Exactly one open milestone.** Assign it silently, and let the read-back
+report it.
+
+**4 — Two or more open milestones.** Ask, first entry pre-selected, plus `none`.
+
+`tea`'s milestone flags carry the same epistemic caveat as `/milestone`'s — verified
+from tea's source, not a live run. If one misbehaves, fix it and update this command.
 
 My notes:
 $ARGUMENTS

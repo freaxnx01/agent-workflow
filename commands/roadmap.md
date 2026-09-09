@@ -83,8 +83,8 @@ and stop. No fuzzy matching, no silent creation:
 
 ```bash
 repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
-gh api "repos/$repo/milestones?state=open&sort=due_on&direction=asc&per_page=100" \
-  --jq '.[] | [.title, (.due_on // "-")] | @tsv'
+gh api "repos/$repo/milestones?state=open&per_page=100" \
+  --jq 'sort_by(.due_on // "9999") | .[] | [.title, (.due_on // "-")] | @tsv'
 ```
 
 If step 1 read-back does not show the milestone, stop and do not remove the label.
@@ -93,12 +93,29 @@ After both read-backs confirm, offer `/route <n>` (read and follow
 
 ### defer
 
-`defer <n> "<reason>"` appends a roadmap reason comment and keeps labels unchanged:
+`defer <n> "<reason>"` appends a roadmap reason comment, **strips the milestone**,
+and otherwise keeps labels unchanged:
 
 ```bash
 gh issue comment <n> --body "roadmap: <reason>"
 gh issue view <n> --json comments --jq '.comments | last | .body | split("\n")[0]'
+
+# roadmap work is by definition not scheduled — drop any milestone it carries
+gh issue edit <n> --remove-milestone
+gh issue view <n> --json number,milestone --jq '[.number, (.milestone.title // "-")] | @tsv'
 ```
+
+**Why the strip.** A roadmap issue is *planned for future work, not yet scheduled
+to a milestone*, so carrying one contradicts the label — and `/milestone triage`
+filters `roadmap` out of the un-milestoned gap, so it can never surface the
+contradiction. `/roadmap promote` is the exact inverse: it assigns a milestone,
+then removes the label.
+
+Report the milestone from the read-back. Removal on an issue that has no milestone
+is a **no-op that exits 0** (verified 2026-09-09), so run it unconditionally rather
+than reading the milestone first. **Coverage is partial by construction:** it only
+fires when `/roadmap defer` runs — labelling an issue `roadmap` by hand in the web
+UI leaves its milestone in place.
 
 If no reason argument was provided, ask for one and stop. Never edit the issue body
 and never edit a previous comment.
@@ -220,6 +237,38 @@ comments=json.load(sys.stdin)
 reasons=[c.get("body","") for c in comments if c.get("body","").startswith("roadmap:")]
 print(reasons[-1].split("\n")[0] if reasons else "—")'
 ```
+
+Deferring also **strips the milestone** — roadmap work is by definition not
+scheduled:
+
+```bash
+# read the current milestone — `remove` takes the name, not an id
+tea api --login git-home "repos/$repo/issues/<n>" | python3 -c '
+import sys, json
+m = json.load(sys.stdin).get("milestone") or {}
+print(m.get("title") or "")'
+
+# then, only if that printed a name:
+tea milestones issues remove --login git-home "<name>" <n>
+```
+
+**Why the strip.** A roadmap issue is *planned for future work, not yet scheduled
+to a milestone*, so carrying one contradicts the label — and `/milestone triage`
+filters `roadmap` out of the un-milestoned gap, so it can never surface the
+contradiction. `/roadmap promote` is the exact inverse: it assigns a milestone,
+then removes the label.
+
+Report the milestone from the read-back. Removal on an issue that has no milestone
+is a **no-op that exits 0** (verified 2026-09-09), so run it unconditionally rather
+than reading the milestone first. **Coverage is partial by construction:** it only
+fires when `/roadmap defer` runs — labelling an issue `roadmap` by hand in the web
+UI leaves its milestone in place.
+
+`tea milestones issues remove` mirrors the `add` form used by `/milestone assign`
+and carries the same epistemic caveat as every other `tea` flag here — taken from
+tea's source, not a live run. If it misbehaves, the fallback is
+`tea api --login git-home -X PATCH "repos/$repo/issues/<n>"` with `{"milestone":0}`;
+fix it and update this command.
 
 If no reason argument was provided, ask for one and stop. Never edit the issue body
 and never edit a previous comment.

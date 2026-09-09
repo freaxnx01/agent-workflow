@@ -33,7 +33,7 @@ label (*a filter tag*) — see `docs/glossary.md` in agent-workflow.
 /milestone triage
 ```
 
-### Two rules that apply to every verb
+### Three rules that apply to every verb
 
 > **`gh milestone` does not exist** (`unknown command "milestone" for "gh"`). Only
 > assignment has a first-class flag; creation and listing go through `gh api`.
@@ -43,6 +43,14 @@ label (*a filter tag*) — see `docs/glossary.md` in agent-workflow.
 > the issue URL and exiting `0` while silently dropping the label, because the token
 > lacked label-write permission. After `new` and `assign`, re-read and report what
 > the read-back says, not what the write returned.
+>
+> **Sort milestones locally, never with the API's `sort=due_on`.** GitHub's own
+> `sort=due_on&direction=asc` returns **undated** milestones **first**, so a repo
+> holding one dated and one undated milestone lists the undated one at the top —
+> where `/new` puts its pre-selected proposal. Use `sort_by(.due_on // "9999")`
+> instead: soonest due first, undated last. Verified 2026-09-09. The Forgejo
+> sections below already use this `"9999"` sentinel in `python3`; do not "simplify"
+> the GitHub calls back to the API parameter.
 
 Resolve the repo once — `gh api` paths need it:
 
@@ -61,8 +69,8 @@ Two calls, grouped locally — cost is fixed regardless of milestone count, and 
 milestone call returns the API's own issue counts to cross-check against:
 
 ```bash
-gh api "repos/$repo/milestones?state=open&sort=due_on&direction=asc&per_page=100" \
-  --jq '.[] | [.title, (.due_on // "-"), .open_issues, .closed_issues] | @tsv'
+gh api "repos/$repo/milestones?state=open&per_page=100" \
+  --jq 'sort_by(.due_on // "9999") | .[] | [.title, (.due_on // "-"), .open_issues, .closed_issues] | @tsv'
 
 gh issue list --state open --limit 200 --json number,title,milestone \
   --jq '.[] | [(.milestone.title // "-"), .number, .title] | @tsv'
@@ -144,8 +152,8 @@ gap. If nothing came back, say the gap is empty and **stop — do not enter the 
 **Phase 2 — walk it.** Fetch the open milestones **once**, before the walk:
 
 ```bash
-gh api "repos/$repo/milestones?state=open&sort=due_on&direction=asc&per_page=100" \
-  --jq '.[] | [.title, (.due_on // "-")] | @tsv'
+gh api "repos/$repo/milestones?state=open&per_page=100" \
+  --jq 'sort_by(.due_on // "9999") | .[] | [.title, (.due_on // "-")] | @tsv'
 ```
 
 Then, for each issue newest first: show number, title, labels; offer the milestone

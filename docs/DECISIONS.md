@@ -1064,3 +1064,103 @@ sentence rather than needing the comment that used to explain it.
 + `claude-implement.yml`, the v1 compatibility shim, keeps its public input
   and output **keys** v1-spelled — that is its purpose — and only moves its
   values to the renamed downstream outputs.
+
+---
+
+## ADR-010 — Milestone selection in `/new`; roadmap/parked carry no milestone (2026-09-09)
+
+**Status:** Accepted
+**Tracking:** none — direct change, no issue
+
+### Context
+
+`/new` set a milestone only when the notes named one, and otherwise neither set
+one nor asked. Every issue therefore arrived un-milestoned and had to be picked up
+later by `/milestone triage`. The ask was for a *proposed* milestone at filing
+time, pre-selected but overridable.
+
+Two ways to derive a default were considered and rejected. Inferring
+`general-<month>-<year>` from today's date hardcodes this org's milestone naming
+into a public, general-purpose command set, where it silently never matches. A
+per-repo config file (`defaultMilestone`) is portable and explicit but introduces
+a config mechanism agent-workflow does not have, an onboarding step to write it,
+and a monthly edit to roll it forward.
+
+Sorting by nearest due date was also considered and is **provably wrong**: in
+August 2026 the open milestones were `finnova-tellco-august-2026` (due 08-10),
+`baloise-august-2026` (08-23) and `general-august-2026` (08-30), so it would have
+proposed a customer milestone for general work for three weeks.
+
+### Decision
+
++ **No stored and no inferred default. The ordering *is* the proposal.** `/new`
+  lists the open milestones sorted soonest-due-first, plus `none`, and the first
+  entry is pre-selected. Nothing to configure, nothing to go stale next month, and
+  identical on both forges.
++ **`none` is always offered and is a legitimate answer.** `roadmap` and
+  `🧊 parked` issues are *defined* by having no milestone, so the option to
+  decline a milestone can never be removed.
++ **Pre-selecting does not violate `/milestone triage`'s "No default milestone, no
+  inferring".** That rule forbids assigning *without an explicit answer*. `/new`
+  still requires one — silence is never an assignment — so triage's rule needed no
+  edit. This is written into `/new` so a future reader does not "fix" the apparent
+  contradiction.
++ **Sort milestones locally, never with the API's `sort=due_on`.** GitHub's
+  `sort=due_on&direction=asc` returns **undated** milestones **first**, which would
+  put an undated milestone in the pre-selected slot ahead of a dated one. Use
+  `sort_by(.due_on // "9999")` — the sentinel idiom the Forgejo sections already
+  used. Folded into **every GitHub call site**: `/milestone list`,
+  `/milestone triage` Phase 2, `/roadmap promote`'s failure list, `/issues pick` and
+  `/triage pick`. All five are lists a human reads to choose a milestone, so one
+  milestone set is never displayed in two different orders. The Forgejo sides of all
+  five already used the sentinel — the GitHub calls were the outliers.
++ **Zero open milestones → offer to create `general-<month>-<year>`**, due the
+  **30th clamped to the month length** (matching `general-july-2026` /
+  `-august-2026` / `-september-2026`, two of which are deliberately not month-end),
+  midday UTC. **Confirm first** — this keeps the existing "never create a milestone
+  silently" rule intact instead of carving an exception into it. Declining files the
+  issue with no milestone and never aborts issue creation. The month name is
+  locale-pinned (`LC_ALL=C date +%B | tr 'A-Z' 'a-z'`); bare `date +%B` returns
+  `September` capitalized even on an English-ish setup and a translated name
+  elsewhere, either of which forks the naming permanently on first use. Note this
+  makes the convention a **creation template only, never a matcher** — the thing
+  rejected above.
++ **Exactly one open milestone → assign it silently**, but the read-back must report
+  it. A silent assignment is always visible, never implicit.
++ **A roadmap or parked issue carries no milestone**, enforced *downstream* rather
+  than guessed at filing time: `/roadmap defer` and `/parked repark` strip it. `/new`
+  does not attempt to detect that intent from raw notes.
++ **`/parked repark` records what it stripped**, as a `milestone-was: <name>` second
+  line in its own reason comment, and `/parked unpark` reads it and **offers** the
+  milestone back — asking first, never restoring silently, and never recreating a
+  milestone that has since been closed or deleted. The second line is deliberate:
+  every reason read-back in `/parked` takes `split("\n")[0]`, so the bookkeeping
+  line stays invisible to `/parked list`. `/roadmap defer` does **not** record
+  anything, because `/roadmap promote` already requires the target milestone to be
+  named explicitly — nothing is lost there.
+
+### Consequences
+
++ **The roadmap/parked invariant is only partially enforced.** Nothing in the
+  command set *adds* those labels — they are applied by hand in the web UI, so
+  there is no chokepoint. `defer` and `repark` are the only hooks; an issue labelled
+  by hand keeps its milestone. A reporting check in `/roadmap list` and
+  `/parked list` would close the gap and is deliberately not part of this change.
++ **`/milestone triage` structurally cannot surface a violation** — it filters
+  `roadmap` and `🧊 parked` out of the un-milestoned gap before looking, so an
+  issue that wrongly *has* a milestone is invisible to it.
++ Picker UIs cap at four options, so above three open milestones `/new` falls back
+  to a numbered plain-text list naming the first entry as the proposal.
++ `gh issue edit --remove-milestone` on an issue with no milestone is a no-op that
+  exits 0 (verified 2026-09-09), so `defer`/`repark` run it unconditionally.
++ **`/parked unpark` is only a partial inverse of `repark`.** It offers the recorded
+  milestone back, but a park → unpark round trip across a milestone's closure ends
+  un-milestoned by design: the recorded name is reported and skipped rather than
+  recreated.
++ A closed `general-<month>-<year>` makes "zero open milestones" true while the
+  create returns `422 already_exists`. `/milestone new`'s rule applies verbatim —
+  report the existing milestone and stop, no variant name, no reopen path.
++ The `tea` milestone-removal form is taken from tea's source, not a live run —
+  the same epistemic status every other `tea` flag in these commands carries.
++ A milestone stripped by hand in the web UI, or by `/roadmap defer`, is not
+  recoverable through `unpark` — only `repark` writes the `milestone-was:` line.

@@ -51,8 +51,8 @@ For `pick`, or to resolve an ambiguous `<name>`, list the open milestones first:
 
 ```bash
 repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
-gh api "repos/$repo/milestones?state=open&sort=due_on&direction=asc&per_page=100" \
-  --jq '.[] | [.title, (.due_on // "-"), .open_issues] | @tsv'
+gh api "repos/$repo/milestones?state=open&per_page=100" \
+  --jq 'sort_by(.due_on // "9999") | .[] | [.title, (.due_on // "-"), .open_issues] | @tsv'
 ```
 
 Do the exclusion **in the query, not by eye** — a `--jq` filter can't be skipped,
