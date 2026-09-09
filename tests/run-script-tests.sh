@@ -2249,6 +2249,13 @@ assert_contains "$out" 'class=rate_limit'   "rate-limit fixture → rate_limit"
 out="$(RESULT_FILE="$FIXTURES/result-max-turns.json"          bash "$CLASSIFY_FAIL")"
 assert_contains "$out" 'class=task_failure' "max-turns fixture → task_failure"
 
+# The Claude CLI reports a turn-budget exhaustion as `error_max_turns` with
+# `"is_error": false` — the shape post-run-report.sh already keys off (its
+# `error_*` subtype check). classify-failure.sh must agree, or the run is
+# bucketed as a success and no retry is ever offered for max-turns.
+out="$(RESULT_FILE="$FIXTURES/result-max-turns-unflagged.json" bash "$CLASSIFY_FAIL")"
+assert_contains "$out" 'class=task_failure' "max-turns with is_error=false → task_failure"
+
 out="$(RESULT_FILE="$FIXTURES/result-api-auth.json"           bash "$CLASSIFY_FAIL")"
 assert_contains "$out" 'class=api_auth'     "api-auth fixture → api_auth"
 
