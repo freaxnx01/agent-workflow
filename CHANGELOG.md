@@ -27,6 +27,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **partials:** new `email-style.md` — mail drafts lead with a `TL;DR:` block
+  stating the actual conclusion, then stay short: the mail carries the conclusion
+  and the asks, not the reasoning chain that produced them. Detail is offered on
+  request rather than pasted in. Notes how this differs from the chat-answer
+  `TL;DR` rule, which repeats at the end of a long answer where a mail must not.
+
+- **partials:** new `german-correspondence.md` — capitalize German address
+  pronouns (`Du`/`Dir`/`Dein…`, `Ihr`/`Euch`/`Euer…`), leave quoted foreign text
+  verbatim, and write real umlauts (`ä ö ü`) instead of `ae oe ue`. Also records
+  why a "named HTML entities for Outlook" rule does not contradict it: the two
+  govern different formats (plain text vs. the HTML Word renders).
+
 - **ci:** `verify-or-recover-pr.sh` now **salvages uncommitted work**. A run that
   exited cleanly without opening a PR used to discard whatever it left in the
   workspace — the largest measured failure mode (24 of 48 failures across the
