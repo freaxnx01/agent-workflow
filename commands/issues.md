@@ -378,7 +378,7 @@ none, verify the shape before trusting the empty set.
 
 ### Step 5 — the milestone argument maps to Iteration Path
 
-A milestone on this forge is an **iteration** (see ADR-011 for why Iteration Path
+A milestone on this forge is an **iteration** (see ADR-012 for why Iteration Path
 and not Area Path or a parent Feature). When the argument resolves to one, add a
 clause to the step-2 query:
 

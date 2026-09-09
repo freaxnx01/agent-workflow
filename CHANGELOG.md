@@ -58,7 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contain spaces. Milestones map to **Iteration Path**, PRs key on **`active`**
   (there is no `open`), and PR↔work-item links come from the first-class link API
   rather than a `closes #N` regex. Closed states and work-item types are read from
-  the project's process template instead of hardcoded. See ADR-011 — including the
+  the project's process template instead of hardcoded. See ADR-012 — including the
   hybrid case (ADO boards + GitHub code) recorded as out of scope.
 - **azdo:** Guard the 11 commands that have no Azure DevOps section yet. Each
   gains a `## Azure DevOps` section that names the forge, explicitly refuses the
