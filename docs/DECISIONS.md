@@ -1321,14 +1321,17 @@ Closed`, Scrum `New / Approved / Committed / Done / Removed`. Any hardcoded
 
 + `/issues` is the only command carrying an ADO section for now — a deliberate
   seam, taken so a wrong scoping model would surface on one file instead of twelve.
-+ **That seam is currently a trap rather than a clean fall-through, and the other
-  11 commands need a guard line.** Their sections are `## GitHub` / `## Forgejo` /
-  `## Unknown host`; handed `azdo <host>`, none matches, and *nothing instructs the
-  reader what to do*. The likely outcome is that the closest section gets picked
-  and `gh` is run against an Azure DevOps remote, which fails confusingly instead
-  of stopping. Each needs one line to the effect of *"forge `azdo` — this command
-  has no Azure DevOps support yet"*. Until then, treat those 11 on an ADO remote as
-  unsafe, not merely unsupported.
++ **The seam is explicit, not implicit: all 11 other commands carry a stop-guard.**
+  Left unguarded, their sections would be `## GitHub` / `## Forgejo` /
+  `## Unknown host` with *nothing matching* `azdo` and nothing instructing the
+  reader — so the closest section would get picked and `gh` would run against an
+  Azure DevOps remote, failing confusingly on a read and aiming at the wrong forge
+  entirely on a write. Each therefore has a `## Azure DevOps` section that names the
+  forge, refuses the GitHub/Forgejo fallback explicitly, and stops. Unsupported and
+  *safe*, rather than unsupported and silently wrong.
++ All 12 `## Unknown host` sections now name `az devops login` alongside
+  `gh auth login` / `tea login add`, so an unmatched host no longer points at only
+  two of the three forges.
 + **The other 11 commands' "Unknown host" sections still name only
   `gh auth login` / `tea login add`**, so an ADO user is pointed at the wrong CLI.
   `/issues` is updated; the rest are 11 one-line edits, not yet made.

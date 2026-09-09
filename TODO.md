@@ -5,14 +5,10 @@
 PR #307 added ADO detection plus an `## Azure DevOps` section to `/issues` only.
 Reasoning and caveats are in **ADR-011**; these are the follow-ups it names.
 
-- [ ] **Guard the other 11 commands (do this first — it is a safety fix, not
-      cosmetics).** `done` `enrich` `enrich-phased` `milestone` `new` `parked`
-      `prs` `roadmap` `route` `triage` `work` have no `## Azure DevOps` section,
-      and nothing tells the reader what to do when `detect_forge` says `azdo` —
-      so the closest section gets picked and `gh` runs against an ADO remote,
-      failing confusingly. One line each: *"forge `azdo` — no Azure DevOps
-      support yet"*. Also update their `## Unknown host` text, which still names
-      only `gh auth login` / `tea login add`.
+- [x] **Guard the other 11 commands** — done in PR #307. Each carries a
+      `## Azure DevOps` section that names the forge, refuses the GitHub/Forgejo
+      fallback and stops; all 12 `## Unknown host` sections now name
+      `az devops login` too. They are unsupported but safe.
 - [ ] **Port the 11 sections properly**, once the `/issues` model is confirmed
       against a live org. `/milestone` is the interesting one: iteration create
       is two steps (`iteration project create` then `iteration team add`, or the

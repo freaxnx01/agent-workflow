@@ -692,7 +692,20 @@ command for the future.
 
 In quick-mode, a [one-way door](../docs/glossary.md#one-way-door) is a design decision the agent refuses to make alone — irreversible operations (deleting data, running migrations), anything touching credentials or secrets, anything that spends money (rate limits, API calls with costs), or anything changing a public interface others depend on. When quick-mode hits a one-way door, it stops and asks the user to decide, even if the flag is `--quick`. Record the unanswered decision as a Blocked item in the Assumptions block (prefixed with ⛔ or similar) so the human review phase can resolve it before implementation.
 
+## Azure DevOps
+
+`detect_forge` said `azdo`, so the remote is an Azure DevOps one — and **this
+command has no Azure DevOps section yet**. Say exactly that and **stop**.
+
+Do **not** fall back to the GitHub or Forgejo section. Neither `gh` nor `tea` can
+read ADO work items, so running either against this remote fails confusingly at
+best; on a command that *writes*, it would aim the write at the wrong forge
+entirely. `/issues` is the only command with ADO support today — see **ADR-011**
+in agent-workflow's `docs/DECISIONS.md` for the object mapping, and its `TODO.md`
+for the port status.
+
 ## Unknown host
 
-Report the detected host and that no authed GitHub or Forgejo login matched it;
-point at `gh auth login` / `tea login add`. Don't guess a forge.
+Report the detected host and that it matched no authed GitHub or Forgejo login
+and none of the Azure DevOps host forms; point at `gh auth login` /
+`tea login add` / `az devops login`. Don't guess a forge.

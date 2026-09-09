@@ -60,6 +60,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rather than a `closes #N` regex. Closed states and work-item types are read from
   the project's process template instead of hardcoded. See ADR-011 — including the
   hybrid case (ADO boards + GitHub code) recorded as out of scope.
+- **azdo:** Guard the 11 commands that have no Azure DevOps section yet. Each
+  gains a `## Azure DevOps` section that names the forge, explicitly refuses the
+  GitHub/Forgejo fallback — `gh`/`tea` cannot read ADO work items, and on a
+  writing command the fallback would aim at the wrong forge — and stops. All 12
+  `## Unknown host` sections now name `az devops login` alongside
+  `gh auth login` / `tea login add`.
 
 - **ci:** `verify-or-recover-pr.sh` now **salvages uncommitted work**. A run that
   exited cleanly without opening a PR used to discard whatever it left in the
