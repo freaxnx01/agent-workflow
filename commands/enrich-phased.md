@@ -548,7 +548,7 @@ command has no Azure DevOps section yet**. Say exactly that and **stop**.
 Do **not** fall back to the GitHub or Forgejo section. Neither `gh` nor `tea` can
 read ADO work items, so running either against this remote fails confusingly at
 best; on a command that *writes*, it would aim the write at the wrong forge
-entirely. `/issues` is the only command with ADO support today — see **ADR-011**
+entirely. `/issues` is the only command with ADO support today — see **ADR-012**
 in agent-workflow's `docs/DECISIONS.md` for the object mapping, and its `TODO.md`
 for the port status.
 
