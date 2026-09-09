@@ -2341,6 +2341,41 @@ assert_equals "$(grep -c 'npm install --prefix' "$WF" || true)" "2" \
 assert_equals "$(grep -c 'GITHUB_PATH' "$WF" || true)" "2" \
   "each job-local install puts its bin dir on PATH for later steps"
 
+section "check-issue-link — warn when the PR will not auto-close its issue (#303)"
+
+# GitHub does not form a closing-issue reference for a PR authored by the
+# github-actions app, so `Closes #N` in a pipeline PR body is inert: merging does not
+# close the issue and /ai-stats reads it as never shipped. Both were silent. CLOSING_REFS
+# drives the script without a network call, the same way ISSUE_LABELS does for
+# check-human-merge-gate.sh.
+LINK_CHK="$ROOT/scripts/check-issue-link.sh"
+
+out="$(ISSUE_NUMBER=307 PR_NUMBER=384 REPO=o/r CLOSING_REFS='307' bash "$LINK_CHK")"
+assert_contains "$out" 'linked=true'   "reference present -> linked=true"
+
+out="$(ISSUE_NUMBER=307 PR_NUMBER=384 REPO=o/r CLOSING_REFS='' bash "$LINK_CHK")"
+assert_contains "$out" 'linked=false'  "no references -> linked=false"
+assert_contains "$out" '::warning::'   "no references -> emits a warning annotation"
+assert_contains "$out" 'will NOT close the issue' "warning names the merge consequence"
+assert_contains "$out" 'never shipped' "warning names the ai-stats consequence"
+assert_contains "$out" 'PIPELINE_APP_ID' "warning names the remedy"
+
+# A PR that closes a DIFFERENT issue must not count as linked for this one.
+out="$(ISSUE_NUMBER=307 PR_NUMBER=384 REPO=o/r CLOSING_REFS='308 309' bash "$LINK_CHK")"
+assert_contains "$out" 'linked=false'  "references to other issues only -> linked=false"
+
+# Linked case stays quiet — a warning on every run would train people to ignore it.
+out="$(ISSUE_NUMBER=307 PR_NUMBER=384 REPO=o/r CLOSING_REFS='306 307' bash "$LINK_CHK")"
+assert_contains "$out" 'linked=true'   "reference among several -> linked=true"
+assert_equals "$(printf '%s' "$out" | grep -c '::warning::' || true)" "0" \
+  "linked -> no warning annotation"
+
+ec="$(run_capture_ec env REPO=o/r bash "$LINK_CHK")"
+assert_equals "$ec" "2" "missing ISSUE_NUMBER/PR_NUMBER -> exit 2"
+
+ec="$(run_capture_ec env ISSUE_NUMBER=1 PR_NUMBER=2 GITHUB_REPOSITORY= bash "$LINK_CHK")"
+assert_equals "$ec" "3" "missing REPO -> exit 3"
+
 section "retry-dispatch — policy decisions (DRY_RUN, no real dispatch)"
 
 RETRY="$ROOT/scripts/retry-dispatch.sh"
