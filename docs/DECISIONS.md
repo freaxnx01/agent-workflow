@@ -1234,8 +1234,13 @@ repositories, so "all open sessions" is not a per-repo concept.
   `**Next step:**` paragraph. A handoff written without them still gets a row —
   title falls back to the first non-empty line, next step to "read the file" — but
   the index is only as useful as those two lines.
-+ Layer-1 coverage is `tests/run-handoff-index-tests.sh` (30 assertions over
++ Layer-1 coverage is `tests/run-handoff-index-tests.sh` (34 assertions over
   throwaway git repos: dedup across worktrees, orphan branches, the legacy name,
-  section upsert, idempotency, empty-repo removal). No `herdr` mock is needed —
+  section upsert, idempotency, empty-repo removal, and the lock on the
+  machine-wide file — held-lock timeout, stale-lock reclaim, release on exit).
+  The lock's retry count and sleep are env-tunable
+  (`HANDOFF_INDEX_LOCK_ATTEMPTS` / `HANDOFF_INDEX_LOCK_SLEEP`) for the sole
+  reason that testing the timeout otherwise costs ten seconds of sleeps, which
+  would blow the suite's sub-five-second budget. No `herdr` mock is needed —
   the script touches only git and the filesystem; the fan-out itself is prompt-level
   policy in the two command docs.

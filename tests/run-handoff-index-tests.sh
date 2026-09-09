@@ -201,6 +201,32 @@ else
 fi
 
 # ============================================================================
+section "the machine-wide index is locked while it is rewritten"
+
+# A held lock times out instead of racing the holder. Attempts/sleep are env-
+# tunable precisely so this assertion costs no wall clock.
+mkdir "$TMP/global.md.lock"
+before="$(cat "$TMP/global.md")"
+set +e
+HANDOFF_INDEX_LOCK_ATTEMPTS=1 HANDOFF_INDEX_LOCK_SLEEP=0 \
+  bash "$SCRIPT" --repo "$REPO_A" --global-index "$TMP/global.md" >/dev/null 2>&1
+code=$?
+set -e
+assert_eq "$code" "4" "a held lock exits 4"
+assert_eq "$(cat "$TMP/global.md")" "$before" "a locked run leaves the index untouched"
+
+# A lock left behind by a crashed run is reclaimed rather than waited on.
+touch -d '-5 minutes' "$TMP/global.md.lock"
+HANDOFF_INDEX_LOCK_ATTEMPTS=2 HANDOFF_INDEX_LOCK_SLEEP=0 \
+  bash "$SCRIPT" --repo "$REPO_A" --global-index "$TMP/global.md" >/dev/null
+assert_contains "$(cat "$TMP/global.md")" 'feature-alpha' "a stale lock is reclaimed and the run completes"
+if [[ -e "$TMP/global.md.lock" ]]; then
+  fail "the lock is released on exit" "lock dir still present"
+else
+  pass "the lock is released on exit"
+fi
+
+# ============================================================================
 section "error handling"
 
 set +e

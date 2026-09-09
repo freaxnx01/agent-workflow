@@ -29,6 +29,9 @@
 #
 # Exit codes: 0 ok; 2 usage error; 3 --repo is not inside a git repository;
 #             4 could not take the lock on the machine-wide index.
+#
+# Env: HANDOFF_INDEX_LOCK_ATTEMPTS / HANDOFF_INDEX_LOCK_SLEEP tune the wait for
+#      that lock (defaults 10 attempts, 1s apart).
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -38,6 +41,10 @@ GLOBAL_INDEX="${HOME}/.claude/handoffs.md"
 WRITE_GLOBAL=1
 TO_STDOUT=0
 NEXT_STEP_MAX=110
+# How long to wait for another repo's run to release the machine-wide index.
+# Overridable so the fixture tests can exercise the timeout without sleeping.
+LOCK_ATTEMPTS="${HANDOFF_INDEX_LOCK_ATTEMPTS:-10}"
+LOCK_SLEEP="${HANDOFF_INDEX_LOCK_SLEEP:-1}"
 
 die_usage() { printf 'usage error: %s\n' "$1" >&2; exit 2; }
 
@@ -48,7 +55,7 @@ while (($# > 0)); do
     --global-index) GLOBAL_INDEX="${2:?--global-index needs a path}"; shift 2 ;;
     --no-global) WRITE_GLOBAL=0; shift ;;
     --stdout) TO_STDOUT=1; shift ;;
-    -h|--help) sed -n '3,32p' "$0"; exit 0 ;;
+    -h|--help) sed -n '3,31p' "$0"; exit 0 ;;
     *) die_usage "unknown argument: $1" ;;
   esac
 done
@@ -241,18 +248,18 @@ END_MARKER="<!-- handoff-index:end path=$MAIN_COPY -->"
 
 mkdir -p "$(dirname "$GLOBAL_INDEX")"
 LOCK="$GLOBAL_INDEX.lock"
-for attempt in 1 2 3 4 5 6 7 8 9 10; do
+for ((attempt = 1; attempt <= LOCK_ATTEMPTS; attempt++)); do
   if mkdir "$LOCK" 2>/dev/null; then break; fi
   # A lock older than two minutes is a crashed run, not a live one.
   if [[ -n "$(find "$LOCK" -maxdepth 0 -mmin +2 2>/dev/null)" ]]; then
     rm -rf "$LOCK"
     continue
   fi
-  if ((attempt == 10)); then
+  if ((attempt == LOCK_ATTEMPTS)); then
     printf 'could not lock %s (held by another run?)\n' "$GLOBAL_INDEX" >&2
     exit 4
   fi
-  sleep 1
+  sleep "$LOCK_SLEEP"
 done
 trap 'rm -rf "$LOCK"' EXIT
 
