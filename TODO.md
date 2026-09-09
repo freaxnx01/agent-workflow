@@ -1,5 +1,33 @@
 # TODO
 
+## Azure DevOps forge support — finish the port (2026-09-09, PR #307, ADR-011)
+
+PR #307 added ADO detection plus an `## Azure DevOps` section to `/issues` only.
+Reasoning and caveats are in **ADR-011**; these are the follow-ups it names.
+
+- [ ] **Guard the other 11 commands (do this first — it is a safety fix, not
+      cosmetics).** `done` `enrich` `enrich-phased` `milestone` `new` `parked`
+      `prs` `roadmap` `route` `triage` `work` have no `## Azure DevOps` section,
+      and nothing tells the reader what to do when `detect_forge` says `azdo` —
+      so the closest section gets picked and `gh` runs against an ADO remote,
+      failing confusingly. One line each: *"forge `azdo` — no Azure DevOps
+      support yet"*. Also update their `## Unknown host` text, which still names
+      only `gh auth login` / `tea login add`.
+- [ ] **Port the 11 sections properly**, once the `/issues` model is confirmed
+      against a live org. `/milestone` is the interesting one: iteration create
+      is two steps (`iteration project create` then `iteration team add`, or the
+      result is unassignable), iterations nest where GitHub milestones are flat,
+      and `--depth` defaults to 1 on the listing commands. `/triage`'s "bugs
+      first" ordering needs to key off work-item **type**, not a `bug` tag.
+- [ ] **Verify against a live organization and delete the epistemic caveat** in
+      `/issues`. Flags came from `--help`; JSON shapes, WIQL clauses and every
+      `--query` path did not. The `--query` paths are the likeliest to be wrong
+      and fail *silently* (empty result, not an error).
+- [ ] **Hybrid case: ADO boards + GitHub code** — out of scope in ADR-011 by
+      choice. `detect_forge` keys off the git remote, so such a repo detects as
+      `github` and never reaches the ADO path. Supporting it means splitting
+      "code host" from "work-item backend", reshaping dispatch in all 12 files.
+
 ## Re-enable GitHub Copilot Coding Agent once access is restored (disabled 2026-09-01, PR #282)
 
 - [ ] Copilot access was revoked on this account, so `/gh:assign`, `/gh:review`,

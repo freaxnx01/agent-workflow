@@ -1319,10 +1319,16 @@ Closed`, Scrum `New / Approved / Committed / Done / Removed`. Any hardcoded
 
 ### Consequences
 
-+ `/issues` is the only command carrying an ADO section for now. The other 11
-  still detect `azdo` and will fall through without a matching section — a
-  deliberate seam, taken so a wrong scoping model would surface on one file
-  instead of twelve.
++ `/issues` is the only command carrying an ADO section for now — a deliberate
+  seam, taken so a wrong scoping model would surface on one file instead of twelve.
++ **That seam is currently a trap rather than a clean fall-through, and the other
+  11 commands need a guard line.** Their sections are `## GitHub` / `## Forgejo` /
+  `## Unknown host`; handed `azdo <host>`, none matches, and *nothing instructs the
+  reader what to do*. The likely outcome is that the closest section gets picked
+  and `gh` is run against an Azure DevOps remote, which fails confusingly instead
+  of stopping. Each needs one line to the effect of *"forge `azdo` — this command
+  has no Azure DevOps support yet"*. Until then, treat those 11 on an ADO remote as
+  unsafe, not merely unsupported.
 + **The other 11 commands' "Unknown host" sections still name only
   `gh auth login` / `tea login add`**, so an ADO user is pointed at the wrong CLI.
   `/issues` is updated; the rest are 11 one-line edits, not yet made.
