@@ -31,6 +31,12 @@ for how this fits alongside the plugin and project-scoped command sources.
 
 ## Commands
 
+> **Driving the pipeline?** [`docs/COMMAND-CHEATSHEET.md`](../docs/COMMAND-CHEATSHEET.md)
+> is the task-shaped view: the issue→PR path in the order you chain it, the two
+> measurement points (`/ai-funnel` before dispatch, `/ai-stats` after), what
+> "ship rate" actually divides by, and a symptom→cause table for when a dispatch
+> goes nowhere. The listing below is the inventory; that page is the route.
+
 **Session hygiene**: `/loose-ends` · `/clear-check` · `/todo` · `/wrap-up`
 
 **Phase handoff** (pairs with the `SessionStart(clear)` hook in `hooks/`):

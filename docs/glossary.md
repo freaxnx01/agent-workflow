@@ -158,6 +158,19 @@ is a deliberate decision rather than a drift. See
 [`partials/scope-boundary.md`](../partials/scope-boundary.md) for the full
 rule.
 
+## Ship rate
+
+Not one number — see
+[`COMMAND-CHEATSHEET.md`](COMMAND-CHEATSHEET.md#what-ship-rate-means) for the
+three a report actually shows and which denominator each uses. In short:
+**shipped** means an issue that was dispatched at least once and closed by a
+**merged** pull request. It is attribution, not causation — work the agent failed
+at and a human then fixed still counts.
+
+Definition kept there rather than duplicated here, because it comes with caveats
+(a hand-closed issue never counts; a PR with no closing reference never counts)
+that are useless separated from it.
+
 ## SDLC
 
 Software Development Life Cycle — the end-to-end sequence from intake

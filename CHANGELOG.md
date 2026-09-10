@@ -27,6 +27,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **docs:** new `docs/COMMAND-CHEATSHEET.md` — the task-shaped view of the
+  console: the issue→PR path in the order you chain it
+  (`/capture-idea` → `/new` → `/triage` → `/enrich` → `/gh:implement` →
+  `/gh:review` → `/done`), the two measurement points (`/ai-funnel` before
+  dispatch, `/ai-stats` after), how to read a run report, and a symptom→cause
+  table for when a dispatch goes nowhere. Deliberately not a fourth inventory of
+  all 37 commands — it cross-links the three that already exist and adds the
+  route instead, so it does not rot when a command is added.
+
+  Its **ship rate** section documents that "ship rate" is three different
+  numbers with two different denominators, that `/ai-stats`'s "Issue shipped" and
+  `/ai-funnel`'s "Shipped by the pipeline" are the same measure (both
+  dispatched-only, `ai-stats.sh:174`), and that they nevertheless disagree today
+  because of #319 — including that `shipped` gates the A–F grade, so an issue
+  that shipped cleanly can currently read `F`. `docs/glossary.md` gains a
+  **Ship rate** entry pointing there rather than duplicating the caveats.
+
 - **commands:** new `/ai-funnel` — backlog readiness for the `ai-implement`
   pipeline, the question that comes before `/ai-stats`'s. It reports how many
   issues could be dispatched **at all**: open → live → carrying a plan → ready,
