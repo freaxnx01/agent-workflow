@@ -40,12 +40,12 @@ Reasoning and caveats are in **ADR-012**; these are the follow-ups it names.
 
 ## Handoff index follow-ups (discovered 2026-09-09 while adding `.claude/handoffs.md`, ADR-011)
 
-- [ ] `hooks/handoff-resume.sh` still reads the legacy unslugged
-      `$dir/.claude/handoff.md`, so the `SessionStart(clear)` context injection is
-      blind to every branch-slugged `.claude/handoff-<branch>.md` that `/handoff`
-      has written since. Options: resolve the current branch's slug in the hook, or
-      inject the derived `.claude/handoffs.md` index instead (the hook has `jq` and
-      the cwd, and the index is regenerated on every `/handoff`).
+- [x] `hooks/handoff-resume.sh` read the legacy unslugged `.claude/handoff.md`, so
+      the `SessionStart(clear)` injection was blind to every branch-slugged handoff
+      `/handoff` had written since. Fixed 2026-09-10: it resolves the branch slug
+      (detached HEAD included), prefers that branch's file, keeps the legacy name as
+      a fallback, and points at `.claude/handoffs.md` when one exists. Covered by
+      `tests/run-handoff-resume-tests.sh` — the hook had no tests at all before.
 - [x] Stale committed handoffs on `main`, surfaced by the first index run — all
       three verified done and deleted 2026-09-10: `handoff-worktree-enrich.md`
       (#193 closed 2026-08-04), `handoff-issue-198-199-forge-agnostic-commands.md`
@@ -55,7 +55,7 @@ Reasoning and caveats are in **ADR-012**; these are the follow-ups it names.
       follow-ups all resolved since). The real lesson is upstream: `/pickup` is
       supposed to delete a handoff when its phase completes, and three in a row
       were left behind.
-- [ ] No CI job runs the Layer-1 suite. `just test` drives four
+- [ ] No CI job runs the Layer-1 suite. `just test` drives five
       `tests/run-*-tests.sh` entry points locally, but the only workflows are
       `lint` (pre-commit) and `gate-selftest` — a broken fixture test would go
       green on a PR. (Also: `tests/run-link-skills-tests.sh` and
