@@ -57,6 +57,86 @@ field_of() {
   jq -r --argjson n "$2" --arg f "$3" '.[] | select(.issue == $n) | .[$f] | tostring' <<< "$1"
 }
 
+# --- shaping (the GraphQL half) ---------------------------------------------
+#
+# The classification tests below start from already-shaped records, so they
+# never execute shape_program -- and shape_program is where everything NEW in
+# this script lives: the body parsing, the closer/reference union, and picking
+# ai-implement out of a mixed itemTypes stream. This section drives it directly
+# from a raw-GraphQL-shaped fixture. The BASH_SOURCE guard in ai-funnel.sh makes
+# sourcing safe: main() does not run.
+
+section "shaping"
+
+# shellcheck source=../scripts/lib/ai-funnel.sh disable=SC1091
+source "$SCRIPT"
+
+GRAPHQL_FIXTURE="$ROOT/tests/fixtures/ai-funnel-graphql.json"
+SHAPED="$(jq -rs --arg repo "acme/alpha" "$(shape_program)" "$GRAPHQL_FIXTURE" | jq -s '.')"
+
+shaped_of() {
+  jq -r --argjson n "$1" --arg f "$2" '.[] | select(.issue == $n) | .[$f] | tostring' <<< "$SHAPED"
+}
+
+assert_eq "$(jq -r 'length | tostring' <<< "$SHAPED")" "12" "every node is shaped, dispatched or not"
+
+# Shipped detection — the PR's headline claim.
+assert_eq "$(shaped_of 101 shipped_prs)" "[901]" \
+  "a merged agent PR is found via ClosedEvent.closer with an empty reference list"
+assert_eq "$(shaped_of 102 shipped_prs)" "[902]" \
+  "a PR named by BOTH sources is counted once, not twice"
+assert_eq "$(shaped_of 103 shipped_prs)" "[]" \
+  "a ClosedEvent whose closer is a Commit is not a ship"
+assert_eq "$(shaped_of 104 shipped_prs)" "[]" \
+  "a ClosedEvent with a null closer is not a ship"
+assert_eq "$(shaped_of 105 shipped_prs)" "[]" \
+  "an unmerged PR is not a ship, from either source"
+
+# Plan detection — must agree with classify-turns.sh:106 exactly.
+assert_eq "$(shaped_of 101 has_plan)" "true"  "a normal plan heading is found"
+assert_eq "$(shaped_of 108 has_plan)" "true"  "a lowercase heading is found, matching grep -qi"
+assert_eq "$(shaped_of 107 has_plan)" "false" \
+  "two spaces after the hashes is NOT a plan — grep -qi '^## Implementation Plan' would miss it too"
+assert_eq "$(shaped_of 109 has_plan)" "false" "the phrase mid-line is not a heading"
+assert_eq "$(shaped_of 112 has_plan)" "false" "a null body does not throw and is not planned"
+
+# Task counting — the turn budget depends on it.
+assert_eq "$(shaped_of 101 tasks)"       "3" "### Task N headings are counted"
+assert_eq "$(shaped_of 106 tasks)"       "0" "## Task N and # Task N score zero, as classify-turns.sh does"
+assert_eq "$(shaped_of 106 loose_tasks)" "3" "the wrong-level headings are counted separately so they can be reported"
+assert_eq "$(shaped_of 101 loose_tasks)" "0" "### Task N is not also counted as a loose task"
+
+# Dispatch extraction out of a mixed itemTypes stream.
+assert_eq "$(jq -r '.[] | select(.issue == 110) | .dispatches | length | tostring' <<< "$SHAPED")" "2" \
+  "only ai-implement label events count as dispatches, not bug or ai-pre-preview"
+assert_eq "$(jq -r '.[] | select(.issue == 103) | .dispatches | length | tostring' <<< "$SHAPED")" "0" \
+  "a timeline of only ClosedEvents yields no dispatches"
+
+# Scalar passthrough.
+assert_eq "$(shaped_of 112 milestone)" "" "a null milestone shapes to an empty string, not null"
+assert_eq "$(shaped_of 101 repo)"      "acme/alpha" "the repo is stamped from --arg"
+assert_eq "$(jq -r '.[] | select(.issue == 101) | .labels | join(",")' <<< "$SHAPED")" "ai-implement,bug" \
+  "labels are flattened to names"
+
+# The shaped output must feed the classifier unchanged — this is the seam that
+# would otherwise only be exercised in production.
+SHAPED_FILE="$(mktemp)"
+trap 'rm -f "$SHAPED_FILE" "${EMPTY_FIXTURE:-}"' EXIT
+printf '%s' "$SHAPED" > "$SHAPED_FILE"
+ROUNDTRIP="$(bash "$SCRIPT" --from "$SHAPED_FILE" --json)"
+
+assert_eq "$(jq -r '.[] | select(.issue == 101) | .stage' <<< "$ROUNDTRIP")" "shipped" \
+  "shaped records classify without a translation step"
+assert_eq "$(jq -r '.[] | select(.issue == 106) | .miscounted | tostring' <<< "$ROUNDTRIP")" "true" \
+  "the #297 miscount is detected end to end, from raw GraphQL"
+assert_eq "$(jq -r '.[] | select(.issue == 106) | .budget' <<< "$ROUNDTRIP")" "floor (50)" \
+  "a wrong-level plan really does land on the floor budget"
+assert_eq "$(jq -r '.[] | select(.issue == 110) | .attempts | tostring' <<< "$ROUNDTRIP")" "2" \
+  "re-dispatch survives the round trip"
+assert_contains "$(jq -r '.[] | select(.issue == 111) | .blockers | join("|")' <<< "$ROUNDTRIP")" \
+  "stale needs-enrichment label" \
+  "a plan already in the body makes the label stale, not the issue unenriched"
+
 # --- classification ---------------------------------------------------------
 
 section "stage classification"
@@ -148,7 +228,6 @@ assert_not_contains "$REPORT" "different milestone" "milestone filtering reaches
 section "empty and degenerate input"
 
 EMPTY_FIXTURE="$(mktemp)"
-trap 'rm -f "$EMPTY_FIXTURE"' EXIT
 echo '[]' > "$EMPTY_FIXTURE"
 EMPTY="$(bash "$SCRIPT" --from "$EMPTY_FIXTURE")"
 assert_contains "$EMPTY" "**Issues:** 0"  "an empty record set still renders"
