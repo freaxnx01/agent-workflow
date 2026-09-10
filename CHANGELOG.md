@@ -14,27 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still work but emit a warning annotation naming the replacement.
   **Removed in v3.** See the migration section in `docs/CONSUMER-SETUP.md`.
 
-### Fixed
-
-- **ai-stats:** `shipped` was read from `closedByPullRequestsReferences` alone, and
-  GitHub forms **no closing reference** for a PR authored by `app/github-actions` —
-  which is every PR this pipeline opens. So on exactly the repos `/ai-stats` exists to
-  measure, most shipped issues read as never shipped (#319).
-
-  It gated more than one row: `shipped` decides the grade
-  (`if $shipped | not then "F"`), so an issue that shipped on the first cheap attempt
-  graded **F**, and the enrichment table read *enriched 13% vs unenriched 67%* — the
-  opposite of the truth, because enriched issues are the recent pipeline-driven ones.
-
-  Now unions `ClosedEvent.closer` with the reference list. Measured on the repo this was
-  found on: ship rate 36% → **79%**, grades A3/B2/F9 → **A5/B6/F3**, first-attempt
-  shipped 38% → **100%**, spend per shipped issue $8.50 → $4.74 — with no run changing.
-
-  The `ClosedEvent` selection is aliased and queried with `last:` rather than folded into
-  the `LABELED_EVENT` window, in both `ai-stats.sh` and `ai-funnel.sh`: a close is late
-  in an issue's timeline, so sharing one `first:100` page with label events would let a
-  heavily relabelled issue push the closer off the page and reintroduce the undercount.
-
 ### Removed
 
 - **commands:** Remove `/gh:done` `/gh:enrich` `/gh:enrich-phased` `/gh:issues`
@@ -302,6 +281,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/gh:implementation-contract` (#177)
 
 ### Fixed
+
+- **ai-stats:** `shipped` was read from `closedByPullRequestsReferences` alone, and
+  GitHub forms **no closing reference** for a PR authored by `app/github-actions` —
+  which is every PR this pipeline opens. So on exactly the repos `/ai-stats` exists to
+  measure, most shipped issues read as never shipped (#319).
+
+  It gated more than one row: `shipped` decides the grade
+  (`if $shipped | not then "F"`), so an issue that shipped on the first cheap attempt
+  graded **F**, and the enrichment table read *enriched 13% vs unenriched 67%* — the
+  opposite of the truth, because enriched issues are the recent pipeline-driven ones.
+
+  Now unions `ClosedEvent.closer` with the reference list. Measured on the repo this was
+  found on: ship rate 36% → **79%**, grades A3/B2/F9 → **A5/B6/F3**, first-attempt
+  shipped 38% → **100%**, spend per shipped issue $8.50 → $4.74 — with no run changing.
+
+  The `ClosedEvent` selection is aliased and queried with `last:` rather than folded into
+  the `LABELED_EVENT` window, in both `ai-stats.sh` and `ai-funnel.sh`: a close is late
+  in an issue's timeline, so sharing one `first:100` page with label events would let a
+  heavily relabelled issue push the closer off the page and reintroduce the undercount.
 
 - **hooks:** `handoff-resume.sh` read only the pre-slug `.claude/handoff.md`, so
   the `SessionStart(clear)` context injection had been blind to every
