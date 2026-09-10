@@ -78,7 +78,7 @@ assert_eq "$(field_of "$ALL" 13 stage)" "shipped"          "a merged PR ships th
 section "dispatchability"
 
 assert_eq "$(field_of "$ALL" 4 dispatchable)"  "true"  "issue 4 is dispatchable"
-assert_eq "$(field_of "$ALL" 9 dispatchable)"  "true"  "a wrong-level plan is still dispatchable, just mis-budgeted"
+assert_eq "$(field_of "$ALL" 9 dispatchable)"  "true"  "a wrong-level plan is still dispatchable, just given the wrong budget"
 assert_eq "$(field_of "$ALL" 3 dispatchable)"  "false" "an issue already carrying ai-implement is not re-offered"
 assert_eq "$(field_of "$ALL" 5 dispatchable)"  "false" "needs-enrichment blocks dispatch"
 assert_eq "$(field_of "$ALL" 7 dispatchable)"  "false" "a missing plan blocks dispatch"
