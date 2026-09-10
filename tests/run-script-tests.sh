@@ -2286,6 +2286,21 @@ assert_equals "$ec" "2" "missing RESULT_FILE → exit 2"
 ec="$(run_capture_ec env RESULT_FILE=/no/such/file bash "$CLASSIFY_FAIL")"
 assert_equals "$ec" "64" "unreadable RESULT_FILE → exit 64"
 
+section "gh:implement — points the operator at parallel enrichment"
+
+# Enrichment is the throughput bottleneck, not the pipeline (5 of 30 dispatchable on
+# BI-ArchiveUploader, 2026-09-09), so the dispatch command must hand the operator the
+# next action rather than leaving them watching a 10-25 minute unattended run. The
+# rule itself lives in the @-included partial; this pins the cross-reference so the
+# two cannot drift apart silently.
+PARALLEL_PARTIAL="$ROOT/partials/subagent-driven-default.md"
+
+assert_equals "$(grep -c 'While the pipeline runs, enrich the next wave' "$PARALLEL_PARTIAL" || true)" "1" \
+  "the partial carries the parallel-enrichment section"
+
+assert_equals "$(grep -c 'subagent-driven-default.md' "$ROOT/commands/gh/implement.md" || true)" "1" \
+  "gh:implement cross-references the partial that carries the rule"
+
 section "gh:implement — label application cannot deadlock the dispatch (#301)"
 
 # `gh issue edit` is atomic across `--add-label` flags: if ANY named label does not
