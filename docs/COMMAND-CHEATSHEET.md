@@ -109,6 +109,12 @@ pipeline already posts.
 
 ## What "ship rate" means
 
+> Three notes in this page are **time-bound** and named as such: the `/ai-stats`
+> divergence (#319), the parked-issue remedy (#321), and the review-held row (#322).
+> Each of those issues carries an acceptance criterion to delete its note from here
+> when it lands, so a fixed bug does not leave wrong advice behind.
+
+
 **It is three different numbers, and a report shows all three.** Reading the wrong
 one is the usual way this gets misquoted.
 
@@ -191,6 +197,13 @@ Each dispatch leaves a `## ai-implement run` comment. What to look at:
 | **Plan** | `enriched` / `none` / `unknown` — `none` means the run was guessing |
 | **Cost** | the per-attempt figure `/ai-stats` sums |
 
+> **On re-triggering a PR's checks:** an empty commit is the right tool because it
+> fires a `push` event, which the required workflows subscribe to. Close/reopen is not
+> the alternative — it only churns the timeline and re-fires `issues: labeled`
+> handlers. It is **not** the reason a closing reference goes missing: GitHub never
+> forms one for an `app/github-actions`-authored PR in the first place (see the ship
+> rate section), so there is nothing for a reopen to break.
+
 A run killed on **wall clock** truncates the agent's output stream, so there is no
 terminal result event to classify. Cross-check a `success` against the job
 conclusions when the duration is suspiciously close to the cap: the work is often
@@ -207,9 +220,9 @@ complete and pushed, with nothing pointing at the PR.
 | Run burns its whole budget, no PR | dispatched with no plan → `UNPLANNED_MAX_TURNS`, spent rediscovering the decomposition | enrich, then redispatch |
 | Big plan, tiny budget | task headings are `## Task N`, not `### Task N` | fix the heading level; `/ai-funnel` names the affected issues |
 | `ai:review-blocked` | the review returned `request_changes` | read the verdict; if it faults the *plan*, correct the spec and re-enrich rather than redispatching |
-| `🧊 parked` after N runs | the attempt cap | re-enrich; note [#321](https://github.com/freaxnx01/agent-workflow/issues/321) — the cap cannot yet be told you did |
+| `🧊 parked` after N runs | the attempt cap | re-enrich, **then** raise `max-attempts` by one in the consumer's `agent.yml` — the cap counts append-only run reports and cannot yet be told you re-enriched ([#321](https://github.com/freaxnx01/agent-workflow/issues/321)). Comment the bump with a revert-when-#321-lands note; it weakens the guard repo-wide |
 | Review "held", PR exists | the PR was opened ready-for-review, not draft | review by hand; [#322](https://github.com/freaxnx01/agent-workflow/issues/322) |
-| PR has no CI | agent-authored PRs don't start workflows | push an **empty commit** — not close/reopen, which breaks the closing reference |
+| PR has no CI | agent-authored PRs don't start workflows | push an **empty commit** — it fires `push`, which the required workflows do listen to |
 
 ---
 
