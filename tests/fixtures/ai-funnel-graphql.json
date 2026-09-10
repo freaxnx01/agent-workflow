@@ -1,0 +1,370 @@
+{
+  "data": {
+    "repository": {
+      "issues": {
+        "pageInfo": {
+          "hasNextPage": true,
+          "endCursor": "Y3Vyc29yOjY="
+        },
+        "nodes": [
+          {
+            "number": 101,
+            "title": "shipped by an agent PR — no closing reference is ever formed",
+            "state": "CLOSED",
+            "createdAt": "2026-09-01T09:00:00Z",
+            "closedAt": "2026-09-01T12:00:00Z",
+            "body": "Something is broken.\n\n## Implementation Plan\n\n### Task 1 — first\n\n### Task 2 — second\n\n### Task 3 — third\n",
+            "milestone": {
+              "title": "general-september-2026"
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "ai-implement"
+                },
+                {
+                  "name": "bug"
+                }
+              ]
+            },
+            "closedByPullRequestsReferences": {
+              "nodes": []
+            },
+            "timelineItems": {
+              "nodes": [
+                {
+                  "createdAt": "2026-09-01T10:00:00Z",
+                  "label": {
+                    "name": "ai-implement"
+                  }
+                },
+                {
+                  "closer": {
+                    "__typename": "PullRequest",
+                    "number": 901,
+                    "merged": true
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "number": 102,
+            "title": "both sources name the same PR — must be counted once",
+            "state": "CLOSED",
+            "createdAt": "2026-09-01T09:00:00Z",
+            "closedAt": "2026-09-01T12:00:00Z",
+            "body": "## Implementation Plan\n\n### Task 1 — only one\n",
+            "milestone": {
+              "title": "general-september-2026"
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "ai-implement"
+                }
+              ]
+            },
+            "closedByPullRequestsReferences": {
+              "nodes": [
+                {
+                  "number": 902,
+                  "merged": true
+                }
+              ]
+            },
+            "timelineItems": {
+              "nodes": [
+                {
+                  "createdAt": "2026-09-01T10:00:00Z",
+                  "label": {
+                    "name": "ai-implement"
+                  }
+                },
+                {
+                  "closer": {
+                    "__typename": "PullRequest",
+                    "number": 902,
+                    "merged": true
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "number": 103,
+            "title": "closed by a commit, not a PR — not shipped",
+            "state": "CLOSED",
+            "createdAt": "2026-09-01T09:00:00Z",
+            "closedAt": "2026-09-01T12:00:00Z",
+            "body": "No plan here.\n",
+            "milestone": {
+              "title": "general-september-2026"
+            },
+            "labels": {
+              "nodes": []
+            },
+            "closedByPullRequestsReferences": {
+              "nodes": []
+            },
+            "timelineItems": {
+              "nodes": [
+                {
+                  "closer": {
+                    "__typename": "Commit"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "number": 104,
+            "title": "closed with no closer at all — not shipped",
+            "state": "CLOSED",
+            "createdAt": "2026-09-01T09:00:00Z",
+            "closedAt": "2026-09-01T12:00:00Z",
+            "body": "Closed by hand.\n",
+            "milestone": {
+              "title": "general-september-2026"
+            },
+            "labels": {
+              "nodes": []
+            },
+            "closedByPullRequestsReferences": {
+              "nodes": []
+            },
+            "timelineItems": {
+              "nodes": [
+                {
+                  "closer": null
+                }
+              ]
+            }
+          },
+          {
+            "number": 105,
+            "title": "an unmerged PR closed it — not shipped",
+            "state": "CLOSED",
+            "createdAt": "2026-09-01T09:00:00Z",
+            "closedAt": "2026-09-01T12:00:00Z",
+            "body": "## Implementation Plan\n\n### Task 1 — a\n\n### Task 2 — b\n",
+            "milestone": {
+              "title": "general-september-2026"
+            },
+            "labels": {
+              "nodes": []
+            },
+            "closedByPullRequestsReferences": {
+              "nodes": [
+                {
+                  "number": 905,
+                  "merged": false
+                }
+              ]
+            },
+            "timelineItems": {
+              "nodes": [
+                {
+                  "closer": {
+                    "__typename": "PullRequest",
+                    "number": 905,
+                    "merged": false
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "number": 106,
+            "title": "task headings at the wrong level — classify-turns.sh scores zero",
+            "state": "OPEN",
+            "createdAt": "2026-09-05T09:00:00Z",
+            "closedAt": null,
+            "body": "## Implementation Plan\n\n## Task 1 — one\n\n## Task 2 — two\n\n# Task 3 — three\n",
+            "milestone": {
+              "title": "general-september-2026"
+            },
+            "labels": {
+              "nodes": []
+            },
+            "closedByPullRequestsReferences": {
+              "nodes": []
+            },
+            "timelineItems": {
+              "nodes": []
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+{
+  "data": {
+    "repository": {
+      "issues": {
+        "pageInfo": {
+          "hasNextPage": false,
+          "endCursor": null
+        },
+        "nodes": [
+          {
+            "number": 107,
+            "title": "two spaces after the hashes — must NOT count as planned",
+            "state": "OPEN",
+            "createdAt": "2026-09-05T09:00:00Z",
+            "closedAt": null,
+            "body": "##  Implementation Plan\n\n### Task 1 — one\n\n### Task 2 — two\n",
+            "milestone": {
+              "title": "general-september-2026"
+            },
+            "labels": {
+              "nodes": []
+            },
+            "closedByPullRequestsReferences": {
+              "nodes": []
+            },
+            "timelineItems": {
+              "nodes": []
+            }
+          },
+          {
+            "number": 108,
+            "title": "lowercase heading — grep -qi accepts it, so this must too",
+            "state": "OPEN",
+            "createdAt": "2026-09-05T09:00:00Z",
+            "closedAt": null,
+            "body": "## implementation plan\n\n### Task 1 — one\n\n### Task 2 — two\n",
+            "milestone": {
+              "title": "general-september-2026"
+            },
+            "labels": {
+              "nodes": []
+            },
+            "closedByPullRequestsReferences": {
+              "nodes": []
+            },
+            "timelineItems": {
+              "nodes": []
+            }
+          },
+          {
+            "number": 109,
+            "title": "the phrase appears mid-line only — not a heading",
+            "state": "OPEN",
+            "createdAt": "2026-09-05T09:00:00Z",
+            "closedAt": null,
+            "body": "We should write an ## Implementation Plan for this at some point.\n",
+            "milestone": {
+              "title": "general-september-2026"
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "needs-enrichment"
+                }
+              ]
+            },
+            "closedByPullRequestsReferences": {
+              "nodes": []
+            },
+            "timelineItems": {
+              "nodes": []
+            }
+          },
+          {
+            "number": 110,
+            "title": "re-dispatched, and other labels must not be counted as dispatches",
+            "state": "OPEN",
+            "createdAt": "2026-09-05T09:00:00Z",
+            "closedAt": null,
+            "body": "## Implementation Plan\n\n### Task 1 — a\n\n### Task 2 — b\n\n### Task 3 — c\n\n### Task 4 — d\n",
+            "milestone": {
+              "title": "general-september-2026"
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "ai-implement"
+                }
+              ]
+            },
+            "closedByPullRequestsReferences": {
+              "nodes": []
+            },
+            "timelineItems": {
+              "nodes": [
+                {
+                  "createdAt": "2026-09-05T10:00:00Z",
+                  "label": {
+                    "name": "bug"
+                  }
+                },
+                {
+                  "createdAt": "2026-09-05T11:00:00Z",
+                  "label": {
+                    "name": "ai-implement"
+                  }
+                },
+                {
+                  "createdAt": "2026-09-05T12:00:00Z",
+                  "label": {
+                    "name": "ai-pre-preview"
+                  }
+                },
+                {
+                  "createdAt": "2026-09-05T13:00:00Z",
+                  "label": {
+                    "name": "ai-implement"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "number": 111,
+            "title": "plan in the body but the label was never cleared",
+            "state": "OPEN",
+            "createdAt": "2026-09-05T09:00:00Z",
+            "closedAt": null,
+            "body": "## Implementation Plan\n\n### Task 1 — a\n\n### Task 2 — b\n",
+            "milestone": {
+              "title": "general-september-2026"
+            },
+            "labels": {
+              "nodes": [
+                {
+                  "name": "needs-enrichment"
+                }
+              ]
+            },
+            "closedByPullRequestsReferences": {
+              "nodes": []
+            },
+            "timelineItems": {
+              "nodes": []
+            }
+          },
+          {
+            "number": 112,
+            "title": "null body and no milestone must not throw",
+            "state": "OPEN",
+            "createdAt": "2026-09-05T09:00:00Z",
+            "closedAt": null,
+            "body": null,
+            "milestone": null,
+            "labels": {
+              "nodes": []
+            },
+            "closedByPullRequestsReferences": {
+              "nodes": []
+            },
+            "timelineItems": {
+              "nodes": []
+            }
+          }
+        ]
+      }
+    }
+  }
+}

@@ -140,7 +140,11 @@ shape_program() {
     closed_at: $i.closedAt,
     milestone: ($i.milestone.title // ""),
     labels: $labels,
-    has_plan: ($body | test("(?im)^## +Implementation Plan")),
+    # Exactly `grep -qi '^## Implementation Plan'` — classify-turns.sh:106 and
+    # commands/gh/implement.md's precondition 5 both use that, with ONE space.
+    # A `+` here would call a body with two spaces planned while the command
+    # that has to accept it prints NO PLAN.
+    has_plan: ($body | test("(?im)^## Implementation Plan")),
     tasks: ($body | [match("(?m)^### Task [0-9]+"; "g")] | length),
     loose_tasks: ($body | [match("(?m)^#{1,2} Task [0-9]+"; "g")] | length),
     dispatches: [ $i.timelineItems.nodes[]
@@ -188,7 +192,12 @@ map(
   | (has("needs-enrichment") or has("❓ to-be-defined")) as $needs_enrichment
   | (has("ai-implement")) as $queued
   | ([ (if $parked then "parked" else empty end),
-       (if $needs_enrichment then "needs-enrichment" else empty end),
+       # A body that already carries a plan but still wears the label is a
+       # one-second fix (remove the label), not twenty minutes of enrichment.
+       # Saying so is the whole job of this table.
+       (if $needs_enrichment and .has_plan then "stale needs-enrichment label (plan is already in the body)"
+        elif $needs_enrichment            then "needs-enrichment"
+        else empty end),
        (if $queued then "already dispatched" else empty end),
        (if .has_plan then empty else "no ## Implementation Plan" end) ]) as $blockers
   | $i + {
@@ -236,6 +245,7 @@ render_report() {
     | ($open | map(select(.parked | not)))                   as $live
     | ($live | map(select(.needs_enrichment)))               as $blocked
     | ($live | map(select(.has_plan)))                       as $planned
+    | ($live | map(select(.needs_enrichment and .has_plan))) as $stale_label
     | ($all  | map(select(.dispatchable)))                   as $ready
     | ($all  | map(select(.attempts > 0)))                   as $dispatched
     | ($all  | map(select(.attempts > 1)))                   as $redispatched
@@ -270,6 +280,9 @@ render_report() {
     , "| Shipped by hand | \($shipped_by_hand | length) | never carried `ai-implement` |"
     , ""
     , "**Enrichment coverage:** \(pct(($planned | length); ($live | length))) of live issues carry an `## Implementation Plan`."
+    , (if ($stale_label | length) == 0 then empty else
+        "**\($stale_label | length) of those also still carry `needs-enrichment`** — the plan is in the body, so the label is stale and removing it is the whole fix. They are counted in both rows above, which is why the two do not sum to the live total."
+       end)
     , (if ($live | length) == 0 then empty
        elif ($ready | length) == 0 then "**Queue depth: 0** — nothing can be dispatched without enriching something first."
        else "**Queue depth: \($ready | length)** issue(s) can be dispatched right now." end)
