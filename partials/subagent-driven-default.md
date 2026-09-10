@@ -30,3 +30,26 @@ execution regardless of the repo's wiring.
 
 Per Superpowers' own instruction-priority rules, this user-level instruction
 overrides the plugin's default skill selection.
+
+## While the pipeline runs, enrich the next wave
+
+A dispatched `ai-implement` run is unattended for roughly 10–25 minutes (implement
+plus review). **Do not spend that window watching it.** Arm a monitor so the outcome
+arrives as a notification, then immediately start enriching the next candidates —
+spec, plan, docs PR, issue body — so the queue is full the moment the current wave
+lands.
+
+Enrichment is the throughput bottleneck, not the pipeline. A backlog that has been
+triaged but not enriched will have very few dispatchable issues: on
+`anim-bossinfo-ch/BI-ArchiveUploader` on 2026-09-09 it was **5 of 30** open
+milestone issues, every other one carrying `needs-enrichment`. Sequential
+"dispatch → watch → report → enrich" wastes the whole run window, every run.
+
+Two practical rules that follow:
+
+- **Batch the specs and plans into one docs PR.** Many repos run their full
+  build/test/lint matrix on every PR, docs-only ones included, so one PR per issue
+  burns a full CI cycle each for no added review value.
+- **Pick the next wave for no file collision with what is already running.** Two
+  concurrent runs editing the same file produce a conflict that reads like a pipeline
+  failure but is a batch-composition mistake.
