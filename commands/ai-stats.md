@@ -42,11 +42,23 @@ writes to GitHub:
 - **Outcome, agent, model, turns, cost** — parsed out of the `## ai-implement run`
   comments that `scripts/post-run-report.sh` posts on the issue.
 
-- **Shipped** — the issue was closed by a pull request that was merged.
+- **Shipped** — the issue was closed by a pull request that was merged. Read from
+  **two** sources and unioned, because neither alone is complete:
 
-That means an issue closed by hand, or by a PR that was never linked, reads as *not
-shipped* even if the work landed. Say so when the shipped count looks low rather than
-treating it as a pipeline failure.
+  - `ClosedEvent.closer` — catches a PR authored by `app/github-actions`, for which
+    GitHub forms **no closing reference** at all. That is every PR this pipeline opens,
+    so on a pipeline-driven repo this is the source that finds most of them.
+  - `closedByPullRequestsReferences` — catches an issue closed by hand that a merged PR
+    still points at.
+
+  The `ClosedEvent` selection is queried separately with `last:`, not folded into the
+  label-event window: a close is late in an issue's timeline, so sharing one `first:100`
+  page with label events would let a heavily relabelled issue push the closer off the
+  page.
+
+That means an issue closed by hand with no merged PR, or by a PR that closed nothing,
+reads as *not shipped* even if the work landed. Say so when the shipped count looks low
+rather than treating it as a pipeline failure.
 
 ## Enrichment correlation
 

@@ -56,6 +56,56 @@ grade_of() {
   jq -r --argjson n "$2" '.[] | select(.issue == $n) | .grade' <<< "$1"
 }
 
+# --- shaping (the GraphQL half) ---------------------------------------------
+#
+# The grading tests below start from already-shaped records, so they never run
+# shape_program -- and shipped-detection lives there. A record whose
+# shipped_prs is already populated grades non-F without exercising the union at
+# all, so this section drives shape_program directly from a raw-GraphQL fixture.
+# The BASH_SOURCE guard in ai-stats.sh makes sourcing safe: main() does not run.
+
+section "shaping — shipped detection (#319)"
+
+# shellcheck source=../scripts/lib/ai-stats.sh disable=SC1091
+source "$SCRIPT"
+
+GRAPHQL_FIXTURE="$ROOT/tests/fixtures/ai-stats-graphql.json"
+SHAPED="$(jq -rs --arg repo "acme/alpha" "$(shape_program)" "$GRAPHQL_FIXTURE" | jq -s '.')"
+
+shipped_of() {
+  jq -r --argjson n "$1" '.[] | select(.issue == $n) | .shipped_prs | tostring' <<< "$SHAPED"
+}
+
+assert_eq "$(shipped_of 201)" "[901]" \
+  "a merged agent PR is found via ClosedEvent.closer with an empty reference list"
+assert_eq "$(shipped_of 202)" "[902]" \
+  "a PR named by BOTH sources is counted once, not twice"
+assert_eq "$(shipped_of 203)" "[]" \
+  "closed by hand with a null closer is not shipped"
+assert_eq "$(shipped_of 204)" "[]" \
+  "a ClosedEvent whose closer is a Commit is not shipped"
+assert_eq "$(shipped_of 205)" "[]" \
+  "an unmerged PR is not shipped, from either source"
+assert_eq "$(shipped_of 206)" "[906]" \
+  "the reference list still works on its own, for a human-authored PR"
+
+assert_eq "$(jq -r 'length | tostring' <<< "$SHAPED")" "6" \
+  "an issue that was never dispatched produces no record, however it closed"
+assert_eq "$(jq -r '[.[] | select(.issue == 207)] | length | tostring' <<< "$SHAPED")" "0" \
+  "issue 207 shipped but never carried ai-implement, so it is out of scope"
+
+# The grade gates on shipped, so the union has to reach it end to end. This is
+# what #319 actually cost: issues that shipped cleanly were reading F.
+SHAPED_FILE="$(mktemp)"
+trap 'rm -f "$SHAPED_FILE"' EXIT
+printf '%s' "$SHAPED" > "$SHAPED_FILE"
+SHAPED_GRADED="$(bash "$SCRIPT" --from "$SHAPED_FILE" --json)"
+
+assert_eq "$(grade_of "$SHAPED_GRADED" 201)" "A" \
+  "an agent-shipped issue grades A, not F — the defect #319 describes"
+assert_eq "$(grade_of "$SHAPED_GRADED" 203)" "F" \
+  "a genuinely unshipped issue still grades F — the guard is not weakened"
+
 # --- grading ----------------------------------------------------------------
 
 section "grading"
