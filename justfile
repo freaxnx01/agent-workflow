@@ -22,6 +22,7 @@ test:
     bash tests/run-ai-stats-tests.sh
     bash tests/run-ai-funnel-tests.sh
     bash tests/run-handoff-index-tests.sh
+    bash tests/run-handoff-resume-tests.sh
 
 # Layer-2: run the *.test.yml workflows under act (needs `act` + Docker; Linux only)
 test-act:

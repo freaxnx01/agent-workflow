@@ -265,6 +265,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **hooks:** `handoff-resume.sh` read only the pre-slug `.claude/handoff.md`, so
+  the `SessionStart(clear)` context injection had been blind to every
+  branch-keyed `.claude/handoff-<branch>.md` written since handoffs moved to
+  branch slugs — `/clear` silently injected nothing. It now resolves the cleared
+  project's branch slug (detached HEAD included), injects that branch's handoff,
+  keeps the legacy name as a fallback, names the file it read, and points at
+  `.claude/handoffs.md` when one is present. A sibling worktree's handoff is
+  still never injected — that is the whole reason handoffs are branch-keyed.
+  First test coverage for the hook: `tests/run-handoff-resume-tests.sh`
+  (16 assertions).
+
 - **enrich:** the `enrichment-ongoing` release no longer swallows its own
   failure with `2>/dev/null || true` — that pattern is for labels a repo may
   not define, and hiding a failed release leaves the lock held for the full
