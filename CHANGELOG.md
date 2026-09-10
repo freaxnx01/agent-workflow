@@ -27,6 +27,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **commands:** new `/ai-funnel` — backlog readiness for the `ai-implement`
+  pipeline, the question that comes before `/ai-stats`'s. It reports how many
+  issues could be dispatched **at all**: open → live → carrying a plan → ready,
+  with everything blocking the rest named per issue. "Ready" applies
+  `/gh:implement`'s own preconditions, so a counted issue is one that command
+  will accept. Backed by `scripts/lib/ai-funnel.sh` and 54 fixture assertions in
+  `tests/run-ai-funnel-tests.sh`.
+
+  A repo can have a flawless ship rate and still be starved, and no
+  dispatch-outcome report can see it — an issue that was never dispatched leaves
+  no dispatch record. On the milestone this was built against, 35 of 39 live
+  issues were blocked on enrichment while the ship rate read 67%.
+
+  It also reads **shipped** from `ClosedEvent.closer` rather than
+  `closedByPullRequestsReferences` alone: GitHub forms no closing reference for a
+  PR authored by `app/github-actions`, which is every PR this pipeline opens, so
+  the reference list misses most agent-shipped issues. `/ai-stats` has the same
+  bug and is fixed separately (#319). And it warns when a plan's task headings
+  are at the wrong level (`## Task N` rather than `### Task N`), which
+  `classify-turns.sh` scores zero — silently landing a large plan on the 50-turn
+  floor (#297).
+
 - **partials:** new `email-style.md` — mail drafts lead with a `TL;DR:` block
   stating the actual conclusion, then stay short: the mail carries the conclusion
   and the asks, not the reasoning chain that produced them. Detail is offered on
