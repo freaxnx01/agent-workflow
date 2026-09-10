@@ -46,12 +46,15 @@ Reasoning and caveats are in **ADR-012**; these are the follow-ups it names.
       has written since. Options: resolve the current branch's slug in the hook, or
       inject the derived `.claude/handoffs.md` index instead (the hook has `jq` and
       the cwd, and the index is regenerated on every `/handoff`).
-- [ ] Stale committed handoffs on `main`, surfaced by the first index run:
-      `.claude/handoff-worktree-enrich.md` (2026-08-01, #193) and
-      `.claude/handoff-issue-198-199-forge-agnostic-commands.md` (2026-07-31, both
-      issues shipped), plus the pre-slug `.claude/handoff.md` (2026-07-27, points at
-      PR #187). `/pickup` is supposed to delete a handoff once its phase completes;
-      these three never were. Verify each is really done, then delete.
+- [x] Stale committed handoffs on `main`, surfaced by the first index run — all
+      three verified done and deleted 2026-09-10: `handoff-worktree-enrich.md`
+      (#193 closed 2026-08-04), `handoff-issue-198-199-forge-agnostic-commands.md`
+      (its plan shipped — `scripts/lib/detect-forge.sh` and the command merge are
+      in; issues #198/#199 stay **open** for the separate skills-layer refactor),
+      and the pre-slug `.claude/handoff.md` (PR #187 merged, and its three parked
+      follow-ups all resolved since). The real lesson is upstream: `/pickup` is
+      supposed to delete a handoff when its phase completes, and three in a row
+      were left behind.
 - [ ] No CI job runs the Layer-1 suite. `just test` drives four
       `tests/run-*-tests.sh` entry points locally, but the only workflows are
       `lint` (pre-commit) and `gate-selftest` — a broken fixture test would go
