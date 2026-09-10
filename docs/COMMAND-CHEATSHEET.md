@@ -114,7 +114,6 @@ pipeline already posts.
 > Each of those issues carries an acceptance criterion to delete its note from here
 > when it lands, so a fixed bug does not leave wrong advice behind.
 
-
 **It is three different numbers, and a report shows all three.** Reading the wrong
 one is the usual way this gets misquoted.
 
