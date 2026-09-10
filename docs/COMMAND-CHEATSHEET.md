@@ -109,10 +109,11 @@ pipeline already posts.
 
 ## What "ship rate" means
 
-> Three notes in this page are **time-bound** and named as such: the `/ai-stats`
-> divergence (#319), the parked-issue remedy (#321), and the review-held row (#322).
-> Each of those issues carries an acceptance criterion to delete its note from here
-> when it lands, so a fixed bug does not leave wrong advice behind.
+> Two notes in this page are **time-bound** and named as such: the parked-issue remedy
+> (#321) and the review-held row (#322). Each of those issues carries an acceptance
+> criterion to delete its note from here when it lands, so a fixed bug does not leave
+> wrong advice behind. (#319's divergence note was removed when it landed — that is the
+> mechanism working.)
 
 **It is three different numbers, and a report shows all three.** Reading the wrong
 one is the usual way this gets misquoted.
@@ -153,26 +154,22 @@ automatically bad news:
   your own GitHub App rather than `app/github-actions`, and GitHub forms the
   reference normally.
 
-### Known divergence — the two commands disagree today
+### Both commands read shipped the same way
 
-They compute the same measure and still return different answers, because
-`/ai-stats` reads shipped from `closedByPullRequestsReferences` alone. **GitHub
-forms no closing reference for a PR authored by `app/github-actions`** — which is
-every PR this pipeline opens. `/ai-funnel` reads `ClosedEvent.closer` instead and
-sees them.
+`ClosedEvent.closer` unioned with `closedByPullRequestsReferences` — the first catches a
+PR authored by `app/github-actions` (every PR this pipeline opens), for which GitHub
+forms **no closing reference**; the second catches an issue closed by hand that a merged
+PR still points at.
 
-On the repo this was measured against, three of four shipped issues were invisible
-to the reference list. So on a pipeline-driven repo, **trust `/ai-funnel`'s count**
-until [#319](https://github.com/freaxnx01/agent-workflow/issues/319) lands; the
-two agree after that.
+If you are looking at a report generated before #319 landed, its shipped count is **too
+low** and its grades are too harsh — `shipped` gates the grade
+(`if $shipped | not then "F"`), so issues that shipped cleanly on the first cheap attempt
+read `F`. On the repo this was measured against, the fix moved the ship rate from 36% to
+79% and the grades from A3/B2/F9 to A5/B6/F3, without a single run changing.
 
-Setting `PIPELINE_APP_ID` (above) sidesteps it for *future* PRs by making the
-reference exist in the first place — it cannot repair history.
-
-This matters beyond one row: in `/ai-stats`, `shipped` **gates the grade** —
-`if $shipped | not then "F"`. An issue that shipped cleanly on the first cheap
-attempt currently grades **F** if its closing reference is missing. Read the grade
-table with that in mind.
+Setting `PIPELINE_APP_ID` / `PIPELINE_APP_PRIVATE_KEY` is still worth doing: it makes the
+PR author your own App, so GitHub forms the closing reference and the issue **auto-closes
+on merge** rather than needing a hand-close.
 
 ### The rate you should be suspicious of
 

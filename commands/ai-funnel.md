@@ -58,9 +58,9 @@ Nothing extra is tracked. Labels, the issue body, and the timeline:
   `BI-ArchiveUploader`, #263, #328 and #258 all shipped via a merged agent PR and all
   three read as an empty `closedByPullRequestsReferences`. `closer` sees them.
 
-  This is worth knowing when comparing against `/ai-stats`, which reads the reference
-  list alone and therefore **undercounts shipped** on any repo whose PRs the pipeline
-  opens.
+  `/ai-stats` reads the same union (it did not, until #319 — it read the reference list
+  alone and undercounted shipped on exactly the repos it exists to measure), so the two
+  commands agree on what shipped.
 
 - **Shipped by the pipeline vs. by hand** — reported separately. An issue can ship
   without ever being dispatched, so folding the two together produces a ship rate

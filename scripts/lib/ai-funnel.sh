@@ -96,6 +96,12 @@ current_repo() {
 # closedByPullRequestsReferences. `ClosedEvent.closer` sees all three. Both are
 # collected and unioned: closer catches agent PRs, the reference list catches an
 # issue closed by hand that a merged PR still points at.
+#
+# The ClosedEvent selection is aliased and queried with `last:` rather than folded
+# into the LABELED_EVENT window. A ClosedEvent is late in an issue's timeline, so
+# sharing a `first:100` page with label events would let a heavily relabelled issue
+# push the closer off the page -- silently reintroducing the very undercount this
+# exists to fix.
 issue_query() {
   cat <<EOF
 query(\$endCursor:String){
@@ -106,12 +112,8 @@ query(\$endCursor:String){
         milestone{title}
         labels(first:40){nodes{name}}
         closedByPullRequestsReferences(first:10, includeClosedPrs:true){nodes{number merged}}
-        timelineItems(first:100, itemTypes:[LABELED_EVENT, CLOSED_EVENT]){
-          nodes{
-            ... on LabeledEvent{createdAt label{name}}
-            ... on ClosedEvent{closer{__typename ... on PullRequest{number merged}}}
-          }
-        }
+        timelineItems(first:100, itemTypes:[LABELED_EVENT]){nodes{... on LabeledEvent{createdAt label{name}}}}
+        closedEvents: timelineItems(last:10, itemTypes:[CLOSED_EVENT]){nodes{... on ClosedEvent{closer{__typename ... on PullRequest{number merged}}}}}
       }
     }
   }
@@ -150,10 +152,9 @@ shape_program() {
     dispatches: [ $i.timelineItems.nodes[]
                   | select(.label.name? == "ai-implement")
                   | .createdAt ],
-    shipped_prs: ( [ $i.timelineItems.nodes[]
-                     | select(has("closer") and .closer != null)
+    shipped_prs: ( [ $i.closedEvents.nodes[]
                      | .closer
-                     | select(.__typename == "PullRequest" and .merged)
+                     | select(. != null and .__typename == "PullRequest" and .merged)
                      | .number ]
                  + [ $i.closedByPullRequestsReferences.nodes[]
                      | select(.merged) | .number ]

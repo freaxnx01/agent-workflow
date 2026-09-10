@@ -9,7 +9,20 @@
 #   2. `## ai-implement run` issue comments          → outcome, agent, model,
 #      turns and cost per attempt (rendered by scripts/post-run-report.sh)
 #
-# An issue "shipped" when a pull request that closed it was merged.
+# An issue "shipped" when a pull request that closed it was merged. That is read
+# from TWO sources and unioned, because neither alone is complete:
+#
+#   ClosedEvent.closer                 catches a PR authored by app/github-actions,
+#                                      for which GitHub forms NO closing reference —
+#                                      i.e. every PR this pipeline opens (#319).
+#   closedByPullRequestsReferences     catches an issue closed by hand that a merged
+#                                      PR still points at.
+#
+# The ClosedEvent selection is aliased and queried separately with `last:`, not
+# folded into the LABELED_EVENT window: a ClosedEvent is late in an issue's
+# timeline, so sharing a `first:100` page with label events would let a heavily
+# relabelled issue push the closer off the page and silently reintroduce the
+# undercount.
 #
 # Usage:
 #   ai-stats.sh                      # current repo (from git remote)
@@ -138,6 +151,7 @@ query(\$endCursor:String){
       pageInfo{hasNextPage endCursor}
       nodes{ number title state
         timelineItems(first:100, itemTypes:[LABELED_EVENT]){nodes{... on LabeledEvent{createdAt label{name}}}}
+        closedEvents: timelineItems(last:10, itemTypes:[CLOSED_EVENT]){nodes{... on ClosedEvent{closer{__typename ... on PullRequest{number merged}}}}}
         closedByPullRequestsReferences(first:10, includeClosedPrs:true){nodes{number merged}}
         comments(first:60){nodes{createdAt body}}
       }
@@ -159,8 +173,13 @@ shape_program() {
     dispatches: [ $i.timelineItems.nodes[]
                   | select(.label.name == "ai-implement")
                   | .createdAt ],
-    shipped_prs: [ $i.closedByPullRequestsReferences.nodes[]
-                   | select(.merged) | .number ],
+    shipped_prs: ( [ $i.closedEvents.nodes[]
+                     | .closer
+                     | select(. != null and .__typename == "PullRequest" and .merged)
+                     | .number ]
+                 + [ $i.closedByPullRequestsReferences.nodes[]
+                     | select(.merged) | .number ]
+                 | unique ),
     runs: [ $i.comments.nodes[]
             | select(.body | startswith("## ai-implement run"))
             | { at: .createdAt,
