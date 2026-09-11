@@ -282,6 +282,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **/new:** milestone creation no longer normalizes `due_on` to midday UTC. The
+  stated reason — stopping a viewer's timezone rolling the date back a day — does
+  not hold: GitHub treats `due_on` as date-only and stores `T00:00:00Z` whatever
+  you send, on create and on PATCH alike (verified against `freaxnx01/bridge`).
+  The command now sends midnight, documents the normalization so the trick is not
+  re-derived, and drops the matching "deliberate asymmetry" note from the Forgejo
+  section, whose own stored value stays explicitly unverified.
+
 - **ai-stats:** `shipped` was read from `closedByPullRequestsReferences` alone, and
   GitHub forms **no closing reference** for a PR authored by `app/github-actions` —
   which is every PR this pipeline opens. So on exactly the repos `/ai-stats` exists to

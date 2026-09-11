@@ -59,12 +59,21 @@ gh issue view <number> --json number,title,url,labels,milestone
 **1 — My notes name a milestone.** Pass it as `-m "<name>"`. If it doesn't exist
 yet, **ask** me before creating it (and ask for a due date); never create one
 silently. If I give no due date, omit `-f due_on=…` entirely — never pass an empty
-value. `gh milestone` doesn't exist, so create it with `gh api`, normalizing the due
-date to **midday UTC** so a viewer's timezone can't roll it back a day:
+value. `gh milestone` doesn't exist, so create it with `gh api`:
 
 ```bash
-gh api "repos/$repo/milestones" -f title="<name>" -f due_on="<YYYY-MM-DD>T12:00:00Z"
+gh api "repos/$repo/milestones" -f title="<name>" -f due_on="<YYYY-MM-DD>T00:00:00Z"
 ```
+
+**Don't normalize the time to midday.** This command used to send `T12:00:00Z`
+"so a viewer's timezone can't roll it back a day" — that does not work. GitHub
+treats `due_on` as date-only and **normalizes it to `T00:00:00Z` whatever you
+send**, on create *and* on PATCH. Verified 2026-09-10 against `freaxnx01/bridge`:
+posted `2026-09-30T12:00:00Z`, read back `2026-09-30T00:00:00Z`; a follow-up
+PATCH with midday read back midnight again. The timezone concern is real — a
+viewer west of UTC does see the previous day — but it is a GitHub display
+property the API gives no way to work around, so send midnight (what gets stored
+regardless) and don't re-derive the midday trick believing it buys something.
 
 If my notes name no milestone, read the open ones — **sorted locally**, see *The
 sort rule* below — and take case 2, 3, or 4 by how many came back:
@@ -86,7 +95,7 @@ due_day=$(( last_day < 30 ? last_day : 30 ))
 
 gh api "repos/$repo/milestones" \
   -f title="general-$month-$year" \
-  -f due_on="$year-$(date +%m)-${due_day}T12:00:00Z"
+  -f due_on="$year-$(date +%m)-${due_day}T00:00:00Z"
 ```
 
 - **Confirm before creating** — show me the name and the due date and wait for a
@@ -227,8 +236,11 @@ tea milestones create --login git-home \
 ```
 
 `--deadline` takes a bare `YYYY-MM-DD` — `tea` parses loose date strings itself, so
-there is no midday-UTC normalization to do here. That asymmetry with the GitHub
-side is deliberate, not an omission.
+there is no time component to pass here. Both sides now come out the same: the
+GitHub section sends midnight because GitHub stores midnight regardless (see
+there), so this is no longer the asymmetry it was once documented as. What
+Forgejo itself stores for a `--deadline` is **unverified** — nobody has read one
+back — so don't assume it matches GitHub until someone checks.
 
 **3 — Exactly one open milestone.** Assign it silently, and let the read-back
 report it.
