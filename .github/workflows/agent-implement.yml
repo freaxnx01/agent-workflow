@@ -459,6 +459,23 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/.git/info"
           printf '%s\n' '.claude-pipeline/' >> "$GITHUB_WORKSPACE/.git/info/exclude"
 
+      - name: Configure git identity for the agent's commits
+        # Without this the runner has no committer identity, so the agent's very
+        # first `git commit` dies with:
+        #   Author identity unknown ... fatal: empty ident name (for <runner@...>)
+        # The agent then spends its whole turn budget trying to work around it
+        # and the run ends `error_max_turns` with no PR — reported only as the
+        # generic "run completed but no PR was opened", which looks like a weak
+        # model or a bad plan rather than missing config. Observed across five
+        # consecutive runs in one consumer repo before the log was read.
+        #
+        # github-actions[bot]'s noreply address is the same identity GitHub's own
+        # first-party actions commit under, so the commits attribute to the run
+        # rather than to a person who did not make them.
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
       - name: Ensure toolchain
         run: bash .claude-pipeline/scripts/ensure-toolchain.sh
 
