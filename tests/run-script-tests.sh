@@ -268,6 +268,17 @@ assert_contains "$out" 'chosen: claude-haiku-4-5 (label model:haiku)' "label mod
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='model:sonnet' bash "$CLASSIFY")"
 assert_contains "$out" 'chosen: claude-sonnet-5 (label model:sonnet)' "label model:sonnet → sonnet"
 
+# Override: model:fable — the design/aesthetics model on the Claude path
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='model:fable' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: claude-fable-5-1 (label model:fable)' "label model:fable → fable"
+
+# model:fable is Claude-only: with AGENT=opencode it must warn and fall through
+# to the default rather than being handed to an OpenRouter provider.
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
+       ISSUE_LABELS='model:fable' \
+       ISSUE_BODY='filler' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'incompatible with AGENT=opencode' "model:fable rejected on opencode"
+
 # Override: model:mistral-large with AGENT=opencode → opencode model ID
 out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
        ISSUE_LABELS='ai-implement

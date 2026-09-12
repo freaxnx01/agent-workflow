@@ -358,7 +358,7 @@ Pick the model per issue with a `model:*` label (alongside `agent:opencode`). Th
 
 For measured per-model results — which model produced the cleanest code on a real task, and which ones failed — see the living [model-comparison report](model-comparison.md).
 
-Claude-path labels (`model:opus` / `model:sonnet` / `model:haiku`) are documented in DESIGN.md.
+Claude-path labels (`model:opus` / `model:sonnet` / `model:haiku` / `model:fable`) are documented in DESIGN.md.
 
 ### Mint the OpenRouter key
 
