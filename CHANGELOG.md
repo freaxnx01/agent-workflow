@@ -35,6 +35,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   labels. The label is not created by `onboard-consumer.sh`; add it to a repo
   that wants it, as with every other `model:*` label.
 
+- **commands:** `/queue` — open issues in implementation order, each with its
+  readiness and whether it is already in flight (a linked PR, a local branch or
+  worktree, or a running pipeline). Complements `/triage`, which sorts by
+  category rather than sequence, and `/issues`, which hides work in flight
+  instead of leading with it. Dependencies are inferred from issue text and the
+  command is required to say so; an explicit `Blocked by #N` line in a body is
+  honoured over its own reading, read from the full body rather than the
+  preview.
+
 - **docs:** new `docs/COMMAND-CHEATSHEET.md` — the task-shaped view of the
   console: the issue→PR path in the order you chain it
   (`/capture-idea` → `/new` → `/triage` → `/enrich` → `/gh:implement` →
