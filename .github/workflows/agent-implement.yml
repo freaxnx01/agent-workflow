@@ -622,7 +622,17 @@ jobs:
           # App token when configured (#55) so `gh pr create` opens the PR as
           # the App and triggers required checks; else the ambient GITHUB_TOKEN.
           GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
-        uses: anthropics/claude-code-base-action@2d6abe4aa8adacaa322e24a040787cf155cf1d09  # v0.0.63
+        # Pinned to a main-branch SHA, not a release tag, on purpose. The newest
+        # release of this action is v0.0.63 (2025-08-22) and it installs Claude
+        # Code 1.0.88, which the API refuses for current models:
+        #   API Error: 400 invalid_request_error
+        #   "Claude Code 1.0.88 does not support this model; version 2.1.251 or
+        #    newer is required"  (error_code: claude_code_version_too_old)
+        # Observed on a model:fable dispatch — the run died at turn 1 for $0.00
+        # before a single token. The action's main branch is still maintained
+        # (this SHA is from 2026-09-12) and installs 2.1.270. Re-pin to a release
+        # tag if upstream ever cuts one newer than v0.0.63.
+        uses: anthropics/claude-code-base-action@b95ab0675f9b2696ae6c826c15b7a12e1a4a7071  # main @ 2026-09-12, installs CLI 2.1.270
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt_file: ${{ steps.issue.outputs.prompt-file }}
