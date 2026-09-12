@@ -66,4 +66,5 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
           APPLY: 'true'
+        shell: bash
         run: bash scripts/update-moving-tag.sh | tee -a "$GITHUB_STEP_SUMMARY"
