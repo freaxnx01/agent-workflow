@@ -338,6 +338,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **pipeline:** bump `anthropics/claude-code-base-action` to a maintained
+  main-branch SHA. Its newest *release*, v0.0.63 from 2025-08-22, installs Claude
+  Code 1.0.88, and the API now refuses current models on it — a `model:fable`
+  dispatch died at turn 1 for $0.00 with
+  `claude_code_version_too_old` ("version 2.1.251 or newer is required"). The
+  action's main branch is still maintained and installs 2.1.270. Pinned by SHA as
+  before; re-pin to a tag if upstream cuts one newer than v0.0.63.
+
 - **pipeline:** configure a git identity on the runner before the agent starts.
   Without it the agent's first `git commit` died with `Author identity unknown` /
   `fatal: empty ident name`, it spent its whole turn budget working around that,
