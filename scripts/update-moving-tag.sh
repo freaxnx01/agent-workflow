@@ -42,9 +42,12 @@
 #              push it.
 #
 # Output:
-#   Writes `moving-tag=<vX|>`, `should-move=<true|false>` and
-#   `reason=<text>` to $GITHUB_OUTPUT when set, and always prints
-#   `chosen: <verdict> (<reason>)` to stdout.
+#   Always prints `chosen: <verdict> (<reason>)` to stdout. Nothing in
+#   release.yml consumes a machine-readable verdict (the workflow doesn't
+#   branch on it and no later job reads it), so this script does not write
+#   $GITHUB_OUTPUT -- an unconsumed output would be dead, untested surface.
+#   If a future step needs the verdict, add outputs there and a test that
+#   asserts on $GITHUB_OUTPUT's contents, not silently.
 #
 # Exit codes:
 #   0  success -- moved OR deliberately skipped (a skip is NOT an error;
@@ -106,16 +109,6 @@ else
   should_move=false
   reason="${newest} is newer than ${RELEASE_TAG}"
   printf 'chosen: skip (%s)\n' "$reason"
-fi
-
-if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-  if [[ "$should_move" == "true" ]]; then
-    printf 'moving-tag=%s\n' "$major" >> "$GITHUB_OUTPUT"
-  else
-    printf 'moving-tag=\n' >> "$GITHUB_OUTPUT"
-  fi
-  printf 'should-move=%s\n' "$should_move" >> "$GITHUB_OUTPUT"
-  printf 'reason=%s\n' "$reason" >> "$GITHUB_OUTPUT"
 fi
 
 if [[ "${APPLY:-false}" == "true" ]] && [[ "$should_move" == "true" ]]; then
