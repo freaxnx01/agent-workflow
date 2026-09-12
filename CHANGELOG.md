@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.0.0) - 2026-09-12
+
+### Added
+
+- **new:** Propose a milestone at filing time; strip it on defer/repark (#298)
+- **partials:** Correspondence conventions — German style + email style (#304)
+- **handoff:** Derive a handoffs.md overview and fan out under Herdr (#306)
+- **azdo:** Detect Azure DevOps as a third forge; add /issues support
+- **azdo:** Guard the 11 commands without an Azure DevOps section
+- **commands:** Add /ai-funnel — backlog readiness, not dispatch outcome
+- **triage:** Add model:fable for design-shaped work on the Claude path (#330)
+- **commands:** Add /queue — issues in implementation order (#329)
+
+### Fixed
+
+- **implement:** Apply the trigger label alone so a missing review label cannot deadlock dispatch (#308)
+- **review:** Install the CLI into a job-local prefix, not the shared global one (#309)
+- **pipeline:** Warn when the PR will not auto-close its issue (#310)
+- **hooks:** Resolve the branch slug in handoff-resume (#317)
+- **ai-stats:** Union ClosedEvent.closer so agent PRs count as shipped
+- **pipeline:** Set a git identity before the agent runs (#335)
+- **release:** Move the v1 major tag when a release is published (#261) (#336)
+
+### Documentation
+
+- **azdo:** Disclose the --query gap; record the 11-command guard as a trap
+- **azdo:** Renumber this ADR 011 -> 012 after #306 claimed 011
+- **release:** Spec and plan for the moving major tag (#261) (#312)
+- **partials:** Require bold + backticked TL;DR marker (#314)
+- **changelog:** Record /ai-funnel, and fix a typos-hook failure
+- Add a command cheat sheet, and define ship rate once
+- **cheatsheet:** Drop a retracted claim, and finish two remedies
+- **cheatsheet:** Collapse a double blank line (MD012)
+- **changelog:** Fold the #319 entry into the existing Fixed section
+
 ## [Unreleased]
 
 ### Deprecated
