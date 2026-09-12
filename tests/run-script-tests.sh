@@ -649,6 +649,60 @@ assert_equals "$ec" "2" "tag without a leading v → exit 2"
 ec="$(run_capture_ec env RELEASE_TAG=v1.13 ALL_TAGS='v1.13' bash "$MOVING_TAG")"
 assert_equals "$ec" "2" "two-component tag → exit 2"
 
+# --- APPLY path: the only mutating code (git tag -f / git push) -------------
+#
+# Every case above runs with APPLY unset, so none of it exercises the APPLY
+# guard, the ^{} dereference, or the refspec. Build a throwaway git fixture
+# (a bare "origin" + a working clone) and drive the real `git tag -l` /
+# `git push` paths -- no ALL_TAGS override here, on purpose.
+
+make_moving_tag_repo() {
+  local bare work
+  bare="$(mktemp -d)"
+  git init --bare --quiet "$bare"
+  work="$(mktemp -d)"
+  git -C "$work" init --quiet -b main
+  git -C "$work" config user.email test@example.com
+  git -C "$work" config user.name test
+  printf 'one\n' > "$work/file.txt"
+  git -C "$work" add file.txt
+  git -C "$work" commit --quiet -m "commit 1"
+  git -C "$work" tag v1.12.0
+  printf 'two\n' > "$work/file.txt"
+  git -C "$work" add file.txt
+  git -C "$work" commit --quiet -m "commit 2"
+  # Annotated, deliberately: proves the ^{} dereference in the script, not
+  # just the lightweight-tag case, ends up on a commit.
+  git -C "$work" tag -a v1.13.0 -m "release v1.13.0"
+  git -C "$work" remote add origin "$bare"
+  git -C "$work" push --quiet origin main --tags
+  printf '%s' "$work"
+}
+
+MT_REPO="$(make_moving_tag_repo)"
+
+# Dry run (APPLY unset/false, the default): the verdict is still "move", but
+# nothing on disk or upstream may change.
+out="$(cd "$MT_REPO" && RELEASE_TAG=v1.13.0 bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v1 → v1.13.0' "APPLY unset → verdict still computed"
+assert_equals "$(git -C "$MT_REPO" tag -l v1)" "" "dry run creates no local v1 tag"
+assert_equals "$(git -C "$MT_REPO" ls-remote origin 'refs/tags/v1')" "" "dry run pushes nothing to origin"
+
+# APPLY=true: v1 must be force-created locally, pushed to origin, and -- the
+# actual point of ^{} -- resolve to a commit object, not the annotated tag
+# object v1.13.0 itself.
+ec="$(run_capture_ec env -C "$MT_REPO" RELEASE_TAG=v1.13.0 APPLY=true bash "$MOVING_TAG")"
+assert_equals "$ec" "0" "APPLY=true move → exit 0"
+assert_equals "$(git -C "$MT_REPO" tag -l v1)" "v1" "APPLY=true creates local v1 tag"
+assert_equals "$(git -C "$MT_REPO" cat-file -t v1)" "commit" \
+  "v1 resolves to a commit, not the annotated tag object (^{} dereference)"
+assert_equals "$(git -C "$MT_REPO" rev-parse v1)" "$(git -C "$MT_REPO" rev-parse v1.13.0^{})" \
+  "v1 points at the same commit as v1.13.0"
+remote_v1="$(git -C "$MT_REPO" ls-remote origin 'refs/tags/v1' | cut -f1)"
+assert_equals "$remote_v1" "$(git -C "$MT_REPO" rev-parse v1)" "APPLY=true pushes v1 to origin"
+
+rm -rf "$MT_REPO"
+
 section "classify-agent — label override + input fallback (ADR-001)"
 
 CLASSIFY_AGENT="$ROOT/scripts/classify-agent.sh"
