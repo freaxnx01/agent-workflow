@@ -31,6 +31,7 @@ What this page adds is the **path**, and the two places you measure it.
 | Capture | `/capture-idea <idea>` | a line in the repo's `docs/ideas.md` — no issue yet |
 | File | `/new` | an issue, usually carrying `needs-enrichment` |
 | Sort | `/triage` | labels, milestone, and a `🧊 parked` decision for what isn't now |
+| Sequence | `/queue` | the same issues in implementation order, with what is already in flight |
 | **Enrich** | `/enrich <N>` | a spec, a plan, and the plan **inlined into the issue body** |
 | Dispatch | `/gh:implement <N>` | the `ai-implement` label — the pipeline takes it from here |
 | Review | *(automatic)* | the pipeline reviews its own PR; `/gh:review <N>` for a second opinion |
