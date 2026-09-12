@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **triage:** `model:fable` selects `claude-fable-5-1` on the Claude path, for
+  work whose point is how it looks. It is an **override only** — the classifier
+  never picks Fable on its own, because whether a task is design-shaped is the
+  author's judgment, not a keyword heuristic's. Incompatible with
+  `agent: opencode`, where it warns and falls through like the other Claude
+  labels. The label is not created by `onboard-consumer.sh`; add it to a repo
+  that wants it, as with every other `model:*` label.
+
 - **docs:** new `docs/COMMAND-CHEATSHEET.md` — the task-shaped view of the
   console: the issue→PR path in the order you chain it
   (`/capture-idea` → `/new` → `/triage` → `/enrich` → `/gh:implement` →

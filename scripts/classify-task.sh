@@ -105,7 +105,7 @@ fi
 label_is_compatible() {
   local label="$1"
   case "$label" in
-    model:opus|model:sonnet|model:haiku)
+    model:opus|model:sonnet|model:haiku|model:fable)
       [[ "$AGENT" == "claude" ]]
       ;;
     model:mistral-large|model:codestral|model:deepseek-v3|model:qwen-coder|model:gemini-flash|model:deepseek-r1|model:llama-4-maverick|model:qwen3-coder|model:glm|model:glm-flash|model:minimax-m2|model:deepseek-v32|model:qwen3-27b)
@@ -121,7 +121,7 @@ chosen=''
 reason=''
 while IFS= read -r label; do
   case "$label" in
-    model:opus|model:sonnet|model:haiku|model:mistral-large|model:codestral|model:deepseek-v3|model:qwen-coder|model:gemini-flash|model:deepseek-r1|model:llama-4-maverick|model:qwen3-coder|model:glm|model:glm-flash|model:minimax-m2|model:deepseek-v32|model:qwen3-27b)
+    model:opus|model:sonnet|model:haiku|model:fable|model:mistral-large|model:codestral|model:deepseek-v3|model:qwen-coder|model:gemini-flash|model:deepseek-r1|model:llama-4-maverick|model:qwen3-coder|model:glm|model:glm-flash|model:minimax-m2|model:deepseek-v32|model:qwen3-27b)
       if ! label_is_compatible "$label"; then
         printf 'warn: label %s incompatible with AGENT=%s; falling through to default\n' \
           "$label" "$AGENT" >&2
@@ -142,6 +142,7 @@ while IFS= read -r label; do
     model:opus)           chosen=claude-opus-5;                 reason='label model:opus' ;;
     model:sonnet)         chosen=claude-sonnet-5;                 reason='label model:sonnet' ;;
     model:haiku)          chosen=claude-haiku-4-5;                reason='label model:haiku' ;;
+    model:fable)          chosen=claude-fable-5-1;                reason='label model:fable' ;;
     model:mistral-large)  chosen=mistralai/mistral-large;          reason='label model:mistral-large' ;;
     model:codestral)      chosen=mistralai/codestral-2508;         reason='label model:codestral' ;;
     model:deepseek-v3)    chosen=deepseek/deepseek-chat-v3-0324;   reason='label model:deepseek-v3' ;;

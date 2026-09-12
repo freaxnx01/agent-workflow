@@ -145,7 +145,7 @@ upgrades that bundle new tools don't waste time reinstalling them.
 ### Triggers
 
 - Label `ai-implement` on an issue → autonomous Issue→PR run
-- Label `model:opus` / `model:sonnet` / `model:haiku` (alongside `ai-implement`) → override triage
+- Label `model:opus` / `model:sonnet` / `model:haiku` / `model:fable` (alongside `ai-implement`) → override triage
 - `@claude` mention in issue/PR comment → interactive mode, no `prompt:` injected
 
 ### Triage step
@@ -153,6 +153,12 @@ upgrades that bundle new tools don't waste time reinstalling them.
 A small Haiku-powered classifier reads the issue and decides Opus / Sonnet / Haiku
 for the implementation step, unless an explicit `model:*` label is present.
 Bias toward Sonnet when uncertain. Posts decision as issue comment for observability.
+
+`model:fable` is an override only — the classifier never picks Fable on its own.
+Fable is the design/aesthetics-tuned model, and whether a task is design-shaped
+is a judgment the issue author makes, not one a keyword heuristic should guess.
+Label it when the work is visual (a 3D model, an illustration-driven look, a
+style series); leave it off for logic, wiring and refactors.
 
 ### Metrics & reporting
 
