@@ -139,7 +139,7 @@ commands/
   gh/    → /gh:assign  /gh:implement  /gh:implementation-contract  /gh:review
   wt/    → /wt:status  /wt:finish
   *.md   → /handoff  /pickup  /todo  /wrap-up  /loose-ends  /clear-check
-           /issues  /prs  /triage  /route  /work  /milestone  /new  /enrich
+           /issues  /prs  /triage  /queue  /route  /work  /milestone  /new  /enrich
            /enrich-phased  /parked  /roadmap  /done  (forge-agnostic)
            /capture-idea  /commands  /update-commands
 ```

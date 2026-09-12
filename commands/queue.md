@@ -9,6 +9,9 @@ source "$HOME/.claude/scripts/lib/detect-forge.sh"
 detect_forge
 ```
 
+This command takes **no arguments**. Scoping by milestone belongs to `/triage`
+and `/issues`; adding it here would duplicate their resolution rules.
+
 ## What this answers
 
 `/triage` asks *what is broken and what is cheap*. `/queue` asks a different
@@ -16,18 +19,23 @@ question: **what should I build next, and what is already being built?**
 
 So it keeps two things `/triage` drops:
 
-- **Work in flight stays in the list**, marked — an issue with an open PR, a
+- **Work in flight stays in the list**, marked — an issue with a linked PR, a
   local branch or worktree, or a running pipeline is the first thing you need
   to see, not the first thing to filter out. `/issues` hides those on purpose;
   here they lead.
-- **Order reflects sequence, not category.** Blockers before the things they
-  block; same code area adjacent, so one pass through a file serves both.
+- **Order reflects sequence, not category** — blockers before what they block,
+  same code area adjacent, so one pass through a file serves both.
 
 This is a reading aid. **Do not start any work from it.**
 
 ## Ordering
 
-Apply in this order, first match wins:
+Two stages. **Place** every issue in exactly one bucket, then **adjust** the
+resulting list. Keeping these apart matters: the adjustments are re-positioning
+rules, not bucket predicates, and treating them as a fifth and sixth bucket
+makes them unreachable for anything that already matched 1–4.
+
+**Stage 1 — place.** First match wins:
 
 1. **Already in flight** — finish before starting anything new. Half-done work
    is the most expensive thing in the list.
@@ -35,15 +43,24 @@ Apply in this order, first match wins:
 3. **Breaks normal use** — a defect that stops the product doing its job on the
    primary device or path. Read the body for *what the user cannot do*, not for
    the word "bug".
-4. **Cheap and independent** — small, self-contained, no dependants. Easiest
-   first.
-5. **Same area as something above** — cluster issues touching the same code,
-   directly after the one they share it with.
-6. **Blocked or waiting** — last, each naming what it waits on.
+4. **Everything else**, cheapest first — small and self-contained before large
+   or vague.
 
-Ready-to-dispatch beats not-ready within a bucket: an issue still carrying
+Within a bucket, ready-to-dispatch beats not-ready: an issue still carrying
 `needs-enrichment` needs `/enrich` before `/gh:implement`, which is real work
 sitting in front of it.
+
+**Stage 2 — adjust**, in this order:
+
+1. **Move every blocked issue behind the issue it waits on.** If the blocker is
+   closed or absent, leave it in place and say the blocker is gone — do not
+   silently treat it as unblocked.
+2. **Cluster by area.** Move an issue that touches the same code as one already
+   placed to sit directly after it — but never past a blocker relationship set
+   by the previous step. Clustering is a convenience; dependency order is not.
+
+An issue that is both blocked *and* in flight stays in bucket 1: something is
+already happening to it, which is what the reader needs to know first.
 
 ## Dependencies are inferred — say so
 
@@ -59,10 +76,14 @@ So, every run:
   not from recorded dependencies.
 - When two issues could go either way, say so rather than picking silently.
 
-**If an issue body carries an explicit `Blocked by #N` (or `Depends on #N`)
-line, honour it over your own reading** and say you did. Nothing creates those
-lines today; they are simply respected when present, so the convention can grow
-without a change here.
+**An explicit `Blocked by #N` or `Depends on #N` line in an issue body wins over
+your own reading** — say when you used one. Both fetches below extract those
+references from the **full body**, as their own `blocked_by` field, precisely
+because the body text you read is truncated to a preview. Never look for a
+dependency line in the preview: on an enriched issue the whole implementation
+plan sits in the body, so anything past the first few hundred characters is not
+there. Nothing creates these lines today; they are simply honoured when present,
+so the convention can grow without another change here.
 
 ## Output
 
@@ -74,7 +95,7 @@ One table, ordered, no grouping headers — the order *is* the message:
 - **Status** — the readiness of the issue: needs enrichment, ready to
   dispatch, enrichment running, blocked.
 - **In flight** — empty for most rows. Otherwise what is in flight and where:
-  an open PR number, a branch or worktree name, or a running pipeline.
+  a linked PR number, a branch or worktree name, or a running pipeline.
 - **Why here** — three to six words. The reason this row sits at this
   position, not a summary of the issue.
 
@@ -87,8 +108,8 @@ larger than people expect.
 
 ## GitHub
 
-One GraphQL call gets the issues **and** their linked-PR state, so in-flight
-detection costs no extra request. Keep parked and roadmap out; keep WIP **in**,
+One GraphQL call gets the issues **and** their PR links, so in-flight detection
+costs no extra request. Keep parked and roadmap out; keep work in flight **in**,
 because showing it is the point.
 
 ```bash
@@ -104,11 +125,11 @@ query($owner:String!,$name:String!){
         number title createdAt
         labels(first:20){nodes{name}}
         body
-        timelineItems(itemTypes:[CROSS_REFERENCED_EVENT,CONNECTED_EVENT], first:50){
-          nodes{
-            ... on CrossReferencedEvent{source{... on PullRequest{number state}}}
-            ... on ConnectedEvent{subject{... on PullRequest{number state}}}
-          }
+        linked: timelineItems(itemTypes:[CONNECTED_EVENT], first:50){
+          nodes{ ... on ConnectedEvent{subject{... on PullRequest{number state}}} }
+        }
+        mentioned: timelineItems(itemTypes:[CROSS_REFERENCED_EVENT], first:50){
+          nodes{ ... on CrossReferencedEvent{source{... on PullRequest{number state}}} }
         }
       }
     }
@@ -124,17 +145,28 @@ query($owner:String!,$name:String!){
             labels: [.labels.nodes[].name],
             body_len: ((.body // "") | length),
             body: ((.body // "") | gsub("\n"; " ") | .[0:400]),
-            open_prs: [.timelineItems.nodes[] | (.source // .subject)
-                       | select(.state == "OPEN") | .number]
+            blocked_by: ([ (.body // "")
+                           | scan("(?i)(?:blocked by|depends on)[[:space:]]*#([0-9]+)") ]
+                         | flatten | map(tonumber) | unique),
+            linked_prs: [.linked.nodes[].subject | select(.state == "OPEN") | .number],
+            mentioned_prs: [.mentioned.nodes[].source | select(.state == "OPEN") | .number]
           })'
 ```
 
 Labels here are `.labels.nodes[].name` — the GraphQL shape — **not**
 `[.labels[].name]`, which is what `gh issue list --json labels` yields.
 
-`open_prs` non-empty means in flight on the forge. Ordering is `CREATED_AT ASC`
-so the oldest issue is row one before you re-order; that keeps a long-ignored
-issue from hiding at the bottom of the fetch.
+**`linked_prs` and `mentioned_prs` are not the same signal.** A `ConnectedEvent`
+means someone actually linked the PR to the issue, so a non-empty `linked_prs`
+is in flight. A `CrossReferencedEvent` fires when *any* open PR merely names
+`#N` in its body or a comment — a PR saying "similar to #42" cross-references
+42 without anybody working on it. So treat `mentioned_prs` as a hint worth one
+sentence, never as grounds for bucket 1, and say which of the two a row rests on.
+
+`blocked_by` is extracted from the **full** body; `body` is a 400-char preview
+for reading only. Ordering is `CREATED_AT ASC`, so the oldest issue is row one
+before you re-order — that keeps a long-ignored issue from hiding at the bottom
+of the fetch.
 
 **Truncation guard:** the cap of 100 applies *before* the parked/roadmap filter,
 so if 100 came back pre-filter, say the list may be incomplete rather than
@@ -160,14 +192,10 @@ Pipeline state lives in labels: `ai:running` means a dispatch is executing,
 `enrichment-ongoing` means a `/enrich` holds the lock, `ai-implement` means it is
 queued. Treat all three as in flight.
 
-My arguments:
-$ARGUMENTS
-
 ## Forgejo
 
-Same question, same output, same ordering. Forgejo has no cheap equivalent of
-the GitHub timeline query, so in-flight detection needs two calls: the issues,
-then the open pull requests, matched by issue reference.
+Same question, same output, same ordering. Forgejo has no timeline equivalent,
+so in-flight detection needs a second call and matches PRs to issues by text.
 
 ### Forgejo access
 
@@ -177,37 +205,65 @@ Target the homelab Forgejo (`git.home.freaxnx01.ch`) via **`tea`** (login
 ```bash
 url=$(git remote get-url origin); url=${url%.git}
 repo=$(echo "$url" | sed -E 's#.*[:/]([^/]+/[^/]+)$#\1#')
-tea api --login git-home "repos/$repo/issues?state=open&type=issues&limit=100&sort=created&order=asc" \
+tea api --login git-home "repos/$repo/issues?state=open&type=issues&limit=100&sort=oldest" \
   | python3 -c '
-import sys, json
+import sys, json, re
+dep = re.compile(r"(?:blocked by|depends on)\s*#(\d+)", re.I)
 for i in json.load(sys.stdin):
     labels = [l["name"] for l in i.get("labels") or []]
     if "🧊 parked" in labels or "roadmap" in labels: continue
-    body = (i.get("body") or "")
+    body = i.get("body") or ""
+    blocked = sorted({int(n) for n in dep.findall(body)})
     print(i["number"], "||", i["title"], "||", ",".join(labels) or "-",
-          "||", len(body), "||", body[:400].replace(chr(10), " "))'
+          "||", len(body),
+          "||", ",".join(map(str, blocked)) or "-",
+          "||", body[:400].replace(chr(10), " "))'
 ```
+
+**`sort=oldest`, and no `order` parameter.** The Forgejo issues API takes `sort`
+from a fixed enum (`relevance`, `latest`, `oldest`, `recentupdate`,
+`leastupdate`, `mostcomment`, `leastcomment`, `nearduedate`, `farduedate`;
+default `latest`) and has no `order` at all — a `sort=created&order=asc` pair is
+silently ignored and returns newest-first, which with `limit=100` would drop
+exactly the oldest issues this ordering exists to surface.
+
+`blocked` comes from the **full** body, before the 400-char preview is cut.
 
 Then the open PRs, to find which issues they belong to:
 
 ```bash
 tea api --login git-home "repos/$repo/pulls?state=open&limit=100" | python3 -c '
 import sys, json, re
+closes = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)", re.I)
+mentions = re.compile(r"#(\d+)")
+branch = re.compile(r"^(?:issue-)?(?:[a-z]+/)?(\d+)[-_]")
 for p in json.load(sys.stdin):
-    text = (p.get("title") or "") + " " + (p.get("body") or "") + " " + (p.get("head", {}).get("ref") or "")
-    refs = sorted(set(re.findall(r"#(\d+)", text)))
-    print(p["number"], "||", p.get("title") or "-", "||", ",".join(refs) or "-")'
+    text = (p.get("title") or "") + " " + (p.get("body") or "")
+    ref = (p.get("head") or {}).get("ref") or ""
+    strong = {int(n) for n in closes.findall(text)}
+    m = branch.match(ref)
+    if m: strong.add(int(m.group(1)))
+    weak = {int(n) for n in mentions.findall(text)} - strong
+    print(p["number"], "||", p.get("title") or "-",
+          "||", ",".join(map(str, sorted(strong))) or "-",
+          "||", ",".join(map(str, sorted(weak))) or "-")'
 ```
 
-That match is **textual**, not a real link — a PR that never names its issue
-stays invisible here. Say so when you report, rather than implying the in-flight
+Three columns, and the last two carry different weight — the same split the
+GitHub half makes:
+
+- **strong** — a closing keyword, or a branch named for the issue
+  (`issue-123-…`, `feat/123-…`). Treat as in flight.
+- **weak** — the issue number appears somewhere in the PR text without either.
+  A hint, not grounds for bucket 1.
+
+Both are sorted numerically, so `#9` precedes `#10`. The match is still
+**textual**: a PR that names its issue nowhere and uses an unnumbered branch
+stays invisible. Say so when you report, rather than implying the in-flight
 column is complete.
 
 The local-signal checks (`git worktree list`, `git branch --list`,
 `git status -sb`) apply unchanged — they are forge-independent.
-
-My arguments:
-$ARGUMENTS
 
 ## Azure DevOps
 

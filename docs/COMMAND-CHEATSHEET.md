@@ -17,13 +17,13 @@ What this page adds is the **path**, and the two places you measure it.
 ## The path
 
 ```text
-             ┌── measure the queue ──┐              ┌── measure the outcome ──┐
-             │                       │              │                         │
-/capture-idea → /new → /triage → /enrich → /gh:implement → /gh:review → /done
-                                     ▲          │
-                                     │          └─ the pipeline runs unattended
-                              /ai-funnel                 (10–25 min)
-                                                  /ai-stats
+                ┌────── measure the queue ──────┐   ┌───── measure the outcome ──────┐
+                │                               │   │                                │
+/capture-idea → /new → /triage → /queue → /enrich → /gh:implement → /gh:review → /done
+                                              ▲          │
+                                              │          └─ the pipeline runs unattended
+                                       /ai-funnel                    (10–25 min)
+                                                           /ai-stats
 ```
 
 | Step | Command | What it produces |
