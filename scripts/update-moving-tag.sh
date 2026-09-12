@@ -119,9 +119,22 @@ if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
 fi
 
 if [[ "${APPLY:-false}" == "true" ]] && [[ "$should_move" == "true" ]]; then
+  # Snapshot what the remote currently holds for refs/tags/$major BEFORE we
+  # touch the local ref, so --force-with-lease below has a real expected
+  # value to check the push against instead of comparing to the value we
+  # are about to write ourselves. Empty when the tag doesn't exist upstream
+  # yet (first-ever move for this major line); ls-remote, not rev-parse, so
+  # this reflects the remote, not whatever fetch-tags happened to leave
+  # locally.
+  remote_before="$(git ls-remote origin "refs/tags/${major}" | cut -f1)"
   # Dereference with ^{} so an annotated release tag resolves to its commit
   # rather than to the tag object -- `git tag -f` on a tag object would move
   # vX to point at another tag instead of a commit.
   git tag -f "$major" "${RELEASE_TAG}^{}"
-  git push -f origin "refs/tags/${major}"
+  # --force-with-lease, not a bare -f: the remote snapshot above is not
+  # atomic with this push, so two near-simultaneous releases could otherwise
+  # race and land vX on the older one. Lease against the exact value read
+  # from the remote a moment ago so a concurrent mover is detected and
+  # rejected instead of silently overwritten.
+  git push "--force-with-lease=refs/tags/${major}:${remote_before}" origin "refs/tags/${major}"
 fi
