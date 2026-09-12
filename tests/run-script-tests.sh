@@ -596,6 +596,113 @@ fi
 ec="$(run_capture_ec env REPO=o/r bash "$CLASSIFY_TURNS")"
 assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 
+section "update-moving-tag — forward-only moves, semver ordering, prerelease refusal"
+
+MOVING_TAG="$ROOT/scripts/update-moving-tag.sh"
+
+# Missing RELEASE_TAG → exit 2
+ec="$(run_capture_ec env ALL_TAGS='v1.0.0' bash "$MOVING_TAG")"
+assert_equals "$ec" "2" "missing RELEASE_TAG → exit 2"
+
+# Newest in its line → move
+out="$(RELEASE_TAG=v1.12.0 ALL_TAGS=$'v1.11.1\nv1.12.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v1 → v1.12.0' "newest in line → move"
+
+# NOT newest → skip, and exit 0 (a hotfix release must not fail the workflow)
+out="$(RELEASE_TAG=v1.11.2 ALL_TAGS=$'v1.11.1\nv1.11.2\nv1.13.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: skip' "older than an existing release → skip"
+assert_contains "$out" 'v1.13.0' "skip reason names the newer tag"
+ec="$(run_capture_ec env RELEASE_TAG=v1.11.2 ALL_TAGS=$'v1.11.1\nv1.13.0' bash "$MOVING_TAG")"
+assert_equals "$ec" "0" "skip is not an error"
+
+# Semver ordering, not lexical: v1.10.0 > v1.9.0
+out="$(RELEASE_TAG=v1.10.0 ALL_TAGS=$'v1.9.0\nv1.10.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v1 → v1.10.0' "v1.10.0 beats v1.9.0 (semver, not lexical)"
+out="$(RELEASE_TAG=v1.9.0 ALL_TAGS=$'v1.9.0\nv1.10.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: skip' "v1.9.0 loses to v1.10.0 (semver, not lexical)"
+
+# Major derived from the tag, never hardcoded
+out="$(RELEASE_TAG=v2.0.0 ALL_TAGS=$'v1.13.0\nv2.0.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v2 → v2.0.0' "major derived from the pushed tag"
+
+# A v2 release must not consider v1 tags when picking the newest
+out="$(RELEASE_TAG=v2.0.0 ALL_TAGS=$'v1.99.99\nv2.0.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v2 → v2.0.0' "v1.99.99 does not block a v2 release"
+
+# Pre-release tags are refused outright
+for pre in v1.14.0-rc.1 v1.14.0-alpha.2 v1.14.0-beta.10; do
+  ec="$(run_capture_ec env RELEASE_TAG="$pre" ALL_TAGS="$pre" bash "$MOVING_TAG")"
+  assert_equals "$ec" "2" "pre-release $pre → exit 2"
+done
+
+# Pre-release tags in ALL_TAGS never win the "newest" comparison
+out="$(RELEASE_TAG=v1.13.0 ALL_TAGS=$'v1.13.0\nv1.14.0-rc.1' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v1 → v1.13.0' "a newer -rc does not block the release tag"
+
+# Idempotent: the tag is already the newest and already what vX points at
+out="$(RELEASE_TAG=v1.13.0 ALL_TAGS=$'v1.11.1\nv1.13.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v1 → v1.13.0' "re-running for the same tag is a no-op move"
+
+# Malformed input
+ec="$(run_capture_ec env RELEASE_TAG=1.13.0 ALL_TAGS='1.13.0' bash "$MOVING_TAG")"
+assert_equals "$ec" "2" "tag without a leading v → exit 2"
+ec="$(run_capture_ec env RELEASE_TAG=v1.13 ALL_TAGS='v1.13' bash "$MOVING_TAG")"
+assert_equals "$ec" "2" "two-component tag → exit 2"
+
+# --- APPLY path: the only mutating code (git tag -f / git push) -------------
+#
+# Every case above runs with APPLY unset, so none of it exercises the APPLY
+# guard, the ^{} dereference, or the refspec. Build a throwaway git fixture
+# (a bare "origin" + a working clone) and drive the real `git tag -l` /
+# `git push` paths -- no ALL_TAGS override here, on purpose.
+
+make_moving_tag_repo() {
+  local bare work
+  bare="$(mktemp -d)"
+  git init --bare --quiet "$bare"
+  work="$(mktemp -d)"
+  git -C "$work" init --quiet -b main
+  git -C "$work" config user.email test@example.com
+  git -C "$work" config user.name test
+  printf 'one\n' > "$work/file.txt"
+  git -C "$work" add file.txt
+  git -C "$work" commit --quiet -m "commit 1"
+  git -C "$work" tag v1.12.0
+  printf 'two\n' > "$work/file.txt"
+  git -C "$work" add file.txt
+  git -C "$work" commit --quiet -m "commit 2"
+  # Annotated, deliberately: proves the ^{} dereference in the script, not
+  # just the lightweight-tag case, ends up on a commit.
+  git -C "$work" tag -a v1.13.0 -m "release v1.13.0"
+  git -C "$work" remote add origin "$bare"
+  git -C "$work" push --quiet origin main --tags
+  printf '%s' "$work"
+}
+
+MT_REPO="$(make_moving_tag_repo)"
+
+# Dry run (APPLY unset/false, the default): the verdict is still "move", but
+# nothing on disk or upstream may change.
+out="$(cd "$MT_REPO" && RELEASE_TAG=v1.13.0 bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v1 → v1.13.0' "APPLY unset → verdict still computed"
+assert_equals "$(git -C "$MT_REPO" tag -l v1)" "" "dry run creates no local v1 tag"
+assert_equals "$(git -C "$MT_REPO" ls-remote origin 'refs/tags/v1')" "" "dry run pushes nothing to origin"
+
+# APPLY=true: v1 must be force-created locally, pushed to origin, and -- the
+# actual point of ^{} -- resolve to a commit object, not the annotated tag
+# object v1.13.0 itself.
+ec="$(run_capture_ec env -C "$MT_REPO" RELEASE_TAG=v1.13.0 APPLY=true bash "$MOVING_TAG")"
+assert_equals "$ec" "0" "APPLY=true move → exit 0"
+assert_equals "$(git -C "$MT_REPO" tag -l v1)" "v1" "APPLY=true creates local v1 tag"
+assert_equals "$(git -C "$MT_REPO" cat-file -t v1)" "commit" \
+  "v1 resolves to a commit, not the annotated tag object (^{} dereference)"
+assert_equals "$(git -C "$MT_REPO" rev-parse v1)" "$(git -C "$MT_REPO" rev-parse v1.13.0^{})" \
+  "v1 points at the same commit as v1.13.0"
+remote_v1="$(git -C "$MT_REPO" ls-remote origin 'refs/tags/v1' | cut -f1)"
+assert_equals "$remote_v1" "$(git -C "$MT_REPO" rev-parse v1)" "APPLY=true pushes v1 to origin"
+
+rm -rf "$MT_REPO"
+
 section "classify-agent — label override + input fallback (ADR-001)"
 
 CLASSIFY_AGENT="$ROOT/scripts/classify-agent.sh"

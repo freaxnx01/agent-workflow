@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **release:** publishing a release now automatically moves the moving major
+  tag (`vX`) to the released commit, forward-only — a hotfix released on an
+  older line can no longer drag it backwards. `@vX` consumers pick up the new
+  pipeline on their next dispatch, with no human step. (#261)
 - **triage:** `model:fable` selects `claude-fable-5-1` on the Claude path, for
   work whose point is how it looks. It is an **override only** — the classifier
   never picks Fable on its own, because whether a task is design-shaped is the

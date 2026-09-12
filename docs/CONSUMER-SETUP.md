@@ -30,8 +30,15 @@ example see `ai-notes/quicktask-vikunja-pipeline-runbook.md`.
 - [ ] Decide **public vs private**. Public → GitHub-hosted runners only
       (`'["ubuntu-latest"]'`). **Never attach a self-hosted runner to a public
       repo** — fork-PR attack surface (DESIGN.md, non-negotiable).
-- [ ] Confirm the pipeline ref to pin. Use `@v1` once real tags exist; until then
-      a `v1` branch on the pipeline repo also resolves for `uses: …@v1`.
+- [ ] Confirm the pipeline ref to pin. `@vX` is a **moving** tag that follows
+      the newest non-prerelease `vX.*.*` release, updated automatically by
+      `release.yml` when a release is published — a consumer pinned to `@vX`
+      picks up the new pipeline on its **next dispatch**, with no review step
+      and no human action required. It may point at a commit that is **not on
+      `main`** — a backport release is still a release; "what is released" is
+      answered by the tags, never by `main`. Consumers who want pipeline
+      changes to arrive as reviewable PRs instead should pin an exact
+      `@vX.Y.Z` and use Dependabot.
 
 ### 1. Add the auth secret
 
@@ -96,8 +103,10 @@ after several clean draft-only runs, enable auto-merge per §2 — including the
    `scripts/` checkout uses them, and `@v1` in `uses:` does **not** propagate to
    that checkout (GitHub's `workflow_ref` points at the caller). Mismatch breaks
    the run at the scripts step.
-2. **`v1` may be a branch, not a tag.** `uses:` accepts either; promote to real
-   `v1.0.0` + moving `v1` tags when convenient.
+2. **`v1` moves automatically on release, and may point off `main`.**
+   `release.yml` force-updates `v1` to the newest non-prerelease `v1.*.*`
+   release whenever one is published, including releases cut on a backport
+   branch — the moving tag follows the newest *release*, not `main`.
 3. **Public repos: hosted runners only.** No self-hosted, ever.
 4. **First run draft-only.** Don't enable auto-merge until the required vuln
    check is in place and you've watched the pipeline behave on the repo.

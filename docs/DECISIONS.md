@@ -1368,3 +1368,70 @@ Closed`, Scrum `New / Approved / Committed / Done / Removed`. Any hardcoded
 + A third section makes these command files roughly 1.5× longer, and `/issues` is
   now ~410 lines. Noted as a structural cost of the one-file-per-command,
   one-section-per-forge shape; no restructuring proposed here.
+
+---
+
+## ADR-013 — Moving major tag updated by `release.yml`, forward-only (2026-09-10)
+
+**Status:** Accepted
+**Tracking:** [#261](https://github.com/freaxnx01/agent-workflow/issues/261)
+
+### Context
+
+Consumer repos pin the reusable workflow by major tag (`agent-implement.yml@v1`),
+the convention `actions/checkout` and friends use — a moving tag that is meant to
+track the newest `v1.*.*` release. Nothing moved it. It was updated once by hand
+(#261, 2026-08-18: `v1` → `v1.11.1`) and the drift came straight back within a
+week: `v1.12.0` and `v1.13.0` both shipped and `v1` followed neither, leaving it
+159 commits behind `main`. Staleness is silent by construction — runs stay green,
+consumers just execute old code — and it has already cost one consumer real
+money: `classify-turns.sh` does not exist at `v1`, so a `@v1` consumer silently
+got `max_turns: 30` and burned five dispatches (~$3.50) chasing what looked like
+a model/plan problem before anyone suspected the pinned ref.
+
+Two places could own the move: the `justfile`'s `push-release` recipe (the
+obvious place), or `release.yml` (the workflow the tag push already triggers).
+
+### Decision
+
+**Extend `release.yml`, not the `justfile`.** A new `update-moving-tag` job runs
+`scripts/update-moving-tag.sh` after the `release` job succeeds, force-updating
+`refs/tags/v<major>` to the pushed commit.
+
+`push-release` was rejected because it runs `git push origin main "v$v"` —
+it assumes the release is cut from `main`. `v1.12.0` and `v1.13.0` were both cut
+on the `backport-v1.12.0-claude-timeout` branch, so whatever produced them was
+not this recipe; a fix living there would have missed exactly the two releases
+that caused the current gap. `release.yml` fires on the tag push itself, from
+whatever branch the release was cut on, which is precisely the case the
+`justfile` route misses. A local recipe is also opt-in — the failure mode is a
+human not running a step, so the fix must not be another step a human has to
+run. A scheduled reconciler was also considered and rejected: it repairs drift
+after the fact rather than preventing it, leaving a window where consumers run
+a stale pipeline, and adds a second source of truth for where `vX` should point.
+
+**Forward-only, by design.** Releases are not always cut in ascending order — a
+late hotfix can land on an older line after a newer release already shipped
+(exactly what happened with the backport branch). The script therefore moves
+`vX` to the pushed tag **only if** that tag is the highest non-prerelease
+`vX.*.*` tag that exists, comparing with `sort -V` (semver, not lexical — an
+earlier bug class this guards against: `v1.9.0` sorts after `v1.10.0`
+lexically). Anything else is a **skip**, and a skip exits `0`: a non-zero exit
+would fail the release workflow on a perfectly legitimate hotfix, which is worse
+than the drift this ADR fixes. The moving tag may therefore end up pointing at a
+commit that is not an ancestor of `main` — that is correct, not a bug: the tag
+follows the newest *release*, and a backport release is still a release. "What
+is released" is answered by the tags, never by `main`.
+
+### Consequences
+
++ `@v1` consumers now pick up a new pipeline release on their next dispatch,
+  automatically, with no review step and no human action.
++ `v1` and `main` can diverge indefinitely. A consumer (or maintainer) asking
+  "what does `v1` run?" must read the tag, not assume it tracks `main`.
++ The one-time catch-up (`v1` `v1.11.1` → `v1.13.0`) is **not** performed by this
+  change — it force-updates a tag every consumer follows and stays a deliberate,
+  manual maintainer action, tracked on #261.
++ Logging the resolved pipeline ref in run output (so "which version am I
+  running?" is answerable from a log) and offering consumers exact-pin +
+  Dependabot are both out of scope here and filed separately from #261.
