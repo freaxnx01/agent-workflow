@@ -299,6 +299,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **pipeline:** configure a git identity on the runner before the agent starts.
+  Without it the agent's first `git commit` died with `Author identity unknown` /
+  `fatal: empty ident name`, it spent its whole turn budget working around that,
+  and the run ended `error_max_turns` with no PR — surfaced only as the generic
+  "run completed but no PR was opened". That reads as a weak model or a bad plan,
+  so the natural response is to re-dispatch on a stronger model, which reproduces
+  it exactly. Observed across five consecutive runs in one consumer repo, about
+  $3.50, before anyone read the log. Commits now attribute to
+  `github-actions[bot]`, the identity GitHub's own first-party actions use.
+
 - **ai-stats:** `shipped` was read from `closedByPullRequestsReferences` alone, and
   GitHub forms **no closing reference** for a PR authored by `app/github-actions` —
   which is every PR this pipeline opens. So on exactly the repos `/ai-stats` exists to
