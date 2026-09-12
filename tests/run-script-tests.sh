@@ -596,6 +596,59 @@ fi
 ec="$(run_capture_ec env REPO=o/r bash "$CLASSIFY_TURNS")"
 assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 
+section "update-moving-tag — forward-only moves, semver ordering, prerelease refusal"
+
+MOVING_TAG="$ROOT/scripts/update-moving-tag.sh"
+
+# Missing RELEASE_TAG → exit 2
+ec="$(run_capture_ec env ALL_TAGS='v1.0.0' bash "$MOVING_TAG")"
+assert_equals "$ec" "2" "missing RELEASE_TAG → exit 2"
+
+# Newest in its line → move
+out="$(RELEASE_TAG=v1.12.0 ALL_TAGS=$'v1.11.1\nv1.12.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v1 → v1.12.0' "newest in line → move"
+
+# NOT newest → skip, and exit 0 (a hotfix release must not fail the workflow)
+out="$(RELEASE_TAG=v1.11.2 ALL_TAGS=$'v1.11.1\nv1.11.2\nv1.13.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: skip' "older than an existing release → skip"
+assert_contains "$out" 'v1.13.0' "skip reason names the newer tag"
+ec="$(run_capture_ec env RELEASE_TAG=v1.11.2 ALL_TAGS=$'v1.11.1\nv1.13.0' bash "$MOVING_TAG")"
+assert_equals "$ec" "0" "skip is not an error"
+
+# Semver ordering, not lexical: v1.10.0 > v1.9.0
+out="$(RELEASE_TAG=v1.10.0 ALL_TAGS=$'v1.9.0\nv1.10.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v1 → v1.10.0' "v1.10.0 beats v1.9.0 (semver, not lexical)"
+out="$(RELEASE_TAG=v1.9.0 ALL_TAGS=$'v1.9.0\nv1.10.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: skip' "v1.9.0 loses to v1.10.0 (semver, not lexical)"
+
+# Major derived from the tag, never hardcoded
+out="$(RELEASE_TAG=v2.0.0 ALL_TAGS=$'v1.13.0\nv2.0.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v2 → v2.0.0' "major derived from the pushed tag"
+
+# A v2 release must not consider v1 tags when picking the newest
+out="$(RELEASE_TAG=v2.0.0 ALL_TAGS=$'v1.99.99\nv2.0.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v2 → v2.0.0' "v1.99.99 does not block a v2 release"
+
+# Pre-release tags are refused outright
+for pre in v1.14.0-rc.1 v1.14.0-alpha.2 v1.14.0-beta.10; do
+  ec="$(run_capture_ec env RELEASE_TAG="$pre" ALL_TAGS="$pre" bash "$MOVING_TAG")"
+  assert_equals "$ec" "2" "pre-release $pre → exit 2"
+done
+
+# Pre-release tags in ALL_TAGS never win the "newest" comparison
+out="$(RELEASE_TAG=v1.13.0 ALL_TAGS=$'v1.13.0\nv1.14.0-rc.1' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v1 → v1.13.0' "a newer -rc does not block the release tag"
+
+# Idempotent: the tag is already the newest and already what vX points at
+out="$(RELEASE_TAG=v1.13.0 ALL_TAGS=$'v1.11.1\nv1.13.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v1 → v1.13.0' "re-running for the same tag is a no-op move"
+
+# Malformed input
+ec="$(run_capture_ec env RELEASE_TAG=1.13.0 ALL_TAGS='1.13.0' bash "$MOVING_TAG")"
+assert_equals "$ec" "2" "tag without a leading v → exit 2"
+ec="$(run_capture_ec env RELEASE_TAG=v1.13 ALL_TAGS='v1.13' bash "$MOVING_TAG")"
+assert_equals "$ec" "2" "two-component tag → exit 2"
+
 section "classify-agent — label override + input fallback (ADR-001)"
 
 CLASSIFY_AGENT="$ROOT/scripts/classify-agent.sh"
