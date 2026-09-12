@@ -56,11 +56,6 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Configure git identity
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
       - name: Decide and apply
         env:
           RELEASE_TAG: ${{ github.ref_name }}
