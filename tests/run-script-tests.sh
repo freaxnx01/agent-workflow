@@ -1879,6 +1879,53 @@ out="$(find_pr_run env ISSUE_NUMBER=11 REPO=o/r \
 assert_contains "$out" 'found=false'  "bare number in body, linked to another issue → rejected (#343)"
 assert_contains "$out" 'pr-number='   "  → no pr-number, so salvage can run"
 
+# The linkage is authoritative: a body that never names the issue is still a
+# match when GitHub linked it.
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":30,"isDraft":true,"headRefOid":"linked","author":{"login":"github-actions[bot]"},"body":"no mention at all","closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
+assert_contains "$out" 'pr-number=30' "closingIssuesReferences alone is enough"
+
+# The body fallback covers the window before GitHub computes the link — the
+# false negative #249's retry loop exists to avoid. It is also the ONLY signal
+# on a real pipeline run: GitHub forms no closing reference for a PR authored
+# by the github-actions app (#303), so every pipeline PR arrives here with an
+# empty closingIssuesReferences and is matched on its body alone.
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":31,"isDraft":true,"headRefOid":"kw","author":{"login":"github-actions[bot]"},"body":"Implements the thing.\n\nCloses #42","closingIssuesReferences":[]}]')"
+assert_contains "$out" 'pr-number=31' "body keyword alone is enough when the link is not computed yet"
+
+# Every keyword GitHub honours, one fixture each.
+for kw in "Close" "Closes" "Closed" "fixes" "Fixed" "resolve" "Resolves" "RESOLVED"; do
+  out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+          PIPELINE_PRS_JSON="[{\"number\":32,\"isDraft\":true,\"headRefOid\":\"kw\",\"author\":{\"login\":\"github-actions[bot]\"},\"body\":\"$kw #42\",\"closingIssuesReferences\":[]}]")"
+  assert_contains "$out" 'pr-number=32' "keyword '$kw' is accepted"
+done
+
+# A mention without a closing keyword is not a claim on the issue.
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":33,"isDraft":true,"headRefOid":"mention","author":{"login":"github-actions[bot]"},"body":"Related to #42, see the discussion there.","closingIssuesReferences":[]}]')"
+assert_contains "$out" 'found=false' "a bare mention without a closing keyword is rejected"
+
+# Prefix collision: #420 must not satisfy issue 42.
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":34,"isDraft":true,"headRefOid":"prefix","author":{"login":"github-actions[bot]"},"body":"Closes #420","closingIssuesReferences":[]}]')"
+assert_contains "$out" 'found=false' "Closes #420 does not satisfy issue 42"
+
+# Linked, but to a different issue in the same repo.
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":35,"isDraft":true,"headRefOid":"other","author":{"login":"github-actions[bot]"},"body":"x","closingIssuesReferences":[{"number":43,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
+assert_contains "$out" 'found=false' "a link to a different issue is rejected"
+
+# Linked to the same number, but in a different repository.
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":36,"isDraft":true,"headRefOid":"xrepo","author":{"login":"github-actions[bot]"},"body":"x","closingIssuesReferences":[{"number":42,"repository":{"name":"other","owner":{"login":"o"}}}]}]')"
+assert_contains "$out" 'found=false' "a link to the same number in another repo is rejected"
+
+# Several valid candidates → the highest-numbered still wins, unchanged.
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":40,"isDraft":true,"headRefOid":"lo","author":{"login":"github-actions[bot]"},"body":"Closes #42","closingIssuesReferences":[]},{"number":41,"isDraft":true,"headRefOid":"hi","author":{"login":"github-actions[bot]"},"body":"Closes #42","closingIssuesReferences":[]}]')"
+assert_contains "$out" 'pr-number=41' "highest-numbered valid candidate still wins"
+
 # --- retry-on-empty-result (search-index lag, #249) --------------------
 
 # Fake `gh pr list` shim: returns "[]" on its first N invocations (tracked
@@ -1963,6 +2010,18 @@ out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
         PIPELINE_PRS_JSON_SEQUENCE_CMD="$garbage_shim" \
         FIND_PR_RETRY_SLEEP_CMD=: FIND_PR_RETRY_MAX=1)"
 assert_contains "$out" 'found=false' "SEQUENCE_CMD garbage-then-fail stdout discarded, found=false not a crash"
+
+# A result set of nothing but false positives must exhaust the retries and
+# report found=false — that is what lets salvage run (#343).
+shim_fp="$(mktemp)"; ctr_fp="$(mktemp)"; : > "$ctr_fp"
+make_flaky_pr_list "$shim_fp" 0 \
+  '[{"number":28,"isDraft":true,"headRefOid":"wrong","author":{"login":"github-actions[bot]"},"body":"cells 5 and 11","closingIssuesReferences":[{"number":13,"repository":{"name":"r","owner":{"login":"o"}}}]}]' \
+  "$ctr_fp"
+out="$(find_pr_run env ISSUE_NUMBER=11 REPO=o/r \
+        PIPELINE_PRS_JSON_SEQUENCE_CMD="$shim_fp" \
+        FIND_PR_RETRY_SLEEP_CMD=: FIND_PR_RETRY_MAX=3)"
+assert_contains "$out" 'found=false'   "an all-false-positive result set exhausts the retries"
+assert_equals "$(cat "$ctr_fp")" "3"   "  → retried FIND_PR_RETRY_MAX times, then gave up"
 
 # Error paths
 ec="$(run_capture_ec env REPO=o/r bash "$FIND_PR")"
