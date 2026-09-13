@@ -452,6 +452,69 @@ Open an issue **titled exactly** `ai:chain-paused`. The dispatcher checks for th
 - **Cycle / depth caps.** Coming in #19. Until then, file shallow chains and watch the chain-state issue.
 - **Manual merges don't trigger the chain** — by design. A human who steps in mid-chain takes over the rest.
 
+## Pinning: which ref to use, and when to move it
+
+Pin the **moving major tag**, in both places the stub names it:
+
+```yaml
+uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2
+with:
+  pipeline-ref: v2
+```
+
+`v2` follows every `v2.x.y` release on its own — `release.yml` moves it when a
+release is published, forward-only, so a hotfix on an older line cannot drag it
+backwards (#261). A consumer picks up pipeline fixes on its next dispatch with
+no human step and no PR in the consumer repo.
+
+**Do not pin a full version** (`@v2.0.5`). It freezes you out of every fix and
+nothing will tell you. One repo was pinned that way and it turned a routine bulk
+migration into a broken ref, because a find-and-replace on `@v1` naturally
+caught `@v1.13.0` too.
+
+**Do not pin `main`** unless you are deliberately testing unreleased pipeline
+changes. `main` is where the pipeline's own agent works.
+
+### What the moving tag does not cover
+
+It keeps you current *within* a major line. It does nothing *between* them.
+`update-moving-tag.sh` derives the tag from the pushed release
+(`major="${RELEASE_TAG%%.*}"`), so releasing `v3.0.0` moves `v3` — never `v2`.
+The day a new major line opens, every `@v2` consumer stops receiving anything.
+
+This is not theoretical. `v1` froze at `v1.11.1` on 2026-08-03 and sat 173
+commits behind `main` while **70 repos** pinned it. Not one of the fixes in
+issues #335, #337, #338, #340, #342 and #345 reached them, and
+`classify-turns.sh` did not exist at `v1` at all — so those runs silently used
+`max_turns: 30` and died at
+`error_max_turns`, which is indistinguishable from a legitimate agent failure.
+Six weeks, no signal, real money.
+
+So since then the pipeline **tells you**. Every dispatch runs
+`check-major-drift.sh`, which compares your pinned major against the newest
+released one and raises a workflow annotation when you are behind:
+
+> **agent-workflow major line v2 is no longer maintained** — This repo pins
+> `@v2`, but `v3` has been released. The moving tag `v2` only follows `v2.x.y`
+> releases, and there will be no more of them …
+
+It is advisory and never fails your run: a major bump is allowed to break
+things, so *when* to upgrade stays your decision. Only *noticing* is taken off
+your plate — the moving-tag design already established that anything relying on
+a human remembering has been falsified in practice.
+
+### Migrating to a new major line
+
+1. Read the major release's entry in `CHANGELOG.md` for `BREAKING CHANGE:`.
+   Check whether any input you actually set was removed — inputs are
+   deprecated for one major line before removal, so the usual answer is no.
+2. Change both `@vN` and `pipeline-ref: vN` in `.github/workflows/agent.yml`.
+3. Dispatch one issue and confirm the run is green before doing the rest.
+
+For many repos at once, read each stub through the contents API and write it
+back, rather than cloning. Match the tag **anchored** — `@v1\b` also matches
+`@v1.13.0`, which is how the pin above became a ref that did not exist.
+
 ## Troubleshooting
 
 ### "Auto-merge held: …" comment on the PR

@@ -1799,6 +1799,66 @@ assert_equals "$ec" "2" "MAX_ITERATIONS=abc (non-numeric) → exit 2"
 ec="$(run_capture_ec env PR_NUMBER=1 REPO=o/r HEAD_SHA=x HEAD_REF=y INITIAL_VERDICT=request_changes MAX_ITERATIONS=2 bash "$SELF_FIX_LOOP")"
 assert_equals "$ec" "2" "missing CONCERNS_FILE (no STUB_VERDICT_SEQUENCE) → exit 2"
 
+section "check-major-drift — warn when the pinned major line is stale"
+
+DRIFT="$ROOT/scripts/check-major-drift.sh"
+DRIFT_TAGS=$'v1.0.0\nv1.11.1\nv1.13.0\nv2.0.0\nv2.0.5\nv2.0.0-rc.1\nv2\nv1'
+
+drift_run() { env "$@" bash "$DRIFT" 2>&1; }
+
+# The case this exists for: pinned to a major line that has been superseded.
+out="$(drift_run PIPELINE_REF=v1 ALL_TAGS="$DRIFT_TAGS")"
+assert_contains "$out" 'drift: behind'   "older major line → behind"
+assert_contains "$out" '::warning'       "  → emits an annotation, not just a log line"
+assert_contains "$out" '@v2'             "  → names the target to migrate to"
+
+# Current line: no warning at all, or the annotation becomes noise everyone
+# learns to ignore — which is how the original drift stayed invisible.
+out="$(drift_run PIPELINE_REF=v2 ALL_TAGS="$DRIFT_TAGS")"
+assert_contains "$out" 'drift: current'  "newest major line → current"
+if [[ "$out" == *"::warning"* ]]; then
+  fail "current major line must not warn"
+else
+  pass "current major line does not warn"
+fi
+
+# A full version pin still resolves to its major line.
+out="$(drift_run PIPELINE_REF=v1.13.0 ALL_TAGS="$DRIFT_TAGS")"
+assert_contains "$out" 'drift: behind'   "full version pin v1.13.0 → behind"
+
+out="$(drift_run PIPELINE_REF=v2.0.5 ALL_TAGS="$DRIFT_TAGS")"
+assert_contains "$out" 'drift: current'  "full version pin v2.0.5 → current"
+
+# Pinned ahead of any release (a v3 branch cut before v3.0.0 shipped): report,
+# don't warn — there is nothing to migrate to yet.
+out="$(drift_run PIPELINE_REF=v3 ALL_TAGS="$DRIFT_TAGS")"
+assert_contains "$out" 'drift: ahead'    "unreleased major → ahead"
+
+# Non-version pins are a deliberate choice to track something else.
+for ref in main develop 0cf6554c feature/x; do
+  out="$(drift_run PIPELINE_REF="$ref" ALL_TAGS="$DRIFT_TAGS")"
+  assert_contains "$out" 'drift: skip'   "non-version pin '$ref' → skip"
+done
+
+# A bare moving tag is not evidence a major line exists — only a real release is.
+out="$(drift_run PIPELINE_REF=v2 ALL_TAGS=$'v1\nv2\nv3')"
+assert_contains "$out" 'drift: unknown'  "moving tags alone → unknown, not a bogus verdict"
+
+# Pre-release tags must never win the newest-major pick.
+out="$(drift_run PIPELINE_REF=v2 ALL_TAGS=$'v2.0.5\nv3.0.0-rc.1')"
+assert_contains "$out" 'drift: current'  "a v3 pre-release does not make v2 stale"
+
+# Advisory: drift must not fail the consumer's run.
+drift_run PIPELINE_REF=v1 ALL_TAGS="$DRIFT_TAGS" >/dev/null
+assert_equals "$?" "0" "drift exits 0 — advisory, never fails the run"
+
+# Missing required env is a real error.
+set +e
+env -u PIPELINE_REF bash "$DRIFT" >/dev/null 2>&1
+rc=$?
+set -e
+assert_equals "$rc" "2" "missing PIPELINE_REF exits 2"
+
 section "find-pipeline-pr — discover the draft PR opened for an issue"
 
 FIND_PR="$ROOT/scripts/find-pipeline-pr.sh"
