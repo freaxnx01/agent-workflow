@@ -2747,7 +2747,7 @@ assert_not_contains "$out" 'pr create'     "IS_ERROR=true → never calls gh pr 
 
 # PR already exists → pr-present=true, no recovery.
 out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false \
-        PIPELINE_PRS_JSON='[{"number":17,"isDraft":true,"headRefOid":"x","author":{"login":"github-actions[bot]"}}]')"
+        PIPELINE_PRS_JSON='[{"number":17,"isDraft":true,"headRefOid":"x","author":{"login":"github-actions[bot]"},"body":"Closes #42"}]')"
 assert_contains "$out" 'pr-present=true'    "existing PR → pr-present=true"
 assert_contains "$out" 'recovered=false'    "existing PR → no recovery"
 assert_not_contains "$out" 'pr create'      "existing PR → never calls gh pr create"
