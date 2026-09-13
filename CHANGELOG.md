@@ -344,6 +344,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **pipeline:** upload the raw Claude execution log as an artifact, as the
+  OpenCode path already did. The run report carries only the final `result`
+  object, so a run that ends `success` having changed nothing tells you *that*
+  there were permission denials but never *which* tools were denied — the
+  per-turn detail lives in a file written to `RUNNER_TEMP` that died with the
+  runner. Retained 7 days, same as the OpenCode artifact.
+
 - **pipeline:** bump `anthropics/claude-code-base-action` to a maintained
   main-branch SHA. Its newest *release*, v0.0.63 from 2025-08-22, installs Claude
   Code 1.0.88, and the API now refuses current models on it — a `model:fable`

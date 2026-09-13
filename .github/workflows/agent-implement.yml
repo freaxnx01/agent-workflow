@@ -649,6 +649,22 @@ jobs:
           claude_env: |
             GH_TOKEN=${{ steps.app_token.outputs.token || github.token }}
 
+      - name: Upload raw Claude output (diagnostics)
+        # Same rationale as the OpenCode upload below: keep the raw execution log
+        # so an odd run is diagnosable without re-running it. The step-summary
+        # report only carries the final `result` object, which says *that* there
+        # were permission denials but never *which* tools were denied — and the
+        # per-turn tool calls live only in this file. Chasing a Fable run that
+        # ended "success" having changed nothing was impossible for exactly this
+        # reason: the file is written to RUNNER_TEMP and dies with the runner.
+        if: ${{ always() && !inputs.stub-claude && steps.claude_run.outputs.execution_file != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: claude-raw-output
+          path: ${{ steps.claude_run.outputs.execution_file }}
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Run OpenCode
         # Mutex with `Run Claude Code` via the classify_agent gate
         # (ADR-001 §3 — exactly one agent step per job). Reads
