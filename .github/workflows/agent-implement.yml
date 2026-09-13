@@ -614,10 +614,11 @@ jobs:
         if: ${{ !inputs.stub-claude && steps.classify_agent.outputs.agent == 'claude' && steps.attempt_cap.outputs.proceed != 'false' }}
         id: claude_run
         # Step-level env propagates to the action's process.env, which the
-        # action then spreads into the spawned `claude` subprocess. Belt-and-
-        # suspenders alongside `claude_env` below — some configurations of
+        # action then spreads into the spawned `claude` subprocess. This is now
+        # the *only* way env reaches the agent — the action's `claude_env`
+        # input is ignored (#341) — and it works because some configurations of
         # Claude Code's Bash tool only see env vars that were already on the
-        # parent process at spawn time.
+        # parent process at spawn time anyway.
         env:
           # App token when configured (#55) so `gh pr create` opens the PR as
           # the App and triggers required checks; else the ambient GITHUB_TOKEN.
@@ -632,31 +633,49 @@ jobs:
         # before a single token. The action's main branch is still maintained
         # (this SHA is from 2026-09-12) and installs 2.1.270. Re-pin to a release
         # tag if upstream ever cuts one newer than v0.0.63.
+        # Wall-clock cap on the `claude` process, as the step's own timeout.
+        # The action's `timeout_minutes` input is gone from its main branch and
+        # was being ignored (#341); a step-level `timeout-minutes` is the only
+        # cap that still distinguishes "the agent overran" from "the whole job
+        # overran". The job cap (`timeout-minutes` at job level, above) stays as
+        # the outer bound and must remain the larger of the two.
+        timeout-minutes: ${{ inputs.claude-timeout-minutes }}
         uses: anthropics/claude-code-base-action@b95ab0675f9b2696ae6c826c15b7a12e1a4a7071  # main @ 2026-09-12, installs CLI 2.1.270
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt_file: ${{ steps.issue.outputs.prompt-file }}
-          model: ${{ steps.triage.outputs.model }}
-          max_turns: ${{ steps.triage_turns.outputs.turns }}
-          timeout_minutes: ${{ inputs.claude-timeout-minutes }}
-          # Headless mode has no human in the loop to approve tool use, so
-          # everything Claude needs to implement an issue must be allowlisted
-          # up front: code changes, search, repo operations, branch + PR.
+          # Everything the agent's behaviour depends on goes through
+          # `claude_args`, because the action's main branch replaced the
+          # individual inputs (`model`, `max_turns`, `allowed_tools`,
+          # `claude_env`) with `settings` and `claude_args` — and Actions
+          # ignores unknown `with:` keys *silently*. That cost four separate
+          # regressions, each invisible until the one before it was fixed:
           #
-          # This goes through `claude_args`, NOT the old `allowed_tools` input.
-          # That input existed on v0.0.63 and is gone from the action's main
-          # branch, which replaced it with `settings` and `claude_args`. Actions
-          # silently ignores unknown `with:` keys, so once the pin moved to main
-          # the allowlist quietly stopped applying and the agent ran on default
-          # permissions — it could edit files but not `git checkout -b`, then sat
-          # asking for an approval no CI run can give. Six dispatches failed that
-          # way before the raw-output artifact showed the denials (#339).
-          claude_args: --allowedTools "Edit,Write,Read,Glob,Grep,MultiEdit,TodoWrite,Bash"
-          # Expose GH_TOKEN to the spawned `claude` subprocess so it can call
-          # `gh pr create` (the action only injects CLAUDE_CODE_OAUTH_TOKEN
-          # by default).
-          claude_env: |
-            GH_TOKEN=${{ steps.app_token.outputs.token || github.token }}
+          #   - `allowed_tools` (#339): the agent ran on default permissions,
+          #     could edit files but not `git checkout -b`, and sat asking for
+          #     an approval no CI run can give. Six dispatches died that way.
+          #   - `model` (#341): the `model:` label triage was inert, every run
+          #     took the action's default model. A `model:fable` dispatch never
+          #     once reached Fable.
+          #   - `max_turns` (#341): `classify-turns.sh`'s whole budget never
+          #     reached the agent; runs ended on the clock instead.
+          #
+          # The allowlist is what headless mode needs up front, since there is
+          # no human to approve tool use: code changes, search, repo
+          # operations, branch + PR.
+          #
+          # Verify a change here against the `init` object in the
+          # `claude-raw-output` artifact — it reports the model and tools the
+          # CLI actually started with, which is the only proof that an argument
+          # landed rather than being dropped.
+          claude_args: >-
+            --model ${{ steps.triage.outputs.model }}
+            --max-turns ${{ steps.triage_turns.outputs.turns }}
+            --allowedTools "Edit,Write,Read,Glob,Grep,MultiEdit,TodoWrite,Bash"
+          # No `claude_env` here: that input is ignored too (#341). GH_TOKEN
+          # reaches the spawned `claude` subprocess via this step's `env:`
+          # above, which was already carrying it as a belt-and-suspenders
+          # measure — so `gh pr create` keeps working.
 
       - name: Upload raw Claude output (diagnostics)
         # Same rationale as the OpenCode upload below: keep the raw execution log
