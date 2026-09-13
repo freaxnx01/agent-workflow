@@ -1813,7 +1813,7 @@ find_pr_run() {
 
 # One draft PR closing the issue → found
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
-        PIPELINE_PRS_JSON='[{"number":17,"isDraft":true,"headRefOid":"deadbeef","headRefName":"feat/fix-thing","author":{"login":"github-actions[bot]"}}]')"
+        PIPELINE_PRS_JSON='[{"number":17,"isDraft":true,"headRefOid":"deadbeef","headRefName":"feat/fix-thing","author":{"login":"github-actions[bot]"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
 assert_contains "$out" 'found=true'         "single draft PR → found=true"
 assert_contains "$out" 'pr-number=17'       "emits pr-number"
 assert_contains "$out" 'head-sha=deadbeef'  "emits head-sha"
@@ -1821,45 +1821,45 @@ assert_contains "$out" 'head-ref=feat/fix-thing' "emits head-ref (branch name)"
 
 # Multiple drafts (e.g. stale + fresh) → highest-numbered wins
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
-        PIPELINE_PRS_JSON='[{"number":17,"isDraft":true,"headRefOid":"old","author":{"login":"github-actions[bot]"}},{"number":99,"isDraft":true,"headRefOid":"new","author":{"login":"github-actions[bot]"}}]')"
+        PIPELINE_PRS_JSON='[{"number":17,"isDraft":true,"headRefOid":"old","author":{"login":"github-actions[bot]"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]},{"number":99,"isDraft":true,"headRefOid":"new","author":{"login":"github-actions[bot]"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
 assert_contains "$out" 'pr-number=99'       "picks highest-numbered draft"
 assert_contains "$out" 'head-sha=new'       "head-sha matches selected PR"
 
 # Higher-numbered draft by a non-allowlisted author is REJECTED → falls
 # back to the legitimate lower-numbered pipeline-authored draft.
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
-        PIPELINE_PRS_JSON='[{"number":100,"isDraft":true,"headRefOid":"pipeline","author":{"login":"github-actions[bot]"}},{"number":101,"isDraft":true,"headRefOid":"attacker","author":{"login":"some-human"}}]')"
+        PIPELINE_PRS_JSON='[{"number":100,"isDraft":true,"headRefOid":"pipeline","author":{"login":"github-actions[bot]"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]},{"number":101,"isDraft":true,"headRefOid":"attacker","author":{"login":"some-human"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
 assert_contains "$out" 'pr-number=100'      "ignores non-allowlisted author even when higher-numbered"
 assert_contains "$out" 'head-sha=pipeline'  "selects pipeline head-sha, not attacker's"
 
 # Custom allowlist accepts a GitHub App
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
         AUTHOR_ALLOWLIST=$'github-actions[bot]\nmy-pipeline-app[bot]' \
-        PIPELINE_PRS_JSON='[{"number":50,"isDraft":true,"headRefOid":"app-pr","author":{"login":"my-pipeline-app[bot]"}}]')"
+        PIPELINE_PRS_JSON='[{"number":50,"isDraft":true,"headRefOid":"app-pr","author":{"login":"my-pipeline-app[bot]"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
 assert_contains "$out" 'pr-number=50'       "custom AUTHOR_ALLOWLIST accepts the bot"
 
 # #54: `gh pr list --json author` reports the Actions bot as `app/github-actions`,
 # not the REST `github-actions[bot]` the default allowlist uses. Normalization
 # must match them so a GITHUB_TOKEN-authored PR is found.
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
-        PIPELINE_PRS_JSON='[{"number":7,"isDraft":true,"headRefOid":"ghtok","author":{"login":"app/github-actions"}}]')"
+        PIPELINE_PRS_JSON='[{"number":7,"isDraft":true,"headRefOid":"ghtok","author":{"login":"app/github-actions"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
 assert_contains "$out" 'found=true'         "gh author 'app/github-actions' matches default allowlist"
 assert_contains "$out" 'pr-number=7'        "  → selects the GITHUB_TOKEN-authored PR"
 
 # Normalization is symmetric: gh's `app/<name>` matches an allowlist `<name>[bot]`.
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
         AUTHOR_ALLOWLIST='my-app[bot]' \
-        PIPELINE_PRS_JSON='[{"number":8,"isDraft":true,"headRefOid":"appsha","author":{"login":"app/my-app"}}]')"
+        PIPELINE_PRS_JSON='[{"number":8,"isDraft":true,"headRefOid":"appsha","author":{"login":"app/my-app"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
 assert_contains "$out" 'pr-number=8'        "allowlist 'my-app[bot]' matches gh author 'app/my-app'"
 
 # A genuine non-bot human author is still rejected (no over-matching).
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
-        PIPELINE_PRS_JSON='[{"number":9,"isDraft":true,"headRefOid":"h","author":{"login":"some-human"}}]')"
+        PIPELINE_PRS_JSON='[{"number":9,"isDraft":true,"headRefOid":"h","author":{"login":"some-human"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
 assert_contains "$out" 'found=false'        "non-allowlisted human still rejected after normalization"
 
 # Only a non-draft PR exists (somehow promoted already) → not found
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
-        PIPELINE_PRS_JSON='[{"number":17,"isDraft":false,"headRefOid":"x","author":{"login":"github-actions[bot]"}}]')"
+        PIPELINE_PRS_JSON='[{"number":17,"isDraft":false,"headRefOid":"x","author":{"login":"github-actions[bot]"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
 assert_contains "$out" 'found=false'        "only non-draft → found=false"
 assert_contains "$out" 'pr-number='         "no pr-number when not found"
 
@@ -1887,7 +1887,7 @@ EOF
 # Empty on attempt 1, PR found on attempt 2 → found=true, exactly 2 invocations.
 shim1="$(mktemp)"; ctr1="$(mktemp)"; : > "$ctr1"
 make_flaky_pr_list "$shim1" 1 \
-  '[{"number":17,"isDraft":true,"headRefOid":"deadbeef","headRefName":"feat/x","author":{"login":"github-actions[bot]"}}]' \
+  '[{"number":17,"isDraft":true,"headRefOid":"deadbeef","headRefName":"feat/x","author":{"login":"github-actions[bot]"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]' \
   "$ctr1"
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
         PIPELINE_PRS_JSON_SEQUENCE_CMD="$shim1" \
@@ -1911,7 +1911,7 @@ assert_equals "$(cat "$ctr2")" "3"   "  → exactly FIND_PR_RETRY_MAX (3) invoca
 shim3="$(mktemp)"; ctr3="$(mktemp)"; printf 0 > "$ctr3"
 make_flaky_pr_list "$shim3" 99 '[]' "$ctr3"
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
-        PIPELINE_PRS_JSON='[{"number":5,"isDraft":true,"headRefOid":"x","author":{"login":"github-actions[bot]"}}]' \
+        PIPELINE_PRS_JSON='[{"number":5,"isDraft":true,"headRefOid":"x","author":{"login":"github-actions[bot]"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]' \
         PIPELINE_PRS_JSON_SEQUENCE_CMD="$shim3" \
         FIND_PR_RETRY_SLEEP_CMD=: FIND_PR_RETRY_MAX=3)"
 assert_contains "$out" 'pr-number=5'      "PIPELINE_PRS_JSON takes priority over the sequence shim"
