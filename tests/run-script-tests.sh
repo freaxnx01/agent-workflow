@@ -1867,6 +1867,18 @@ assert_contains "$out" 'pr-number='         "no pr-number when not found"
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r PIPELINE_PRS_JSON='[]')"
 assert_contains "$out" 'found=false'        "empty list → found=false"
 
+# --- false-positive rejection (#343) -----------------------------------
+
+# GitHub's search tokenises `closes #11` and matches any body containing the
+# bare number, so the result set can hold a PR that closes something else
+# entirely. PR #28 in game-wipfelkratzer matched issue 11 on the phrase
+# "chairs at cells 5 and 11" — a cell index. Accepting it suppressed
+# verify-or-recover-pr.sh's salvage and the run's work was lost.
+out="$(find_pr_run env ISSUE_NUMBER=11 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":28,"isDraft":true,"headRefOid":"wrong","author":{"login":"github-actions[bot]"},"body":"- **After, tall** (floors: 10, chairs at cells 5 and 11 next to the stair opening)","closingIssuesReferences":[{"number":13,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
+assert_contains "$out" 'found=false'  "bare number in body, linked to another issue → rejected (#343)"
+assert_contains "$out" 'pr-number='   "  → no pr-number, so salvage can run"
+
 # --- retry-on-empty-result (search-index lag, #249) --------------------
 
 # Fake `gh pr list` shim: returns "[]" on its first N invocations (tracked
