@@ -352,6 +352,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **pipeline:** pass the tool allowlist through `claude_args`, not the removed
+  `allowed_tools` input. The action's main branch dropped that input in favour of
+  `settings`/`claude_args`, and Actions silently ignores unknown `with:` keys — so
+  from v2.0.1 the agent ran on default permissions. It could edit files but not
+  `git checkout -b`, and sat asking for an approval no CI run can give. Six
+  dispatches failed as "run completed but no PR was opened" before the raw-output
+  artifact exposed the denials (#339).
+
 - **pipeline:** upload the raw Claude execution log as an artifact, as the
   OpenCode path already did. The run report carries only the final `result`
   object, so a run that ends `success` having changed nothing tells you *that*
