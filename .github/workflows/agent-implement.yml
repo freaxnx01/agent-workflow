@@ -992,14 +992,23 @@ jobs:
         env:
           WORKSPACE: ${{ github.workspace }}
           RUNNER_TEMP_DIR: ${{ runner.temp }}
+          STUB_ISSUE: ${{ inputs.issue-number }}
+          STUB_REPO: ${{ github.repository }}
         run: |
           log="$RUNNER_TEMP_DIR/gh-mock.log"
           : > "$log"
+          # The stub PR must satisfy find-pipeline-pr.sh's verification (#343):
+          # a candidate is only accepted when it actually closes the issue. So
+          # the canned JSON carries the closingIssuesReferences a real
+          # pipeline PR has, scoped to this repo — without it the stub is
+          # rejected and every downstream assert job fails on a PR that was
+          # never found.
+          owner="${STUB_REPO%%/*}"; name="${STUB_REPO#*/}"
           {
             printf 'PATH=%s/.claude-pipeline/tests/mocks:%s\n' "$WORKSPACE" "$PATH"
             printf 'GH_MOCK_LOG=%s\n' "$log"
-            printf 'PIPELINE_PRS_JSON=%s\n' \
-              '[{"number":9999,"isDraft":true,"headRefOid":"stubsha","headRefName":"stub-branch","author":{"login":"github-actions[bot]"}}]'
+            printf 'PIPELINE_PRS_JSON=[{"number":9999,"isDraft":true,"headRefOid":"stubsha","headRefName":"stub-branch","author":{"login":"github-actions[bot]"},"closingIssuesReferences":[{"number":%s,"repository":{"name":"%s","owner":{"login":"%s"}}}]}]\n' \
+              "$STUB_ISSUE" "$name" "$owner"
           } >> "$GITHUB_ENV"
 
       - name: Self-modification guard (ADR-002 — agent-workflow itself)
@@ -1347,14 +1356,23 @@ jobs:
         env:
           WORKSPACE: ${{ github.workspace }}
           RUNNER_TEMP_DIR: ${{ runner.temp }}
+          STUB_ISSUE: ${{ inputs.issue-number }}
+          STUB_REPO: ${{ github.repository }}
         run: |
           log="$RUNNER_TEMP_DIR/gh-mock.log"
           : > "$log"
+          # The stub PR must satisfy find-pipeline-pr.sh's verification (#343):
+          # a candidate is only accepted when it actually closes the issue. So
+          # the canned JSON carries the closingIssuesReferences a real
+          # pipeline PR has, scoped to this repo — without it the stub is
+          # rejected and every downstream assert job fails on a PR that was
+          # never found.
+          owner="${STUB_REPO%%/*}"; name="${STUB_REPO#*/}"
           {
             printf 'PATH=%s/.claude-pipeline/tests/mocks:%s\n' "$WORKSPACE" "$PATH"
             printf 'GH_MOCK_LOG=%s\n' "$log"
-            printf 'PIPELINE_PRS_JSON=%s\n' \
-              '[{"number":9999,"isDraft":true,"headRefOid":"stubsha","headRefName":"stub-branch","author":{"login":"github-actions[bot]"}}]'
+            printf 'PIPELINE_PRS_JSON=[{"number":9999,"isDraft":true,"headRefOid":"stubsha","headRefName":"stub-branch","author":{"login":"github-actions[bot]"},"closingIssuesReferences":[{"number":%s,"repository":{"name":"%s","owner":{"login":"%s"}}}]}]\n' \
+              "$STUB_ISSUE" "$name" "$owner"
           } >> "$GITHUB_ENV"
 
       - name: Find pipeline-opened PR
