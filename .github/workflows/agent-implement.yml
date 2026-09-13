@@ -642,7 +642,16 @@ jobs:
           # Headless mode has no human in the loop to approve tool use, so
           # everything Claude needs to implement an issue must be allowlisted
           # up front: code changes, search, repo operations, branch + PR.
-          allowed_tools: Edit,Write,Read,Glob,Grep,MultiEdit,TodoWrite,Bash
+          #
+          # This goes through `claude_args`, NOT the old `allowed_tools` input.
+          # That input existed on v0.0.63 and is gone from the action's main
+          # branch, which replaced it with `settings` and `claude_args`. Actions
+          # silently ignores unknown `with:` keys, so once the pin moved to main
+          # the allowlist quietly stopped applying and the agent ran on default
+          # permissions — it could edit files but not `git checkout -b`, then sat
+          # asking for an approval no CI run can give. Six dispatches failed that
+          # way before the raw-output artifact showed the denials (#339).
+          claude_args: --allowedTools "Edit,Write,Read,Glob,Grep,MultiEdit,TodoWrite,Bash"
           # Expose GH_TOKEN to the spawned `claude` subprocess so it can call
           # `gh pr create` (the action only injects CLAUDE_CODE_OAUTH_TOKEN
           # by default).
