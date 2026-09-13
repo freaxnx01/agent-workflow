@@ -160,7 +160,7 @@ permissions:            # the reusable jobs need these; a caller can't grant a
 jobs:
   claude:
     if: github.event.label.name == 'ai-implement'
-    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
+    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     with:
@@ -217,7 +217,7 @@ App* (triggers required checks; stable bot login). To enable:
    ```yaml
    jobs:
      claude:
-       uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
+       uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2
        with:
          issue-number: ${{ github.event.issue.number }}
          ai-review-ai-merge: true
@@ -259,7 +259,7 @@ Caveats:
 # .github/workflows/agent.yml
 jobs:
   claude:
-    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
+    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2
     with:
       issue-number: ${{ github.event.issue.number }}
       ai-review-ai-merge: true        # per-repo opt-in (ADR-002 gate 3)
@@ -331,7 +331,7 @@ Choose the agent at the call site or per-issue:
 # .github/workflows/agent.yml
 jobs:
   claude:
-    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
+    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2
     with:
       issue-number: ${{ github.event.issue.number }}
       agent: opencode             # ← workflow-input default for this repo

@@ -104,8 +104,9 @@ on:
           context fields refer to the *caller's* workflow when running as
           a reusable workflow, so we cannot auto-resolve to the same ref
           the caller pinned in `uses:`. Consumers that pin to a tag (e.g.
-          `uses: ...@v1`) should also pass `pipeline-ref: v1` here to keep
-          workflow and scripts in lockstep.
+          `uses: ...@v2`) should also pass `pipeline-ref: v2` here to keep
+          workflow and scripts in lockstep. Pin the moving major tag, not a
+          full version — see the pinning section in docs/CONSUMER-SETUP.md.
         type: string
         default: main
       dry-run:
