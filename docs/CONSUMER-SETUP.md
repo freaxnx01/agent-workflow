@@ -505,15 +505,44 @@ a human remembering has been falsified in practice.
 
 ### Migrating to a new major line
 
-1. Read the major release's entry in `CHANGELOG.md` for `BREAKING CHANGE:`.
-   Check whether any input you actually set was removed — inputs are
-   deprecated for one major line before removal, so the usual answer is no.
-2. Change both `@vN` and `pipeline-ref: vN` in `.github/workflows/agent.yml`.
-3. Dispatch one issue and confirm the run is green before doing the rest.
+`scripts/migrate-consumers.sh` does this across a fleet. Its two modes answer
+the two questions separately.
 
-For many repos at once, read each stub through the contents API and write it
-back, rather than cloning. Match the tag **anchored** — `@v1\b` also matches
-`@v1.13.0`, which is how the pin above became a ref that did not exist.
+**Where do I stand?** No target, no writes, safe any time:
+
+```bash
+bash scripts/migrate-consumers.sh --owner <owner>
+# freaxnx01/flowhub              v2  inventory
+# freaxnx01/game-wipfelkratzer   v2  inventory
+```
+
+**Roll out a new line.** Dry run first — `--apply` is required to write
+anything:
+
+```bash
+bash scripts/migrate-consumers.sh --owner <owner> --to v3           # dry run
+bash scripts/migrate-consumers.sh --owner <owner> --to v3 --apply
+```
+
+Before the rollout, read the major release's `CHANGELOG.md` entry for
+`BREAKING CHANGE:` and check whether an input you actually set was removed.
+Inputs are deprecated for a full major line before removal, so the usual answer
+is no. Then migrate **one** repo, dispatch an issue there, and confirm the run
+is green before doing the rest.
+
+Three behaviours worth knowing, each of them a mistake someone already made:
+
+- **The whole ref is replaced, never a substring.** A stub pinned `@v1.13.0`
+  becomes `@v2` — not `@v2.13.0`. A find-and-replace of `@v1` → `@v2` produces
+  exactly that non-existent ref, and did.
+- **Non-version pins are left alone.** `main`, a branch or a SHA is a
+  deliberate choice; `--force` overrides.
+- **It is idempotent.** Running it twice changes nothing the second time, so a
+  partial run is safe to repeat.
+
+Use `--pr` wherever the default branch is protected — it opens a pull request
+per repo instead of committing directly, which is the normal case outside
+personal repos.
 
 ## Troubleshooting
 
