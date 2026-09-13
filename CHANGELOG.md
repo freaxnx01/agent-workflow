@@ -364,6 +364,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **pipeline:** `find-pipeline-pr.sh` now verifies a candidate PR actually
+  closes the issue instead of trusting the search result. GitHub tokenises
+  `closes #N in:body` and drops the `#`, so the query matched every open PR
+  whose body contained the bare number anywhere — a line number, a cell index.
+  A false hit told `verify-or-recover-pr.sh` a PR already existed, so salvage
+  stood down and a run that pushed nothing ended as `success` with its work
+  discarded (59 turns, $2.76, observed on `game-wipfelkratzer#11`). Candidates
+  are now checked against `closingIssuesReferences` scoped to the repo, or a
+  closing keyword for the issue in the body; both fields come from the existing
+  `gh pr list` call, so this costs no extra API requests. (#343)
+
 - **pipeline:** pass the tool allowlist through `claude_args`, not the removed
   `allowed_tools` input. The action's main branch dropped that input in favour of
   `settings`/`claude_args`, and Actions silently ignores unknown `with:` keys — so
