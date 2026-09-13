@@ -69,7 +69,7 @@ fetch_prs() {
     --repo "$REPO" \
     --state open \
     --search "closes #${ISSUE_NUMBER} in:body" \
-    --json number,isDraft,headRefOid,headRefName,author \
+    --json number,isDraft,headRefOid,headRefName,author,body,closingIssuesReferences \
     --limit 10 2>/dev/null || printf '[]'
 }
 
@@ -85,15 +85,37 @@ fetch_prs() {
 # normalizing, gate 1 never matches a GITHUB_TOKEN-authored PR (#54). The same
 # maps any App, e.g. `app/my-app` ⇄ `my-app[bot]`.
 #
-# select_from_json <json> <allowed_json> → prints the selected PR object (or {}).
+# The search query is a PREFILTER, not an answer. GitHub tokenises
+# `closes #N in:body` and drops the `#`, so the result set contains every open
+# PR whose body mentions the bare number anywhere — a line number, a cell
+# index, a viewport width. Accepting one of those made verify-or-recover-pr.sh
+# believe a PR already existed and skip salvage, losing the run's work (#343).
+#
+# So verify each candidate. Two signals, either is sufficient:
+#   1. closingIssuesReferences — GitHub's own computed link, scoped to this
+#      repo so the same number in another repo does not count. Definitive.
+#   2. a closing keyword for the issue in the body — covers the window before
+#      the link is computed. Without this fallback, a link that has not
+#      materialised yet becomes a false negative, which is what #249's retry
+#      loop exists to prevent.
+#
+# select_from_json <json> <allowed_json> <issue_number> <repo> → the selected
+# PR object (or {}).
 select_from_json() {
   printf '%s' "$1" \
-    | jq -c --argjson allow "$2" '
+    | jq -c --argjson allow "$2" --arg issue "$3" --arg repo "$4" '
       def norm: (. // "") | sub("^app/"; "") | sub("\\[bot\\]$"; "");
+      def closes_issue($n; $r):
+        ((.closingIssuesReferences // [])
+           | any(.number == ($n | tonumber)
+                 and ((.repository.owner.login + "/" + .repository.name) == $r)))
+        or ((.body // "")
+              | test("(?i)\\b(close[sd]?|fix(es|ed)?|resolve[sd]?)\\s+#" + $n + "\\b"));
       ($allow | map(norm)) as $a
       | [ .[]
           | select(.isDraft == true
-                   and ((.author.login | norm) as $au | ($a | index($au)) != null)) ]
+                   and ((.author.login | norm) as $au | ($a | index($au)) != null)
+                   and closes_issue($issue; $repo)) ]
       | sort_by(-.number) | .[0] // {}'
 }
 
@@ -105,13 +127,13 @@ ALLOWED_JSON="$(printf '%s\n' "$AUTHOR_ALLOWLIST" \
 if [[ -n "${PIPELINE_PRS_JSON:-}" ]]; then
   # Explicit static seam — used by every non-retry test. No retry: a caller
   # that already knows the exact JSON to return doesn't want the loop.
-  SELECTED="$(select_from_json "$PIPELINE_PRS_JSON" "$ALLOWED_JSON")"
+  SELECTED="$(select_from_json "$PIPELINE_PRS_JSON" "$ALLOWED_JSON" "$ISSUE_NUMBER" "$REPO")"
 else
   attempt=1
   SELECTED='{}'
   while :; do
     PRS_JSON="$(fetch_prs)"
-    SELECTED="$(select_from_json "$PRS_JSON" "$ALLOWED_JSON")"
+    SELECTED="$(select_from_json "$PRS_JSON" "$ALLOWED_JSON" "$ISSUE_NUMBER" "$REPO")"
     [[ "$(printf '%s' "$SELECTED" | jq -r '.number // ""')" ]] && break
     (( attempt >= FIND_PR_RETRY_MAX )) && break
     "$FIND_PR_RETRY_SLEEP_CMD" "$(( FIND_PR_RETRY_BASE_SLEEP * attempt ))"
