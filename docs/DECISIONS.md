@@ -1435,3 +1435,75 @@ is released" is answered by the tags, never by `main`.
 + Logging the resolved pipeline ref in run output (so "which version am I
   running?" is answerable from a log) and offering consumers exact-pin +
   Dependabot are both out of scope here and filed separately from #261.
+
+---
+
+## ADR-014 — The PR search is a prefilter; the issue link is verified (2026-09-13)
+
+**Status:** Accepted
+**Tracking:** [#343](https://github.com/freaxnx01/agent-workflow/issues/343)
+
+### Context
+
+`find-pipeline-pr.sh` locates the PR a run opened by asking GitHub search for
+`closes #N in:body`. That query does not mean what it reads like. Search has no
+phrase semantics here: it tokenises the expression and drops the `#`, so `#11`
+reduces to `11` and the result set contains **every** open PR whose body
+mentions the bare number anywhere — a line number, a cell index, a viewport
+width. `select_from_json` then filtered on draft status and author, but never on
+whether the candidate had anything to do with the issue, so the first
+false positive won.
+
+This is not theoretical. On `game-wipfelkratzer#11` the run finished `success`
+with `ai:done` and no branch and no PR — 59 turns and $2.76 of work that died
+with the runner. `verify-or-recover-pr.sh` exists to salvage exactly that case
+(“run completed but no PR was opened” is the largest measured failure class in
+the fleet, 24 of 48), and it stood down because `find-pipeline-pr.sh` told it a
+PR already existed. The PR it had found was #28, which closes #13; it matched on
+the phrase “chairs at cells 5 and **11** next to the stair opening”.
+
+The existing tiebreaker made this worse rather than better: “highest-numbered
+draft wins” picks *among* the false positives instead of excluding them. And
+[#249](https://github.com/freaxnx01/agent-workflow/issues/249)'s retry loop
+guards only the opposite failure — an empty result from search-index lag — and
+stops at the first selection, so a false positive is never reconsidered.
+
+The cost is asymmetric, which decides the design. A false negative is cheap and
+self-correcting: salvage runs, and at worst opens a PR that already existed. A
+false positive silently discards a run's entire output and reports `success`,
+indistinguishable from a real one in both the run report and `/ai-stats`.
+
+### Decision
+
+**The search result is a prefilter, not an answer.** Every candidate is verified
+before it counts as “the PR for this issue”. Two signals, either sufficient:
+
+1. `closingIssuesReferences` contains the issue, **scoped to this repository** —
+   the same number in another repo does not count.
+2. A closing keyword for the issue in the body:
+   `\b(close[sd]?|fix(es|ed)?|resolve[sd]?)\s+#N\b`, case-insensitive. The `\b`
+   is load-bearing: without it `Closes #420` satisfies issue 42.
+
+Both fields ride along on the `gh pr list` request that was already being made,
+so verification costs **no additional API calls**.
+
+### Consequences
+
++ A candidate satisfying neither signal is discarded even though search returned
+  it. For `verify-or-recover-pr.sh` that means salvage runs — the safe direction,
+  per the asymmetry above.
++ **Signal 2 is not a mere fallback; on this pipeline it is the only signal that
+  ever fires.** GitHub forms no closing-issue reference for a PR authored by the
+  github-actions app ([#303](https://github.com/freaxnx01/agent-workflow/issues/303)),
+  so a pipeline PR reaches this code with `closingIssuesReferences: []` and is
+  matched on its body alone. Removing the body check as redundant would break
+  every run. Signal 1 covers PRs opened under other identities and is kept
+  because it is the stronger evidence when it is present.
++ The pipeline's PR body **must** contain `Closes #N`. That was already true —
+  the search query depended on it — but it is now a correctness requirement
+  rather than a search hint, and the agent instructions state it explicitly.
++ Fixtures for this script must carry `body` and `closingIssuesReferences`; one
+  without them no longer resembles a real response. This reached beyond the test
+  file: the canned `PIPELINE_PRS_JSON` that `agent-implement.yml` emits under
+  `stub-review-verdict` had to gain a `Closes #<issue>` body, since the stub is
+  now subject to the same predicate as a real response.
