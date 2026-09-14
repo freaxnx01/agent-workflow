@@ -222,7 +222,14 @@ if [[ -z "${AGENT_CMD:-}" ]]; then
     claude)   export AGENT_BIN=claude ;;
     opencode) export AGENT_BIN=opencode ;;
   esac
-  export MODEL="${MODEL:-}"
+  # Denylisted models are substituted here rather than inside the generated
+  # wrapper: the wrapper only reads this exported value, so one guard covers
+  # it. The workflow always sets AGENT_CMD, so this branch is the ad-hoc path
+  # — lib/agent-cmd-claude.sh guards the workflow one.
+  # shellcheck source=scripts/lib/blocked-models.sh disable=SC1091  # hook runs without -x; SC1091 is conventionally suppressed
+  source "$SCRIPT_DIR/lib/blocked-models.sh"
+  MODEL="$(allowed_model_or_fallback "${MODEL:-}")"
+  export MODEL
   AGENT_CMD="$WORK_DIR/agent-cmd-default.sh"
   cat > "$AGENT_CMD" <<'EOF'
 #!/usr/bin/env bash

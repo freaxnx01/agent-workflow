@@ -574,6 +574,10 @@ jobs:
           # otherwise classify-task treats opencode model labels as incompatible
           # with the default AGENT=claude and falls back to DEFAULT_MODEL.
           AGENT: ${{ steps.classify_agent.outputs.agent }}
+          # Same attempt counter classify_agent reads. classify-task uses it to
+          # stop a cost-guarded model (model:fable) from being spent twice: the
+          # first attempt was a per-issue decision, the retry is automatic.
+          ATTEMPT: ${{ steps.attempt_cap.outputs.attempt || 1 }}
         run: bash .claude-pipeline/scripts/classify-task.sh
 
       - name: Triage turns

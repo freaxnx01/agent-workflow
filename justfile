@@ -18,6 +18,7 @@ lint:
 # Layer-1 fixture tests (no network, runs in seconds)
 test:
     bash tests/run-script-tests.sh
+    bash tests/run-blocked-models-tests.sh
     bash tests/run-detect-forge-tests.sh
     bash tests/run-ai-stats-tests.sh
     bash tests/run-ai-funnel-tests.sh

@@ -160,6 +160,13 @@ is a judgment the issue author makes, not one a keyword heuristic should guess.
 Label it when the work is visual (a 3D model, an illustration-driven look, a
 style series); leave it off for logic, wiring and refactors.
 
+Because Fable's per-token cost and rate limit are both high, the label is the
+*only* way to reach it — `scripts/lib/blocked-models.sh` substitutes it on every
+route where nobody decided per issue: a `default-model` / `escalate-model` /
+`review-model` set repo-wide, and a retry of a Fable run (attempt 2 onwards).
+The first attempt is a decision and stands; the automatic repeat is not one, so
+it escalates off Fable instead of spending a second budget unattended.
+
 ### Metrics & reporting
 
 Every run posts a comment to the issue with:
