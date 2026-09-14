@@ -98,7 +98,9 @@ that never left it counts for exactly as much as an unsaved edit.
   moment that task's own tests pass — do not front-load all edits across
   every task and push once at the end. Push is the part that matters: a
   local commit dies with the runner.
-- **Open the draft PR after the first task passes, not at the end.** Say in
+- **Open the draft PR after the first task passes, not at the end.** Create it
+  with \`gh pr create --draft\`, never ready-for-review: \`find-pipeline-pr.sh\`
+  selects only drafts, so a ready PR gets no pipeline review at all (#322). Say in
   its description which tasks are done and which remain, and update that as
   you go. A truncated run then leaves a real, reviewable PR of finished
   work instead of nothing at all — and if the run is cut short, whatever
@@ -190,7 +192,9 @@ counts for exactly as much as an unsaved edit.
 
 - **Commit and push as soon as a step's verification commands pass** — do not
   batch every task into one final push. A local commit dies with the runner.
-- **Open the draft PR after the first task, not at the end**, and note in its
+- **Open the draft PR after the first task, not at the end** — with
+  \`gh pr create --draft\`, never ready-for-review, since \`find-pipeline-pr.sh\`
+  selects only drafts (#322) — and note in its
   description which tasks are done. A truncated run then leaves reviewable work
   rather than nothing.
 - **Trust the plan's line numbers and diffs.** Only re-read a file if a step's
