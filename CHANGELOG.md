@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.6](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.0.6) - 2026-09-14
+
+### Added
+
+- **pipeline:** Warn a consumer when its pinned major line is stale (#346)
+- **scripts:** `migrate-consumers.sh` — fleet inventory and major-line migration (#346)
+
+### Fixed
+
+- **find-pipeline-pr:** Verify the PR actually closes the issue (#343) (#345)
+- **onboard:** Resolve the pin at run time instead of baking a major into the script (#346)
+
 ## [2.0.5](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.0.5) - 2026-09-13
 
 ### Fixed
