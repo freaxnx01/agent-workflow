@@ -18,11 +18,135 @@ Reasoning and caveats are in **ADR-012**; these are the follow-ups it names.
 - [ ] **Verify against a live organization and delete the epistemic caveat** in
       `/issues`. Flags came from `--help`; JSON shapes, WIQL clauses and every
       `--query` path did not. The `--query` paths are the likeliest to be wrong
-      and fail *silently* (empty result, not an error).
+      and fail *silently* (empty result, not an error). Step-by-step checklist:
+      see the next section.
 - [ ] **Hybrid case: ADO boards + GitHub code** — out of scope in ADR-012 by
       choice. `detect_forge` keys off the git remote, so such a repo detects as
       `github` and never reaches the ADO path. Supporting it means splitting
       "code host" from "work-item backend", reshaping dispatch in all 12 files.
+
+## Azure DevOps — manual test plan (needs a live org; nothing here can be faked)
+
+Everything below is what `--help` and the fixture tests **cannot** reach. The unit
+tests cover remote-URL parsing only; they build throwaway repos and never call
+`az`. So treat every JSON shape, WIQL clause and `--query` path in `/issues`'
+`## Azure DevOps` section as unverified until a run below confirms it.
+
+**Golden rule for the whole pass: run each call with plain `--output json` FIRST
+and look at the real shape, then add the `--query`.** A wrong JMESPath returns an
+empty list, not an error — so testing `--query` first can "pass" by printing
+nothing while proving nothing.
+
+### Setup
+
+- [ ] An ADO org with a project and a git repo in Azure Repos; clone it so
+      `origin` is a real `dev.azure.com` remote.
+- [ ] `az` + `az extension add --name azure-devops`.
+- [ ] PAT exported as `AZURE_DEVOPS_EXT_PAT` from an allowed `.envrc`; reach it
+      with `direnv exec <dir> …` (the agent shell fires no direnv hook).
+- [ ] Ideally **two** projects on different process templates (Agile + Basic or
+      Scrum) — the design's core claim is that state *categories* are
+      template-independent where state *names* are not, and one project cannot
+      test that claim.
+
+### 1. Detection and context
+
+- [ ] `detect_forge` on the real clone returns `azdo dev.azure.com`.
+- [ ] `resolve_azdo_context` yields the right `AZDO_ORG` / `AZDO_PROJECT` /
+      `AZDO_REPO`.
+- [ ] Repeat against an **ssh** remote (`git@ssh.dev.azure.com:v3/...`).
+- [ ] Repeat with a **project name containing a space**. The unit tests cover
+      `%20` synthetically; this is the first time a real remote produces it, and
+      it is the entire reason the helper returns variables instead of one line.
+- [ ] If a legacy `<org>.visualstudio.com` remote is reachable, confirm whether
+      `org_url="https://dev.azure.com/$AZDO_ORG"` works or the documented
+      `https://$AZDO_ORG.visualstudio.com` fallback is actually needed.
+
+### 2. Auth failure path
+
+- [ ] With **no** PAT and no `az devops login`, confirm the command *reports* the
+      missing auth and stops. The section claims it must not fall through to a
+      bare `az` call whose prompt would hang — verify it truly does not hang.
+
+### 3. Work-item metadata (this is what removes the template guessing)
+
+- [ ] `az devops invoke --area wit --resource workitemtypes --route-parameters
+      project=<p> --api-version 7.1 --output json` returns successfully — confirm
+      the **resource name and api-version are right**, since both were guessed.
+- [ ] The response really has `.value[].states[]` with `.name` and `.category`.
+- [ ] `Completed` and `Removed` appear as categories, and the derived closed-state
+      list matches that project's template.
+- [ ] Run it on the **second** project (different template) and confirm the
+      category names are identical while the state names differ. If this fails,
+      the whole "read it from metadata" decision in ADR-012 needs revisiting.
+
+### 4. The WIQL query
+
+- [ ] `az boards query --wiql` accepts the multi-field `SELECT` as written.
+- [ ] `[System.AreaPath] UNDER 'Project\repo'` — the single backslash survives
+      bash → `az` → REST → the WIQL parser. Verified locally only as far as bash.
+- [ ] `NOT CONTAINS` is one operator and parses as written.
+- [ ] The `@project` macro resolves against `--project`.
+- [ ] `ORDER BY [System.CreatedDate] DESC` is honoured.
+- [ ] Record the **result JSON shape** — where the fields actually live (e.g.
+      `.fields."System.Title"`) — and fix the section if it differs.
+
+### 5. Every `--query` path (the silent failures)
+
+For each: run without `--query` first, record the shape, then confirm the path.
+
+- [ ] `az repos pr list … --query '[].pullRequestId'` — is the response a
+      top-level array, or object-wrapped?
+- [ ] `az repos pr work-item list --id <pr> --query '[].id'`
+- [ ] `az boards area project list --query '[].name'`
+- [ ] `az boards iteration project list --query '[].{name:name,path:path}'`
+
+### 6. Area Path guard
+
+- [ ] In a project that **does** mirror repo names into its area tree: rows come
+      back.
+- [ ] In a project that **does not**: confirm the command says *"no Area Path
+      matching `<repo>`"* and **asks**, rather than printing a confident empty
+      list.
+- [ ] Confirm it never widens to project-wide on its own — the failure this guard
+      exists for is showing other repos' work as this repo's.
+
+### 7. WIP derivation
+
+- [ ] Link a work item to an **active** PR → it disappears from `/issues`.
+- [ ] Complete or abandon that PR → the work item comes back (only `active`
+      counts as WIP).
+- [ ] With no active PRs at all, confirm the empty result reads as "nothing is
+      WIP" and not as a failure.
+
+### 8. Tags
+
+- [ ] Tag a work item `🧊 parked` → it drops out. This is the real test of the
+      deliberate decision to match the bare word `parked`: confirm `CONTAINS
+      'parked'` matches a tag whose stored value carries the emoji.
+- [ ] Tag another `roadmap` → it drops out.
+- [ ] Write tags via `--fields "System.Tags=a;b"` (semicolon-delimited) and
+      confirm both land — `work-item create` has no `--tags` flag.
+
+### 9. Iteration scope (the milestone argument)
+
+- [ ] `/issues <iteration-name>` scopes correctly, and `/issues pick` lists them.
+- [ ] Create a **nested** iteration and confirm the default `--depth 1` listing
+      hides it while `--depth 3` shows it — the documented trap.
+- [ ] Matching on the leaf name while filtering on the full path behaves.
+
+### 10. The guards on the other 11 commands
+
+- [ ] On an ADO remote, run `/milestone`, `/new`, `/prs`, `/triage`, `/work` and
+      confirm each **names the forge and stops** — no `gh` call, and in
+      particular no write aimed at the wrong forge.
+
+### Closing the loop
+
+- [ ] Fold every correction back into `commands/issues.md`, then **delete its
+      "Epistemic status" paragraph** — that paragraph is the marker that this
+      pass has not happened, so removing it is the definition of done.
+- [ ] Only then port the other 11 sections (see the previous section).
 
 ## Re-enable GitHub Copilot Coding Agent once access is restored (disabled 2026-09-01, PR #282)
 
