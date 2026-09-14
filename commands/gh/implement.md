@@ -177,3 +177,10 @@ Print:
   gets blocked (`ai:review-blocked` label) or you want a second opinion"
 - If not: remind the user to watch for a new PR and review it with `/gh:review`
   when it appears
+
+Then, before reporting back: **start enriching the next wave.** The run is unattended
+for roughly 10–25 minutes, and enrichment — not the pipeline — is what limits
+throughput. Arm a monitor so the outcome arrives as a notification, pick the next
+candidates avoiding any file the running wave is editing, and batch their specs and
+plans into a single docs PR. See *While the pipeline runs, enrich the next wave* in
+`partials/subagent-driven-default.md`. Do not sit and watch the run.
