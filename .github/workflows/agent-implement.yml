@@ -104,8 +104,9 @@ on:
           context fields refer to the *caller's* workflow when running as
           a reusable workflow, so we cannot auto-resolve to the same ref
           the caller pinned in `uses:`. Consumers that pin to a tag (e.g.
-          `uses: ...@v1`) should also pass `pipeline-ref: v1` here to keep
-          workflow and scripts in lockstep.
+          `uses: ...@v2`) should also pass `pipeline-ref: v2` here to keep
+          workflow and scripts in lockstep. Pin the moving major tag, not a
+          full version — see the pinning section in docs/CONSUMER-SETUP.md.
         type: string
         default: main
       dry-run:
@@ -458,6 +459,23 @@ jobs:
         run: |
           mkdir -p "$GITHUB_WORKSPACE/.git/info"
           printf '%s\n' '.claude-pipeline/' >> "$GITHUB_WORKSPACE/.git/info/exclude"
+
+      - name: Warn if the pinned major line is stale
+        # The moving tag keeps a consumer current WITHIN its major line; nothing
+        # keeps it current ACROSS lines. Releasing v3.0.0 moves v3, never v2, so
+        # an @v2 consumer silently stops receiving fixes the day v3 opens — runs
+        # stay green, the code just gets older. `v1` sat frozen that way for six
+        # weeks across 70 repos before anyone noticed.
+        #
+        # Advisory only, and deliberately non-fatal: a major bump is allowed to
+        # break things, so upgrading stays the consumer's decision. Noticing is
+        # what must not depend on someone remembering.
+        continue-on-error: true
+        env:
+          PIPELINE_REF: ${{ inputs.pipeline-ref }}
+          PIPELINE_REPO: ${{ inputs.pipeline-repo }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash .claude-pipeline/scripts/check-major-drift.sh
 
       - name: Configure git identity for the agent's commits
         # Without this the runner has no committer identity, so the agent's very

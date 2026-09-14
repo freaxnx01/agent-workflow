@@ -47,6 +47,10 @@
 #
 # Pipeline wiring:
 #       --ref <ref>             Pipeline ref to pin in `uses:` / `pipeline-ref:`.
+#                               Default: the newest released major line,
+#                               resolved at run time (see below). Pass this
+#                               only for a deliberate pin — a self-test, or
+#                               tracking `main`.
 #                               Default 'v1'.
 #       --agent claude|opencode Default agent for the stub. Default 'claude'.
 #       --model <model>         default-model input. Default 'claude-sonnet-5'.
@@ -107,7 +111,7 @@ SECRET_SCOPE='repo'
 ORG=''
 SECRET_VISIBILITY='selected'
 SECRET_REPOS=''
-REF='v1'
+REF=''
 AGENT='claude'
 MODEL='claude-sonnet-5'
 RUNNER_LABELS='["ubuntu-latest"]'
@@ -178,6 +182,35 @@ done
 # ---- validation (fail fast) ------------------------------------------------
 require_cmd gh
 require_cmd jq
+
+# Resolve the ref to pin, rather than baking a major into this script. A
+# hardcoded default is exactly what froze `v1`: it was correct the day it was
+# written and silently wrong from the day v2 shipped, and every repo onboarded
+# in between inherited a pin that would never receive another fix. Nobody
+# noticed for six weeks, across 70 repos.
+#
+# Only a real vX.Y.Z release counts — a bare moving tag is the pointer, not
+# evidence that a line exists — and pre-releases never win, so cutting a
+# v3.0.0-rc.1 does not start pinning new repos to an unreleased line.
+resolve_newest_major() {
+  gh api "repos/${PIPELINE_REPO}/git/matching-refs/tags/v" \
+      --jq '.[].ref | sub("^refs/tags/"; "")' 2>/dev/null \
+    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+    | sort -V | tail -1 | sed -E 's/^(v[0-9]+)\..*/\1/'
+}
+
+if [[ -z "$REF" ]]; then
+  REF="$(resolve_newest_major)"
+  # Fail rather than guess. A wrong pin produces green runs on stale code,
+  # which is the failure mode this whole mechanism exists to prevent — far
+  # worse than refusing to onboard until someone says what to pin.
+  if [[ -z "$REF" ]]; then
+    printf 'error: could not resolve the newest major tag from %s\n' "$PIPELINE_REPO" >&2
+    printf '       Pass --ref <vN> explicitly (e.g. --ref v2).\n' >&2
+    exit 2
+  fi
+  printf 'pinning %s (newest released major line in %s)\n' "$REF" "$PIPELINE_REPO"
+fi
 
 [[ -n "$REPO" ]]            || usage_error "--repo is required"
 [[ "$REPO" == */* ]]       || usage_error "--repo must be owner/repo (got: $REPO)"

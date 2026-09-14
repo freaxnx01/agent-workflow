@@ -52,7 +52,7 @@ stub via `/sync-ai-instr`.
 # In consumer repo: .github/workflows/agent.yml
 jobs:
   claude:
-    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
+    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     with:

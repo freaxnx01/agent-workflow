@@ -160,7 +160,7 @@ permissions:            # the reusable jobs need these; a caller can't grant a
 jobs:
   claude:
     if: github.event.label.name == 'ai-implement'
-    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
+    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     with:
@@ -217,7 +217,7 @@ App* (triggers required checks; stable bot login). To enable:
    ```yaml
    jobs:
      claude:
-       uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
+       uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2
        with:
          issue-number: ${{ github.event.issue.number }}
          ai-review-ai-merge: true
@@ -259,7 +259,7 @@ Caveats:
 # .github/workflows/agent.yml
 jobs:
   claude:
-    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
+    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2
     with:
       issue-number: ${{ github.event.issue.number }}
       ai-review-ai-merge: true        # per-repo opt-in (ADR-002 gate 3)
@@ -331,7 +331,7 @@ Choose the agent at the call site or per-issue:
 # .github/workflows/agent.yml
 jobs:
   claude:
-    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
+    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2
     with:
       issue-number: ${{ github.event.issue.number }}
       agent: opencode             # ← workflow-input default for this repo
@@ -451,6 +451,98 @@ Open an issue **titled exactly** `ai:chain-paused`. The dispatcher checks for th
 - **Cross-repo dependencies.** `Blocks: org/other-repo#42` is parsed but ignored.
 - **Cycle / depth caps.** Coming in #19. Until then, file shallow chains and watch the chain-state issue.
 - **Manual merges don't trigger the chain** — by design. A human who steps in mid-chain takes over the rest.
+
+## Pinning: which ref to use, and when to move it
+
+Pin the **moving major tag**, in both places the stub names it:
+
+```yaml
+uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2
+with:
+  pipeline-ref: v2
+```
+
+`v2` follows every `v2.x.y` release on its own — `release.yml` moves it when a
+release is published, forward-only, so a hotfix on an older line cannot drag it
+backwards (#261). A consumer picks up pipeline fixes on its next dispatch with
+no human step and no PR in the consumer repo.
+
+**Do not pin a full version** (`@v2.0.5`). It freezes you out of every fix and
+nothing will tell you. One repo was pinned that way and it turned a routine bulk
+migration into a broken ref, because a find-and-replace on `@v1` naturally
+caught `@v1.13.0` too.
+
+**Do not pin `main`** unless you are deliberately testing unreleased pipeline
+changes. `main` is where the pipeline's own agent works.
+
+### What the moving tag does not cover
+
+It keeps you current *within* a major line. It does nothing *between* them.
+`update-moving-tag.sh` derives the tag from the pushed release
+(`major="${RELEASE_TAG%%.*}"`), so releasing `v3.0.0` moves `v3` — never `v2`.
+The day a new major line opens, every `@v2` consumer stops receiving anything.
+
+This is not theoretical. `v1` froze at `v1.11.1` on 2026-08-03 and sat 173
+commits behind `main` while **70 repos** pinned it. Not one of the fixes in
+issues #335, #337, #338, #340, #342 and #345 reached them, and
+`classify-turns.sh` did not exist at `v1` at all — so those runs silently used
+`max_turns: 30` and died at
+`error_max_turns`, which is indistinguishable from a legitimate agent failure.
+Six weeks, no signal, real money.
+
+So since then the pipeline **tells you**. Every dispatch runs
+`check-major-drift.sh`, which compares your pinned major against the newest
+released one and raises a workflow annotation when you are behind:
+
+> **agent-workflow major line v2 is no longer maintained** — This repo pins
+> `@v2`, but `v3` has been released. The moving tag `v2` only follows `v2.x.y`
+> releases, and there will be no more of them …
+
+It is advisory and never fails your run: a major bump is allowed to break
+things, so *when* to upgrade stays your decision. Only *noticing* is taken off
+your plate — the moving-tag design already established that anything relying on
+a human remembering has been falsified in practice.
+
+### Migrating to a new major line
+
+`scripts/migrate-consumers.sh` does this across a fleet. Its two modes answer
+the two questions separately.
+
+**Where do I stand?** No target, no writes, safe any time:
+
+```bash
+bash scripts/migrate-consumers.sh --owner <owner>
+# freaxnx01/flowhub              v2  inventory
+# freaxnx01/game-wipfelkratzer   v2  inventory
+```
+
+**Roll out a new line.** Dry run first — `--apply` is required to write
+anything:
+
+```bash
+bash scripts/migrate-consumers.sh --owner <owner> --to v3           # dry run
+bash scripts/migrate-consumers.sh --owner <owner> --to v3 --apply
+```
+
+Before the rollout, read the major release's `CHANGELOG.md` entry for
+`BREAKING CHANGE:` and check whether an input you actually set was removed.
+Inputs are deprecated for a full major line before removal, so the usual answer
+is no. Then migrate **one** repo, dispatch an issue there, and confirm the run
+is green before doing the rest.
+
+Three behaviours worth knowing, each of them a mistake someone already made:
+
+- **The whole ref is replaced, never a substring.** A stub pinned `@v1.13.0`
+  becomes `@v2` — not `@v2.13.0`. A find-and-replace of `@v1` → `@v2` produces
+  exactly that non-existent ref, and did.
+- **Non-version pins are left alone.** `main`, a branch or a SHA is a
+  deliberate choice; `--force` overrides.
+- **It is idempotent.** Running it twice changes nothing the second time, so a
+  partial run is safe to repeat.
+
+Use `--pr` wherever the default branch is protected — it opens a pull request
+per repo instead of committing directly, which is the normal case outside
+personal repos.
 
 ## Troubleshooting
 

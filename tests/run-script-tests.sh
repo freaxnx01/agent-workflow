@@ -1799,6 +1799,135 @@ assert_equals "$ec" "2" "MAX_ITERATIONS=abc (non-numeric) → exit 2"
 ec="$(run_capture_ec env PR_NUMBER=1 REPO=o/r HEAD_SHA=x HEAD_REF=y INITIAL_VERDICT=request_changes MAX_ITERATIONS=2 bash "$SELF_FIX_LOOP")"
 assert_equals "$ec" "2" "missing CONCERNS_FILE (no STUB_VERDICT_SEQUENCE) → exit 2"
 
+section "migrate-consumers — rewrite a consumer's pin to a new major line"
+
+MIGRATE="$ROOT/scripts/migrate-consumers.sh"
+
+rewrite() {  # <target> [force] ; stub on stdin
+  REWRITE_STDIN=1 TARGET_REF="$1" FORCE="${2:-false}" bash "$MIGRATE"
+}
+
+STUB_MOVING=$'jobs:\n  claude:\n    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1\n    with:\n      pipeline-ref: v1\n'
+
+out="$(printf '%s' "$STUB_MOVING" | rewrite v2)"
+assert_contains "$out" 'agent-implement.yml@v2' "moving tag @v1 → @v2"
+assert_contains "$out" 'pipeline-ref: v2'       "  → pipeline-ref follows"
+
+# THE regression. A substring swap of @v1 → @v2 turns a full-version pin into
+# @v2.13.0, a ref that does not exist. That is what happened to the one repo
+# pinned this way during the real v1→v2 migration.
+STUB_FULL=$'    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1.13.0\n      pipeline-ref: v1.13.0\n'
+out="$(printf '%s' "$STUB_FULL" | rewrite v2)"
+assert_contains "$out" 'agent-implement.yml@v2' "full-version pin migrates to the moving tag"
+assert_contains "$out" 'pipeline-ref: v2'       "  → pipeline-ref too"
+if [[ "$out" == *"v2.13.0"* ]]; then
+  fail "full-version pin must not become v2.13.0 (the ref does not exist)"
+else
+  pass "full-version pin does not produce a non-existent ref"
+fi
+
+# Idempotent: running it twice must not corrupt an already-migrated stub.
+once="$(printf '%s' "$STUB_MOVING" | rewrite v2)"
+twice="$(printf '%s' "$once" | rewrite v2)"
+assert_equals "$twice" "$once" "rewriting an already-migrated stub is a no-op"
+
+# A deliberate non-version pin is left alone unless forced — clobbering it
+# silently would be the same class of mistake this script exists to undo.
+STUB_MAIN=$'    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@main\n      pipeline-ref: main\n'
+out="$(printf '%s' "$STUB_MAIN" | rewrite v2)"
+assert_contains "$out" '@main'            "a main pin is preserved by default"
+assert_contains "$out" 'pipeline-ref: main' "  → pipeline-ref preserved too"
+
+out="$(printf '%s' "$STUB_MAIN" | rewrite v2 true)"
+assert_contains "$out" '@v2'              "--force does rewrite a main pin"
+
+# A SHA pin is a non-version pin too.
+STUB_SHA=$'    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@0cf6554c\n'
+out="$(printf '%s' "$STUB_SHA" | rewrite v2)"
+assert_contains "$out" '@0cf6554c'        "a SHA pin is preserved by default"
+
+# Everything else in the file must survive untouched.
+out="$(printf '%s' "$STUB_MOVING" | rewrite v2)"
+assert_contains "$out" 'jobs:'            "unrelated lines are preserved"
+assert_contains "$out" '  claude:'        "  → including indentation"
+
+# Nothing to rewrite is not an error.
+out="$(printf 'name: unrelated\n' | rewrite v2)"
+assert_contains "$out" 'name: unrelated'  "a file with no pin passes through unchanged"
+
+# Bad invocation is a usage error, not a silent pass.
+set +e
+REWRITE_STDIN=1 bash "$MIGRATE" </dev/null >/dev/null 2>&1
+rc=$?
+set -e
+assert_equals "$rc" "2" "REWRITE_STDIN without TARGET_REF exits 2"
+
+set +e
+bash "$MIGRATE" >/dev/null 2>&1
+rc=$?
+set -e
+assert_equals "$rc" "2" "no --owner and no --repo exits 2"
+
+section "check-major-drift — warn when the pinned major line is stale"
+
+DRIFT="$ROOT/scripts/check-major-drift.sh"
+DRIFT_TAGS=$'v1.0.0\nv1.11.1\nv1.13.0\nv2.0.0\nv2.0.5\nv2.0.0-rc.1\nv2\nv1'
+
+drift_run() { env "$@" bash "$DRIFT" 2>&1; }
+
+# The case this exists for: pinned to a major line that has been superseded.
+out="$(drift_run PIPELINE_REF=v1 ALL_TAGS="$DRIFT_TAGS")"
+assert_contains "$out" 'drift: behind'   "older major line → behind"
+assert_contains "$out" '::warning'       "  → emits an annotation, not just a log line"
+assert_contains "$out" '@v2'             "  → names the target to migrate to"
+
+# Current line: no warning at all, or the annotation becomes noise everyone
+# learns to ignore — which is how the original drift stayed invisible.
+out="$(drift_run PIPELINE_REF=v2 ALL_TAGS="$DRIFT_TAGS")"
+assert_contains "$out" 'drift: current'  "newest major line → current"
+if [[ "$out" == *"::warning"* ]]; then
+  fail "current major line must not warn"
+else
+  pass "current major line does not warn"
+fi
+
+# A full version pin still resolves to its major line.
+out="$(drift_run PIPELINE_REF=v1.13.0 ALL_TAGS="$DRIFT_TAGS")"
+assert_contains "$out" 'drift: behind'   "full version pin v1.13.0 → behind"
+
+out="$(drift_run PIPELINE_REF=v2.0.5 ALL_TAGS="$DRIFT_TAGS")"
+assert_contains "$out" 'drift: current'  "full version pin v2.0.5 → current"
+
+# Pinned ahead of any release (a v3 branch cut before v3.0.0 shipped): report,
+# don't warn — there is nothing to migrate to yet.
+out="$(drift_run PIPELINE_REF=v3 ALL_TAGS="$DRIFT_TAGS")"
+assert_contains "$out" 'drift: ahead'    "unreleased major → ahead"
+
+# Non-version pins are a deliberate choice to track something else.
+for ref in main develop 0cf6554c feature/x; do
+  out="$(drift_run PIPELINE_REF="$ref" ALL_TAGS="$DRIFT_TAGS")"
+  assert_contains "$out" 'drift: skip'   "non-version pin '$ref' → skip"
+done
+
+# A bare moving tag is not evidence a major line exists — only a real release is.
+out="$(drift_run PIPELINE_REF=v2 ALL_TAGS=$'v1\nv2\nv3')"
+assert_contains "$out" 'drift: unknown'  "moving tags alone → unknown, not a bogus verdict"
+
+# Pre-release tags must never win the newest-major pick.
+out="$(drift_run PIPELINE_REF=v2 ALL_TAGS=$'v2.0.5\nv3.0.0-rc.1')"
+assert_contains "$out" 'drift: current'  "a v3 pre-release does not make v2 stale"
+
+# Advisory: drift must not fail the consumer's run.
+drift_run PIPELINE_REF=v1 ALL_TAGS="$DRIFT_TAGS" >/dev/null
+assert_equals "$?" "0" "drift exits 0 — advisory, never fails the run"
+
+# Missing required env is a real error.
+set +e
+env -u PIPELINE_REF bash "$DRIFT" >/dev/null 2>&1
+rc=$?
+set -e
+assert_equals "$rc" "2" "missing PIPELINE_REF exits 2"
+
 section "find-pipeline-pr — discover the draft PR opened for an issue"
 
 FIND_PR="$ROOT/scripts/find-pipeline-pr.sh"
