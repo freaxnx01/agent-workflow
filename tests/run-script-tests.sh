@@ -482,6 +482,104 @@ out="$(ISSUE_NUMBER=1 REPO=o/r \
        ISSUE_BODY='Refactor the auth middleware' bash "$CLASSIFY")"
 assert_contains "$out" 'claude-haiku-4-5 (label model:haiku)' "override label beats heuristic"
 
+# --- cost-guarded models (#350) -------------------------------------------
+#
+# The guard is about who chose the model, not which model it is. An explicit
+# label is a per-issue decision and stands; a repo-level knob and an automatic
+# retry are not.
+
+# The deliberate route is untouched — this is #330's contract.
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='model:fable' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-fable-5-1 (label model:fable)' \
+  "an explicit model:fable label still selects Fable"
+assert_not_contains "$out" 'not available on this route' \
+  "a deliberate label is not second-guessed"
+
+# default-model is every issue in the repo, not a decision about this one.
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=claude DEFAULT_MODEL=claude-fable-5-1 \
+       ISSUE_BODY='add an endpoint' ISSUE_LABELS='ai-implement' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-sonnet-5' \
+  "a Fable default-model is substituted, not run"
+assert_not_contains "$out" 'chosen: claude-fable-5-1' \
+  "a Fable default-model never reaches the chosen model"
+assert_contains "$out" 'not available on this route' \
+  "the substitution tells the operator why"
+
+# Same for the escalation knob, including the both-set case.
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=claude DEFAULT_MODEL=claude-fable-5-1 \
+       ESCALATE_MODEL=claude-fable-6 ISSUE_BODY='add an endpoint' \
+       ISSUE_LABELS='ai-implement' bash "$CLASSIFY" 2>&1)"
+assert_not_contains "$out" 'chosen: claude-fable' \
+  "a Fable escalate-model cannot smuggle it back in"
+
+# A retry is the pipeline spending again on its own, so the label stops holding.
+out="$(ISSUE_NUMBER=1 REPO=o/r ATTEMPT=2 ISSUE_LABELS='model:fable' \
+       ISSUE_BODY='add an endpoint' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-sonnet-5' \
+  "a retry of a model:fable run does not spend Fable twice"
+assert_contains "$out" 'not repeated on attempt 2' \
+  "the report says why the retry changed model"
+
+# ... and the retry guard is narrow: it must not rewrite other labels.
+out="$(ISSUE_NUMBER=1 REPO=o/r ATTEMPT=2 ISSUE_LABELS='model:opus' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-opus-5 (label model:opus)' \
+  "a retry leaves an unguarded label alone"
+
+# Attempt 1 is the default when the workflow does not pass ATTEMPT.
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='model:fable' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-fable-5-1' "a missing ATTEMPT means attempt 1"
+
+# The heuristic escalation targets stay reachable — the guard must not broaden
+# into the models the pipeline actually runs on.
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=claude \
+       ISSUE_BODY='Refactor the auth middleware' ISSUE_LABELS='ai-implement' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-opus-5' "the opus escalation target is unaffected"
+
+# An unrecognised model label warns instead of silently resolving to the
+# default — the failure shape #330 removed for model:fable, now for typos too.
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS=$'ai-implement\nmodel:opsu' \
+       ISSUE_BODY='add an endpoint' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-sonnet-5' "a typo'd model label falls through to the default"
+assert_contains "$out" 'model:opsu' "a typo'd model label is named in the warning"
+assert_contains "$out" 'not a recognised model label' "a typo'd model label warns"
+
+section "agent-cmd wrappers — review/self-fix models are cost-guarded (#350)"
+
+# The wrappers are the chokepoint: nothing reaches `claude --model` without
+# passing through one of them, whichever env var supplied the model. A stub
+# `claude` on PATH records the argv each wrapper would have run.
+CMD_STUB_DIR="$(mktemp -d)"
+cat > "$CMD_STUB_DIR/claude" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CLAUDE_ARGV_LOG"
+printf '{"type":"result","subtype":"success","is_error":false}\n'
+STUB
+chmod +x "$CMD_STUB_DIR/claude"
+
+# wrapper_argv <wrapper-path> <model> — argv the stubbed `claude` received
+wrapper_argv() {
+  local wrapper="$1" model="$2" prompt log
+  prompt="$(mktemp)"; log="$(mktemp)"
+  printf 'review this\n' > "$prompt"
+  PATH="$CMD_STUB_DIR:$PATH" CLAUDE_ARGV_LOG="$log" MODEL="$model" \
+    RUNNER_TEMP="$CMD_STUB_DIR" bash "$wrapper" "$prompt" "$(mktemp)" >/dev/null 2>&1 || true
+  cat "$log"
+}
+
+for wrapper in agent-cmd-claude.sh agent-cmd-claude-fix.sh; do
+  argv="$(wrapper_argv "$ROOT/scripts/lib/$wrapper" claude-fable-5-1)"
+  assert_not_contains "$argv" 'fable'           "$wrapper never passes --model fable"
+  assert_contains     "$argv" 'claude-sonnet-5' "$wrapper substitutes the fallback model"
+
+  argv="$(wrapper_argv "$ROOT/scripts/lib/$wrapper" claude-opus-5)"
+  assert_contains "$argv" '--model claude-opus-5' "$wrapper passes an allowed model through"
+
+  argv="$(wrapper_argv "$ROOT/scripts/lib/$wrapper" '')"
+  assert_not_contains "$argv" '--model' "$wrapper omits --model when MODEL is empty"
+done
+
+rm -rf "$CMD_STUB_DIR"
+
 section "classify-turns — explicit override labels + task-count heuristic"
 
 CLASSIFY_TURNS="$ROOT/scripts/classify-turns.sh"

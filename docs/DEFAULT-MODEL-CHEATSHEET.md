@@ -26,6 +26,32 @@ the fallback when no label is present (`scripts/classify-task.sh`).
 | `claude` (default, no `agent:` line needed) | Claude model name | `claude-sonnet-5`, `claude-opus-5`, `claude-haiku-4-5-20251001` |
 | `opencode` | raw OpenRouter model id, free-form — no allowlist enforced | `z-ai/glm-5.2`, `qwen/qwen3.6-27b` |
 
+### Cost-guarded models
+
+`scripts/lib/blocked-models.sh` guards models whose cost and rate limit make an
+*unattended* run expensive. The rule is **who chose the model**, not which model
+it is:
+
+| Route | Fable |
+|---|---|
+| `model:fable` label on one issue | **runs** — a per-issue decision, see [DESIGN.md](DESIGN.md#triage-step) |
+| `default-model` / `escalate-model` in `agent.yml` | substituted + warned — repo-wide, no decision about this issue |
+| `review-model` (drives review and the self-fix loop) | substituted + warned |
+| retry of a `model:fable` run (attempt 2+) | escalates off Fable — the first attempt was chosen, the repeat is not |
+| keyword heuristic | never picks it, and never did |
+
+So a Fable id typed into `default-model` does not silently become every
+dispatch's model; you get `claude-sonnet-5` and an annotation saying why. To run
+Fable, label the issue.
+
+Guarding another model means adding a glob to `BLOCKED_MODEL_PATTERNS`; every
+call site picks it up.
+
+The one route a substitution cannot reach is `review-model: ''`, which omits
+`--model` entirely and inherits the `claude` CLI's own default. The input
+defaults to `claude-opus-5`, so it is pinned out of the box; setting it empty is
+a deliberate choice to hand model selection to the CLI.
+
 **Before picking an OpenCode/OpenRouter model, verify it supports tool use** —
 OpenCode drives edits through function/tool calls; a model that doesn't
 advertise `tools` fails with *"No endpoints found that support tool use"*, and

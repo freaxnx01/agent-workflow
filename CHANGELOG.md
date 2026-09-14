@@ -121,6 +121,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   honoured over its own reading, read from the full body rather than the
   preview.
 
+- **models:** a cost guard (`scripts/lib/blocked-models.sh`) so Fable can only
+  be reached by a deliberate per-issue choice. `model:fable` (#330) is
+  unchanged and still selects `claude-fable-5-1` — the label *is* the decision.
+  What is now substituted, with a warning annotation, is every route where
+  nobody decided per issue: a Fable id in `default-model` or `escalate-model`
+  (which the `claude-*` prefix test in `classify-task.sh` used to wave straight
+  through, since it only separates Claude ids from OpenRouter ids), a Fable
+  `review-model` (which drives both review and the self-fix loop), and a
+  **retry** of a deliberate Fable run — attempt 2 onwards escalates off Fable
+  rather than spending a second budget unattended. The keyword heuristic never
+  picked Fable and still does not.
+
+  Enforced at each point where `--model` gets its value: `classify-task.sh`
+  (so a substituted id never reaches `$GITHUB_OUTPUT` or the run report
+  either), `lib/agent-cmd-claude.sh`, `lib/agent-cmd-claude-fix.sh`, and
+  `review-pr.sh`'s own ad-hoc wrapper. Guarding another model means adding one
+  glob to `BLOCKED_MODEL_PATTERNS`.
+
+- **triage:** an unrecognised `model:*` label now warns instead of resolving to
+  the default silently — the same failure shape #330 removed for `model:fable`,
+  now covered for typos (`model:opsu`) too.
+
 - **docs:** new `docs/COMMAND-CHEATSHEET.md` — the task-shaped view of the
   console: the issue→PR path in the order you chain it
   (`/capture-idea` → `/new` → `/triage` → `/enrich` → `/gh:implement` →
