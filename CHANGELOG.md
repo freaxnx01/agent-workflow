@@ -422,6 +422,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sourced files and a `# shellcheck source=` directive is verified rather than
   inert. Without it a script sourcing a `lib/` helper was clean under `just lint`
   and failed CI — as #350 did on three `source` lines (#353, #354).
+- **tests:** the Layer-1 suite is now hermetic against the ambient environment —
+  `run-all.sh` and `run-script-tests.sh` clear `GITHUB_REPOSITORY`,
+  `GITHUB_OUTPUT`, `GITHUB_ACTIONS` and `GITHUB_TOKEN`. On a runner
+  `GITHUB_REPOSITORY` is always set and the scripts under test fall back to it,
+  so six `missing REPO → exit 2` assertions passed locally and failed the first
+  time the suite ran in CI. Found by wiring the suite up, which is the point of
+  it (#354).
 - **lint:** `.markdownlint-cli2.yaml` now ignores `.superpowers/**`. Its `globs:`
   key overrides the file list pre-commit passes, so markdownlint read the disk
   rather than the git index: the gitignored, untracked `.superpowers/` directory

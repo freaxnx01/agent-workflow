@@ -27,6 +27,15 @@ set -euo pipefail
 IFS=$'\n\t'
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Layer-1 tests are hermetic by contract: no network, no GitHub, no Docker. That
+# has to include the *ambient* environment — on a GitHub Actions runner
+# GITHUB_REPOSITORY is always set, and scripts under test fall back to it
+# (`REPO="${REPO:-${GITHUB_REPOSITORY:-}}"`), so six "missing REPO -> exit 2"
+# assertions passed locally and failed the moment the suite first ran in CI
+# (#354). Clearing them here fixes the whole class rather than one call site;
+# a test that wants one sets it per-invocation.
+unset GITHUB_REPOSITORY GITHUB_OUTPUT GITHUB_ACTIONS GITHUB_TOKEN
 TESTS_DIR="${TESTS_DIR:-$HERE}"
 
 if [[ ! -d "$TESTS_DIR" ]]; then
