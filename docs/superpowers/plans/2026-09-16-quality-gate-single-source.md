@@ -10,6 +10,12 @@ Each gate is defined once and every caller delegates to it: `pre-commit` defines
 lint, `tests/run-all.sh` defines the test set. Local and CI cannot drift because
 they run the same thing.
 
+> **Heading levels are load-bearing.** `classify-turns.sh:113` counts
+> `^### Task [0-9]+` to size the agent's turn budget. At `## Task N` the count is
+> zero and the run silently gets the 50-turn default instead of the 160 six tasks
+> earn — which is exactly how attempt 2 of this issue died at 51/50 turns having
+> produced nothing. Keep tasks at `###`, steps at `####`.
+
 ## Global constraints
 
 - Bash prelude on every new script: `#!/usr/bin/env bash`, `set -euo pipefail`,
@@ -23,7 +29,7 @@ they run the same thing.
 - **Task 0 before everything else.** Tasks 3+ point `just lint` at a gate that is
   red until Task 0 lands, and a red gate cannot verify the tasks that follow.
 
-## Task 0 — close the markdownlint globs gap first
+### Task 0 — close the markdownlint globs gap first
 
 **Files:** `.markdownlint-cli2.yaml`
 
@@ -34,7 +40,7 @@ until this is fixed that gate is red on any machine with an untracked
 `.superpowers/` directory while CI stays green — the exact divergence this issue
 removes.
 
-### Step 0.1 — Reproduce
+#### Step 0.1 — Reproduce
 
 ```bash
 ls -d .superpowers 2>/dev/null || { echo "no .superpowers here — skip to 0.2"; }
@@ -54,7 +60,7 @@ mkdir -p .superpowers/sdd && printf '# x\n\n```\ncode\n```\n' > .superpowers/sdd
 pre-commit run markdownlint-cli2 --all-files   # expect: MD040 on the fence
 ```
 
-### Step 0.2 — Add the ignore
+#### Step 0.2 — Add the ignore
 
 In `.markdownlint-cli2.yaml`, add to the existing `ignores:` list, next to the
 `.worktrees/**` and `.claude/handoffs.md` entries it already carries for this
@@ -75,13 +81,13 @@ Keep it next to the other gitignored-path entries, not at the end of the list.
 `.superpowers/` present on disk. Then `pre-commit run --all-files` passes too —
 that is the real gate, and Task 3 is about to depend on it.
 
-## Task 1 — CI gains `-x` on shellcheck
+### Task 1 — CI gains `-x` on shellcheck
 
 **Files:** `.pre-commit-config.yaml`
 
 **Interface:** none (config).
 
-### Step 1.1 — Prove the gap exists
+#### Step 1.1 — Prove the gap exists
 
 Reproduce CI's invocation (no args) and confirm it fails on a `lib/`-sourcing
 script with its suppression stripped:
@@ -97,7 +103,7 @@ rm -rf "$T"
 
 `verify:` the command above exits non-zero and names SC1091.
 
-### Step 1.2 — Add the args
+#### Step 1.2 — Add the args
 
 ```yaml
   - repo: https://github.com/koalaman/shellcheck-precommit
@@ -117,7 +123,7 @@ rm -rf "$T"
 docker.io/koalaman/shellcheck:v0.11.0 -x -e SC1091 $(find scripts tests -name '*.sh' | sort)`
 exits 0.
 
-## Task 2 — `tests/run-all.sh` becomes the test definition
+### Task 2 — `tests/run-all.sh` becomes the test definition
 
 **Files:** `tests/run-all.sh` (new), `tests/run-all-discovery-tests.sh` (new)
 
@@ -136,7 +142,7 @@ tests/run-all.sh
 Without it the test would have to run against the real `tests/`, which contains a
 runner that invokes `run-all.sh` — infinite recursion.
 
-### Step 2.1 — Write the failing test
+#### Step 2.1 — Write the failing test
 
 `tests/run-all-discovery-tests.sh`. Note the filename matches `run-*-tests.sh`, so
 it is itself discovered and run like any other runner — that is intended.
@@ -262,7 +268,7 @@ exit 0
 `verify:` `bash tests/run-all-discovery-tests.sh` fails because `tests/run-all.sh`
 does not exist yet.
 
-### Step 2.2 — Write `tests/run-all.sh`
+#### Step 2.2 — Write `tests/run-all.sh`
 
 ```bash
 #!/usr/bin/env bash
@@ -336,13 +342,13 @@ exit 0
 `bash tests/run-all.sh` runs all 10 runners (9 existing + the new discovery test)
 and exits 0.
 
-## Task 3 — `just test` and `just lint` delegate
+### Task 3 — `just test` and `just lint` delegate
 
 **Files:** `justfile`
 
 **Interface:** recipes `test`, `lint`, `lint-shell`.
 
-### Step 3.1 — Point `test` at the definition
+#### Step 3.1 — Point `test` at the definition
 
 Replace the seven-line body:
 
@@ -356,7 +362,7 @@ test:
 `run-parse-enrich-args-tests.sh` and `run-link-skills-tests.sh`, neither of which
 the old recipe ran.
 
-### Step 3.2 — Delegate `lint` to pre-commit
+#### Step 3.2 — Delegate `lint` to pre-commit
 
 The comment must change with the body: this recipe is no longer "actionlint +
 shellcheck", it is the whole gate.
@@ -392,13 +398,13 @@ exits 0 and its output mentions only the shellcheck and actionlint hooks. With
 `pre-commit` absent (`PATH= just lint`), the message names the install command and
 the exit code is 127, not a bare `command not found`.
 
-## Task 4 — CI runs the Layer-1 suite
+### Task 4 — CI runs the Layer-1 suite
 
 **Files:** `.github/workflows/lint.yml`
 
 **Interface:** new job `test`.
 
-### Step 4.1 — Add the job
+#### Step 4.1 — Add the job
 
 `lint.yml` already triggers on `pull_request` and `push: [main]` with
 `permissions: contents: read` and a concurrency group — the new job inherits all
@@ -426,14 +432,14 @@ tag.
 Then, as a negative control, temporarily break one assertion, push, confirm
 `test` goes red, and revert.
 
-### Step 4.2 — Update the workflow header comment
+#### Step 4.2 — Update the workflow header comment
 
 The file's top comment describes a lint-only gate. Add that it now also runs the
 Layer-1 suite, and note the job is not in `required_status_checks` yet.
 
 `verify:` `yamllint .github/workflows/lint.yml` exits 0.
 
-## Task 5 — Changelog
+### Task 5 — Changelog
 
 **Files:** `CHANGELOG.md`
 
