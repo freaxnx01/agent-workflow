@@ -32,6 +32,21 @@ Both halves of that table are a gap:
 - **`just lint` runs one hook of eleven.** markdownlint and typos are CI-only, so
   a local run cannot predict them. Also observed on #350: MD012 and trailing
   whitespace had to be hand-approximated because neither tool is installed.
+- **And the divergence already runs the *other* way.** `pre-commit run --all-files`
+  **fails locally while CI is green**, found while validating this very design.
+  `.markdownlint-cli2.yaml` sets `globs: ["**/*.md"]`, which overrides the file
+  list pre-commit passes, so markdownlint-cli2 lints whatever is on disk
+  regardless of what git tracks. `.superpowers/` is gitignored and untracked, so
+  CI's fresh checkout never has it — but a machine that has run superpowers SDD
+  does, and gets 26 MD0xx errors. Proven by hiding the directory and re-running
+  the same hook, which then passes.
+
+  The config's own comment at `.markdownlint-cli2.yaml:19-21` already documents
+  this exact trap for `.worktrees/**`, and the `ignores:` list already carries
+  `.claude/handoffs.md` and `docs/superpowers/**` for the same reason.
+  `.superpowers/**` was simply missed. This has to be fixed **before** `just lint`
+  delegates, or delegation hands every SDD-using machine a red gate that CI
+  cannot reproduce — the same class of bug this issue exists to remove.
 
 `scripts/verify-or-recover-pr.sh:35` already carries the workaround comment
 (`disable=SC1091  # hook runs without -x`), so this has been hit before; #350 added
@@ -104,9 +119,12 @@ plan asserts it.
   the shellcheck, actionlint and hadolint hooks need. The recipe must fail with an
   actionable message rather than a bare `command not found`.
 - **`just lint` will start reporting pre-existing findings** in the twelve
-  previously-unscanned shell files and from the ten previously-unrun hooks. CI has
-  been checking these all along and is green, so the expected count is zero — but
-  the local scan is wider than before, and any finding is real rather than new.
+  previously-unscanned shell files and from the ten previously-unrun hooks. The
+  first draft of this spec predicted zero, "since CI is green" — **that prediction
+  was wrong**, and checking it is what found the `.superpowers/**` gap above. CI
+  being green proves nothing about a local run whose file set is larger, because
+  markdownlint's `globs:` reads the disk rather than the index. After Task 0 the
+  count is zero, verified by running the gate rather than by inference.
 - **A failing `test` job is visible but not blocking.** `main`'s protection pins
   `required_status_checks.contexts` to `["gate-selftest"]` only. Until `test` is
   added there, a red test job does not prevent merge. That is a repo-settings
@@ -123,6 +141,8 @@ plan asserts it.
       `# shellcheck source=` path is verified rather than inert
 - [ ] `just lint` runs the same command as CI, so a clean local run predicts a clean
       CI lint
+- [ ] `pre-commit run --all-files` passes on a working copy that contains an
+      untracked `.superpowers/` directory, so local and CI agree
 - [ ] `just lint` fails with an actionable message when `pre-commit` is absent
 - [ ] `just lint-shell` exists as the fast shell-and-workflow-only path
 - [ ] `just lint` and `just test` are green on the resulting branch
@@ -137,5 +157,6 @@ Written down, not acted on:
   a human-minted token.
 - The Node 20 deprecation warning from `actions/add-to-project@v1.0.2`. Tracked in
   #355.
-- Any finding the widened local lint surfaces in the twelve newly-scanned files.
-  Expected to be none, since CI is green; if any appear, they get their own issue.
+- Any *further* finding the widened local lint surfaces beyond the
+  `.superpowers/**` gap Task 0 fixes. If one appears it gets its own issue rather
+  than growing this one.
