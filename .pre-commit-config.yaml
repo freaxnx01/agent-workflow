@@ -39,6 +39,13 @@ repos:
     rev: v0.11.0
     hooks:
       - id: shellcheck
+        # -x follows sourced files, so a `# shellcheck source=` directive is
+        # verified rather than inert. Without it a script that sources a lib/
+        # helper is clean under `just lint` and fails here (#350, #353).
+        # -e SC1091 is still required: tests/run-ai-funnel-tests.sh and
+        # tests/run-ai-stats-tests.sh do `source "$SCRIPT"`, a variable -x
+        # cannot resolve — so the inline `disable=SC1091` comments stay too.
+        args: [-x, -e, SC1091]
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.18

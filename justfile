@@ -7,23 +7,38 @@ default:
 
 # === Quality =================================================================
 
-# actionlint + shellcheck on workflows and scripts (Layer 0)
+# The full polyglot gate — the exact command CI runs, so a clean run here
+# predicts a clean CI lint. Slower than lint-shell and needs Docker for the
+# shellcheck/actionlint/hadolint hooks; use `just lint-shell` in the inner loop.
 lint:
     #!/usr/bin/env bash
     set -euo pipefail
-    actionlint -color
-    mapfile -t files < <(find scripts tests -type f -name '*.sh' 2>/dev/null | sort)
-    if [[ ${#files[@]} -gt 0 ]]; then shellcheck -x -e SC1091 "${files[@]}"; else echo "no shell scripts"; fi
+    if ! command -v pre-commit >/dev/null; then
+      echo "pre-commit is not installed — it defines this repo's lint gate." >&2
+      echo "  pipx install pre-commit   (or: python -m pip install --user pre-commit)" >&2
+      echo "Fast shell-only path meanwhile: just lint-shell" >&2
+      exit 127
+    fi
+    pre-commit run --all-files
 
-# Layer-1 fixture tests (no network, runs in seconds)
+# Fast inner-loop lint: shell + workflows only, skipping the other nine hooks
+lint-shell:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if ! command -v pre-commit >/dev/null; then
+      echo "pre-commit is not installed — see 'just lint'." >&2
+      exit 127
+    fi
+    # One hook id per invocation — `pre-commit run` takes a single positional
+    # hook, so passing two is an "unrecognized arguments" error.
+    for hook in shellcheck actionlint-docker; do
+      pre-commit run "$hook" --all-files
+    done
+
+# Layer-1 fixture tests (no network, runs in seconds) — tests/run-all.sh
+# discovers every runner, so this recipe and CI cannot list a different set
 test:
-    bash tests/run-script-tests.sh
-    bash tests/run-blocked-models-tests.sh
-    bash tests/run-detect-forge-tests.sh
-    bash tests/run-ai-stats-tests.sh
-    bash tests/run-ai-funnel-tests.sh
-    bash tests/run-handoff-index-tests.sh
-    bash tests/run-handoff-resume-tests.sh
+    bash tests/run-all.sh
 
 # Layer-2: run the *.test.yml workflows under act (needs `act` + Docker; Linux only)
 test-act:

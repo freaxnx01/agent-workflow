@@ -26,6 +26,12 @@ ignores:
   # fix — and pre-commit never sees it, being untracked. Same generated-file
   # rationale as the excludes above.
   - ".claude/handoffs.md"
+  # Superpowers SDD scratch (gitignored, see .gitignore). `globs:` above reads the
+  # disk rather than the git index, so an untracked directory is still linted —
+  # the same trap the .worktrees/** entry above exists for. CI never has this
+  # directory, so without the entry `pre-commit run --all-files` fails locally and
+  # passes in CI, which is the divergence #354 exists to remove.
+  - ".superpowers/**"
   - "CLAUDE.md"
   - "SKILL.md"
   - ".github/copilot-instructions.md"
