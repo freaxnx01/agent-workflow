@@ -100,6 +100,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **ci:** a `test` job in `.github/workflows/lint.yml` runs the Layer-1 suite on
+  every PR. Nothing ran it before: `tests/run-*-tests.sh` lived only behind
+  `just test`, so a PR breaking `run-script-tests.sh` — 693 assertions — merged
+  green (#354, absorbing #353).
+- **tests:** `tests/run-all.sh` is now the single definition of the Layer-1 test
+  set, discovering every `run-*-tests.sh` with `find` rather than a hand-kept
+  list. Both `just test` and the CI job call it, so the two cannot name different
+  runners — `run-parse-enrich-args-tests.sh` and `run-link-skills-tests.sh` were
+  in neither the old recipe nor CI, and so were run by nothing at all.
+- **just:** new `lint-shell` recipe — the fast inner-loop path, shell and
+  workflows only, for when the full gate is too slow.
+
 - **release:** publishing a release now automatically moves the moving major
   tag (`vX`) to the released commit, forward-only — a hotfix released on an
   older line can no longer drag it backwards. `@vX` consumers pick up the new
@@ -328,6 +340,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **just:** `lint` now runs `pre-commit run --all-files`, the exact command CI
+  runs, so a clean local run predicts a clean CI lint. It is therefore the whole
+  polyglot gate rather than "actionlint + shellcheck", and it needs `pre-commit`
+  installed — the recipe exits 127 with an install hint rather than a bare
+  `command not found`. Previously the recipe scanned only `scripts/` and
+  `tests/`, missing 12 tracked shell files under `gate-tests/`, `hooks/`,
+  `setup/` and `.github/actions/`, and ran 1 of 11 hooks (#354).
+
 - **models:** **Flip the default implementation agent and model** to
   `opencode` + `z-ai/glm-5.2`. Across the fleet glm-5.2 shipped 15 of 18 runs
   (83%) for $4.25 total, against 59% for `claude-opus-4-7` at $181.70 — the
@@ -397,6 +417,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/gh:implementation-contract` (#177)
 
 ### Fixed
+
+- **ci:** the pre-commit shellcheck hook now passes `-x -e SC1091`, so CI follows
+  sourced files and a `# shellcheck source=` directive is verified rather than
+  inert. Without it a script sourcing a `lib/` helper was clean under `just lint`
+  and failed CI — as #350 did on three `source` lines (#353, #354).
+- **lint:** `.markdownlint-cli2.yaml` now ignores `.superpowers/**`. Its `globs:`
+  key overrides the file list pre-commit passes, so markdownlint read the disk
+  rather than the git index: the gitignored, untracked `.superpowers/` directory
+  is absent from CI's fresh checkout but present on any machine that has run
+  superpowers SDD, making `pre-commit run --all-files` fail locally while CI
+  stayed green. The same trap the `.worktrees/**` entry already guarded (#354).
 
 - **pipeline:** `find-pipeline-pr.sh` now verifies a candidate PR actually
   closes the issue instead of trusting the search result. GitHub tokenises
