@@ -20,6 +20,60 @@ they run the same thing.
 - One PR. `main` is protected (`gate-selftest` required, `strict: true`), so this
   lands via PR, never a direct push.
 - Discovery is by `find`, never a `**` glob or a hand-kept list.
+- **Task 0 before everything else.** Tasks 3+ point `just lint` at a gate that is
+  red until Task 0 lands, and a red gate cannot verify the tasks that follow.
+
+## Task 0 — close the markdownlint globs gap first
+
+**Files:** `.markdownlint-cli2.yaml`
+
+**Interface:** none (config).
+
+Do this task **first**. Tasks 3 onward make `just lint` run the full gate, and
+until this is fixed that gate is red on any machine with an untracked
+`.superpowers/` directory while CI stays green — the exact divergence this issue
+removes.
+
+### Step 0.1 — Reproduce
+
+```bash
+ls -d .superpowers 2>/dev/null || { echo "no .superpowers here — skip to 0.2"; }
+pre-commit run markdownlint-cli2 --all-files
+# expect: 26 MD0xx errors, every path under .superpowers/
+mv .superpowers /tmp/sp && pre-commit run markdownlint-cli2 --all-files; mv /tmp/sp .superpowers
+# expect: Passed — proving the directory is the cause, not the content of tracked files
+```
+
+`verify:` the first run fails naming only `.superpowers/` paths; the second passes.
+
+If the machine has no `.superpowers/` directory, create a throwaway one to
+reproduce, since CI will not show this:
+
+```bash
+mkdir -p .superpowers/sdd && printf '# x\n\n```\ncode\n```\n' > .superpowers/sdd/probe.md
+pre-commit run markdownlint-cli2 --all-files   # expect: MD040 on the fence
+```
+
+### Step 0.2 — Add the ignore
+
+In `.markdownlint-cli2.yaml`, add to the existing `ignores:` list, next to the
+`.worktrees/**` and `.claude/handoffs.md` entries it already carries for this
+same reason:
+
+```yaml
+  # Superpowers SDD scratch (gitignored, see .gitignore). `globs:` above reads the
+  # disk rather than the git index, so an untracked directory is still linted —
+  # the same trap the .worktrees/** entry above exists for. CI never has this
+  # directory, so without the entry `pre-commit run --all-files` fails locally and
+  # passes in CI, which is the divergence #354 exists to remove.
+  - ".superpowers/**"
+```
+
+Keep it next to the other gitignored-path entries, not at the end of the list.
+
+`verify:` `pre-commit run markdownlint-cli2 --all-files` passes with
+`.superpowers/` present on disk. Then `pre-commit run --all-files` passes too —
+that is the real gate, and Task 3 is about to depend on it.
 
 ## Task 1 — CI gains `-x` on shellcheck
 
@@ -395,9 +449,13 @@ runners now run. Reference #354 and #353.
 ```bash
 just test                     # exits 0, 10 runners
 just lint                     # exits 0 (needs pre-commit)
+pre-commit run --all-files    # exits 0 WITH .superpowers/ on disk (Task 0)
 actionlint                    # exits 0
 bash tests/run-all-discovery-tests.sh   # exits 0
 ```
+
+`just lint` and `pre-commit run --all-files` are the same command after Task 3,
+so running both is a deliberate check that the delegation actually delegates.
 
 Then branch, commit, and open a PR against `main`. Do not push to `main`.
 
