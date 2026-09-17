@@ -593,6 +593,21 @@ section "classify-turns — explicit override labels + task-count heuristic"
 
 CLASSIFY_TURNS="$ROOT/scripts/classify-turns.sh"
 
+# plan_body <heading-prefix> <task-count> — a synthetic issue body with N tasks
+plan_body() {
+  local prefix="$1" n="$2" i
+  printf '## Implementation Plan\n\n'
+  for (( i = 1; i <= n; i++ )); do
+    printf '%s Task %d — something\n\nSome prose.\n\n' "$prefix" "$i"
+  done
+}
+
+# turns_for <heading-prefix> <task-count>
+turns_for() {
+  ISSUE_LABELS='ai-implement' ISSUE_NUMBER=1 REPO=o/r \
+    ISSUE_BODY="$(plan_body "$1" "$2")" bash "$CLASSIFY_TURNS" 2>/dev/null
+}
+
 # Override: turns:80 label
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement
 turns:80' bash "$CLASSIFY_TURNS")"
@@ -602,50 +617,53 @@ assert_contains "$out" 'chosen: 80 (label turns:80)' "label turns:80 → 80"
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='turns:120' bash "$CLASSIFY_TURNS")"
 assert_contains "$out" 'chosen: 120 (label turns:120)' "label turns:120 → 120"
 
-# Heuristic: 6+ "### Task N" headings under "## Implementation Plan" → 160
-body6="## Implementation Plan
-### Task 1: a
-### Task 2: b
-### Task 3: c
-### Task 4: d
-### Task 5: e
-### Task 6: f"
-out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' ISSUE_BODY="$body6" bash "$CLASSIFY_TURNS")"
-assert_contains "$out" 'chosen: 160 (heuristic: 6 plan tasks)' "6 tasks → 160"
+# h3 baseline — the heading level that already worked
+assert_contains "$(turns_for '###' 6)" 'chosen: 160' "h3: 6 tasks → 160"
+assert_contains "$(turns_for '###' 4)" 'chosen: 120' "h3: 4 tasks → 120"
+assert_contains "$(turns_for '###' 2)" 'chosen: 80'  "h3: 2 tasks → 80"
+assert_contains "$(turns_for '###' 1)" 'chosen: 50'  "h3: 1 task → default"
 
-# Heuristic: 4-5 tasks → 120
-body4="## Implementation Plan
-### Task 1: a
-### Task 2: b
-### Task 3: c
-### Task 4: d"
-out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' ISSUE_BODY="$body4" bash "$CLASSIFY_TURNS")"
-assert_contains "$out" 'chosen: 120 (heuristic: 4 plan tasks)' "4 tasks → 120"
+# h2 (#359) — writing-plans' natural output. Must size identically to h3: a
+# fully enriched plan silently landed on task_count=0 before this fix, sizing
+# at the 50-turn default regardless of how many tasks it actually had (#354
+# died at 51/50 turns on a 6-task h2 plan that should have earned 160).
+assert_contains "$(turns_for '##' 6)" 'chosen: 160' "h2: 6 tasks → 160"
+assert_contains "$(turns_for '##' 4)" 'chosen: 120' "h2: 4 tasks → 120"
+assert_contains "$(turns_for '##' 2)" 'chosen: 80'  "h2: 2 tasks → 80"
 
-# Heuristic: 2-3 tasks → 80
-body2="## Implementation Plan
-### Task 1: a
-### Task 2: b"
-out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' ISSUE_BODY="$body2" bash "$CLASSIFY_TURNS")"
-assert_contains "$out" 'chosen: 80 (heuristic: 2 plan tasks)' "2 tasks → 80"
+# Mixed levels double-count. Not a shape a generated plan takes, and
+# over-sizing costs a little compute where under-sizing loses the whole run —
+# so this pins the behaviour rather than guarding against it.
+mixed="$(printf '## Implementation Plan\n\n## Task 1 — x\n\n### Task 1 — x\n\n')"
+out="$(ISSUE_LABELS='ai-implement' ISSUE_NUMBER=1 REPO=o/r ISSUE_BODY="$mixed" \
+       bash "$CLASSIFY_TURNS" 2>/dev/null)"
+assert_contains "$out" 'chosen: 80' "mixed h2+h3 counts twice (documented, not guarded)"
 
-# Regression: an "## Implementation Plan" section whose task headings are
-# NOT "### Task N" (e.g. "## Task N", a different heading level, or plain
-# prose) must fall through to DEFAULT_MAX_TURNS, not crash. grep -c exits 1
-# on zero matches; under set -euo pipefail an unguarded `grep -c` inside a
-# command substitution kills the whole script before it prints anything —
-# this is exactly what happened on issue #193's Phase 1 dispatch
-# (2026-08-04): the body used "## Task N" (H2) instead of "### Task N" (H3),
-# classify-turns.sh silently exited 1, and the whole implement job aborted
-# before ever running the implementer.
-body_wrong_heading="## Implementation Plan
-## Task 1: a
-## Task 2: b"
-ec="$(run_capture_ec env ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' ISSUE_BODY="$body_wrong_heading" bash "$CLASSIFY_TURNS")"
-assert_equals "$ec" "0" "Implementation Plan present but zero '### Task N' matches → exit 0, no crash"
-out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' ISSUE_BODY="$body_wrong_heading" bash "$CLASSIFY_TURNS")"
-assert_contains "$out" 'chosen: 50 (heuristic: 0 plan task(s), default budget enough)' \
-  "zero task-heading matches → falls through to DEFAULT_MAX_TURNS, not a crash"
+# A plan section with no countable tasks at all is almost always a
+# heading-level bug (#359), not a genuinely task-free plan. It still takes
+# the default budget, but it must not do so silently — silence here is
+# exactly what let #354 burn a run at the default cap.
+nostasks="$(printf '## Implementation Plan\n\nProse only, no numbered tasks.\n')"
+ec="$(run_capture_ec env ISSUE_LABELS='ai-implement' ISSUE_NUMBER=1 REPO=o/r \
+       ISSUE_BODY="$nostasks" bash "$CLASSIFY_TURNS")"
+assert_equals "$ec" "0" "zero-task plan → exit 0, no crash"
+out="$(ISSUE_LABELS='ai-implement' ISSUE_NUMBER=1 REPO=o/r ISSUE_BODY="$nostasks" \
+       bash "$CLASSIFY_TURNS" 2>&1)"
+assert_contains "$out" 'chosen: 50'   "zero-task plan still takes the default"
+assert_contains "$out" 'no countable' "zero-task plan warns"
+assert_contains "$out" '::warning::'  "zero-task plan emits an Actions annotation"
+
+# ...and a plan that does size must NOT warn.
+out="$(ISSUE_LABELS='ai-implement' ISSUE_NUMBER=1 REPO=o/r \
+       ISSUE_BODY="$(plan_body '###' 4)" bash "$CLASSIFY_TURNS" 2>&1)"
+assert_not_contains "$out" '::warning::' "a sized plan warns about nothing"
+
+# DEFAULT_MAX_TURNS env override still applies on the plan-present-but-zero-tasks
+# branch (a plan section exists, so its size is known to be small).
+out="$(ISSUE_LABELS='ai-implement' ISSUE_NUMBER=1 REPO=o/r ISSUE_BODY="$nostasks" \
+       DEFAULT_MAX_TURNS=30 bash "$CLASSIFY_TURNS" 2>/dev/null)"
+assert_contains "$out" 'chosen: 30 (heuristic: 0 plan task(s), default budget enough)' \
+  "DEFAULT_MAX_TURNS env override applied"
 
 # No "## Implementation Plan" section at all → UNPLANNED_MAX_TURNS, NOT the floor.
 # An un-enriched issue does not mean "small"; it means the agent has to do the
@@ -668,12 +686,6 @@ assert_contains "$out" 'chosen: 160 (heuristic: no Implementation Plan section f
 # must not be overridden by the discovery budget.
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS=$'ai-implement\nturns:50' ISSUE_BODY='Add a hello.md file' bash "$CLASSIFY_TURNS")"
 assert_contains "$out" 'chosen: 50 (label turns:50)' "turns:50 label beats the unplanned budget"
-
-# DEFAULT_MAX_TURNS env override still applies on the plan-present-but-zero-tasks
-# branch (a plan section exists, so its size is known to be small).
-out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' ISSUE_BODY="$body_wrong_heading" \
-       DEFAULT_MAX_TURNS=30 bash "$CLASSIFY_TURNS")"
-assert_contains "$out" 'chosen: 30 (heuristic: 0 plan task(s), default budget enough)' "DEFAULT_MAX_TURNS env override applied"
 
 # Regression (#280): a LARGE body must classify by its plan, EVERY time.
 # `printf "$ISSUE_BODY" | grep -q` lets grep exit on the first match while

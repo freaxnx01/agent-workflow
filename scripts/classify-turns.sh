@@ -5,12 +5,13 @@
 #
 #   1. Explicit override via a `turns:<N>` label on the issue (N one of
 #      50/80/120/160). This always wins.
-#   2. Heuristic over the issue body — counts `### Task` headings under an
-#      `## Implementation Plan` section (the shape /enrich writes). More
-#      tasks means more file edits + test runs + a regression pass before
-#      the agent can commit/push/open a PR, so it needs a bigger budget.
-#      An issue with NO Implementation Plan section at all (never enriched)
-#      gets UNPLANNED_MAX_TURNS instead -- see below.
+#   2. Heuristic over the issue body — counts `## Task` or `### Task`
+#      headings under an `## Implementation Plan` section (writing-plans, the
+#      skill /enrich invokes, emits h2; a hand-written or pasted-in plan may
+#      use h3). More tasks means more file edits + test runs + a regression
+#      pass before the agent can commit/push/open a PR, so it needs a bigger
+#      budget. An issue with NO Implementation Plan section at all (never
+#      enriched) gets UNPLANNED_MAX_TURNS instead -- see below.
 #
 # An un-enriched issue is not a small issue. With no plan, the agent has to do
 # the discovery an enriched plan would have handed it -- reading the codebase,
@@ -104,17 +105,32 @@ if [[ -z "$chosen" ]]; then
   # full run at 50 turns instead of 160). A here-string has no pipe and no
   # race. See tests/fixtures/issue-body-large-plan.md.
   if grep -qi '^## Implementation Plan' <<< "$ISSUE_BODY"; then
-    # `grep -c` exits 1 on zero matches (a heading level other than "### Task
-    # N", or a plan with no numbered task headings at all) -- under
-    # set -euo pipefail that would kill this whole script silently before it
-    # writes anything to $GITHUB_OUTPUT, aborting the implement job before
-    # the implementer ever runs. `-c` still prints "0" on no match; the
-    # `|| true` only neutralizes the exit code.
-    task_count="$(grep -cE '^### Task [0-9]+' <<< "$ISSUE_BODY" || true)"
+    # `grep -c` exits 1 on zero matches (a plan with no numbered task headings
+    # at all) -- under set -euo pipefail that would kill this whole script
+    # silently before it writes anything to $GITHUB_OUTPUT, aborting the
+    # implement job before the implementer ever runs. `-c` still prints "0"
+    # on no match; the `|| true` only neutralizes the exit code.
+    #
+    # Accept `## Task N` as well as `### Task N`. writing-plans emits h2 and
+    # the pipeline counted h3 only, so a fully enriched plan could land with
+    # task_count=0 and silently take DEFAULT_MAX_TURNS -- #354 died at 51
+    # turns against a 50 cap with a 6-task plan that should have earned 160
+    # (#359).
+    task_count="$(grep -cE '^#{2,3} Task [0-9]+' <<< "$ISSUE_BODY" || true)"
     if   (( task_count >= 6 )); then chosen=160; reason="heuristic: ${task_count} plan tasks"
     elif (( task_count >= 4 )); then chosen=120; reason="heuristic: ${task_count} plan tasks"
     elif (( task_count >= 2 )); then chosen=80;  reason="heuristic: ${task_count} plan tasks"
-    else chosen="$DEFAULT_MAX_TURNS"; reason="heuristic: ${task_count} plan task(s), default budget enough"
+    else
+      chosen="$DEFAULT_MAX_TURNS"; reason="heuristic: ${task_count} plan task(s), default budget enough"
+      if (( task_count == 0 )); then
+        # An Implementation Plan with no countable tasks is nearly always a
+        # heading-level mismatch (#359), not a genuinely task-free plan. Say
+        # so: silence here is what let #354 burn a run at the default budget.
+        printf 'warn: an Implementation Plan section is present but has no countable "## Task N" / "### Task N" headings; using the default budget of %s\n' \
+          "$DEFAULT_MAX_TURNS" >&2
+        printf '::warning::Implementation Plan has no countable task headings; budget defaulted to %s turns\n' \
+          "$DEFAULT_MAX_TURNS"
+      fi
     fi
   else
     chosen="$UNPLANNED_MAX_TURNS"
