@@ -533,6 +533,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file this installer never placed (hand-authored, or from another tool) is
   never touched.
 - **auto-review self-fix:** the post-self-fix approve path now waits (bounded, up to 3 minutes) for required checks to complete before the merge-envelope re-check, instead of routinely dead-ending at `ai:review-blocked` because checks on the freshly-pushed fix commit hadn't finished yet (#238).
+- **pipeline:** `classify-turns.sh` now counts `## Task N` headings as well as
+  `### Task N` when sizing an issue's turn budget. `writing-plans`, the skill
+  `/enrich` invokes, emits h2 task headings, but the heuristic only matched
+  h3 — so a fully enriched plan of any size silently landed at `task_count=0`
+  and took the 50-turn default. #354 died at 51/50 turns on a 6-task h2 plan
+  that should have earned 160: $1.24, no PR, and the issue's last allowed
+  attempt consumed. An `## Implementation Plan` section that still yields
+  zero countable tasks now emits a `::warning::` annotation naming the likely
+  cause, instead of failing silently (#359).
 
 ## [1.11.0](https://github.com/freaxnx01/agent-workflow/releases/tag/v1.11.0) - 2026-07-27
 

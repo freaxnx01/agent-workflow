@@ -16,8 +16,13 @@
 
 ## Global constraints
 
-- TDD: the failing test first, every time. `tests/run-script-tests.sh` has
-  **zero** assertions for classify-turns today, so all of this is new coverage.
+- TDD: the failing test first, every time. `tests/run-script-tests.sh` **already**
+  asserts the h3 tiers (6→160, 4→120, 2→80) and carries a regression test from
+  #193 pinning h2-falls-through-to-default as correct. The h3 tiers must keep
+  passing; that h2 assertion is deliberately superseded, but its exit-0 and
+  `DEFAULT_MAX_TURNS` guarantees must be preserved against a genuinely task-free
+  body. (An earlier draft of this plan claimed the section had zero assertions —
+  that was a faulty extraction on my part, not the truth.)
 - Do **not** touch the here-string or the `|| true` on the `grep -c`. The comment
   above them documents a SIGPIPE bug that lost the budget ~42% of the time on a
   57KB body (#280). Changing the pattern is the whole change.

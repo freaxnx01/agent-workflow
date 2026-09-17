@@ -36,17 +36,36 @@ same script against the same plan with h3 headings gives
 `chosen: 160 (heuristic: 6 plan tasks)`. Fixed for that one issue in #358; the
 next enrichment is exposed again.
 
-### The gap was known but misjudged
+### The gap was known, hit before, and fixed only halfway
 
-The comment above the line already names the cause:
+This is the **second** time h2 headings have broken a dispatch. The comment above
+the line names the cause:
 
 > `grep -c` exits 1 on zero matches (**a heading level other than "### Task N"**,
 > or a plan with no numbered task headings at all)
 
-So "the heading might be a different level" was understood, and treated purely as
-an exit-code hazard for `set -o pipefail` to survive — not as a silent budget
-downgrade. The `|| true` makes the script keep going; it does not make the
-budget right.
+and `tests/run-script-tests.sh` carries a regression test recording the first
+occurrence — issue #193's Phase 1 dispatch on 2026-08-04, where "the body used
+`## Task N` (H2) instead of `### Task N` (H3), classify-turns.sh silently exited
+1, and the whole implement job aborted before ever running the implementer."
+
+So the August fix addressed the **crash** — `|| true` plus the here-string — and
+then pinned h2-falls-through-to-the-default as *correct* behaviour:
+
+```bash
+assert_contains "$out" 'chosen: 50 (heuristic: 0 plan task(s), default budget enough)' \
+  "zero task-heading matches → falls through to DEFAULT_MAX_TURNS, not a crash"
+```
+
+That made the failure survivable rather than fatal, which was the right call for
+a crash. It did not make the budget right, and it left the real cause — the level
+writing-plans actually emits — untouched, so #354 walked into the quieter version
+of the same bug six weeks later. This change finishes the job.
+
+**This supersedes that regression test deliberately.** Its two still-valid
+guarantees — exit 0 rather than a crash, and `DEFAULT_MAX_TURNS` honoured on the
+plan-present-but-zero-tasks branch — must be kept, retargeted at a genuinely
+task-free body, since h2 is no longer "zero tasks".
 
 ## Approach
 
@@ -104,6 +123,9 @@ first run instead of after two failed dispatches.
 - [ ] A plan whose tasks are `## Task N` is sized identically to one using
       `### Task N`, at every tier
 - [ ] Fixture tests cover both heading levels at each tier boundary (2, 4, 6)
+- [ ] The existing h3 tier assertions keep passing, and the superseded
+      h2-falls-through regression test is replaced rather than simply deleted —
+      its exit-0 and `DEFAULT_MAX_TURNS` guarantees survive
 - [ ] An `## Implementation Plan` section that yields zero countable tasks emits a
       warning naming the likely cause, and still takes the default budget
 - [ ] A body with no `## Implementation Plan` section still gets
