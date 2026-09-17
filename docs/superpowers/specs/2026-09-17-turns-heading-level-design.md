@@ -36,7 +36,7 @@ same script against the same plan with h3 headings gives
 `chosen: 160 (heuristic: 6 plan tasks)`. Fixed for that one issue in #358; the
 next enrichment is exposed again.
 
-### The gap was known and mis-assessed
+### The gap was known but misjudged
 
 The comment above the line already names the cause:
 
@@ -55,7 +55,7 @@ Chosen over teaching `/enrich` to rewrite the heading level, because:
 
 - It is one line, in the place that actually consumes the heading.
 - It repairs plans **already written** — including any enriched issue sitting in
-  the backlog right now with h2 tasks and a mis-sized budget waiting to happen.
+  the backlog right now with h2 tasks and an undersized budget waiting to happen.
 - Rewriting in `/enrich` leaves `classify-turns.sh` brittle for anyone
   hand-writing a plan, pasting one in, or enriching via a different route.
 
