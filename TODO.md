@@ -1,5 +1,60 @@
 # TODO
 
+## Session 2026-09-18 (quality gate + turn budget) — 3 issues shipped, 3 open, #355 blocked on you
+
+Shipped: #353+#354 (one quality-gate definition, PR #360) and #359 (turn budget
+sized from either heading level, PR #363). Details are in those issues; only what
+they do **not** record is below.
+
+- [ ] **#355 `ADD_TO_PROJECT_PAT` — blocked on a token only you can mint.**
+      Still failing (`Bad credentials`, 100+ consecutive runs, latest 2026-09-17
+      11:26). Passbolt was audited this session and **has no usable token** —
+      this is the part #355 does not record:
+      - `51026ce1` "GitHub PAT freaxnx01" — right account, but `read:project`
+        only (read-only). Insufficient.
+      - `6684328d` "anim-bossinfo-ch CLI+CI" — has `project` **write**, but is
+        account `anim-bossinfo-ch`; project 5 is `users/freaxnx01/projects/5`.
+      - `c458813c` "agent-action-sandbox GH Runner PAT" — freaxnx01,
+        fine-grained, capability **untested** (scope probing was blocked, and it
+        is the wrong credential to couple this workflow to anyway).
+      - `c25fe9c0`, `af3c3701` — not a token / expired.
+
+      All five had **empty descriptions**, which is why scope had to be probed
+      at all — record scopes in the description for whatever replaces them.
+      Decision taken: mint a **fine-grained** PAT, owner `freaxnx01`, repo
+      `freaxnx01/agent-workflow`, **Account permissions → Projects: read &
+      write** (the action's README misfiles this under *Organization*
+      permissions — wrong for a user-owned project), plus repo `issues` and
+      `pull requests` read-only. Longest available expiry: the outage is a
+      30-day lapse (secret set 2026-06-04, failing from ~2026-07-12).
+      Then `gh secret set ADD_TO_PROJECT_PAT --repo freaxnx01/agent-workflow`
+      and tell me — verification is re-running the failed run and confirming an
+      issue **lands in project 5**, not just that the secret was written.
+
+- [ ] **#364 / #365 need enrichment** — both `needs-enrichment`, bodies complete.
+      Not recorded in either: they **compound**. An agent PR gets
+      `action_required` checks (#364) *and* its review job can be cancelled by
+      a competing label-event run (#365), so a correct implementation can look
+      like a dead end via two independent routes at once — which is exactly what
+      #359's dispatch did before it was finished by hand.
+
+- [ ] **`just lint` now needs `pre-commit` locally.** Installed this session at
+      `~/.local/share/pre-commit-venv`, symlinked to `~/.local/bin/pre-commit`
+      (system Python is externally-managed; no `pipx`). On a fresh machine the
+      recipe exits 127 with an install hint. Two traps it exposed, both cheap to
+      re-learn the hard way: `pre-commit run --all-files` only checks files git
+      **tracks**, so lint a new file *after* `git add` or the green is a false
+      pass; and `markdownlint-cli2` is the exception, because its
+      `globs: ["**/*.md"]` reads the disk instead (that is why `.superpowers/**`
+      had to be added to its `ignores:`).
+
+- [ ] **Plan task headings must be `### Task N`.** `classify-turns.sh` counted h3
+      only, and `writing-plans` emits h2 — an enriched 6-task plan silently got
+      the 50-turn default. #359 fixed the script to accept both, so this is no
+      longer load-bearing, but verifying a plan's budget before dispatch is still
+      worth doing:
+      `ISSUE_LABELS='ai-implement' ISSUE_NUMBER=1 REPO=o/r ISSUE_BODY="$(printf '## Implementation Plan\n\n'; cat <plan>)" bash scripts/classify-turns.sh`
+
 ## Azure DevOps forge support — finish the port (2026-09-09, PR #307, ADR-012)
 
 PR #307 added ADO detection plus an `## Azure DevOps` section to `/issues` only.
@@ -179,11 +234,17 @@ For each: run without `--query` first, record the shape, then confirm the path.
       follow-ups all resolved since). The real lesson is upstream: `/pickup` is
       supposed to delete a handoff when its phase completes, and three in a row
       were left behind.
-- [ ] No CI job runs the Layer-1 suite. `just test` drives five
-      `tests/run-*-tests.sh` entry points locally, but the only workflows are
-      `lint` (pre-commit) and `gate-selftest` — a broken fixture test would go
-      green on a PR. (Also: `tests/run-link-skills-tests.sh` and
-      `tests/run-parse-enrich-args-tests.sh` are in neither `just test` nor CI.)
+- [x] No CI job runs the Layer-1 suite. **Done 2026-09-16/17** via #354 (which
+      absorbed #353) and PR #360. `lint.yml` gained a `test` job; both it and
+      `just test` now call `tests/run-all.sh`, which *discovers* every
+      `run-*-tests.sh` with `find` instead of listing them — so the two
+      orphaned runners (`run-link-skills-tests.sh`,
+      `run-parse-enrich-args-tests.sh`) are picked up by construction. 10
+      runners, was 7. `test` is now a **required** status check on `main`.
+      Wiring it up immediately found a real bug: six `missing REPO → exit 2`
+      assertions passed locally and failed in CI, because a runner always sets
+      `GITHUB_REPOSITORY` and the scripts fall back to it — the suite is now
+      hermetic against ambient `GITHUB_*` vars.
 
 ## Pipeline flake: `ensure-toolchain.sh` apt install hang (discovered 2026-08-17, issue #255 dispatch)
 
@@ -192,8 +253,9 @@ For each: run without `--query` first, record the shape, then confirm the path.
       `scripts/ensure-toolchain.sh` for the full 10-minute job timeout, then got
       cancelled (`The operation was canceled`) — see
       [run 32068197101](https://github.com/freaxnx01/agent-workflow/actions/runs/32068197101/job/95505110588).
-      Not a required check (`gate-selftest` is main's only required status
-      check) so it didn't block merging PR #256, and it wasn't caused by
+      Not a required check (as of 2026-09-17 main requires `gate-selftest`
+      **and** `test`; `agent-implement-test` is neither) so it didn't block
+      merging PR #256, and it wasn't caused by
       anything in that PR's content — looks like apt lock contention or a slow
       runner mirror. Worth a closer look if it recurs: retry/timeout logic
       around the `apt-get install` call, or pin a faster mirror.
