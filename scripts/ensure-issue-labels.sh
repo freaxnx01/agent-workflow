@@ -27,9 +27,16 @@
 #   outcome    ai:review-blocked
 #              — written by either review job (ADR-002, epic #3) when
 #                the safety envelope or verdict leaves the PR draft
-#   coordination enrichment-ongoing
-#              — read/written by /enrich (Step 1.5 / 2.5 / 6) to prevent two
-#                sessions from concurrently enriching the same issue
+#   coordination enrichment-ongoing, ai-implementing
+#              — enrichment-ongoing is read/written by /enrich (Step 1.5 / 2.5
+#                / 6) to prevent two sessions from concurrently enriching the
+#                same issue; ai-implementing is the implement claim
+#                (ADR-015, #366), written by claim-issue.sh before the agent
+#                runs and removed by release-issue-claim.sh at run end, and
+#                read by /gh:implement and /work so a local session and the
+#                pipeline cannot implement the same issue at once.
+#                `gh issue edit --add-label` fails outright on a label that
+#                does not exist, so the claim is unusable until it is created
 #
 # Idempotent: existing labels are preserved unchanged (`gh label create` errors
 # when the label exists; we ignore that error rather than passing `--force`, so
@@ -85,3 +92,4 @@ create turns:160 5319E7 'Override the agent turn budget to 160 (classify-turns.s
 create ai:review-blocked D73A4A 'Auto-review left the PR draft; human action required'
 
 create enrichment-ongoing FBCA04 'Another /enrich session is actively enriching this issue — do not start a second one'
+create ai-implementing FBCA04 'An implement run is working this issue — see the claim comment for the run'

@@ -100,6 +100,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **claim:** the implement job takes a visible claim on the issue before the
+  agent runs — the `ai-implementing` label plus a comment naming the run — and
+  releases it at run end. A dispatch that finds a live claim refuses and names
+  the holding run; `/gh:implement` and `/work` read the same claim, so a local
+  session and the pipeline can no longer implement the same issue at once.
+  Staleness is decided by asking GitHub about the referenced run, never by
+  elapsed time, and an unresolvable run is stale — a crashed run cannot wedge
+  the issue. See ADR-015 (#366).
 - **ci:** a `test` job in `.github/workflows/lint.yml` runs the Layer-1 suite on
   every PR. Nothing ran it before: `tests/run-*-tests.sh` lived only behind
   `just test`, so a PR breaking `run-script-tests.sh` — 693 assertions — merged

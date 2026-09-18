@@ -66,6 +66,52 @@ Claude Code implements the issue on a new branch and opens a draft PR.
    dispatch a genuinely trivial issue without enriching it, say so explicitly and
    apply a `turns:50` label alongside `ai-implement` to keep the budget honest.
 
+6. **No live implement claim** — a run may already be implementing this issue.
+   GitHub Actions' `concurrency:` key serialises pipeline against pipeline, but it
+   is invisible from here, so the claim on the issue is the only thing both parties
+   can see (ADR-015). First the boolean:
+
+   ```bash
+   gh issue view <N> --repo <owner/repo> --json labels --jq '[.labels[].name]' \
+     | grep -q ai-implementing && echo "CLAIM?" || echo "free"
+   ```
+
+   `free` → carry on. On `CLAIM?`, read the newest claim comment — the label alone
+   says nothing about *who* holds it:
+
+   ```bash
+   gh issue view <N> --repo <owner/repo> --comments \
+     | grep -A2 '🔒 Implement claim by run' | tail -3
+   ```
+
+   ```text
+   🔒 Implement claim by run 34263247853
+   https://github.com/<owner>/<repo>/actions/runs/34263247853
+   claimed 2026-09-17T09:12:03Z
+   ```
+
+   Then ask GitHub whether that run is still going — **never** judge by the
+   timestamp, an implement run is only 10–15 minutes long:
+
+   ```bash
+   gh run view <run-id> --repo <owner/repo> --json status --jq .status
+   ```
+
+   - `queued` / `in_progress` → **stop**, do not label. Name the holding run and its
+     URL, and say the issue is being implemented right now. Cancelling that run is
+     the operator's call, not yours: print `gh run cancel <run-id> --repo <owner/repo>`
+     as text and let them decide — cancelling mid-implementation discards whatever
+     the run has not pushed.
+   - anything else, **including a run that will not resolve at all** → the claim is
+     **stale**, not a blocker. Say so in one line and carry on. An unresolvable run
+     cannot be in progress, and a wedged issue is worse than a rare double
+     implementation.
+   - label present but no claim comment names a run → also stale. There is no run
+     reference to judge, so nothing is held.
+
+   A claim released cleanly leaves a `🔓 Implement claim released by run <id>` note;
+   a claim followed by its own release note is retired, not held.
+
 ## Post the implementation contract
 
 Read `~/.claude/commands/gh/implementation-contract.md` and follow it: apply its
