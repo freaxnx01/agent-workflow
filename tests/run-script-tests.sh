@@ -715,6 +715,72 @@ fi
 ec="$(run_capture_ec env REPO=o/r bash "$CLASSIFY_TURNS")"
 assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 
+section "issue-claim — claim parsing and run liveness (#366)"
+
+CLAIM_LIB="$ROOT/scripts/lib/issue-claim.sh"
+
+# claim_lib <fn> [args...] — run one library function in a subshell, so no case
+# leaks state into the next one.
+claim_lib() (
+  # shellcheck source=scripts/lib/issue-claim.sh disable=SC1090,SC1091
+  source "$CLAIM_LIB"
+  "$@"
+)
+
+# claim_state_for <run-state> <run-id> — drives claim_state through the
+# RUN_STATE seam, so liveness is covered without a single network call.
+claim_state_for() (
+  # shellcheck source=scripts/lib/issue-claim.sh disable=SC1090,SC1091
+  source "$CLAIM_LIB"
+  RUN_STATE="$1" claim_state "$2"
+)
+
+comments_one=$'🔒 Implement claim by run 111\nhttps://gh/run/111\nclaimed 2026-09-17T09:12:03Z'
+out="$(claim_lib parse_latest_claim "$comments_one")"
+assert_contains "$out" '111'               "parses a single claim's run id"
+assert_contains "$out" 'https://gh/run/111' "parses the run url"
+assert_contains "$out" '2026-09-17T09:12:03Z' "parses the claim timestamp"
+
+# Newest claim wins — a redispatched issue accumulates them, and the oldest is
+# never the answer.
+comments_two=$'🔒 Implement claim by run 111\nhttps://gh/run/111\nclaimed 2026-09-17T09:12:03Z\n---\n🔒 Implement claim by run 222\nhttps://gh/run/222\nclaimed 2026-09-17T10:00:00Z'
+out="$(claim_lib parse_latest_claim "$comments_two")"
+assert_contains "$out"     '222' "newest claim wins"
+assert_not_contains "$out" '111' "the superseded claim is not reported"
+
+# parse_claims lists every claim, oldest first — the re-check needs the order.
+out="$(claim_lib parse_claims "$comments_two")"
+assert_equals "$(printf '%s\n' "$out" | grep -c 'https://gh/run/')" "2" "parse_claims lists both claims"
+assert_equals "$(printf '%s\n' "$out" | head -1 | cut -f1)" "111" "parse_claims is oldest-first"
+
+# No claim at all
+out="$(claim_lib parse_latest_claim 'just an ordinary comment')"
+assert_equals "$out" "" "no claim comment → empty"
+out="$(claim_lib parse_latest_claim '')"
+assert_equals "$out" "" "empty comment blob → empty"
+
+# A release note must not read as a claim, or a released claim would look held.
+released=$'🔒 Implement claim by run 111\nhttps://gh/run/111\nclaimed 2026-09-17T09:12:03Z\n---\n🔓 Implement claim released by run 111'
+out="$(claim_lib parse_latest_claim "$released")"
+assert_contains "$out" '111' "a release note does not parse as a new claim"
+
+# Liveness — the run's own state is the only signal
+for s in queued in_progress; do
+  out="$(claim_state_for "$s" 111)"
+  assert_equals "$out" "live" "$s → live"
+done
+for s in completed cancelled failure skipped; do
+  out="$(claim_state_for "$s" 111)"
+  assert_equals "$out" "stale" "$s → stale"
+done
+
+# The decision that keeps a crashed run from wedging the issue: an unresolvable
+# run cannot be in progress, so it is stale and takeable. Never live.
+out="$(claim_state_for "" 999999)"
+assert_equals "$out" "stale" "unresolvable run → stale, never live"
+out="$(claim_state_for "" "")"
+assert_equals "$out" "stale" "empty run id → stale, never live"
+
 section "update-moving-tag — forward-only moves, semver ordering, prerelease refusal"
 
 MOVING_TAG="$ROOT/scripts/update-moving-tag.sh"
