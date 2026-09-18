@@ -16,6 +16,22 @@ Implement GitHub issue #$ARGUMENTS end to end (strip any leading `#` from the
 number):
 
 1. `gh issue view $ARGUMENTS --comments` — read the issue and its discussion.
+   **Check the implement claim in the same pass** (ADR-015): if the issue carries
+   `ai-implementing`, find the newest `🔒 Implement claim by run <id>` comment and
+   ask GitHub about that run — `gh run view <id> --json status --jq .status`.
+
+   - `queued` / `in_progress` → **stop**. A pipeline run is implementing this issue
+     right now; say so, naming the run and its URL. Working it here produces a
+     second, competing PR — the flowhub#93 collision this claim exists to prevent.
+     Cancelling the run is the operator's call: offer
+     `gh run cancel <id> --repo <owner/repo>` as text and do not run it.
+   - anything else, including a run that will not resolve, or a label with no claim
+     comment → the claim is **stale**. Say so in one line and carry on. Staleness is
+     never judged from the claim's timestamp.
+
+   Note the claim is one-directional: the pipeline takes it, this command only
+   reads it. Nothing stops a run claiming the issue *after* you start here, so if
+   the work spans a long session, re-check before opening the PR.
 2. If scope or requirements are unclear or open-ended, use the
    **superpowers:brainstorming** skill to settle them before any code.
 3. Use **superpowers:writing-plans** to produce an implementation plan (markdown).

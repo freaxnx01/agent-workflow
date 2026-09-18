@@ -1507,3 +1507,133 @@ so verification costs **no additional API calls**.
   file: the canned `PIPELINE_PRS_JSON` that `agent-implement.yml` emits under
   `stub-review-verdict` had to gain a `Closes #<issue>` body, since the stub is
   now subject to the same predicate as a real response.
+
+---
+
+## ADR-015 — The implement claim: a label plus a run reference on the issue (2026-09-18)
+
+**Status:** Accepted
+**Tracking:** [#366](https://github.com/freaxnx01/agent-workflow/issues/366)
+
+### Context
+
+`agent-implement.yml` already serialises **pipeline against pipeline**:
+
+```yaml
+concurrency:
+  group: claude-implement-${{ github.repository }}-${{ inputs.issue-number }}
+  cancel-in-progress: true
+```
+
+That key is invisible outside GitHub Actions. Nothing stopped a local session — a
+person, or a Claude Code session running `/work` — from implementing an issue
+while a run was live, or from dispatching while someone was mid-implementation.
+
+Observed on `freaxnx01/flowhub#93`: a session recovered the agent's work from a
+closed PR's `refs/pull/99/head`, fixed it, ran the suite green and opened a PR;
+concurrently the attempt cap was raised and the issue redispatched. A run started
+~80 seconds after that merge and began a second, competing implementation. Both
+reactions were legitimate. Neither party could see the other. Cost: a wasted run
+(~$2), two PRs closing one issue, and manual reconciliation.
+
+The `/enrich` lock ([#229](https://github.com/freaxnx01/agent-workflow/issues/229),
+[#237](https://github.com/freaxnx01/agent-workflow/issues/237)) does not cover
+this. It lives **client-side**, in `~/.claude/commands/enrich.md`; agent-workflow
+contributes only the label definition. An implement claim has to be taken by the
+pipeline itself, because the pipeline is one of the two colliding parties.
+
+### Decision
+
+**The claim is a label plus a comment on the issue.**
+
+```text
+labels: ai-implement, ai-implementing
+
+comment:
+  🔒 Implement claim by run 34263247853
+  https://github.com/freaxnx01/agent-workflow/actions/runs/34263247853
+  claimed 2026-09-17T09:12:03Z
+```
+
+The label is the boolean: greppable from an issue list, one API call to test, and
+it mirrors the enrich lock so both locks have one mental model. The comment
+carries the **run reference**, which is what staleness is actually judged from —
+a label alone cannot hold it, and that would force staleness back onto the time
+heuristic this decision exists to improve on. A label with no parseable claim
+comment is therefore **stale**, not held.
+
+**Staleness is decided by the referenced run's state, never by elapsed time.**
+`queued` and `in_progress` are live; everything else is stale and takeable with no
+waiting. An implement run is ~10–15 minutes, so a time rule would have to be
+either uselessly long or prone to false takeovers.
+
+**An unresolvable run reference is stale — take over.** If `gh run view <id>`
+cannot resolve the run (deleted, expired, API error), the claim is dead: an
+unresolvable run cannot be in progress. Failing open is what satisfies "a crashed
+run does not block the issue indefinitely" without a time heuristic. The cost is
+a possible false takeover during a GitHub API outage — strictly better than a
+wedged issue, and the same outage would break dispatch anyway.
+
+**A local session that finds a live claim refuses, naming the holder.** Hard
+stop, printing the holding run's URL and state — the same shape as
+`/gh:implement`'s existing hard stop on `needs-enrichment`. Not warn-and-continue:
+that is precisely the flowhub#93 behaviour. Cancelling the holder stays a
+deliberate manual act; the refusal may print `gh run cancel <id>`, but no tooling
+runs it, because cancelling a mid-implementation run discards its unpushed work.
+
+**The claim is released at run end, in an `always()` step.** Released on success,
+failure and cancellation, and only when the releasing run is the one holding it —
+`cancel-in-progress: true` means a cancelled run's `always()` release can land
+*after* its replacement has claimed, and releasing the successor's claim would
+hand the issue to a third party mid-implementation.
+
+**Acquire re-checks after claiming.** Acquire is not atomic, and the second party
+is one Actions' `concurrency` cannot see. The run that claimed *first* wins; a
+run that finds an older live claim on the re-check stands down, retires its own
+claim and exits 3 — the same shape as `/enrich`'s Step 2.5 race re-check.
+
+Implementation: `scripts/lib/issue-claim.sh` (parsing + liveness),
+`scripts/claim-issue.sh` (exit `3` = held by another live run),
+`scripts/release-issue-claim.sh` (always exits `0`), wired into the implement job
+before the agent and in an `always()` step after the run report.
+
+### Consequences
+
++ The release step is an optimisation, not the correctness mechanism. GitHub runs
+  `always()` steps during a cancellation grace period, but a hard timeout can
+  still kill the job first. What makes the system correct is that a claim whose
+  run is no longer in progress is takeable immediately.
++ A refusal must not look like a crash. `claim-issue.sh` exits `3`, the step is
+  `continue-on-error`, both agent steps gate on `claimed != 'false'`, and the
+  holder goes to `$GITHUB_STEP_SUMMARY` — a refusal misread as an agent failure
+  is what gets an issue redispatched, the loop this ADR exists to break. A
+  genuine crash leaves the output empty and the run proceeds unclaimed: the claim
+  must not be able to block implementation by failing.
++ `ai-implementing` is created by `ensure-issue-labels.sh` **and** by
+  `claim-issue.sh` before it applies the label, because the label script runs
+  later in the same job and `gh issue edit --add-label` fails outright on a label
+  that does not exist (the bootstrap deadlock of
+  [#301](https://github.com/freaxnx01/agent-workflow/issues/301)).
++ Claim and release comments accumulate on a much-redispatched issue. They are
+  the audit trail of who ran when — the same reason the enrich lock keeps its
+  comments — and the parse, not a deletion, is what retires a claim: a claim
+  followed by its own run's `🔓 Implement claim released by run <id>` note no
+  longer stands.
++ Two `gh` round-trips are added before the agent starts.
+
+### Residual gap — accepted, not solved here
+
+Releasing at run end does **not** fully close the flowhub#93 scenario.
+
+The claim is **one-directional**: the pipeline claims, local tooling reads. It
+protects a session that checks *after* a run has started; it does not protect one
+that started *first*, while no claim was held. Making it symmetric needs a claim
+identity that is not a run id, and staleness for that identity would fall back to
+the very time heuristic this ADR rejects —
+[#369](https://github.com/freaxnx01/agent-workflow/issues/369).
+
+Likewise a PR left in `ai:review-blocked` is unclaimed once its run ends, which is
+the state flowhub#93's collision happened in —
+[#370](https://github.com/freaxnx01/agent-workflow/issues/370).
+
+This change closes the dispatch-side half.
