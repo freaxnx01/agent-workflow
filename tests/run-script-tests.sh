@@ -759,10 +759,22 @@ assert_equals "$out" "" "no claim comment → empty"
 out="$(claim_lib parse_latest_claim '')"
 assert_equals "$out" "" "empty comment blob → empty"
 
-# A release note must not read as a claim, or a released claim would look held.
+# A claim its own run released no longer stands. Both comments stay on the
+# issue as the audit trail, so the parse is what retires the claim — and it is
+# what stops a run that stood down from later releasing the winner's claim.
 released=$'🔒 Implement claim by run 111\nhttps://gh/run/111\nclaimed 2026-09-17T09:12:03Z\n---\n🔓 Implement claim released by run 111'
 out="$(claim_lib parse_latest_claim "$released")"
-assert_contains "$out" '111' "a release note does not parse as a new claim"
+assert_equals "$out" "" "a released claim no longer stands"
+
+# ...but a release note only retires its OWN run's claim.
+other_released=$'🔒 Implement claim by run 111\nhttps://gh/run/111\nclaimed 2026-09-17T09:12:03Z\n---\n🔓 Implement claim released by run 222'
+out="$(claim_lib parse_latest_claim "$other_released")"
+assert_contains "$out" '111' "another run's release note leaves the claim standing"
+
+# A re-claim after a release stands again (the newest claim is the live one).
+reclaimed=$'🔒 Implement claim by run 111\nhttps://gh/run/111\nclaimed 2026-09-17T09:12:03Z\n---\n🔓 Implement claim released by run 111\n---\n🔒 Implement claim by run 333\nhttps://gh/run/333\nclaimed 2026-09-17T11:00:00Z'
+out="$(claim_lib parse_latest_claim "$reclaimed")"
+assert_contains "$out" '333' "a claim posted after a release still stands"
 
 # Liveness — the run's own state is the only signal
 for s in queued in_progress; do
@@ -780,6 +792,177 @@ out="$(claim_state_for "" 999999)"
 assert_equals "$out" "stale" "unresolvable run → stale, never live"
 out="$(claim_state_for "" "")"
 assert_equals "$out" "stale" "empty run id → stale, never live"
+
+section "claim-issue / release-issue-claim — acquire, refuse, release (#366)"
+
+CLAIM_SH="$ROOT/scripts/claim-issue.sh"
+RELEASE_SH="$ROOT/scripts/release-issue-claim.sh"
+
+CLAIM_OUT=''
+CLAIM_EC=0
+CLAIM_LOG_TEXT=''
+
+# claim_by <run-id> — a claim comment in the canonical format
+claim_by() {
+  printf '🔒 Implement claim by run %s\nhttps://gh/run/%s\nclaimed 2026-09-17T09:00:00Z\n' "$1" "$1"
+}
+
+# run_claim <VAR=VAL>... — drive claim-issue.sh as run 555 under the gh mock.
+# Fills CLAIM_OUT (stdout+stderr), CLAIM_EC and CLAIM_LOG_TEXT (the gh calls
+# actually made, so "a refusal writes nothing" is assertable).
+run_claim() {
+  local log
+  log="$(mktemp)"
+  CLAIM_EC=0
+  CLAIM_OUT="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$log" \
+    env ISSUE_NUMBER=42 REPO=o/r RUN_ID=555 RUN_URL='https://gh/run/555' "$@" \
+    bash "$CLAIM_SH" 2>&1)" || CLAIM_EC=$?
+  CLAIM_LOG_TEXT="$(cat "$log")"
+  rm -f "$log"
+}
+
+# run_release <VAR=VAL>... — same, for release-issue-claim.sh
+run_release() {
+  local log
+  log="$(mktemp)"
+  CLAIM_EC=0
+  CLAIM_OUT="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$log" \
+    env ISSUE_NUMBER=42 REPO=o/r RUN_ID=555 "$@" \
+    bash "$RELEASE_SH" 2>&1)" || CLAIM_EC=$?
+  CLAIM_LOG_TEXT="$(cat "$log")"
+  rm -f "$log"
+}
+
+# --- acquire: the free issue ------------------------------------------------
+
+run_claim ISSUE_LABELS='ai-implement' ISSUE_COMMENTS='' RUN_STATE=''
+assert_equals   "$CLAIM_EC" "0"              "free issue → exit 0"
+assert_contains "$CLAIM_OUT" 'claimed=true'  "free issue → claimed=true"
+assert_contains "$CLAIM_OUT" 'holder=https://gh/run/555' "holder names this run"
+assert_contains "$CLAIM_LOG_TEXT" '🔒 Implement claim by run 555' "posts the claim comment"
+assert_contains "$CLAIM_LOG_TEXT" 'issue edit 42 --repo o/r --add-label ai-implementing' "adds the label"
+
+# The label has to be created first: `--add-label` fails outright on a label
+# that does not exist, and ensure-issue-labels.sh runs later in the job — the
+# same bootstrap deadlock #301 documents.
+assert_contains "$CLAIM_LOG_TEXT" 'label create ai-implementing --repo o/r' "creates the label before adding it"
+
+# Comment before label, matching the enrich lock's ordering: a label must never
+# exist without a run reference to judge it by.
+order="$(printf '%s\n' "$CLAIM_LOG_TEXT" | grep -nE 'issue (comment|edit) 42' | head -1)"
+assert_contains "$order" 'issue comment' "the claim comment is posted before the label is added"
+
+# --- acquire: a live claim by another run -----------------------------------
+
+run_claim ISSUE_LABELS=$'ai-implement\nai-implementing' ISSUE_COMMENTS="$(claim_by 111)" RUN_STATE=in_progress
+assert_equals       "$CLAIM_EC" "3"                     "live claim by another run → exit 3"
+assert_contains     "$CLAIM_OUT" 'claimed=false'        "refusal → claimed=false"
+assert_contains     "$CLAIM_OUT" 'holder=https://gh/run/111' "holder is the holding run's url"
+assert_contains     "$CLAIM_OUT" '111'                  "the refusal names the holding run"
+assert_contains     "$CLAIM_OUT" 'gh run cancel 111'    "the refusal offers the cancel command as text"
+assert_not_contains "$CLAIM_LOG_TEXT" 'issue comment'   "a refusal posts no comment"
+assert_not_contains "$CLAIM_LOG_TEXT" '--add-label'     "a refusal applies no label"
+
+# --- acquire: staleness is takeable -----------------------------------------
+
+run_claim ISSUE_LABELS=$'ai-implement\nai-implementing' ISSUE_COMMENTS="$(claim_by 111)" RUN_STATE=completed
+assert_equals   "$CLAIM_EC" "0"                    "stale claim → taken over, exit 0"
+assert_contains "$CLAIM_OUT" 'claimed=true'        "stale claim → claimed=true"
+assert_contains "$CLAIM_LOG_TEXT" '🔒 Implement claim by run 555' "takeover posts this run's claim"
+
+# A crashed run leaves no resolvable run, so the claim must not survive it.
+run_claim ISSUE_LABELS=$'ai-implement\nai-implementing' ISSUE_COMMENTS="$(claim_by 111)" RUN_STATE=''
+assert_equals "$CLAIM_EC" "0" "unresolvable holding run → taken over, exit 0"
+
+# The label alone is not a claim: with no parseable comment there is no run to
+# judge, so the issue is free. This is the branch that stops a crashed run
+# wedging the issue forever.
+run_claim ISSUE_LABELS=$'ai-implement\nai-implementing' ISSUE_COMMENTS='just an ordinary comment' RUN_STATE=in_progress
+assert_equals   "$CLAIM_EC" "0"           "label with no claim comment → stale, exit 0"
+assert_contains "$CLAIM_OUT" 'claimed=true' "label with no claim comment → claimed=true"
+
+# --- acquire: idempotent for the run that already holds it ------------------
+
+run_claim ISSUE_LABELS=$'ai-implement\nai-implementing' ISSUE_COMMENTS="$(claim_by 555)" RUN_STATE=in_progress
+assert_equals       "$CLAIM_EC" "0"                   "this run's own claim → exit 0"
+assert_contains     "$CLAIM_OUT" 'claimed=true'       "own claim → claimed=true"
+assert_not_contains "$CLAIM_LOG_TEXT" 'issue comment' "own claim → no duplicate comment"
+
+# --- acquire: the post-claim race re-check ----------------------------------
+
+# Acquire is not atomic, and the second party is one Actions' `concurrency` key
+# cannot see. If the re-read shows an older live claim by another run, this run
+# lost and must stand down — not implement alongside the winner.
+run_claim ISSUE_LABELS='ai-implement' ISSUE_COMMENTS='' \
+  ISSUE_COMMENTS_RECHECK="$(claim_by 111; claim_by 555)" RUN_STATE=in_progress
+assert_equals   "$CLAIM_EC" "3"                   "lost the race → exit 3"
+assert_contains "$CLAIM_OUT" 'claimed=false'      "lost the race → claimed=false"
+assert_contains "$CLAIM_OUT" 'holder=https://gh/run/111' "the winner is named as holder"
+assert_contains "$CLAIM_LOG_TEXT" '--remove-label ai-implementing' "standing down removes the label this run added"
+assert_contains "$CLAIM_LOG_TEXT" '🔓 Implement claim released by run 555' "standing down retires this run's claim"
+
+# Same race, but the other claim's run is not live → this run keeps the claim.
+run_claim ISSUE_LABELS='ai-implement' ISSUE_COMMENTS='' \
+  ISSUE_COMMENTS_RECHECK="$(claim_by 111; claim_by 555)" RUN_STATE=completed
+assert_equals       "$CLAIM_EC" "0"                       "won the race against a dead run → exit 0"
+assert_not_contains "$CLAIM_LOG_TEXT" '--remove-label'    "winning keeps the label"
+
+# A run that already held the label before claiming must not have it stripped
+# by a stand-down it did not cause.
+run_claim ISSUE_LABELS=$'ai-implement\nai-implementing' ISSUE_COMMENTS='' \
+  ISSUE_COMMENTS_RECHECK="$(claim_by 111; claim_by 555)" RUN_STATE=in_progress
+assert_equals       "$CLAIM_EC" "3"                    "lost the race with a pre-existing label → exit 3"
+assert_not_contains "$CLAIM_LOG_TEXT" '--remove-label' "a label this run did not add is left alone"
+
+# --- acquire: guardrails ----------------------------------------------------
+
+run_claim ISSUE_LABELS='ai-implement' ISSUE_COMMENTS='' RUN_STATE='' DRY_RUN=1
+assert_equals       "$CLAIM_EC" "0"                   "DRY_RUN → exit 0"
+assert_contains     "$CLAIM_OUT" 'claimed=true'       "DRY_RUN still reports the decision"
+assert_not_contains "$CLAIM_LOG_TEXT" 'issue comment' "DRY_RUN writes nothing"
+assert_not_contains "$CLAIM_LOG_TEXT" 'issue edit'    "DRY_RUN applies no label"
+
+ec="$(run_capture_ec env PATH="$MOCKS:$PATH" GH_MOCK_LOG=/dev/null REPO=o/r RUN_ID=555 bash "$CLAIM_SH")"
+assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
+ec="$(run_capture_ec env PATH="$MOCKS:$PATH" GH_MOCK_LOG=/dev/null REPO=o/r ISSUE_NUMBER=42 bash "$CLAIM_SH")"
+assert_equals "$ec" "2" "missing RUN_ID → exit 2"
+ec="$(run_capture_ec env PATH="$MOCKS:$PATH" GH_MOCK_LOG=/dev/null ISSUE_NUMBER=42 RUN_ID=555 bash "$CLAIM_SH")"
+assert_equals "$ec" "2" "missing REPO → exit 2"
+
+# --- release ----------------------------------------------------------------
+
+run_release ISSUE_COMMENTS="$(claim_by 555)"
+assert_equals   "$CLAIM_EC" "0" "releasing this run's claim → exit 0"
+assert_contains "$CLAIM_LOG_TEXT" '--remove-label ai-implementing' "release removes the label"
+assert_contains "$CLAIM_LOG_TEXT" '🔓 Implement claim released by run 555' "release posts the release note"
+
+run_release ISSUE_COMMENTS=''
+assert_equals       "$CLAIM_EC" "0"                    "release with no claim held → exit 0"
+assert_not_contains "$CLAIM_LOG_TEXT" '--remove-label' "release with no claim touches nothing"
+
+# `cancel-in-progress: true` means the common path to a release is a
+# cancellation — and a cancelled run's always() release can land *after* its
+# replacement has claimed. It must not release the successor's claim.
+run_release ISSUE_COMMENTS="$(claim_by 555; claim_by 777)"
+assert_equals       "$CLAIM_EC" "0"                    "release when a newer run holds the claim → exit 0"
+assert_not_contains "$CLAIM_LOG_TEXT" '--remove-label' "release leaves another run's claim alone"
+
+run_release ISSUE_COMMENTS="$(claim_by 555; printf '🔓 Implement claim released by run 555\n')"
+assert_equals       "$CLAIM_EC" "0"                    "releasing twice → exit 0"
+assert_not_contains "$CLAIM_LOG_TEXT" '--remove-label' "an already-released claim is not released again"
+
+ec="$(run_capture_ec env PATH="$MOCKS:$PATH" GH_MOCK_LOG=/dev/null REPO=o/r bash "$RELEASE_SH")"
+assert_equals "$ec" "0" "release with missing env → exit 0, never fails the job"
+
+# The release runs in always(), often inside a cancellation grace period. Every
+# failure inside it is reported and swallowed.
+failing_bin="$(mktemp -d)"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$failing_bin/gh"
+chmod +x "$failing_bin/gh"
+ec="$(run_capture_ec env PATH="$failing_bin:$PATH" ISSUE_NUMBER=42 REPO=o/r RUN_ID=555 \
+  ISSUE_COMMENTS="$(claim_by 555)" bash "$RELEASE_SH")"
+assert_equals "$ec" "0" "release survives every gh call failing"
+rm -rf "$failing_bin"
 
 section "update-moving-tag — forward-only moves, semver ordering, prerelease refusal"
 

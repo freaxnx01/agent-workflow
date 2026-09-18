@@ -15,10 +15,17 @@
 # so a local session with no GitHub Actions access reaches the same verdict
 # from the same data as the pipeline does.
 #
-#   parse_claims <comments>        every claim, oldest first, as
+#   parse_claims <comments>        every claim still standing, oldest first, as
 #                                  `run_id<TAB>run_url<TAB>claimed_at`
 #   parse_latest_claim <comments>  the newest claim only, same shape
 #   claim_state <run-id>           `live` | `stale`
+#
+# A claim is "still standing" until the same run posts its release note
+# ("🔓 Implement claim released by run <id>"). Both comments stay on the issue
+# as the audit trail of who ran when, so the parse — not a deletion — is what
+# retires a claim. Without that, a run that stood down after losing a race
+# would still own the newest claim comment, and its own release step would then
+# strip the *winner's* label.
 #
 # Staleness is never decided by elapsed time. An implement run is ~10–15
 # minutes, so any time rule would be either uselessly long or prone to false
@@ -41,28 +48,50 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# The marker is matched as a prefix of the line, so the release note
-# ("🔓 Implement claim released by run N") cannot be read as a claim.
+# Both markers are matched as a line prefix, so the release note can never be
+# read as a claim.
 CLAIM_MARKER='🔒 Implement claim by run '
+CLAIM_RELEASE_MARKER='🔓 Implement claim released by run '
 CLAIM_LABEL="${CLAIM_LABEL:-ai-implementing}"
 
-# parse_claims <comments> — print every claim found in the blob, oldest first,
-# one per line as `run_id<TAB>run_url<TAB>claimed_at`. Prints nothing when the
-# blob holds no claim.
+# _claim_run_id <line> <marker> — the run id a marker line names, or nothing.
+_claim_run_id() {
+  local id="${1#"$2"}"
+  id="${id%%[^0-9]*}"
+  printf '%s' "$id"
+}
+
+# parse_claims <comments> — print every claim still standing in the blob,
+# oldest first, one per line as `run_id<TAB>run_url<TAB>claimed_at`. A claim
+# whose run later posted its release note is retired and not printed. Prints
+# nothing when no claim stands.
 parse_claims() {
   local comments="${1:-}"
   [[ -n "$comments" ]] || return 0
 
-  local -a lines=()
+  local -a lines=() ids=() urls=() times=()
   mapfile -t lines <<< "$comments"
 
-  local i run_id run_url claimed_at
+  local i j run_id run_url claimed_at
   for (( i = 0; i < ${#lines[@]}; i++ )); do
-    [[ "${lines[i]}" == "$CLAIM_MARKER"* ]] || continue
+    if [[ "${lines[i]}" == "$CLAIM_RELEASE_MARKER"* ]]; then
+      run_id="$(_claim_run_id "${lines[i]}" "$CLAIM_RELEASE_MARKER")"
+      for (( j = 0; j < ${#ids[@]}; j++ )); do
+        if [[ "${ids[j]}" == "$run_id" ]]; then
+          ids[j]=''
+        fi
+      done
+      continue
+    fi
 
-    run_id="${lines[i]#"$CLAIM_MARKER"}"
-    run_id="${run_id%%[^0-9]*}"
-    [[ -n "$run_id" ]] || continue
+    if [[ "${lines[i]}" != "$CLAIM_MARKER"* ]]; then
+      continue
+    fi
+
+    run_id="$(_claim_run_id "${lines[i]}" "$CLAIM_MARKER")"
+    if [[ -z "$run_id" ]]; then
+      continue
+    fi
 
     run_url=''
     claimed_at=''
@@ -73,7 +102,15 @@ parse_claims() {
       claimed_at="${lines[i + 2]#claimed }"
     fi
 
-    printf '%s\t%s\t%s\n' "$run_id" "$run_url" "$claimed_at"
+    ids+=("$run_id")
+    urls+=("$run_url")
+    times+=("$claimed_at")
+  done
+
+  for (( j = 0; j < ${#ids[@]}; j++ )); do
+    if [[ -n "${ids[j]}" ]]; then
+      printf '%s\t%s\t%s\n' "${ids[j]}" "${urls[j]}" "${times[j]}"
+    fi
   done
 }
 
