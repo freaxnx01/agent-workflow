@@ -1,0 +1,154 @@
+Implement claim — the agent-implement.yml wiring (#366)
+=======================================================
+
+This patch carries the half of #366 that a pipeline run cannot push: the
+`Claim issue` / `Release issue claim` steps in
+`.github/workflows/agent-implement.yml`, plus the tests that assert that
+wiring. Everything else (the claim library, both scripts, the label, the
+command docs and the ADR) is in the branch itself.
+
+Why it is a patch and not a commit: the implement job runs with the Actions
+`GITHUB_TOKEN`, and GitHub refuses a push from a GitHub App that touches
+`.github/workflows/` without the `workflows` permission:
+
+    ! [remote rejected] ... (refusing to allow a GitHub App to create or
+      update workflow `.github/workflows/agent-implement.yml` without
+      `workflows` permission)
+
+The tests travel with it because they assert against the YAML: pushing them
+alone would fail CI on a branch whose workflow has not been wired yet.
+
+Apply, verify and commit before merging the PR:
+
+    git apply docs/patches/2026-09-18-366-agent-implement-claim.patch
+    bash tests/run-all.sh
+    actionlint
+    git rm docs/patches/2026-09-18-366-agent-implement-claim.patch
+    git commit -am "feat(claim): wire the implement claim into agent-implement.yml (#366)"
+
+diff --git a/.github/workflows/agent-implement.yml b/.github/workflows/agent-implement.yml
+index 1407e69..06d5307 100644
+--- a/.github/workflows/agent-implement.yml
++++ b/.github/workflows/agent-implement.yml
+@@ -535,6 +535,35 @@ jobs:
+           GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+         run: bash .claude-pipeline/scripts/check-attempt-cap.sh
+ 
++      - name: Claim issue
++        # The `concurrency:` key above serialises pipeline against pipeline,
++        # but it is invisible outside Actions — nothing stopped a local session
++        # implementing the same issue at the same time (ADR-015, #366). The
++        # claim is a label plus a comment on the issue, so both parties see it.
++        #
++        # Skipped when the attempt cap already parked the issue: no agent will
++        # run, so claiming it would only add noise to an issue a human is about
++        # to read.
++        if: ${{ !inputs.stub-claude && steps.attempt_cap.outputs.proceed != 'false' }}
++        id: claim
++        # Exit 3 means another run holds a live claim. That is a legitimate
++        # refusal, not a crash: the script has already written `claimed=false`
++        # plus the holder to $GITHUB_OUTPUT and the step summary, and the agent
++        # steps below gate on `steps.claim.outputs.claimed != 'false'`, so the
++        # job ends cleanly instead of looking like an agent failure — which is
++        # how a collision gets misdiagnosed and redispatched, the very loop
++        # this claim exists to break. A genuine crash leaves the output empty
++        # and the run proceeds unclaimed: the claim must not be able to block
++        # implementation by failing.
++        continue-on-error: true
++        env:
++          ISSUE_NUMBER: ${{ inputs.issue-number }}
++          REPO: ${{ github.repository }}
++          RUN_ID: ${{ github.run_id }}
++          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
++          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
++        run: bash .claude-pipeline/scripts/claim-issue.sh
++
+       - name: Classify agent
+         if: ${{ !inputs.stub-claude }}
+         id: classify_agent
+@@ -633,7 +662,11 @@ jobs:
+         run: printf 'enabled=%s\n' "$ENABLED" >> "$GITHUB_OUTPUT"
+ 
+       - name: Run Claude Code
+-        if: ${{ !inputs.stub-claude && steps.classify_agent.outputs.agent == 'claude' && steps.attempt_cap.outputs.proceed != 'false' }}
++        if: |
++          !inputs.stub-claude
++          && steps.classify_agent.outputs.agent == 'claude'
++          && steps.attempt_cap.outputs.proceed != 'false'
++          && steps.claim.outputs.claimed != 'false'
+         id: claude_run
+         # Step-level env propagates to the action's process.env, which the
+         # action then spreads into the spawned `claude` subprocess. This is now
+@@ -725,6 +758,7 @@ jobs:
+           !inputs.stub-claude
+           && steps.classify_agent.outputs.agent == 'opencode'
+           && steps.attempt_cap.outputs.proceed != 'false'
++          && steps.claim.outputs.claimed != 'false'
+         id: opencode_run
+         env:
+           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+@@ -945,6 +979,24 @@ jobs:
+           HAS_PLAN: ${{ steps.issue.outputs.has-plan }}
+         run: bash .claude-pipeline/scripts/post-run-report.sh
+ 
++      - name: Release issue claim
++        # Last step in the job, and `always()`, so the claim comes back on
++        # success, failure and cancellation — and after the report, so a
++        # cancellation grace period that only fits one more step spends it on
++        # the report rather than on this.
++        #
++        # The script releases only a claim THIS run holds, and swallows every
++        # failure: it must never fail the job. If it never runs at all, the
++        # claim goes stale on its own the moment the run stops being in
++        # progress, which is what makes the system correct (ADR-015, #366).
++        if: ${{ always() && !inputs.stub-claude }}
++        env:
++          ISSUE_NUMBER: ${{ inputs.issue-number }}
++          REPO: ${{ github.repository }}
++          RUN_ID: ${{ github.run_id }}
++          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
++        run: bash .claude-pipeline/scripts/release-issue-claim.sh
++
+   ai_review_ai_merge:
+     # ADR-002: agent-driven review on the freshly-opened draft PR, with
+     # gates 1/5/6/7 enforced in scripts/check-merge-envelope.sh. Verdict
+diff --git a/tests/run-script-tests.sh b/tests/run-script-tests.sh
+index 3791b97..784d4d7 100755
+--- a/tests/run-script-tests.sh
++++ b/tests/run-script-tests.sh
+@@ -972,6 +972,35 @@ ec="$(run_capture_ec env PATH="$failing_bin:$PATH" ISSUE_NUMBER=42 REPO=o/r RUN_
+ assert_equals "$ec" "0" "release survives every gh call failing"
+ rm -rf "$failing_bin"
+ 
++# --- pipeline wiring --------------------------------------------------------
++
++IMPL_WF="$ROOT/.github/workflows/agent-implement.yml"
++# Comments explain the gate expression, so assert against what the job
++# executes, not what it documents (same rationale as the npm-prefix section).
++impl_exec="$(grep -vE '^[[:space:]]*#' "$IMPL_WF")"
++
++assert_contains "$impl_exec" 'scripts/claim-issue.sh'         "agent-implement.yml claims the issue"
++assert_contains "$impl_exec" 'scripts/release-issue-claim.sh' "agent-implement.yml releases the claim"
++
++# A refusal must stop the agent, in both agent paths (ADR-001 §3).
++assert_equals "$(printf '%s' "$impl_exec" | grep -c "steps.claim.outputs.claimed != 'false'" || true)" "2" \
++  "both agent steps stand down when the claim was refused"
++
++# Released on success, failure and cancellation.
++release_if="$(grep -B6 'scripts/release-issue-claim.sh' "$IMPL_WF" | grep -E '^[[:space:]]+if:' || true)"
++assert_contains "$release_if" 'always()' "the release step runs under always()"
++
++# Claim before the agent, release after the report: nothing between the claim
++# and the release may exit the job without reaching it.
++claim_line="$(grep -n 'scripts/claim-issue.sh' "$IMPL_WF" | head -1 | cut -d: -f1)"
++agent_line="$(grep -n 'name: Run Claude Code' "$IMPL_WF" | head -1 | cut -d: -f1)"
++report_line="$(grep -n 'scripts/post-run-report.sh' "$IMPL_WF" | tail -1 | cut -d: -f1)"
++release_line="$(grep -n 'scripts/release-issue-claim.sh' "$IMPL_WF" | tail -1 | cut -d: -f1)"
++assert_equals "$(( claim_line < agent_line ? 1 : 0 ))" "1" \
++  "the claim is taken before the agent runs"
++assert_equals "$(( report_line < release_line ? 1 : 0 ))" "1" \
++  "the claim is released after the run report, as the job's last step"
++
+ section "update-moving-tag — forward-only moves, semver ordering, prerelease refusal"
+ 
+ MOVING_TAG="$ROOT/scripts/update-moving-tag.sh"

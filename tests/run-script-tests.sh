@@ -847,6 +847,14 @@ assert_contains "$CLAIM_LOG_TEXT" 'issue edit 42 --repo o/r --add-label ai-imple
 # same bootstrap deadlock #301 documents.
 assert_contains "$CLAIM_LOG_TEXT" 'label create ai-implementing --repo o/r' "creates the label before adding it"
 
+# ...and it creates the same label ensure-issue-labels.sh defines, or a repo
+# ends up with two descriptions depending on which script got there first.
+claim_label_desc='An implement run is working this issue — see the claim comment for the run'
+assert_contains "$(cat "$ROOT/scripts/ensure-issue-labels.sh")" "$claim_label_desc" \
+  "ensure-issue-labels.sh defines ai-implementing with the same description"
+assert_contains "$(cat "$CLAIM_SH")" "$claim_label_desc" \
+  "claim-issue.sh's on-the-fly label matches that definition"
+
 # Comment before label, matching the enrich lock's ordering: a label must never
 # exist without a run reference to judge it by.
 order="$(printf '%s\n' "$CLAIM_LOG_TEXT" | grep -nE 'issue (comment|edit) 42' | head -1)"
@@ -3143,8 +3151,13 @@ assert_not_contains "$log" 'label create ai-pre-preview'  "does not create depre
 # Outcome label (auto-review epic #3 — ADR-002 §2)
 assert_contains "$log" 'label create ai:review-blocked --repo owner/repo' "creates ai:review-blocked"
 
-# Coordination label (read/written by /enrich's concurrency lock)
+# Coordination labels (the /enrich lock, and the implement claim — ADR-015).
+# claim-issue.sh applies ai-implementing with `gh issue edit --add-label`,
+# which fails outright on a label that does not exist, so an uncreated label is
+# a claim that never happens. The turns:* labels went missing exactly this way
+# (#273): an untested label is a label that will not exist.
 assert_contains "$log" 'label create enrichment-ongoing --repo owner/repo' "creates enrichment-ongoing"
+assert_contains "$log" 'label create ai-implementing --repo owner/repo'    "creates ai-implementing"
 
 # Turn-budget override labels (read by classify-turns.sh stage 1). Without
 # these the documented override is unusable in a fresh repo: `gh issue edit
