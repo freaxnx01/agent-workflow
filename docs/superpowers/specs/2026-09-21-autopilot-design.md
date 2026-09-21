@@ -288,8 +288,9 @@ backoff are the more nuanced answer and are explicitly out of scope for v1.
 
 ## Kill switch
 
-Two layers, documented in `docs/CONSUMER-SETUP.md` and in the unit file's own
-comments:
+Two layers, documented in a new `docs/AUTOPILOT.md` and in the unit file's own
+comments. `CONSUMER-SETUP.md` is deliberately not the home for this: autopilot
+is operator-side host policy, not something a consumer repo configures.
 
 ```bash
 # panic button — one touch, no unit knowledge needed, greppable in the log
@@ -322,8 +323,9 @@ is a deliberate per-host act, documented as manual steps.
 
 **Layer 0** — `shellcheck -x` on every new script, via the existing `lint.yml`.
 
-**Layer 1** — `tests/run-autopilot-tests.sh`, fixture-driven, no network,
-registered in `tests/run-all.sh`:
+**Layer 1** — `tests/run-autopilot-tests.sh`, fixture-driven, no network. No
+registration step: `run-all.sh` discovers every `run-*-tests.sh` by `find`, and
+#354 removed the hand-kept list precisely because it drifted.
 
 - config: valid, unknown key, non-numeric `max_per_run`, malformed `repo=`,
   missing file, comments and blank lines
