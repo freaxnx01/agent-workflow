@@ -1,0 +1,11 @@
+name: Agent
+on:
+  issues:
+    types: [labeled]
+jobs:
+  agent:
+    uses: freaxnx01/agent-workflow/.github/workflows/agent.yml@v3
+    with:
+      ai-review-ai-merge: false
+      autopilot-test-gate: ci.yml
+    secrets: inherit
