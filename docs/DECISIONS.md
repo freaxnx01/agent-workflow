@@ -1507,3 +1507,42 @@ so verification costs **no additional API calls**.
   file: the canned `PIPELINE_PRS_JSON` that `agent-implement.yml` emits under
   `stub-review-verdict` had to gain a `Closes #<issue>` body, since the stub is
   now subject to the same predicate as a real response.
+
+## ADR-015 — The unattended lane drives `/enrich` through a nested `claude --print` session (2026-09-21)
+
+**Context.** `/autopilot` (#373) runs from a systemd timer. A timer runs a
+process, not a slash command, so the driver is `scripts/autopilot.sh`. The
+per-issue enrichment still has to be `/enrich`, because that command is where
+the whole spec/plan/issue-body contract lives — reimplementing it in bash would
+fork it.
+
+**Decision.** Each issue gets its own nested `claude --print` session, invoked
+with the prompt `/enrich <n> --quick --headless` on stdin and the working
+directory set to that repo's managed clone. One session per issue, not one per
+run: a single long-lived session would share one context across N enrichments,
+and a mid-run context exhaustion would lose the whole batch.
+
+**Verified.** On 2026-09-21, `printf '/commands\n' | claude --print` expanded
+the custom command and returned a full listing of the 37 user-level and 3
+project-level slash commands, confirming this install resolves custom slash
+commands rather than treating them as literal prose. `printf '/enrich\n' |
+claude --print` also expanded the custom command: the response demonstrated
+concrete knowledge of `commands/enrich.md`'s actual content — it named the
+`/enrich <issue-number> [--quick]` usage format verbatim and acted on the
+command's own instructions by inspecting real repository state (issue #373's
+body length, its labels, and the unpushed local commit `3feeb13`) rather than
+describing `/enrich` in the abstract. It did not, however, emit the literal
+`Issue number is required.` stderr line from the command's argument-parsing
+bash block verbatim; instead, given no issue number, it used agentic judgment
+to treat #373 as the likely target and reported that issue's state, offering
+the same usage string as one of several suggested next steps. The command body
+was executed, just not down the exact hard-stop branch the raw bash snippet
+specifies — Claude interprets command markdown as a playbook, not as a literal
+script interpreter, so it substituted a more helpful path for the missing-argument
+case instead of exiting.
+
+**Consequences.** The nested session inherits the wrapper's `--allowedTools`
+list rather than an interactive permission prompt, so the tool set the headless
+enrich may use is fixed at the wrapper. The driver learns the outcome by
+re-reading the issue's labels, not from the session's exit code — see the spec's
+"Dispatch" section.
