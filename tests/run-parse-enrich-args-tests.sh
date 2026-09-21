@@ -62,27 +62,32 @@ section "basic cases"
 
 assert_eq "issue number only" \
   "ISSUE=256
-QUICK=no" \
+QUICK=no
+HEADLESS=no" \
   "$(run_parse "256")"
 
 assert_eq "issue with --quick flag" \
   "ISSUE=256
-QUICK=yes" \
+QUICK=yes
+HEADLESS=no" \
   "$(run_parse "256 --quick")"
 
 assert_eq "--quick before issue" \
   "ISSUE=256
-QUICK=yes" \
+QUICK=yes
+HEADLESS=no" \
   "$(run_parse "--quick 256")"
 
 assert_eq "issue with leading #" \
   "ISSUE=256
-QUICK=no" \
+QUICK=no
+HEADLESS=no" \
   "$(run_parse "#256")"
 
 assert_eq "issue with # and --quick" \
   "ISSUE=256
-QUICK=yes" \
+QUICK=yes
+HEADLESS=no" \
   "$(run_parse "#256 --quick")"
 
 section "error cases"
@@ -98,6 +103,39 @@ assert_eq "no issue number, no flag, exit 1" \
 assert_eq "non-numeric issue, exit 1" \
   "1" \
   "$(run_parse_exit "abc")"
+
+section "--headless"
+
+# shellcheck disable=SC1090
+out="$(source "$LIB"; parse_enrich_args "373")"
+assert_eq "no flags -> HEADLESS=no" "HEADLESS=no" "$(printf '%s\n' "$out" | sed -n 's/^HEADLESS=/HEADLESS=/p')"
+
+# shellcheck disable=SC1090
+out="$(source "$LIB"; parse_enrich_args "373 --headless")"
+assert_eq "--headless -> HEADLESS=yes" "HEADLESS=yes" "$(printf '%s\n' "$out" | grep '^HEADLESS=')"
+assert_eq "--headless implies QUICK=yes" "QUICK=yes" "$(printf '%s\n' "$out" | grep '^QUICK=')"
+assert_eq "--headless keeps the issue number" "ISSUE=373" "$(printf '%s\n' "$out" | grep '^ISSUE=')"
+
+# shellcheck disable=SC1090
+out="$(source "$LIB"; parse_enrich_args "373 --quick --headless")"
+assert_eq "--quick --headless -> QUICK=yes" "QUICK=yes" "$(printf '%s\n' "$out" | grep '^QUICK=')"
+assert_eq "--quick --headless -> HEADLESS=yes" "HEADLESS=yes" "$(printf '%s\n' "$out" | grep '^HEADLESS=')"
+
+# shellcheck disable=SC1090
+out="$(source "$LIB"; parse_enrich_args "--headless 373")"
+assert_eq "flag before issue still parses" "ISSUE=373" "$(printf '%s\n' "$out" | grep '^ISSUE=')"
+
+# shellcheck disable=SC1090
+out="$(source "$LIB"; parse_enrich_args "373 --quick")"
+assert_eq "--quick alone leaves HEADLESS=no" "HEADLESS=no" "$(printf '%s\n' "$out" | grep '^HEADLESS=')"
+
+# The failure path must still emit all three lines, on stderr, and return 1.
+# shellcheck disable=SC1090
+err="$(source "$LIB"; parse_enrich_args "--headless" 2>&1 1>/dev/null || true)"
+assert_eq "missing issue still reports HEADLESS" "HEADLESS=yes" "$(printf '%s\n' "$err" | grep '^HEADLESS=')"
+# shellcheck disable=SC1090
+rc=$( (source "$LIB"; parse_enrich_args "--headless" >/dev/null 2>&1 && echo 0) || echo 1 )
+assert_eq "missing issue returns 1" "1" "$rc"
 
 # --- summary ---------------------------------------------------------------
 
