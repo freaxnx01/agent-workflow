@@ -11,7 +11,11 @@
 #   GH_MOCK_STDOUT_MAP            file of "<substring>\t<fixture>" lines; first
 #                                 substring found in argv is cat'd to stdout
 #   GH_MOCK_FAIL_MAP              file of substrings, one per line; a match in
-#                                 argv exits 1 with no stdout (checked first)
+#                                 argv exits 1 with no stdout (checked first).
+#                                 A line may add a tab-separated stderr message
+#                                 ("<substring>\t<stderr text>") to simulate a
+#                                 specific failure (e.g. an HTTP 404) versus an
+#                                 opaque one (no message) — a real `gh` outage.
 set -euo pipefail
 IFS=$'\n\t'
 : "${GH_MOCK_LOG:?GH_MOCK_LOG must be set when using the gh mock}"
@@ -22,9 +26,12 @@ argv="$(IFS=' '; printf '%s' "$*")"
 # Response seams. These are generic on purpose: a new test adds a fixture and a
 # pattern line, never a branch here.
 if [[ -n "${GH_MOCK_FAIL_MAP:-}" && -r "${GH_MOCK_FAIL_MAP}" ]]; then
-  while IFS= read -r pattern || [[ -n "$pattern" ]]; do
+  while IFS=$'\t' read -r pattern stderr_msg || [[ -n "$pattern" ]]; do
     [[ -z "$pattern" ]] && continue
-    [[ "$argv" == *"$pattern"* ]] && exit 1
+    if [[ "$argv" == *"$pattern"* ]]; then
+      [[ -n "${stderr_msg:-}" ]] && printf '%s\n' "$stderr_msg" >&2
+      exit 1
+    fi
   done < "$GH_MOCK_FAIL_MAP"
 fi
 

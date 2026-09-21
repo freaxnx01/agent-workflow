@@ -34,6 +34,8 @@ SRC_DIR="$REPO_DIR/commands"
 DEST_DIR="$HOME/.claude/commands"
 LIB_SRC_DIR="$REPO_DIR/scripts/lib"
 LIB_DEST_DIR="$HOME/.claude/scripts/lib"
+DRIVER_SRC="$REPO_DIR/scripts/autopilot.sh"
+DRIVER_DEST_DIR="$HOME/.claude/scripts"
 MANIFEST="$HOME/.claude/.agent-workflow-commands-manifest"
 
 mode="copy"
@@ -118,5 +120,21 @@ for lib_src in "$LIB_SRC_DIR"/*.sh; do
     echo "  linked  scripts/lib/$lib_name"
   fi
 done
+
+# 5) Install the autopilot driver itself. /autopilot invokes it by absolute
+#    installed path (like every other command invokes its libs — see
+#    commands/ai-funnel.md), so the driver must be installed alongside the
+#    libs it sources, not left to be found relative to a cwd nothing sets.
+mkdir -p "$DRIVER_DEST_DIR"
+driver_dest="$DRIVER_DEST_DIR/autopilot.sh"
+if [ "$mode" = "copy" ]; then
+  rm -f "$driver_dest"     # dest may be a symlink from a prior install → cp would error
+  cp -f "$DRIVER_SRC" "$driver_dest"
+  echo "  copied  scripts/autopilot.sh"
+else
+  ln -sfn "$DRIVER_SRC" "$driver_dest"
+  echo "  linked  scripts/autopilot.sh"
+fi
+chmod 755 "$driver_dest"
 
 echo "✓ done — agent-workflow console commands installed (e.g. /enrich, /route, /capture-idea)"

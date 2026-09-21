@@ -13,7 +13,7 @@ With no arguments, this is **read-only**. It prints the decisions a timer run
 would make and writes nothing — no labels, no comments, no clone sync:
 
 ```bash
-scripts/autopilot.sh --dry-run
+"$HOME/.claude/scripts/autopilot.sh" --dry-run
 ```
 
 That default is deliberate. The lane's real trigger is
@@ -30,7 +30,7 @@ skipped with why.
 Only when `$ARGUMENTS` contains `--run`, drop `--dry-run`:
 
 ```bash
-scripts/autopilot.sh
+"$HOME/.claude/scripts/autopilot.sh"
 ```
 
 Before doing so, state what it is about to do and confirm: a real run spends a

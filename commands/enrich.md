@@ -1,6 +1,6 @@
 ---
 description: Enrich an issue with a spec and implementation plan, then update the issue body so it's ready to implement
-argument-hint: <issue number> [--quick]
+argument-hint: <issue number> [--quick] [--headless]
 ---
 
 Detect the forge, then run the matching section below.
@@ -54,6 +54,10 @@ human via `needs-human` instead.
 
 ## Headless mode
 
+**Headless mode is GitHub-only in v1.** Its escalation write (`gh issue edit`,
+below) and its lock/label mechanics are the [GitHub](#github) section's; the
+[Forgejo](#forgejo) path does not support `--headless` at all.
+
 `--headless` is quick mode with nobody there to ask. It implies `--quick`, and
 adds one absolute rule: **never prompt.** `AskUserQuestion` is forbidden. There
 is no approval gate, no clarifying question, and no "tell me which you'd
@@ -96,9 +100,9 @@ same issue race, which is the lesson of #365:
 gh issue edit $ISSUE --add-label needs-human --remove-label enrichment-ongoing
 ```
 
-Headless mode changes nothing else. Every other step of the GitHub section
-below still runs: the lock, the spec, the plan, the push verification, the issue
-body.
+Headless mode changes nothing else. Every other step of the [GitHub](#github)
+section still runs: the lock, the spec, the plan, the push verification, the
+issue body.
 
 ## GitHub
 

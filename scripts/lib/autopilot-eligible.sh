@@ -27,9 +27,26 @@ IFS=$'\n\t'
 
 repo_eligible() {
   local repo="$1" yaml gate default_branch runs
+  local agent_yml_err
+  agent_yml_err="$(mktemp)"
+  # shellcheck disable=SC2064  # expand agent_yml_err now, on function return
+  trap "rm -f '$agent_yml_err'" RETURN
 
-  yaml="$(gh api -H 'Accept: application/vnd.github.raw' \
-            "repos/$repo/contents/.github/workflows/agent.yml" 2>/dev/null)" || yaml=''
+  # A failed `gh api` here is ambiguous by exit code alone: a genuine 404
+  # (the repo really has no agent.yml) and a `gh` outage or auth failure both
+  # exit non-zero. Reading only stdout and treating empty as "missing" (as
+  # this used to) reports an outage as "no agent.yml" — indistinguishable
+  # from a real absence in the log, and misleading to whoever reads it at
+  # 3am. Check stderr for the 404 signature to tell the two apart.
+  if ! yaml="$(gh api -H 'Accept: application/vnd.github.raw' \
+            "repos/$repo/contents/.github/workflows/agent.yml" 2>"$agent_yml_err")"; then
+    if grep -qiE 'HTTP 404|Not Found' "$agent_yml_err"; then
+      printf 'no .github/workflows/agent.yml\n'
+      return 1
+    fi
+    printf 'eligibility check failed (could not read agent.yml)\n'
+    return 1
+  fi
   if [[ -z "$yaml" ]]; then
     printf 'no .github/workflows/agent.yml\n'
     return 1
