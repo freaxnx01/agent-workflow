@@ -100,6 +100,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **autopilot:** unattended enrich lane — `/autopilot` and
+  `scripts/autopilot.sh` quick-enrich `needs-enrichment` issues in allowlisted
+  repos and dispatch the clean ones, on a systemd timer, escalating anything
+  undecidable to `needs-human` (#373)
+- **enrich:** `--headless` flag — quick mode with no prompts; a one-way door or
+  a `[low]` assumption routes to `needs-human` instead of asking (#373)
 - **ci:** a `test` job in `.github/workflows/lint.yml` runs the Layer-1 suite on
   every PR. Nothing ran it before: `tests/run-*-tests.sh` lived only behind
   `just test`, so a PR breaking `run-script-tests.sh` — 693 assertions — merged

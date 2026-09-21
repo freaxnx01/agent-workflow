@@ -1,0 +1,21 @@
+# agent-autopilot.timer — schedule for the unattended enrich lane (#373).
+
+[Unit]
+Description=Run the agent-workflow unattended enrich lane hourly
+Documentation=https://github.com/freaxnx01/agent-workflow/blob/main/docs/AUTOPILOT.md
+
+[Timer]
+OnCalendar=hourly
+
+# Keeps the run off the exact top of the hour.
+RandomizedDelaySec=300
+
+# Deliberately false. A missed run must NOT fire a catch-up burst of
+# enrichments the moment the host comes back up — hourly against a cap of 3 is
+# a bounded rate only while every firing is a scheduled one.
+Persistent=false
+
+Unit=agent-autopilot.service
+
+[Install]
+WantedBy=timers.target

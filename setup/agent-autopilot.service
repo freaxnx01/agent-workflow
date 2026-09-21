@@ -1,0 +1,43 @@
+# agent-autopilot.service — one run of the unattended enrich lane (#373).
+#
+# NOT installed by setup/bootstrap.sh. Enabling an unattended lane that opens
+# PRs and merges them is a deliberate per-host act; see docs/AUTOPILOT.md.
+#
+# Install (as the user that owns the clone and the tokens — NOT root):
+#   mkdir -p ~/.config/systemd/user
+#   cp setup/agent-autopilot.{service,timer} ~/.config/systemd/user/
+#   $EDITOR ~/.config/systemd/user/agent-autopilot.service   # fix the two paths
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now agent-autopilot.timer
+#
+# Kill switch (either works):
+#   touch ~/.config/agent-workflow/autopilot.disabled
+#   systemctl --user disable --now agent-autopilot.timer
+
+[Unit]
+Description=agent-workflow unattended enrich lane (one run)
+Documentation=https://github.com/freaxnx01/agent-workflow/blob/main/docs/AUTOPILOT.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+
+# A --user unit inherits NOTHING from an interactive shell. Both tokens must
+# come from here, or every run fails at the first gh call. Keep the file 0600 —
+# it holds credentials.
+#   CLAUDE_CODE_OAUTH_TOKEN=…
+#   GH_TOKEN=…
+EnvironmentFile=%h/.config/agent-workflow/autopilot.env
+
+# Absolute path to this clone of agent-workflow. Edit after copying.
+WorkingDirectory=%h/repos/github/freaxnx01/public/agent-workflow
+ExecStart=%h/repos/github/freaxnx01/public/agent-workflow/scripts/autopilot.sh
+
+# A run is several nested Claude sessions; generous, but never unbounded.
+TimeoutStartSec=3h
+
+# Journald keeps the one-line-per-decision log.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agent-autopilot
