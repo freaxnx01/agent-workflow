@@ -305,6 +305,45 @@ else
   pass "a clone-sync failure touches no labels"
 fi
 
+section "fail-closed on an unreadable label state (Critical 1)"
+
+# `gh issue view` (the needs-human re-read after a clean enrich) fails. The
+# driver must NOT fall through and dispatch — that would send an issue the
+# enrich session flagged needs-human straight into unattended auto-merge.
+printf 'issue view\n' > "$TMPDIR_T/gh-fail-view.map"
+rm -rf "$AUTOPILOT_CACHE_DIR"; : > "$GH_MOCK_LOG"; : > "$ENRICH_STUB_LOG"
+out="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/gh-clean.map" GH_MOCK_FAIL_MAP="$TMPDIR_T/gh-fail-view.map" run_driver)"
+case "$out" in
+  *"could not read labels"*) pass "an unreadable label state is logged distinctly" ;;
+  *) fail "an unreadable label state is logged distinctly" "output was: $out" ;;
+esac
+if grep -q 'issue edit' "$GH_MOCK_LOG"; then
+  fail "an unreadable label state dispatches nothing" "$(grep 'issue edit' "$GH_MOCK_LOG")"
+else
+  pass "an unreadable label state dispatches nothing"
+fi
+
+section "the escalation write failure is visible (Critical 2)"
+
+# The enrich session fails AND the escalating `gh issue edit` also fails. The
+# log line must say so distinctly from an ordinary "failed (enrich exited N)"
+# line — an operator reading journald needs to see that needs-human was NOT
+# applied and enrichment-ongoing may still be set (the issue can silently drop
+# out of the lane otherwise).
+printf 'issue edit\n' > "$TMPDIR_T/gh-fail-edit.map"
+rm -rf "$AUTOPILOT_CACHE_DIR"; : > "$GH_MOCK_LOG"; : > "$ENRICH_STUB_LOG"
+out="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/gh-clean.map" GH_MOCK_FAIL_MAP="$TMPDIR_T/gh-fail-edit.map" \
+  GH_RETRY_MAX=1 ENRICH_RC=7 run_driver)"
+case "$out" in
+  *"ESCALATION FAILED"*) pass "a failed escalation write is called out distinctly" ;;
+  *) fail "a failed escalation write is called out distinctly" "output was: $out" ;;
+esac
+case "$out" in
+  *"needs-human not applied"*"enrichment-ongoing may still be set"*)
+    pass "the log names both consequences" ;;
+  *) fail "the log names both consequences" "output was: $out" ;;
+esac
+
 section "SIGPIPE re-scoping: partial-but-mutating runs must not report success"
 
 # Deterministic SIGPIPE, no scheduling involved: fd 3 is wired to a pipe whose
