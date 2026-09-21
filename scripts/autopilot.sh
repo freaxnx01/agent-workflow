@@ -37,8 +37,22 @@ IFS=$'\n\t'
 
 # A caller piping our stdout through something like `head -1` closes the pipe
 # early on purpose — that's not an error, so exit clean instead of dying by
-# signal (128+13) when a later log write hits the closed pipe.
-trap 'exit 0' PIPE
+# signal (128+13) when a later log write hits the closed pipe. But that is
+# only honest while nothing has been mutated yet: once a run has written to an
+# issue, a signal-killed process is a truncated-but-mutating run, not a clean
+# no-op, and reporting it as exit 0 would hide a partial run behind a success
+# code. AUTOPILOT_WROTE is set immediately before the FIRST mutating `gh` call
+# in a run (before the call, not after — if the process dies mid-call the
+# write may still have landed), so the trap can tell the two cases apart.
+AUTOPILOT_WROTE=0
+
+handle_sigpipe() {
+  if (( AUTOPILOT_WROTE )); then
+    exit 1
+  fi
+  exit 0
+}
+trap handle_sigpipe PIPE
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -57,7 +71,6 @@ MAX_OVERRIDE=''
 
 CACHE_DIR="${AUTOPILOT_CACHE_DIR:-$HOME/.cache/agent-workflow/autopilot}"
 DISABLE_FLAG="${AUTOPILOT_DISABLE_FLAG:-$HOME/.config/agent-workflow/autopilot.disabled}"
-# shellcheck disable=SC2034  # unused until Task 11's write path consumes it
 ENRICH_CMD="${ENRICH_CMD:-$ROOT/scripts/lib/agent-cmd-enrich.sh}"
 
 die() { printf 'error: %s\n' "$1" >&2; exit "${2:-2}"; }
@@ -101,8 +114,18 @@ acquire_run_lock() {
   flock -n 9
 }
 
+# True iff the issue currently carries $3. The enrich session labels the issue
+# itself, so the issue — not this script's memory, and not the session's exit
+# code — is the source of truth. That also means a driver killed mid-run leaves
+# the state where the next run can read it.
+issue_has_label() {
+  local repo="$1" n="$2" want="$3" out
+  out="$(gh issue view "$n" --repo "$repo" --json labels 2>/dev/null)" || return 1
+  printf '%s' "$out" | jq -e --arg want "$want" '[.labels[].name] | index($want) != null' >/dev/null
+}
+
 process_issue() {
-  local repo="$1" n="$2" dir
+  local repo="$1" n="$2" dir rc
   dir="$(autopilot_clone_dir "$repo")"
 
   if (( DRY_RUN )); then
@@ -110,8 +133,45 @@ process_issue() {
     return 0
   fi
 
-  # Task 11 fills in the write path here.
-  return 0
+  if ! sync_autopilot_clone "$repo"; then
+    log_issue "$repo" "$n" "failed (clone sync)"
+    return 0
+  fi
+
+  rc=0
+  ( cd "$dir" && timeout "$AUTOPILOT_ENRICH_TIMEOUT" "$ENRICH_CMD" "$n" ) || rc=$?
+
+  if (( rc != 0 )); then
+    # A crash escalates to a human, not just to the log. Without this, an issue
+    # that reliably kills the enrich session re-spawns a paid nested session on
+    # every run, forever. One call, so a failure cannot release the lock while
+    # leaving the issue unlabelled (#365).
+    AUTOPILOT_WROTE=1
+    gh issue edit "$n" --repo "$repo" \
+      --add-label needs-human --remove-label enrichment-ongoing >/dev/null 2>&1 || true
+    if (( rc == 124 )); then
+      log_issue "$repo" "$n" "failed (enrich timed out after ${AUTOPILOT_ENRICH_TIMEOUT}s)"
+    else
+      log_issue "$repo" "$n" "failed (enrich exited $rc)"
+    fi
+    return 0
+  fi
+
+  if issue_has_label "$repo" "$n" needs-human; then
+    log_issue "$repo" "$n" "needs-human"
+    return 0
+  fi
+
+  # Both labels in ONE call. Two calls spawn two workflow runs that race and can
+  # cancel each other's review job (#365).
+  AUTOPILOT_WROTE=1
+  if ! gh issue edit "$n" --repo "$repo" \
+        --add-label ai-implement,ai-review-ai-merge >/dev/null 2>&1; then
+    log_issue "$repo" "$n" "failed (dispatch labels not applied)"
+    return 0
+  fi
+
+  log_issue "$repo" "$n" "enriched"
 }
 
 main() {
