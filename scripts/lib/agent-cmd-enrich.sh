@@ -22,6 +22,13 @@
 # discarded, so a failed enrichment leaves a trace the driver's log line can
 # point at. Diagnostics only — it does not change the exit-code contract.
 #
+# The prompt is fed via a here-string, not a pipe: a pipe under
+# `set -o pipefail` reports the rightmost non-zero status, so if `claude`
+# exited 0 without draining stdin and the feeding command took SIGPIPE, the
+# pipeline would report that command's status instead of the session's.
+# `claude` must stay the last command executed so its exit status is this
+# script's exit status verbatim.
+#
 # Exits with the nested session's status; 2 on usage error.
 set -euo pipefail
 IFS=$'\n\t'
@@ -43,5 +50,4 @@ args=(--print --allowedTools 'Edit,Write,Read,Glob,Grep,MultiEdit,TodoWrite,Bash
 log_dir="${AUTOPILOT_LOG_DIR:-${TMPDIR:-/tmp}}"
 mkdir -p "$log_dir"
 
-printf '/enrich %s --quick --headless\n' "$issue" \
-  | claude "${args[@]}" > "$log_dir/enrich-$issue.log" 2>&1
+claude "${args[@]}" <<< "/enrich $issue --quick --headless" > "$log_dir/enrich-$issue.log" 2>&1

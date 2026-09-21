@@ -50,6 +50,9 @@ cat > "$TMPDIR_T/bin/claude" <<'STUB'
 set -euo pipefail
 ( IFS=' '; printf '%s\n' "$*" > "$CLAUDE_STUB_ARGV" )
 cat > "$CLAUDE_STUB_STDIN"
+if [[ "${STUB_RC:-0}" -ne 0 ]]; then
+  printf 'stub-diagnostic-line\n' >&2
+fi
 exit "${STUB_RC:-0}"
 STUB
 chmod +x "$TMPDIR_T/bin/claude"
@@ -101,10 +104,10 @@ section "exit status and diagnostics"
 
 rc=0; STUB_RC=7 "$WRAPPER" 99 || rc=$?
 assert_eq "session failure propagates" "7" "$rc"
-if [[ -s "$AUTOPILOT_LOG_DIR/enrich-99.log" ]] || [[ -e "$AUTOPILOT_LOG_DIR/enrich-99.log" ]]; then
-  pass "a failed session leaves a log"
+if grep -qF 'stub-diagnostic-line' "$AUTOPILOT_LOG_DIR/enrich-99.log" 2>/dev/null; then
+  pass "a failed session's log captures stderr diagnostics"
 else
-  fail "a failed session leaves a log" "no enrich-99.log in $AUTOPILOT_LOG_DIR"
+  fail "a failed session's log captures stderr diagnostics" "no stub-diagnostic-line in $AUTOPILOT_LOG_DIR/enrich-99.log"
 fi
 
 section "usage"
