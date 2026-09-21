@@ -1,0 +1,23 @@
+# autopilot.conf — host-local config for the unattended enrich lane (/autopilot).
+#
+# Copy to ~/.config/agent-workflow/autopilot.conf and edit. This file is the
+# documented shape; the real one is NOT in git, because the allowlist is host
+# policy rather than library content and agent-workflow is a public repo.
+#
+# Syntax: key=value, one per line. '#' starts a comment. Unknown keys, bad
+# values and an empty allowlist are all hard errors — never silent defaults.
+
+# Global cap on issues enriched per run, across every repo below.
+# Each one costs a nested Claude session, so this is the cost ceiling.
+max_per_run=3
+
+# Per-issue timeout for the nested enrich session, in seconds.
+enrich_timeout=1800
+
+# Allowlisted repos, one line each. This is the outer gate: a repo not listed
+# here is never touched, no matter what its own agent.yml says. A repo also
+# needs `ai-review-ai-merge: true` and an `autopilot-test-gate:` that has
+# actually run — see docs/AUTOPILOT.md.
+#
+# Start with the sandbox. Add a real repo only after an end-to-end run.
+repo=freaxnx01/agent-action-sandbox
