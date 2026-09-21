@@ -111,6 +111,32 @@ case "$reason" in
   *) fail "reason says the gate never ran" "reason was: $reason" ;;
 esac
 
+section "default branch unreadable"
+
+{
+  printf 'contents/.github/workflows/agent.yml\t%s\n' "$FIX/agent-yml-good.yml"
+  printf 'actions/workflows/\t%s\n' "$FIX/runs-one.json"
+  printf 'repos/o/r\t%s\n' "$FIX/repo-meta-no-branch.json"
+} > "$TMPDIR_T/nobranch.map"
+rc=0
+reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/nobranch.map" repo_eligible o/r)" || rc=$?
+assert_eq "missing default_branch returns 1" "1" "$rc"
+case "$reason" in
+  *"could not read the default branch"*) pass "reason says the default branch could not be read" ;;
+  *) fail "reason says the default branch could not be read" "reason was: $reason" ;;
+esac
+
+section "test gate total_count missing"
+
+write_map "$FIX/agent-yml-good.yml" "$FIX/runs-null.json" "$TMPDIR_T/nullruns.map"
+rc=0
+reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/nullruns.map" repo_eligible o/r)" || rc=$?
+assert_eq "missing total_count returns 1" "1" "$rc"
+case "$reason" in
+  *"not found"*) pass "reason says the gate was not found" ;;
+  *) fail "reason says the gate was not found" "reason was: $reason" ;;
+esac
+
 section "test gate does not exist"
 
 write_map "$FIX/agent-yml-good.yml" "$FIX/runs-one.json" "$TMPDIR_T/gate404.map"
