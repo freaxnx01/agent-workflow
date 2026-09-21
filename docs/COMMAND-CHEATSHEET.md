@@ -26,6 +26,15 @@ What this page adds is the **path**, and the two places you measure it.
                                                            /ai-stats
 ```
 
+### The unattended shortcut
+
+`/autopilot` is the unattended version of the `/enrich → /gh:implement` hop: on
+a systemd timer, it quick-enriches `needs-enrichment` issues in an allowlisted
+set of repos and dispatches the ones that come out clean, escalating anything
+undecidable to `needs-human` for a person to pick up. It is gated on an
+allowlist a repo cannot opt itself into, and its default is a dry run — see
+[`docs/AUTOPILOT.md`](AUTOPILOT.md).
+
 | Step | Command | What it produces |
 |---|---|---|
 | Capture | `/capture-idea <idea>` | a line in the repo's `docs/ideas.md` — no issue yet |

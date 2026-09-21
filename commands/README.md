@@ -71,6 +71,7 @@ vocabulary (MudBlazor, shadcn/ui, Flutter widgets, …) comes from the project's
 > batch into Issue / `TODO.md` / implement-now with dedup and a resumable worklog.
 
 **GitHub-only** (`gh/`, no Forgejo equivalent): `/gh:assign` · `/gh:implement` ·
-`/gh:implementation-contract` · `/gh:review`
+`/gh:implementation-contract` · `/gh:review` · `/autopilot` — the unattended
+version of the `/enrich → /gh:implement` hop, dry-run by default
 
 Each `.md` file's `description:` front-matter shows in the `/` autocomplete menu.
