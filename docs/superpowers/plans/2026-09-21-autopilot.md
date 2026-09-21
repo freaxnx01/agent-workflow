@@ -284,7 +284,7 @@ And extend the sentence about variables not persisting so it names all three:
 Insert a new section immediately after the existing `## Quick mode` section and
 before the `## GitHub` section.
 
-```markdown
+````markdown
 ## Headless mode
 
 `--headless` is quick mode with nobody there to ask. It implies `--quick`, and
@@ -327,7 +327,7 @@ gh issue edit $ISSUE --add-label needs-human --remove-label enrichment-ongoing
 Headless mode changes nothing else. Every other step of the GitHub section
 below still runs: the lock, the spec, the plan, the push verification, the issue
 body.
-```
+````
 
 - [ ] **Step 3: Reference headless from the Quick mode section**
 
@@ -2342,7 +2342,7 @@ there.
 
 Create `commands/autopilot.md`:
 
-```markdown
+````markdown
 ---
 description: Unattended enrich lane — show what the next timer run would do, or drive one now
 ---
@@ -2408,7 +2408,7 @@ instructions, the allowlist, and the kill switch.
 ---
 
 If you run into blockers, find a solution and update this command for the future.
-```
+````
 
 - [ ] **Step 3: List it alongside its siblings**
 
@@ -2535,7 +2535,7 @@ WantedBy=timers.target
 
 Create `docs/AUTOPILOT.md`:
 
-```markdown
+````markdown
 # The unattended enrich lane
 
 `/autopilot` quick-enriches `needs-enrichment` issues in an allowlisted set of
@@ -2639,7 +2639,7 @@ Before any `game-*` repo is allowlisted it needs re-onboarding with
 `onboard-consumer.sh --ai-review-ai-merge`. As of 2026-09-21 game-tschau-sepp is
 pinned at `@v2` with a deprecated `pre-preview: true` and a stub still named
 `name: Claude` / `jobs: claude`. Tracked under freaxnx01/bridge#218.
-```
+````
 
 - [ ] **Step 4: Link it from the root README**
 
