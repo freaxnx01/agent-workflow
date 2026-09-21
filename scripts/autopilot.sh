@@ -29,6 +29,8 @@
 #
 # Exit codes:
 #   0  ran (including "disabled" and "already running" — neither is an error)
+#   1  SIGPIPE after at least one write — a truncated run that already
+#      mutated something (a clean, no-write SIGPIPE still exits 0)
 #   2  usage error
 #   3  missing dependency
 #   4  config invalid or unreadable
@@ -64,6 +66,8 @@ source "$ROOT/scripts/lib/autopilot-eligible.sh"
 source "$ROOT/scripts/lib/autopilot-candidates.sh"
 # shellcheck source=scripts/lib/autopilot-clone.sh disable=SC1091
 source "$ROOT/scripts/lib/autopilot-clone.sh"
+# shellcheck source=scripts/lib/gh-retry.sh disable=SC1091
+source "$ROOT/scripts/lib/gh-retry.sh"
 
 DRY_RUN=0
 CONFIG_FILE=''
@@ -114,14 +118,23 @@ acquire_run_lock() {
   flock -n 9
 }
 
-# True iff the issue currently carries $3. The enrich session labels the issue
-# itself, so the issue — not this script's memory, and not the session's exit
-# code — is the source of truth. That also means a driver killed mid-run leaves
-# the state where the next run can read it.
-issue_has_label() {
-  local repo="$1" n="$2" want="$3" out
-  out="$(gh issue view "$n" --repo "$repo" --json labels 2>/dev/null)" || return 1
-  printf '%s' "$out" | jq -e --arg want "$want" '[.labels[].name] | index($want) != null' >/dev/null
+# Three-way read of whether the issue currently carries $3: 0 = present,
+# 1 = absent, 2 = could not determine (gh failed, or the JSON was unreadable).
+# The enrich session labels the issue itself, so the issue — not this script's
+# memory, and not the session's exit code — is the source of truth. That also
+# means a driver killed mid-run leaves the state where the next run can read
+# it. Callers MUST treat 2 as "do not dispatch" — a transient `gh` blip here
+# must never be read as "label absent", or an issue the enrich session flagged
+# needs-human could fall through into unattended auto-merge.
+issue_label_state() {
+  local repo="$1" n="$2" want="$3" out has
+  out="$(gh issue view "$n" --repo "$repo" --json labels 2>/dev/null)" || return 2
+  has="$(printf '%s' "$out" | jq -r --arg want "$want" '[.labels[].name] | index($want) != null' 2>/dev/null)" || return 2
+  case "$has" in
+    true)  return 0 ;;
+    false) return 1 ;;
+    *)     return 2 ;;
+  esac
 }
 
 process_issue() {
@@ -145,22 +158,36 @@ process_issue() {
     # A crash escalates to a human, not just to the log. Without this, an issue
     # that reliably kills the enrich session re-spawns a paid nested session on
     # every run, forever. One call, so a failure cannot release the lock while
-    # leaving the issue unlabelled (#365).
-    AUTOPILOT_WROTE=1
-    gh issue edit "$n" --repo "$repo" \
-      --add-label needs-human --remove-label enrichment-ongoing >/dev/null 2>&1 || true
+    # leaving the issue unlabelled (#365). It's retried via gh-retry.sh because
+    # a transient blip on this exact call is the one failure mode that defeats
+    # the whole anti-poison-issue design: needs-human never lands,
+    # enrichment-ongoing (set by /enrich before it crashed) stays set, and
+    # autopilot-candidates.sh excludes issues carrying enrichment-ongoing — so
+    # the issue silently drops out of the lane for good.
+    local reason escalate_rc=0
     if (( rc == 124 )); then
-      log_issue "$repo" "$n" "failed (enrich timed out after ${AUTOPILOT_ENRICH_TIMEOUT}s)"
+      reason="failed (enrich timed out after ${AUTOPILOT_ENRICH_TIMEOUT}s)"
     else
-      log_issue "$repo" "$n" "failed (enrich exited $rc)"
+      reason="failed (enrich exited $rc)"
+    fi
+    AUTOPILOT_WROTE=1
+    with_backoff gh issue edit "$n" --repo "$repo" \
+      --add-label needs-human --remove-label enrichment-ongoing >/dev/null 2>&1 || escalate_rc=$?
+    if (( escalate_rc != 0 )); then
+      log_issue "$repo" "$n" \
+        "$reason; ESCALATION FAILED: needs-human not applied, enrichment-ongoing may still be set"
+    else
+      log_issue "$repo" "$n" "$reason"
     fi
     return 0
   fi
 
-  if issue_has_label "$repo" "$n" needs-human; then
-    log_issue "$repo" "$n" "needs-human"
-    return 0
-  fi
+  local label_state=0
+  issue_label_state "$repo" "$n" needs-human || label_state=$?
+  case "$label_state" in
+    0) log_issue "$repo" "$n" "needs-human"; return 0 ;;
+    2) log_issue "$repo" "$n" "skipped (could not read labels — not dispatching)"; return 0 ;;
+  esac
 
   # Both labels in ONE call. Two calls spawn two workflow runs that race and can
   # cancel each other's review job (#365).
@@ -219,8 +246,11 @@ main() {
     for n in "${issues[@]}"; do
       [[ -n "$n" ]] || continue
       process_issue "$repo" "$n"
-      # Every attempt costs a nested session, so every attempt spends budget —
-      # including one that ends in needs-human or a failure.
+      # Decremented once per attempt regardless of outcome, including one that
+      # never reached a nested session (a clone-sync failure). It's not "every
+      # attempt costs a session" — it's that a broken repo or a poison issue
+      # must not be retried indefinitely within one run; capping attempts is
+      # what keeps that deterministic, whether or not a session ever spawned.
       remaining=$((remaining - 1))
     done
   done
