@@ -1,0 +1,62 @@
+[
+  {
+    "number": 50,
+    "body": "newer but fine",
+    "createdAt": "2026-09-10T00:00:00Z",
+    "labels": [{"name": "needs-enrichment"}]
+  },
+  {
+    "number": 41,
+    "body": "oldest eligible",
+    "createdAt": "2026-09-01T00:00:00Z",
+    "labels": [{"name": "needs-enrichment"}, {"name": "bug"}]
+  },
+  {
+    "number": 42,
+    "body": "parked",
+    "createdAt": "2026-09-02T00:00:00Z",
+    "labels": [{"name": "needs-enrichment"}, {"name": "🧊 parked"}]
+  },
+  {
+    "number": 43,
+    "body": "already being enriched",
+    "createdAt": "2026-09-03T00:00:00Z",
+    "labels": [{"name": "needs-enrichment"}, {"name": "enrichment-ongoing"}]
+  },
+  {
+    "number": 44,
+    "body": "handed to a human already",
+    "createdAt": "2026-09-04T00:00:00Z",
+    "labels": [{"name": "needs-enrichment"}, {"name": "needs-human"}]
+  },
+  {
+    "number": 45,
+    "body": "already dispatched",
+    "createdAt": "2026-09-05T00:00:00Z",
+    "labels": [{"name": "needs-enrichment"}, {"name": "ai-implement"}]
+  },
+  {
+    "number": 46,
+    "body": "",
+    "createdAt": "2026-09-06T00:00:00Z",
+    "labels": [{"name": "needs-enrichment"}]
+  },
+  {
+    "number": 47,
+    "body": "   \n\t  ",
+    "createdAt": "2026-09-07T00:00:00Z",
+    "labels": [{"name": "needs-enrichment"}]
+  },
+  {
+    "number": 48,
+    "body": null,
+    "createdAt": "2026-09-08T00:00:00Z",
+    "labels": [{"name": "needs-enrichment"}]
+  },
+  {
+    "number": 49,
+    "body": "second oldest eligible",
+    "createdAt": "2026-09-09T00:00:00Z",
+    "labels": [{"name": "needs-enrichment"}]
+  }
+]
