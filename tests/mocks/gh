@@ -8,10 +8,35 @@
 #   GH_MOCK_PR_CREATE_STDERR      stderr emitted on those failures
 #   GH_MOCK_PR_CREATE_CTR         counter file path (required if FAIL_TIMES set)
 #   GH_MOCK_AUTH_HOSTS            space-separated hosts 'gh auth token --hostname' succeeds for
+#   GH_MOCK_STDOUT_MAP            file of "<substring>\t<fixture>" lines; first
+#                                 substring found in argv is cat'd to stdout
+#   GH_MOCK_FAIL_MAP              file of substrings, one per line; a match in
+#                                 argv exits 1 with no stdout (checked first)
 set -euo pipefail
 IFS=$'\n\t'
 : "${GH_MOCK_LOG:?GH_MOCK_LOG must be set when using the gh mock}"
 ( IFS=' '; printf '%s\n' "$*" >> "$GH_MOCK_LOG" )
+
+argv="$(IFS=' '; printf '%s' "$*")"
+
+# Response seams. These are generic on purpose: a new test adds a fixture and a
+# pattern line, never a branch here.
+if [[ -n "${GH_MOCK_FAIL_MAP:-}" && -r "${GH_MOCK_FAIL_MAP}" ]]; then
+  while IFS= read -r pattern || [[ -n "$pattern" ]]; do
+    [[ -z "$pattern" ]] && continue
+    [[ "$argv" == *"$pattern"* ]] && exit 1
+  done < "$GH_MOCK_FAIL_MAP"
+fi
+
+if [[ -n "${GH_MOCK_STDOUT_MAP:-}" && -r "${GH_MOCK_STDOUT_MAP}" ]]; then
+  while IFS=$'\t' read -r pattern fixture || [[ -n "$pattern" ]]; do
+    [[ -z "$pattern" ]] && continue
+    if [[ "$argv" == *"$pattern"* ]]; then
+      cat "$fixture"
+      exit 0
+    fi
+  done < "$GH_MOCK_STDOUT_MAP"
+fi
 
 if [[ "${1:-}" == "auth" && "${2:-}" == "token" && -n "${GH_MOCK_AUTH_HOSTS:-}" ]]; then
   host="${4:-}"
