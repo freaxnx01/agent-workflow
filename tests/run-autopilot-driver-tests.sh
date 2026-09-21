@@ -107,6 +107,13 @@ case "$out" in
   *"o/r#50"*) fail "cap excludes the third candidate" "50 appeared" ;;
   *) pass "cap excludes the third candidate" ;;
 esac
+# Paired positive assertion (Fix 9): a driver that silently produced no
+# output at all would also pass the absence check above — confirm the two
+# candidates the cap *should* include are actually there.
+case "$out" in
+  *"o/r#49"*) pass "the cap still includes the second-oldest candidate" ;;
+  *) fail "the cap still includes the second-oldest candidate" "output was: $out" ;;
+esac
 
 if grep -q 'issue edit' "$GH_MOCK_LOG"; then
   fail "dry run writes no labels" "$(grep 'issue edit' "$GH_MOCK_LOG")"
@@ -148,6 +155,13 @@ esac
 case "$out" in
   *would:*) fail "an ineligible repo yields no candidates" "output was: $out" ;;
   *) pass "an ineligible repo yields no candidates" ;;
+esac
+# Paired positive assertion (Fix 9): confirm the run actually reached and
+# logged the repo-level skip, not merely that it produced no "would:" lines
+# (silent, empty output would also pass the absence check above).
+case "$out" in
+  *"o/r skipped"*) pass "the ineligible repo's skip is actually logged" ;;
+  *) fail "the ineligible repo's skip is actually logged" "output was: $out" ;;
 esac
 
 section "the run lock"
@@ -205,8 +219,12 @@ run_driver() {
   "$DRIVER" --config "$TMPDIR_T/ap.conf" --max 1 "$@" 2>&1
 }
 
-# --- the happy path: enrich succeeds, no needs-human on the issue ---
-printf '{"labels":[{"name":"needs-enrichment"}]}\n' > "$TMPDIR_T/labels-clean.json"
+# --- the happy path: enrich genuinely completed. /enrich removes
+#     needs-enrichment only on a real success (commands/enrich.md), so a
+#     genuinely-enriched issue's re-read must show it gone — a fixture that
+#     still carries needs-enrichment is exactly the fail-open bug (Fix 1):
+#     `claude --print` exiting 0 is not evidence anything was enriched. ---
+printf '{"labels":[]}\n' > "$TMPDIR_T/labels-clean.json"
 {
   printf 'contents/.github/workflows/agent.yml\t%s\n' "$FIX/agent-yml-good.yml"
   printf 'actions/workflows/\t%s\n' "$FIX/runs-one.json"
@@ -233,6 +251,74 @@ if grep -q 'enrichment-ongoing' "$GH_MOCK_LOG"; then
 else
   pass "the driver never touches enrichment-ongoing on success"
 fi
+
+# --- Fix 1: rc==0 from the nested session is NOT evidence of enrichment. A
+#     session that answered as prose, hit a tool denial, or no-op'd still
+#     exits 0 — but never removed needs-enrichment. The driver must refuse to
+#     dispatch on this positive-evidence check, not just on the absence of
+#     needs-human. ---
+printf '{"labels":[{"name":"needs-enrichment"}]}\n' > "$TMPDIR_T/labels-not-enriched.json"
+{
+  printf 'contents/.github/workflows/agent.yml\t%s\n' "$FIX/agent-yml-good.yml"
+  printf 'actions/workflows/\t%s\n' "$FIX/runs-one.json"
+  printf 'issue list\t%s\n' "$FIX/issues-mixed.json"
+  printf 'issue view\t%s\n' "$TMPDIR_T/labels-not-enriched.json"
+  printf 'repos/o/r\t%s\n' "$FIX/repo-meta.json"
+} > "$TMPDIR_T/gh-not-enriched.map"
+
+out="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/gh-not-enriched.map" run_driver)"
+case "$out" in
+  *"skipped (enrich did not complete — needs-enrichment still present)"*)
+    pass "rc==0 with needs-enrichment still present refuses to dispatch (Fix 1)" ;;
+  *) fail "rc==0 with needs-enrichment still present refuses to dispatch (Fix 1)" "output was: $out" ;;
+esac
+if grep -q 'issue edit' "$GH_MOCK_LOG"; then
+  fail "an incomplete enrich dispatches nothing (Fix 1)" "$(grep 'issue edit' "$GH_MOCK_LOG")"
+else
+  pass "an incomplete enrich dispatches nothing (Fix 1)"
+fi
+
+# --- Fix 3: a human parks the issue while the (up to 30-minute) nested
+#     session is still running. The post-enrich re-read must catch it. ---
+printf '{"labels":[{"name":"🧊 parked"}]}\n' > "$TMPDIR_T/labels-parked.json"
+{
+  printf 'contents/.github/workflows/agent.yml\t%s\n' "$FIX/agent-yml-good.yml"
+  printf 'actions/workflows/\t%s\n' "$FIX/runs-one.json"
+  printf 'issue list\t%s\n' "$FIX/issues-mixed.json"
+  printf 'issue view\t%s\n' "$TMPDIR_T/labels-parked.json"
+  printf 'repos/o/r\t%s\n' "$FIX/repo-meta.json"
+} > "$TMPDIR_T/gh-parked.map"
+
+out="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/gh-parked.map" run_driver)"
+case "$out" in
+  *"skipped (parked during enrich — not dispatching)"*)
+    pass "a parked-during-enrich issue refuses to dispatch (Fix 3)" ;;
+  *) fail "a parked-during-enrich issue refuses to dispatch (Fix 3)" "output was: $out" ;;
+esac
+if grep -q 'issue edit' "$GH_MOCK_LOG"; then
+  fail "a parked-during-enrich issue dispatches nothing (Fix 3)" "$(grep 'issue edit' "$GH_MOCK_LOG")"
+else
+  pass "a parked-during-enrich issue dispatches nothing (Fix 3)"
+fi
+
+# --- Fix 2: the dispatch write itself fails (even after with_backoff's
+#     retries). Left alone, the issue is fully enriched (needs-enrichment
+#     already gone) with no needs-human and no dispatch labels — invisible to
+#     both the lane and a human. Must escalate to needs-human instead. ---
+printf '%s\n' '--add-label ai-implement' > "$TMPDIR_T/gh-fail-dispatch.map"
+rm -rf "$AUTOPILOT_CACHE_DIR"; : > "$GH_MOCK_LOG"; : > "$ENRICH_STUB_LOG"
+out="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/gh-clean.map" GH_MOCK_FAIL_MAP="$TMPDIR_T/gh-fail-dispatch.map" \
+  GH_RETRY_MAX=1 run_driver)"
+case "$out" in
+  *"failed (dispatch labels not applied); escalated to needs-human"*)
+    pass "a failed dispatch write escalates to needs-human (Fix 2)" ;;
+  *) fail "a failed dispatch write escalates to needs-human (Fix 2)" "output was: $out" ;;
+esac
+edits="$(grep 'issue edit' "$GH_MOCK_LOG" || true)"
+case "$edits" in
+  *"--add-label needs-human"*) pass "the escalation write is visible in the gh log (Fix 2)" ;;
+  *) fail "the escalation write is visible in the gh log (Fix 2)" "edits were: $edits" ;;
+esac
 
 # --- needs-human: the enrich session labelled it itself ---
 printf '{"labels":[{"name":"needs-enrichment"},{"name":"needs-human"}]}\n' > "$TMPDIR_T/labels-human.json"
@@ -303,6 +389,59 @@ if grep -q 'issue edit' "$GH_MOCK_LOG"; then
   fail "a clone-sync failure touches no labels" "$(grep 'issue edit' "$GH_MOCK_LOG")"
 else
   pass "a clone-sync failure touches no labels"
+fi
+
+section "non-allowlisted repos are never touched (Fix 10 / safety coverage)"
+
+# The allowlist is the one gate that cannot be flipped from inside a consumer
+# repo (docs/AUTOPILOT.md). $TMPDIR_T/ap.conf allowlists o/r only, but the
+# mocked `gh` would happily answer for any repo asked — so the only thing
+# standing between "o/shadow" and being enriched is the driver actually
+# restricting its loop to AUTOPILOT_REPOS. Assert it never asks, never logs.
+rm -rf "$AUTOPILOT_CACHE_DIR"; : > "$GH_MOCK_LOG"
+out="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/gh-clean.map" "$DRIVER" --config "$TMPDIR_T/ap.conf" --dry-run 2>&1)"
+if grep -q 'o/shadow' "$GH_MOCK_LOG"; then
+  fail "a non-allowlisted repo is never queried" "$(grep 'o/shadow' "$GH_MOCK_LOG")"
+else
+  pass "a non-allowlisted repo is never queried"
+fi
+case "$out" in
+  *"o/shadow"*) fail "a non-allowlisted repo is never logged" "output was: $out" ;;
+  *) pass "a non-allowlisted repo is never logged" ;;
+esac
+if grep -q 'issue edit' "$GH_MOCK_LOG"; then
+  fail "a dry run touching only the allowlist writes nothing" "$(grep 'issue edit' "$GH_MOCK_LOG")"
+else
+  pass "a dry run touching only the allowlist writes nothing"
+fi
+
+section "default-closed on an unexpected label state (Fix 5)"
+
+# issue_label_state's own contract guarantees 0/1/2, but the safety-critical
+# dispatch gate must never assume "a state I don't recognize == proceed":
+# stub the helper to return an unmodeled state and confirm the driver refuses
+# via the catch-all arm rather than falling through into a dispatch. This
+# calls process_issue directly (sourcing the driver rather than exec'ing it)
+# because no real gh response can produce a fourth state — issue_label_state
+# itself guarantees only 0/1/2, so this is the only way to exercise the
+# catch-all arm at all.
+rm -rf "$AUTOPILOT_CACHE_DIR"; : > "$GH_MOCK_LOG"; : > "$ENRICH_STUB_LOG"
+out="$(bash -c '
+  set -euo pipefail
+  source "'"$DRIVER"'"
+  issue_label_state() { return 3; }
+  AUTOPILOT_ENRICH_TIMEOUT=5
+  DRY_RUN=0
+  process_issue o/r 41
+' 2>&1)"
+case "$out" in
+  *"could not read labels"*) pass "an unexpected label state refuses to dispatch" ;;
+  *) fail "an unexpected label state refuses to dispatch" "output was: $out" ;;
+esac
+if grep -q 'issue edit' "$GH_MOCK_LOG"; then
+  fail "an unexpected label state dispatches nothing" "$(grep 'issue edit' "$GH_MOCK_LOG")"
+else
+  pass "an unexpected label state dispatches nothing"
 fi
 
 section "fail-closed on an unreadable label state (Critical 1)"
@@ -379,11 +518,11 @@ GH_MOCK_STDOUT_MAP="$TMPDIR_T/gh-clean.map" \
   run_with_dead_stdout "$DRIVER" --config "$TMPDIR_T/ap.conf" --max 1 || rc=$?
 assert_eq "the issue edit before the SIGPIPE really landed" "1" \
   "$(grep -c 'issue edit' "$GH_MOCK_LOG")"
-if [[ "$rc" == "0" ]]; then
-  fail "SIGPIPE after a write exits non-zero" "rc was 0"
-else
-  pass "SIGPIPE after a write exits non-zero"
-fi
+# Fix 9: exactly 1, the documented exit code — not merely "non-zero". Bash's
+# default death-by-signal exit is 141 (128+13); asserting only "non-zero"
+# would still pass if the whole AUTOPILOT_WROTE/trap mechanism were deleted
+# and the process just died by the raw signal instead of the trap's `exit 1`.
+assert_eq "SIGPIPE after a write exits exactly 1" "1" "$rc"
 
 printf '\n%s──────────%s\n' "$C_DIM" "$C_OFF"
 printf 'passed: %d   failed: %d\n' "$PASS" "$FAIL"

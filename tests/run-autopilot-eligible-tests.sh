@@ -149,15 +149,35 @@ case "$reason" in
   *) fail "reason says the gate was not found" "reason was: $reason" ;;
 esac
 
-section "no agent.yml at all"
+section "no agent.yml at all (a genuine 404)"
 
-printf 'contents/.github/workflows/agent.yml\n' > "$TMPDIR_T/noyml.fail"
+printf 'contents/.github/workflows/agent.yml\tHTTP 404: Not Found\n' > "$TMPDIR_T/noyml.fail"
 rc=0
 reason="$(GH_MOCK_FAIL_MAP="$TMPDIR_T/noyml.fail" repo_eligible o/r)" || rc=$?
 assert_eq "no agent.yml returns 1" "1" "$rc"
 case "$reason" in
   *agent.yml*) pass "reason names the missing agent.yml" ;;
   *) fail "reason names the missing agent.yml" "reason was: $reason" ;;
+esac
+
+section "gh outage reading agent.yml (D5 — not the same as a missing file)"
+
+# No stderr on this failure, unlike the 404 above — an opaque `gh` failure
+# (outage, auth) must NOT be reported as "no .github/workflows/agent.yml":
+# that reads as "this repo isn't onboarded" when the real problem is `gh`
+# itself, and sends whoever's debugging at 3am down the wrong path.
+printf 'contents/.github/workflows/agent.yml\n' > "$TMPDIR_T/outage.fail"
+rc=0
+reason="$(GH_MOCK_FAIL_MAP="$TMPDIR_T/outage.fail" repo_eligible o/r)" || rc=$?
+assert_eq "a gh outage returns 1" "1" "$rc"
+case "$reason" in
+  *"eligibility check failed"*) pass "reason says the check failed, not that the file is missing" ;;
+  *) fail "reason says the check failed, not that the file is missing" "reason was: $reason" ;;
+esac
+case "$reason" in
+  *"no .github/workflows/agent.yml"*)
+    fail "an outage is not reported as a missing file" "reason was: $reason" ;;
+  *) pass "an outage is not reported as a missing file" ;;
 esac
 
 printf '\n%s──────────%s\n' "$C_DIM" "$C_OFF"

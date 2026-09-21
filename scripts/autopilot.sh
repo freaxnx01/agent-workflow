@@ -182,19 +182,63 @@ process_issue() {
     return 0
   fi
 
-  local label_state=0
-  issue_label_state "$repo" "$n" needs-human || label_state=$?
-  case "$label_state" in
+  # Re-read every gating label after the nested session returns. rc == 0 from
+  # `claude --print` only means the model produced text — it is NOT evidence
+  # the issue was enriched (a prose-only reply, a denied tool call, or a
+  # graceful no-op all exit 0 too). So dispatch requires POSITIVE evidence:
+  # needs-enrichment must be gone (that removal happens only on a genuine
+  # `/enrich` success — see commands/enrich.md), needs-human must be absent
+  # (the session may have escalated instead of enriching), and 🧊 parked must
+  # be absent (a human may have parked the issue during the up-to-30-minute
+  # nested session). Every arm below is explicit — state 1 (absent) is the
+  # ONLY state that proceeds, and every other state, including one the case
+  # statement doesn't expect, refuses via the catch-all. The most
+  # safety-critical branch in this script must be default-closed.
+
+  local human_state=0
+  issue_label_state "$repo" "$n" needs-human || human_state=$?
+  case "$human_state" in
+    1) : ;; # absent — proceed
     0) log_issue "$repo" "$n" "needs-human"; return 0 ;;
-    2) log_issue "$repo" "$n" "skipped (could not read labels — not dispatching)"; return 0 ;;
+    *) log_issue "$repo" "$n" "skipped (could not read labels — not dispatching)"; return 0 ;;
+  esac
+
+  local enrich_state=0
+  issue_label_state "$repo" "$n" needs-enrichment || enrich_state=$?
+  case "$enrich_state" in
+    1) : ;; # absent — /enrich completed and cleared it, proceed
+    0) log_issue "$repo" "$n" \
+         "skipped (enrich did not complete — needs-enrichment still present)"; return 0 ;;
+    *) log_issue "$repo" "$n" "skipped (could not read labels — not dispatching)"; return 0 ;;
+  esac
+
+  local parked_state=0
+  issue_label_state "$repo" "$n" '🧊 parked' || parked_state=$?
+  case "$parked_state" in
+    1) : ;; # absent — proceed
+    0) log_issue "$repo" "$n" "skipped (parked during enrich — not dispatching)"; return 0 ;;
+    *) log_issue "$repo" "$n" "skipped (could not read labels — not dispatching)"; return 0 ;;
   esac
 
   # Both labels in ONE call. Two calls spawn two workflow runs that race and can
-  # cancel each other's review job (#365).
+  # cancel each other's review job (#365). Retried via gh-retry.sh for the same
+  # reason as the crash escalation above: a transient blip on this exact call
+  # would otherwise leave the issue fully enriched (needs-enrichment already
+  # gone) with no needs-human and no dispatch labels — invisible to both the
+  # lane (autopilot_candidates requires needs-enrichment) and a human.
   AUTOPILOT_WROTE=1
-  if ! gh issue edit "$n" --repo "$repo" \
+  if ! with_backoff gh issue edit "$n" --repo "$repo" \
         --add-label ai-implement,ai-review-ai-merge >/dev/null 2>&1; then
-    log_issue "$repo" "$n" "failed (dispatch labels not applied)"
+    local dispatch_escalate_rc=0
+    with_backoff gh issue edit "$n" --repo "$repo" \
+      --add-label needs-human >/dev/null 2>&1 || dispatch_escalate_rc=$?
+    if (( dispatch_escalate_rc != 0 )); then
+      log_issue "$repo" "$n" \
+        "failed (dispatch labels not applied); ESCALATION FAILED: needs-human not applied"
+    else
+      log_issue "$repo" "$n" \
+        "failed (dispatch labels not applied); escalated to needs-human"
+    fi
     return 0
   fi
 
@@ -236,8 +280,17 @@ main() {
       continue
     fi
 
+    local candidates_out candidates_rc=0
+    candidates_out="$(autopilot_candidates "$repo" "$remaining")" || candidates_rc=$?
+    if (( candidates_rc != 0 )); then
+      log_repo "$repo" "skipped (eligibility check failed)"
+      continue
+    fi
+
     issues=()
-    mapfile -t issues < <(autopilot_candidates "$repo" "$remaining" || true)
+    if [[ -n "$candidates_out" ]]; then
+      mapfile -t issues <<< "$candidates_out"
+    fi
     if (( ${#issues[@]} == 0 )); then
       log_repo "$repo" "no candidates"
       continue
@@ -256,4 +309,10 @@ main() {
   done
 }
 
-main "$@"
+# Guarded so tests/run-autopilot-driver-tests.sh can `source` this file to
+# call process_issue directly (Fix 5's catch-all coverage needs a stubbed
+# issue_label_state, which only works against the sourced function) without
+# a real run firing.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

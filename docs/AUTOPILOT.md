@@ -62,7 +62,12 @@ And per issue: open, `needs-enrichment`, a non-empty body, and none of
    `setup/agent-autopilot.service`. Both paths in it need editing for your
    clone. Neither unit is installed by `setup/bootstrap.sh` — enabling an
    unattended lane that opens and merges PRs is a deliberate per-host act, not
-   something bootstrap turns on for you.
+   something bootstrap turns on for you. The unit's `TimeoutStartSec=3h` is
+   sized for the shipped defaults; raising `max_per_run` or `enrich_timeout`
+   in `autopilot.conf` can push a real run past it, and a SIGTERM mid-enrich
+   leaves the issue with `enrichment-ongoing` set and no `needs-human` — the
+   same silent drop described under "When something is wedged" below. Raise
+   `TimeoutStartSec` to match if you raise either config value.
 6. **Only then** add a real repo to the allowlist.
 
 ## Reading the log
@@ -79,15 +84,19 @@ script:
 |---|---|
 | `disabled: <path> present` | The kill switch is on; nothing was read |
 | `already running — exiting` | Another run (timer or shell) holds the lock |
-| `skipped (<reason>)` | The repo failed one of the two `agent.yml` eligibility gates — reason names which one |
-| `no candidates` | The repo is eligible; nothing was enrichable |
+| `skipped (<reason>)` | The repo failed one of the `agent.yml` eligibility gates, or the gate check itself failed (e.g. `skipped (eligibility check failed)` — a `gh` outage, not an absent gate) — reason names which |
+| `no candidates` | The repo is eligible and the candidate query succeeded; genuinely nothing was enrichable |
+| `skipped (eligibility check failed)` | The candidate query (`gh issue list`) itself failed — distinct from `no candidates`, which means the query succeeded and returned nothing |
 | `failed (clone sync)` | The managed clone could not be updated; the issue was never touched |
 | `failed (enrich timed out after <n>s)` | The nested enrich session hit `enrich_timeout`; escalated to `needs-human` |
 | `failed (enrich exited <rc>)` | The nested enrich session crashed; escalated to `needs-human` |
 | `failed (…); ESCALATION FAILED: needs-human not applied, enrichment-ongoing may still be set` | The crash above, AND the escalation call itself failed — the issue may be stuck; fix by hand |
 | `needs-human` | The enrich session hit a one-way door or a `[low]` assumption and handed it over |
-| `skipped (could not read labels — not dispatching)` | The issue's labels could not be re-read after a clean enrich; refuses to dispatch rather than guess |
-| `failed (dispatch labels not applied)` | The enrich session came out clean, but applying `ai-implement`/`ai-review-ai-merge` failed |
+| `skipped (could not read labels — not dispatching)` | A post-enrich label re-read (`needs-human`, `needs-enrichment`, or `🧊 parked`) failed, or returned a state the driver did not expect; refuses to dispatch rather than guess |
+| `skipped (enrich did not complete — needs-enrichment still present)` | The nested session exited 0 but never actually enriched the issue (prose-only reply, a denied tool, a silent no-op) — `needs-enrichment` is the positive evidence `/enrich` clears on genuine success, and it is still there |
+| `skipped (parked during enrich — not dispatching)` | A human applied `🧊 parked` while the (up to 30-minute) nested session was running; the driver re-reads it after the session returns and refuses to dispatch |
+| `failed (dispatch labels not applied); escalated to needs-human` | The enrich session came out clean, but applying `ai-implement`/`ai-review-ai-merge` failed even after retry; escalated to a human instead of silently dropping the issue |
+| `failed (dispatch labels not applied); ESCALATION FAILED: needs-human not applied` | The dispatch write failed, AND the escalation write also failed — the issue is now enriched with no dispatch labels and no `needs-human`; fix by hand |
 | `enriched` | Spec, plan and issue body written; `ai-implement` + `ai-review-ai-merge` applied |
 | `would: enrich headless, then dispatch (clone <dir>)` | `--dry-run` only — what a real run would attempt next |
 
@@ -112,15 +121,23 @@ The process's own exit code, distinct from the per-line outcomes above:
 - **A clone is in a bad state.** Delete it:
   `rm -rf ~/.cache/agent-workflow/autopilot/<owner>__<name>`. The next run
   re-clones.
-- **An issue is stuck with `enrichment-ongoing` and no run in flight.** The
-  label is released automatically after 24h by `/enrich`'s own staleness check,
-  or remove it by hand.
+- **An issue is stuck with `enrichment-ongoing` and no run in flight.** Nothing
+  releases it automatically: `/enrich`'s staleness check only offers to take
+  over a stale lock interactively, which headless mode forbids, and the lane
+  skips any issue still carrying `enrichment-ongoing` regardless of its age.
+  Remove the label by hand:
+  `gh issue edit <n> --repo <owner/repo> --remove-label enrichment-ongoing`.
 - **An issue keeps landing in `needs-human`.** That is the design working.
   Enrich it by hand with `/enrich <n>` and remove `needs-human`.
-- **An `ESCALATION FAILED` line.** The issue may still carry
-  `enrichment-ongoing` with no `needs-human`, which drops it out of the lane for
-  good (`autopilot-candidates.sh` excludes `enrichment-ongoing`). Apply
-  `needs-human` and remove `enrichment-ongoing` by hand.
+- **An `ESCALATION FAILED` line after a crashed enrich session.** The issue
+  may still carry `enrichment-ongoing` with no `needs-human`, which drops it
+  out of the lane for good (`autopilot-candidates.sh` excludes
+  `enrichment-ongoing`). Apply `needs-human` and remove `enrichment-ongoing`
+  by hand.
+- **An `ESCALATION FAILED` line after `failed (dispatch labels not
+  applied)`.** The issue enriched cleanly (`needs-enrichment` is already
+  gone), but neither the dispatch labels nor `needs-human` landed — it has
+  dropped out of the lane silently. Apply `needs-human` by hand.
 
 ## Prerequisite for the game repos
 
