@@ -12,16 +12,18 @@ detect_forge
 
 ## Argument parsing
 
-`$ARGUMENTS` may carry `--quick` alongside the issue number. Parse it in this block:
+`$ARGUMENTS` may carry `--quick` and/or `--headless` alongside the issue number.
+`--headless` implies `--quick`. Parse them in this block:
 
 ```bash
 source "$HOME/.claude/scripts/lib/parse-enrich-args.sh"
 parsed=$(parse_enrich_args "$ARGUMENTS") || { echo "Issue number is required. Usage: /enrich <issue-number> [--quick]" >&2; exit 1; }
 ISSUE=$(echo "$parsed" | sed -n 's/^ISSUE=//p')
 QUICK=$(echo "$parsed" | sed -n 's/^QUICK=//p')
+HEADLESS=$(echo "$parsed" | sed -n 's/^HEADLESS=//p')
 ```
 
-Since each fenced bash block runs as a separate shell invocation, the variables `$ISSUE` and `$QUICK` set above **will not persist** to the blocks below. After parsing, substitute the resolved issue number (a digit, not a variable) directly into each command below. For example, if you parsed `256 --quick`, you would write `gh issue view 256` not `gh issue view $ISSUE`.
+Since each fenced bash block runs as a separate shell invocation, the variables `$ISSUE`, `$QUICK` and `$HEADLESS` set above **will not persist** to the blocks below. After parsing, substitute the resolved issue number (a digit, not a variable) directly into each command below. For example, if you parsed `256 --quick`, you would write `gh issue view 256` not `gh issue view $ISSUE`.
 
 ## Quick mode
 
@@ -45,6 +47,58 @@ Confidence is `[high]`/`[med]`/`[low]` — how likely the human is to disagree, 
 - Pacing: each entry adds ~50ms to page load in browser-parsing mode.
 - Side effect: adding a sea also marks it as "recently modified" for recommendation sorting.
 ```
+
+When `--headless` is also set, the one-way-door escalation cannot be a question.
+See [Headless mode](#headless-mode) — the door gets recorded and handed to a
+human via `needs-human` instead.
+
+## Headless mode
+
+`--headless` is quick mode with nobody there to ask. It implies `--quick`, and
+adds one absolute rule: **never prompt.** `AskUserQuestion` is forbidden. There
+is no approval gate, no clarifying question, and no "tell me which you'd
+prefer" — a blocked run must terminate with the block recorded, not wait.
+
+Quick mode's escape hatch is to stop and ask on a
+[one-way door](#one-way-door). Headless cannot. So on **any** of:
+
+- a one-way door,
+- a ⛔ Blocked entry in the Assumptions block,
+- **any `[low]`-confidence assumption**,
+
+the run does all of the following and then stops:
+
+1. Writes the `## Assumptions` block into the issue body as usual, ⛔ items
+   included — the whole point is that the human arrives to a stated open
+   decision rather than a silent stall.
+2. Pushes whatever spec exists. If brainstorming never got far enough to have a
+   plan, there is no plan; say so in the issue body instead of inventing one.
+3. Applies `needs-human`.
+4. Releases the `enrichment-ongoing` lock.
+5. Does **not** apply `ai-implement`.
+6. Exits 0 — the caller is a loop over several issues, and one issue needing a
+   human is a normal outcome, not a failure that should abort the batch.
+
+These six outcomes hold however the run gets there — they are not a code path
+to execute optimistically and abandon if judgment suggests otherwise: a
+headless run has nobody watching to catch a reasoned-around exit, so it may
+not infer its way past them.
+
+`[low]` routing to a human follows #252: confidence is "how likely is the human
+to disagree", so `[low]` is precisely the set of decisions worth a human's
+attention, and until async review of an assumptions block is proven workable a
+low-confidence guess gets a person.
+
+Apply steps 3 and 4 in a **single** `gh issue edit` call — two calls against the
+same issue race, which is the lesson of #365:
+
+```bash
+gh issue edit $ISSUE --add-label needs-human --remove-label enrichment-ongoing
+```
+
+Headless mode changes nothing else. Every other step of the GitHub section
+below still runs: the lock, the spec, the plan, the push verification, the issue
+body.
 
 ## GitHub
 
@@ -691,6 +745,10 @@ command for the future.
 ## One-way door
 
 In quick-mode, a [one-way door](../docs/glossary.md#one-way-door) is a design decision the agent refuses to make alone — irreversible operations (deleting data, running migrations), anything touching credentials or secrets, anything that spends money (rate limits, API calls with costs), or anything changing a public interface others depend on. When quick-mode hits a one-way door, it stops and asks the user to decide, even if the flag is `--quick`. Record the unanswered decision as a Blocked item in the Assumptions block (prefixed with ⛔ or similar) so the human review phase can resolve it before implementation.
+
+In **headless** mode there is no user to ask: the door is recorded as a ⛔
+Blocked item and the issue is handed over with `needs-human`. See
+[Headless mode](#headless-mode).
 
 ## Azure DevOps
 
