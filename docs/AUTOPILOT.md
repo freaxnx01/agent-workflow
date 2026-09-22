@@ -34,15 +34,18 @@ A run already in flight is stopped with
 
 Three gates, all required. Failing any one is logged with its reason:
 
-1. **The allowlist.** The repo has a `repo=` line in
+1. **The allowlist, with its gate.** The repo has a
+   `repo=<owner/name>:<test-gate workflow file>` line in
    `~/.config/agent-workflow/autopilot.conf`. This is the outer gate and the
-   only one that cannot be flipped from inside a consumer repo.
+   only one that cannot be flipped from inside a consumer repo — the gate
+   workflow is named here too, not in the consumer's `agent.yml`: the
+   reusable workflow does not declare that input, and `workflow_call`
+   hard-fails on an undeclared one.
 2. **`ai-review-ai-merge: true`** in the consumer's
    `.github/workflows/agent.yml`.
-3. **A test gate that has actually run.** The same `agent.yml` declares
-   `autopilot-test-gate: <workflow-file>`, that workflow exists, and it has at
-   least one completed run on the default branch. No auto-merge on an unrun
-   gate (#263).
+3. **The gate named in the allowlist has actually run.** That workflow
+   exists in the consumer repo, and it has at least one completed run on the
+   default branch. No auto-merge on an unrun gate (#263).
 
 And per issue: open, `needs-enrichment`, a non-empty body, and none of
 `🧊 parked`, `enrichment-ongoing`, `needs-human`, `ai-implement`.

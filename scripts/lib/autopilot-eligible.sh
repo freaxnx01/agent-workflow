@@ -1,32 +1,37 @@
 #!/usr/bin/env bash
 #
 # autopilot-eligible.sh — sourced, not executed.
-#   repo_eligible <owner/repo>
+#   repo_eligible <owner/repo> <gate>
 #
 # Returns 0 if the repo may be auto-laned, 1 otherwise, and writes a one-line
 # reason to stdout either way — the driver logs it verbatim, so the reason is
 # the whole diagnostic.
 #
 # Two conditions, both required:
-#   1. The consumer's .github/workflows/agent.yml declares BOTH
-#      `ai-review-ai-merge: true` and `autopilot-test-gate: <workflow-file>`.
-#   2. That workflow exists and has at least one COMPLETED run on the default
-#      branch.
+#   1. The consumer's .github/workflows/agent.yml declares
+#      `ai-review-ai-merge: true`.
+#   2. The <gate> workflow (passed in — named by the host's autopilot.conf,
+#      not read from the consumer repo) exists and has at least one COMPLETED
+#      run on the default branch.
 #
 # (The allowlist is the third condition, enforced by the driver before this is
-# called — an outer gate that cannot be flipped from inside a consumer repo.)
+# called — an outer gate that cannot be flipped from inside a consumer repo.
+# The allowlist is also where <gate> comes from: see
+# scripts/lib/autopilot-config.sh. It cannot live in the consumer's agent.yml
+# — the reusable workflow does not declare that input, and workflow_call
+# hard-fails on an undeclared one.)
 #
-# Condition 2 is #263: no auto-merge on a gate that has never run. The repo
-# names its own gate rather than this script guessing which workflow is "the
-# tests" — a heuristic guarding auto-merge means a workflow rename silently
-# changes eligibility.
+# Condition 2 is #263: no auto-merge on a gate that has never run. The gate is
+# named by the operator rather than this script guessing which workflow is
+# "the tests" — a heuristic guarding auto-merge means a workflow rename
+# silently changes eligibility.
 #
 # Query-only. Requires: gh (authenticated), jq.
 set -euo pipefail
 IFS=$'\n\t'
 
 repo_eligible() {
-  local repo="$1" yaml gate default_branch runs
+  local repo="$1" gate="$2" yaml default_branch runs
   local agent_yml_err
   agent_yml_err="$(mktemp)"
   # shellcheck disable=SC2064  # expand agent_yml_err now, on function return
@@ -54,14 +59,6 @@ repo_eligible() {
 
   if ! grep -Eq '^[[:space:]]*ai-review-ai-merge:[[:space:]]*true[[:space:]]*$' <<< "$yaml"; then
     printf 'agent.yml does not set ai-review-ai-merge: true\n'
-    return 1
-  fi
-
-  gate="$(grep -E '^[[:space:]]*autopilot-test-gate:' <<< "$yaml" \
-            | head -1 \
-            | sed -E 's/^[[:space:]]*autopilot-test-gate:[[:space:]]*//; s/[[:space:]]+$//; s/^["'\'']//; s/["'\'']$//')"
-  if [[ -z "$gate" ]]; then
-    printf 'agent.yml does not declare autopilot-test-gate\n'
     return 1
   fi
 

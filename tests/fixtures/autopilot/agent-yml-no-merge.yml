@@ -7,5 +7,4 @@ jobs:
     uses: freaxnx01/agent-workflow/.github/workflows/agent.yml@v3
     with:
       ai-review-ai-merge: false
-      autopilot-test-gate: ci.yml
     secrets: inherit

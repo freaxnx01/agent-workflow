@@ -14,10 +14,17 @@ max_per_run=3
 # Per-issue timeout for the nested enrich session, in seconds.
 enrich_timeout=1800
 
-# Allowlisted repos, one line each. This is the outer gate: a repo not listed
-# here is never touched, no matter what its own agent.yml says. A repo also
-# needs `ai-review-ai-merge: true` and an `autopilot-test-gate:` that has
-# actually run — see docs/AUTOPILOT.md.
+# Allowlisted repos, one line each: repo=<owner/name>:<test-gate workflow
+# file>. This is the outer gate: a repo not listed here is never touched, no
+# matter what its own agent.yml says. A repo also needs
+# `ai-review-ai-merge: true` in its agent.yml, and the named gate workflow
+# needs an actual completed run — see docs/AUTOPILOT.md.
+#
+# The gate is named HERE, in the allowlist, rather than as a key in the
+# consumer's own agent.yml: the reusable workflow
+# (.github/workflows/agent-implement.yml) does not declare an
+# `autopilot-test-gate` input, and GitHub Actions hard-fails a `workflow_call`
+# job on an undeclared input — there is no legal place for it there.
 #
 # Start with the sandbox. Add a real repo only after an end-to-end run.
-repo=freaxnx01/agent-action-sandbox
+repo=freaxnx01/agent-action-sandbox:ci.yml

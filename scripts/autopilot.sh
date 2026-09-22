@@ -275,7 +275,7 @@ main() {
     (( remaining > 0 )) || break
 
     reason=''
-    if ! reason="$(repo_eligible "$repo")"; then
+    if ! reason="$(repo_eligible "$repo" "${AUTOPILOT_GATES[$repo]}")"; then
       log_repo "$repo" "skipped ($reason)"
       continue
     fi
