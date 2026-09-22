@@ -35,6 +35,10 @@ WorkingDirectory=%h/repos/github/freaxnx01/public/agent-workflow
 ExecStart=%h/repos/github/freaxnx01/public/agent-workflow/scripts/autopilot.sh
 
 # A run is several nested Claude sessions; generous, but never unbounded.
+# Sized for the shipped defaults (max_per_run x enrich_timeout is the real
+# worst case) — raise this to match if you raise either in autopilot.conf.
+# A SIGTERM mid-enrich leaves the issue with enrichment-ongoing set and no
+# needs-human; see "When something is wedged" in docs/AUTOPILOT.md.
 TimeoutStartSec=3h
 
 # Journald keeps the one-line-per-decision log.

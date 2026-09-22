@@ -19,6 +19,18 @@ session, run inside a managed clone of the target repo.
 
 **Spec:** [`docs/superpowers/specs/2026-09-21-autopilot-design.md`](../specs/2026-09-21-autopilot-design.md)
 
+> **Amendment (2026-09-22):** This plan describes the pre-implementation
+> design. In particular, every step below that has the consumer's
+> `.github/workflows/agent.yml` declare an `autopilot-test-gate:` key is
+> **not what was built** — that key is not a declared input on the reusable
+> workflow, and an operator who adds it breaks every `ai-implement` run in
+> that repo. As shipped, the test gate is named in the host-local autopilot
+> config instead (`repo=<owner/name>:<test-gate workflow file>`). See
+> [`docs/AUTOPILOT.md`](../../AUTOPILOT.md) for current behaviour and
+> Amendment 1 in the spec's [`## Amendments`](../specs/2026-09-21-autopilot-design.md#amendments)
+> section for the full rationale. The rest of this plan is left as the
+> historical record it is.
+
 ## Global Constraints
 
 - Every script starts with `#!/usr/bin/env bash`, `set -euo pipefail`, `IFS=$'\n\t'`.

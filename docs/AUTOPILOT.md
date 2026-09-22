@@ -87,9 +87,9 @@ script:
 |---|---|
 | `disabled: <path> present` | The kill switch is on; nothing was read |
 | `already running — exiting` | Another run (timer or shell) holds the lock |
-| `skipped (<reason>)` | The repo failed one of the `agent.yml` eligibility gates, or the gate check itself failed (e.g. `skipped (eligibility check failed)` — a `gh` outage, not an absent gate) — reason names which |
+| `skipped (<reason>)` | The repo failed one of the `agent.yml` eligibility gates (missing file, `ai-review-ai-merge` not set, unreadable default branch, gate workflow never completed a run on it), or `repo_eligible` itself could not run the check (e.g. `skipped (eligibility check failed (could not read agent.yml))` — a `gh` outage reading `agent.yml`, not an absent gate) — reason names which |
 | `no candidates` | The repo is eligible and the candidate query succeeded; genuinely nothing was enrichable |
-| `skipped (eligibility check failed)` | The candidate query (`gh issue list`) itself failed — distinct from `no candidates`, which means the query succeeded and returned nothing |
+| `skipped (candidate query failed)` | The repo passed `repo_eligible`, but the candidate query (`gh issue list`) itself failed — distinct from `no candidates` (query succeeded, returned nothing) and distinct from the `skipped (<reason>)` row above (that one is `repo_eligible` failing to read `agent.yml`/its metadata, not `gh issue list` failing to list issues) |
 | `failed (clone sync)` | The managed clone could not be updated; the issue was never touched |
 | `failed (enrich timed out after <n>s)` | The nested enrich session hit `enrich_timeout`; escalated to `needs-human` |
 | `failed (enrich exited <rc>)` | The nested enrich session crashed; escalated to `needs-human` |
