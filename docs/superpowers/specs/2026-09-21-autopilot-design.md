@@ -387,3 +387,41 @@ pinned at `@v2`, a deprecated `pre-preview: true`, and the stub still named
 #252 (async assumption review), #332 (parallel enrich), #274 (baseline commit),
 #365 (label race), #263 (unrun gate), freaxnx01/bridge#304 (successor lane),
 freaxnx01/bridge#303 (blocker), freaxnx01/bridge#218 (game repo re-onboarding).
+
+## Amendments
+
+The body above is preserved as the original design as written on 2026-09-21. The
+following corrections were made during implementation.
+
+**Amendment 1 (2026-09-22) — the test gate is declared in the autopilot config,
+not the consumer's `agent.yml`**
+
+The spec's "Components" section requires the consumer repo's
+`.github/workflows/agent.yml` to declare `autopilot-test-gate: <workflow-file>`.
+That is not implementable: `autopilot-test-gate` is not a declared input on the
+reusable workflow `.github/workflows/agent-implement.yml`, GitHub Actions
+hard-fails a `workflow_call` job on an undefined input, and a workflow file has
+no other legal place for the key. An operator following the original design would
+break every `ai-implement` run in that repo.
+
+As shipped, the gate is named in the host-local allowlist entry instead:
+
+    repo=<owner/name>:<test-gate workflow file>
+
+so eligibility reads it from the operator's own config. The two conditions that
+remain unchanged are that the consumer's `agent.yml` declares
+`ai-review-ai-merge: true`, and that the named gate workflow exists and has at
+least one COMPLETED run on the default branch (#263 — no auto-merge on an unrun
+gate). The gate name is validated against `^[A-Za-z0-9._-]+\.ya?ml$`, which also
+prevents a traversal like `../../other/ci.yml` pointing the check at a different
+repo's green workflow. Found by the final whole-branch review; resolution chosen
+by the operator. Current behaviour is documented in `docs/AUTOPILOT.md`.
+
+**Amendment 2 (2026-09-22) — the `skipped (cap reached)` example log line cannot
+occur**
+
+The spec's "Logging" section shows an example journald line ending
+`skipped (cap reached)`. The driver never emits it: `autopilot_candidates` is
+passed the remaining budget as its `<limit>`, so an over-cap issue is never
+returned and therefore never logged. The complete and accurate set of outcomes
+is the table in `docs/AUTOPILOT.md`.
