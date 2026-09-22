@@ -2894,8 +2894,10 @@ assert_not_contains "$log" 'label create ai-pre-preview'  "does not create depre
 # Outcome label (auto-review epic #3 — ADR-002 §2)
 assert_contains "$log" 'label create ai:review-blocked --repo owner/repo' "creates ai:review-blocked"
 
-# Coordination label (read/written by /enrich's concurrency lock)
+# Coordination labels (read/written by /enrich's concurrency lock; needs-human
+# written by the unattended /autopilot escalation lane)
 assert_contains "$log" 'label create enrichment-ongoing --repo owner/repo' "creates enrichment-ongoing"
+assert_contains "$log" 'label create needs-human --repo owner/repo' "creates needs-human"
 
 # Turn-budget override labels (read by classify-turns.sh stage 1). Without
 # these the documented override is unusable in a fresh repo: `gh issue edit
