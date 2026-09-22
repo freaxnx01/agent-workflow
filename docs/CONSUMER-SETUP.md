@@ -67,6 +67,11 @@ gh secret list -R <owner>/<repo>   # value never displayed
 Only if using the OpenCode/OpenRouter backend (§3 below): also set
 `OPENROUTER_API_KEY`. Skip for the Claude path.
 
+**Optional but recommended:** `PIPELINE_APP_ID` + `PIPELINE_APP_PRIVATE_KEY`.
+Without them the pipeline's PRs are authored by `github-actions` and their
+required checks stall awaiting manual approval — see
+[`PIPELINE-APP-SETUP.md`](PIPELINE-APP-SETUP.md).
+
 > Secret hygiene: keep the token on the path secrets-manager → your shell →
 > GitHub's encrypted store. Don't paste it into files, issues, commits, or an
 > agent's chat context. Setting an Actions secret is always a human/CLI step —
