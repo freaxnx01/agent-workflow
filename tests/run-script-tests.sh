@@ -3499,6 +3499,38 @@ done
 
 rm -rf "$fake_home"
 
+section "checks-blocked warning (#364)"
+
+# Reuses the existing success fixture: a blocked run is still a SUCCESSFUL run,
+# so the outcome must not change. That is the regression this guards.
+out="$(CHECKS_RUNNABLE=false CHECKS_BLOCKED_REASON=no-app-token \
+  render_only result-success-cheap.json)"
+assert_contains "$out" 'Required checks could not run'  "blocked → warning block rendered"
+assert_contains "$out" 'PIPELINE_APP_ID'                "blocked → names the unset secret"
+assert_contains "$out" 'docs/PIPELINE-APP-SETUP.md'     "blocked → points at the runbook"
+assert_contains "$out" 'ai:checks-blocked'              "blocked → label in LABELS line"
+assert_contains "$out" 'LABELS: ai:done'                "blocked → outcome STILL ai:done"
+
+out="$(CHECKS_RUNNABLE=false CHECKS_BLOCKED_REASON=rollup-empty \
+  render_only result-success-cheap.json)"
+assert_contains "$out" 'A pipeline App token was minted' "rollup-empty → different wording"
+assert_contains "$out" 'ai:checks-blocked'               "rollup-empty → label present"
+
+out="$(CHECKS_RUNNABLE=true render_only result-success-cheap.json)"
+assert_not_contains "$out" 'Required checks could not run' "runnable → no warning block"
+assert_not_contains "$out" 'ai:checks-blocked'             "runnable → no label"
+
+out="$(render_only result-success-cheap.json)"
+assert_not_contains "$out" 'Required checks could not run' "unset → no warning block"
+assert_not_contains "$out" 'ai:checks-blocked'             "unset → no label"
+
+# The ctx label is orthogonal and must survive alongside the new one — the
+# labels_csv() rewrite is where those two could have collided.
+out="$(CHECKS_RUNNABLE=false CHECKS_BLOCKED_REASON=no-app-token \
+  render_only result-high-context.json exec-high-context.ndjson)"
+assert_contains "$out" 'LABELS: ai:done,ctx:high,ai:checks-blocked' \
+  "blocked + high context → all three labels, outcome first"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"

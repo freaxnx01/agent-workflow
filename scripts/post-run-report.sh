@@ -28,6 +28,14 @@
 #   RENDER_ONLY         If "1", print the rendered comment + label list to
 #                       stdout and skip all GitHub API calls. Used by Layer-1
 #                       fixture tests.
+#   CHECKS_RUNNABLE     "false" when check-pr-checks-runnable.sh determined the
+#                       PR's required checks cannot run. Adds a warning block to
+#                       the comment and the ai:checks-blocked label. Never
+#                       changes the outcome — a blocked run is still a
+#                       successful run (#364).
+#   CHECKS_BLOCKED_REASON
+#                       "no-app-token" | "rollup-empty". Selects the remedy
+#                       wording. Only read when CHECKS_RUNNABLE is "false".
 #
 # Exit codes:
 #   0   success
@@ -58,6 +66,38 @@ AGENT="${AGENT:-}"   # resolved agent (steps.classify_agent.outputs.agent) — o
 MAX_TURNS="${MAX_TURNS:-}"   # configured turn budget (steps.triage_turns.outputs.turns) — optional
 SALVAGED="${SALVAGED:-}"     # "true" when the PR came from verify-or-recover-pr.sh salvage
 HAS_PLAN="${HAS_PLAN:-}"     # "true"/"false": did the issue body carry an "## Implementation Plan"
+CHECKS_RUNNABLE="${CHECKS_RUNNABLE:-}"              # "false" → checks cannot run (#364)
+CHECKS_BLOCKED_REASON="${CHECKS_BLOCKED_REASON:-}"  # no-app-token | rollup-empty
+
+# Rendered into the comment, and gates the ai:checks-blocked label. Built here
+# rather than inside render_comment so labels_csv can test one variable.
+#
+# Single-quoted and literally multi-line on purpose: backticks are markdown
+# code spans, not command substitution, and `$(printf ...)` would strip the
+# trailing newline the surrounding blank line needs. Empty renders as the one
+# blank line that already separated the table from the run link.
+CHECKS_BLOCKED_BLOCK=''
+# shellcheck disable=SC2016  # the backticks are markdown code spans in the
+# rendered comment, not command substitution — single quotes are the point.
+if [[ "$CHECKS_RUNNABLE" == "false" ]]; then
+  if [[ "$CHECKS_BLOCKED_REASON" == "rollup-empty" ]]; then
+    CHECKS_BLOCKED_BLOCK='
+> [!WARNING]
+> **Required checks could not run on this PR.**
+> A pipeline App token was minted, yet no checks appeared. This is not the
+> usual cause — inspect the PR directly. See `docs/PIPELINE-APP-SETUP.md`.
+'
+  else
+    CHECKS_BLOCKED_BLOCK='
+> [!WARNING]
+> **Required checks could not run on this PR.**
+> No `PIPELINE_APP_ID` is configured, so the PR is authored by
+> `github-actions` and its checks stall awaiting manual approval — the PR
+> stays BLOCKED until someone approves them or pushes to the branch.
+> The implementation itself is unaffected. Fix: `docs/PIPELINE-APP-SETUP.md`.
+'
+  fi
+fi
 
 [[ -r "$RESULT_FILE" ]] || {
   printf 'error: RESULT_FILE not readable: %s\n' "$RESULT_FILE" >&2
@@ -282,17 +322,18 @@ ${MODEL_AGENT_LINE}
 | Cache create | $(format_int "$CACHE_CREATE") |
 | Total tokens | $(format_int "$TOTAL_TOKENS") |
 | Max context per turn | ${CONTEXT_ROW} |
-
+${CHECKS_BLOCKED_BLOCK}
 [View workflow run](${WORKFLOW_RUN_URL})
 EOF
 }
 
 labels_csv() {
-  if [[ -n "$CTX_LABEL" ]]; then
-    printf '%s,%s' "$STATUS_LABEL" "$CTX_LABEL"
-  else
-    printf '%s' "$STATUS_LABEL"
-  fi
+  local out="$STATUS_LABEL"
+  [[ -n "$CTX_LABEL" ]] && out="${out},${CTX_LABEL}"
+  # Additive only. A blocked run is still ai:done — the agent did its job and
+  # the PR is reviewable; it is the repo that is misconfigured (#364).
+  [[ -n "$CHECKS_BLOCKED_BLOCK" ]] && out="${out},ai:checks-blocked"
+  printf '%s' "$out"
 }
 
 # --- output / post ----------------------------------------------------------
