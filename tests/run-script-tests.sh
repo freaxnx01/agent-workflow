@@ -3211,6 +3211,56 @@ out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=mai
 assert_contains "$out" 'recovered=true'    "pushed branch → ordinary recovery"
 assert_contains "$out" 'salvaged=false'    "pushed branch → not a salvage"
 
+# --- pr-number output (#364) ------------------------------------------------
+#
+# check-pr-checks-runnable.sh needs a PR number, and this script never emitted
+# one. Without it the probe step receives an empty PR_NUMBER, exits 2, and —
+# carrying continue-on-error — fails SILENTLY. That is precisely the class of
+# bug #364 is about, so the empty-not-stale case is asserted explicitly.
+
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false \
+        PIPELINE_PRS_JSON='[{"number":123,"isDraft":true,"headRefOid":"x","author":{"login":"github-actions[bot]"},"body":"Closes #42"}]')"
+assert_contains "$out" 'pr-present=true'  "found PR → pr-present=true"
+assert_contains "$out" 'pr-number=123'    "found PR → pr-number reported"
+
+# A genuine agent failure reports no PR, so the number must be empty, not stale.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=true)"
+assert_contains "$out" 'pr-number='       "agent failure → pr-number key still emitted"
+assert_not_contains "$out" 'pr-number=123' "agent failure → no stale number"
+
+# Nothing to recover and nothing to salvage — still no stale number.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=main BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        WORKTREE_DIRTY=false SALVAGE_APPLY=0)"
+assert_contains "$out" 'pr-number='       "no PR at all → pr-number key still emitted"
+assert_not_contains "$out" 'pr-number=1'  "no PR at all → number is empty"
+
+# On the recovery path `gh pr create` prints the new PR's URL; the last path
+# segment is the number. The mock is made to print one here — its default is
+# silence, which must degrade to an empty number rather than a prose fragment.
+pr_url_map="$(mktemp)"; pr_url_fixture="$(mktemp)"
+printf 'https://github.com/o/r/pull/456\n' > "$pr_url_fixture"
+printf 'pr create\t%s\n' "$pr_url_fixture" > "$pr_url_map"
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        GH_MOCK_STDOUT_MAP="$pr_url_map")"
+assert_contains "$out" 'recovered=true'   "recovery → recovered=true"
+assert_contains "$out" 'pr-number=456'    "recovery → pr-number parsed from the PR URL"
+rm -f "$pr_url_map" "$pr_url_fixture"
+
+# A failed `gh pr create` leaves an error message in the captured output, not a
+# URL. Without the numeric guard that prose would land in $GITHUB_OUTPUT.
+ctr_num="$(mktemp)"; : > "$ctr_num"
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        GH_RETRY_SLEEP_CMD=: GH_RETRY_NO_JITTER=1 \
+        GH_MOCK_PR_CREATE_FAIL_TIMES=9 GH_MOCK_PR_CREATE_CTR="$ctr_num" \
+        GH_MOCK_PR_CREATE_STDERR='not permitted to create or approve pull requests')"
+assert_contains "$out" 'pr-number='                  "failed pr create → pr-number key emitted"
+assert_not_contains "$out" 'pr-number=not'           "failed pr create → no prose in pr-number"
+assert_not_contains "$out" 'pull requests'           "failed pr create → error text never reaches the output"
+rm -f "$ctr_num"
+
 section "check-attempt-cap — stop redispatching an issue forever"
 
 CAP="$ROOT/scripts/check-attempt-cap.sh"
