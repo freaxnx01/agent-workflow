@@ -213,7 +213,12 @@ esac
 section "the log line format"
 
 rm -rf "$AUTOPILOT_CACHE_DIR"
-out="$("$DRIVER" --config "$TMPDIR_T/ap.conf" --dry-run | head -1)"
+# Capture the full run first, then take its first line — this asserts the
+# LOG FORMAT, its actual subject, without piping the driver straight into
+# `head -1` and racing its EPIPE/SIGPIPE teardown (that race is covered
+# deterministically below, "SIGPIPE re-scoping").
+full_out="$("$DRIVER" --config "$TMPDIR_T/ap.conf" --dry-run)"
+out="$(printf '%s\n' "$full_out" | head -1)"
 if [[ "$out" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\  ]]; then
   pass "log lines start with an ISO-8601 UTC timestamp"
 else
