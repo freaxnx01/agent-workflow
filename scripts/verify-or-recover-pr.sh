@@ -27,6 +27,7 @@
 # explicitly to force it elsewhere.
 #
 # Output: found=<bool> pr-present=<bool> recovered=<bool> salvaged=<bool>
+#         pr-number=<n|empty>
 # Exit: 0 success; 2 required env missing.
 set -euo pipefail
 IFS=$'\n\t'
@@ -42,15 +43,22 @@ fi
 REPO="${REPO:-${GITHUB_REPOSITORY:-}}"
 IS_ERROR="${IS_ERROR:-false}"
 
+# The PR number, once known. A global rather than a fifth positional parameter:
+# emit() has nine call sites and widening its signature would mean editing all
+# of them. Empty whenever there is no PR — never stale (#364).
+PR_NUMBER_OUT=''
+
 emit() {
   local salvaged="${4:-false}"
-  printf 'found=%s pr-present=%s recovered=%s salvaged=%s\n' "$1" "$2" "$3" "$salvaged"
+  printf 'found=%s pr-present=%s recovered=%s salvaged=%s pr-number=%s\n' \
+    "$1" "$2" "$3" "$salvaged" "$PR_NUMBER_OUT"
   if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
     {
       printf 'found=%s\n' "$1"
       printf 'pr-present=%s\n' "$2"
       printf 'recovered=%s\n' "$3"
       printf 'salvaged=%s\n' "$salvaged"
+      printf 'pr-number=%s\n' "$PR_NUMBER_OUT"
     } >> "$GITHUB_OUTPUT"
   fi
 }
@@ -67,6 +75,13 @@ open_draft_pr() {
       --body "$body" 2>&1)" || ec=$?
   if [[ "$ec" -eq 0 ]]; then
     PR_CREATE_RESULT=created
+    # `gh pr create` prints the PR URL; the last path segment is the number.
+    # The regex guard matters: on the `exists` and `failed` paths `out` is an
+    # error message, not a URL, so without it a fragment of prose would travel
+    # into $GITHUB_OUTPUT as a PR number.
+    PR_NUMBER_OUT="$(printf '%s' "$out" | tr -d '[:space:]')"
+    PR_NUMBER_OUT="${PR_NUMBER_OUT##*/}"
+    [[ "$PR_NUMBER_OUT" =~ ^[0-9]+$ ]] || PR_NUMBER_OUT=''
   elif printf '%s' "$out" | grep -qi 'already exists'; then
     PR_CREATE_RESULT=exists
   else
@@ -84,6 +99,10 @@ fi
 pr_out="$(ISSUE_NUMBER="$ISSUE_NUMBER" REPO="$REPO" \
   PIPELINE_PRS_JSON="${PIPELINE_PRS_JSON:-}" bash "$HERE/find-pipeline-pr.sh" 2>/dev/null || printf 'found=false')"
 if [[ "$pr_out" == *"found=true"* ]]; then
+  # find-pipeline-pr.sh already knows the number; it reports all four fields on
+  # a single space-separated line, so match `pr-number=` anywhere on it.
+  PR_NUMBER_OUT="$(printf '%s\n' "$pr_out" \
+    | sed -n 's/.*[[:space:]]pr-number=\([0-9][0-9]*\).*/\1/p' | head -1)"
   emit true true false
   exit 0
 fi
