@@ -27,9 +27,16 @@
 #   outcome    ai:review-blocked
 #              — written by either review job (ADR-002, epic #3) when
 #                the safety envelope or verdict leaves the PR draft
-#   coordination enrichment-ongoing
-#              — read/written by /enrich (Step 1.5 / 2.5 / 6) to prevent two
-#                sessions from concurrently enriching the same issue
+#   coordination enrichment-ongoing, needs-human
+#              — enrichment-ongoing is read/written by /enrich (Step 1.5 / 2.5 / 6)
+#                to prevent two sessions from concurrently enriching the same issue.
+#                needs-human is written by the unattended /autopilot lane (headless
+#                /enrich hitting a one-way door, a blocked assumption, or a
+#                [low]-confidence assumption; scripts/autopilot.sh's crash/timeout
+#                escalation; a failed post-enrichment dispatch write) via
+#                `gh issue edit --add-label`, which fails outright on a label that
+#                does not exist — so without it the escalation silently drops
+#                instead of flagging a human
 #
 # Idempotent: existing labels are preserved unchanged (`gh label create` errors
 # when the label exists; we ignore that error rather than passing `--force`, so
@@ -85,3 +92,4 @@ create turns:160 5319E7 'Override the agent turn budget to 160 (classify-turns.s
 create ai:review-blocked D73A4A 'Auto-review left the PR draft; human action required'
 
 create enrichment-ongoing FBCA04 'Another /enrich session is actively enriching this issue — do not start a second one'
+create needs-human D93F0B 'Autopilot could not decide this unattended — a human must resolve it'
