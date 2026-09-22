@@ -490,26 +490,26 @@ section exists, add it before the final summary block):
 ```bash
 section "verify-or-recover-pr — pr-number output (#364)"
 
-vor_tmp="$(mktemp -d)"
-vor_script="$HERE/../scripts/verify-or-recover-pr.sh"
+recover_tmp="$(mktemp -d)"
+recover_script="$HERE/../scripts/verify-or-recover-pr.sh"
 
 # An existing pipeline PR is found: its number must be reported.
 printf '[{"number":123,"isDraft":true,"headRefName":"fix/1-x","author":{"login":"app/github-actions"},"headRefOid":"abc123"}]\n' \
-  > "$vor_tmp/prs.json"
-gh_out="$vor_tmp/out"; : > "$gh_out"
-out="$(env PATH="$MOCKS:$PATH" GH_MOCK_LOG="$vor_tmp/gh.log" \
+  > "$recover_tmp/prs.json"
+gh_out="$recover_tmp/out"; : > "$gh_out"
+out="$(env PATH="$MOCKS:$PATH" GH_MOCK_LOG="$recover_tmp/gh.log" \
   ISSUE_NUMBER=1 REPO=o/r SALVAGE_APPLY=0 \
-  PIPELINE_PRS_JSON="$(cat "$vor_tmp/prs.json")" \
-  GITHUB_OUTPUT="$gh_out" bash "$vor_script" 2>&1 || true)"
+  PIPELINE_PRS_JSON="$(cat "$recover_tmp/prs.json")" \
+  GITHUB_OUTPUT="$gh_out" bash "$recover_script" 2>&1 || true)"
 assert_contains "$out" 'pr-present=true'   "found PR → pr-present=true"
 assert_contains "$out" 'pr-number=123'     "found PR → pr-number on stdout"
 assert_contains "$(cat "$gh_out")" 'pr-number=123' "found PR → pr-number in GITHUB_OUTPUT"
 
 # A genuine agent failure reports no PR, so the number must be empty, not stale.
-gh_out2="$vor_tmp/out2"; : > "$gh_out2"
-out="$(env PATH="$MOCKS:$PATH" GH_MOCK_LOG="$vor_tmp/gh.log" \
+gh_out2="$recover_tmp/out2"; : > "$gh_out2"
+out="$(env PATH="$MOCKS:$PATH" GH_MOCK_LOG="$recover_tmp/gh.log" \
   ISSUE_NUMBER=1 REPO=o/r SALVAGE_APPLY=0 IS_ERROR=true \
-  GITHUB_OUTPUT="$gh_out2" bash "$vor_script" 2>&1 || true)"
+  GITHUB_OUTPUT="$gh_out2" bash "$recover_script" 2>&1 || true)"
 assert_contains "$out" 'pr-number='        "agent failure → pr-number key still emitted"
 assert_not_contains "$out" 'pr-number=123' "agent failure → no stale number"
 ```
