@@ -90,6 +90,7 @@ script:
 | `skipped (<reason>)` | The repo failed one of the `agent.yml` eligibility gates (missing file, `ai-review-ai-merge` not set, unreadable default branch, gate workflow never completed a run on it), or `repo_eligible` itself could not run the check (e.g. `skipped (eligibility check failed (could not read agent.yml))` — a `gh` outage reading `agent.yml`, not an absent gate) — reason names which |
 | `no candidates` | The repo is eligible and the candidate query succeeded; genuinely nothing was enrichable |
 | `skipped (candidate query failed)` | The repo passed `repo_eligible`, but the candidate query (`gh issue list`) itself failed — distinct from `no candidates` (query succeeded, returned nothing) and distinct from the `skipped (<reason>)` row above (that one is `repo_eligible` failing to read `agent.yml`/its metadata, not `gh issue list` failing to list issues) |
+| `skipped (label ensure failed)` | The repo has candidates, but `ensure-issue-labels.sh` could not be run against it before the first dispatch of this run (#380) — the repo is skipped for this run rather than letting a later dispatch or escalation write fail against labels that were never created; no nested enrich session was spent |
 | `failed (clone sync)` | The managed clone could not be updated; the issue was never touched |
 | `failed (enrich timed out after <n>s)` | The nested enrich session hit `enrich_timeout`; escalated to `needs-human` |
 | `failed (enrich exited <rc>)` | The nested enrich session crashed; escalated to `needs-human` |
