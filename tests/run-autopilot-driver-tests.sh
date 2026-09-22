@@ -51,7 +51,7 @@ export AUTOPILOT_CACHE_DIR="$TMPDIR_T/cache"
 export AUTOPILOT_DISABLE_FLAG="$TMPDIR_T/disabled"
 
 # Config: one allowlisted repo.
-printf 'max_per_run=2\nrepo=o/r\n' > "$TMPDIR_T/ap.conf"
+printf 'max_per_run=2\nrepo=o/r:ci.yml\n' > "$TMPDIR_T/ap.conf"
 
 # gh responses: an eligible repo and three enrichable issues.
 {
@@ -371,7 +371,7 @@ case "$out" in
 esac
 
 # --- a clone that cannot be synced ---
-printf 'max_per_run=1\nrepo=o/missing\n' > "$TMPDIR_T/ap-missing.conf"
+printf 'max_per_run=1\nrepo=o/missing:ci.yml\n' > "$TMPDIR_T/ap-missing.conf"
 {
   printf 'contents/.github/workflows/agent.yml\t%s\n' "$FIX/agent-yml-good.yml"
   printf 'actions/workflows/\t%s\n' "$FIX/runs-one.json"

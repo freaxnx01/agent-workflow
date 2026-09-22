@@ -7,6 +7,19 @@
 #   AUTOPILOT_MAX_PER_RUN     global cap on issues enriched per run (default 3)
 #   AUTOPILOT_ENRICH_TIMEOUT  per-issue timeout in seconds (default 1800)
 #   AUTOPILOT_REPOS           array of allowlisted owner/name repos
+#   AUTOPILOT_GATES           assoc array, owner/name -> its test-gate workflow file
+#
+# Each allowlisted repo is declared as:
+#   repo=<owner/name>:<test-gate workflow file>
+# e.g.
+#   repo=freaxnx01/agent-action-sandbox:ci.yml
+#
+# The gate is named HERE, not in the consumer's own agent.yml: that reusable
+# workflow (.github/workflows/agent-implement.yml) does not declare a
+# `autopilot-test-gate` input, and GitHub Actions hard-fails a `workflow_call`
+# job on an undeclared input — so there is no legal place in a consumer
+# workflow to carry this key. The allowlist already lives host-side, so the
+# gate lives right next to it.
 #
 # With no argument, reads $AUTOPILOT_CONFIG, else
 # ~/.config/agent-workflow/autopilot.conf. The real file is host-local and not
@@ -30,6 +43,13 @@ load_autopilot_config() {
   AUTOPILOT_MAX_PER_RUN=3
   AUTOPILOT_ENRICH_TIMEOUT=1800
   AUTOPILOT_REPOS=()
+  # A bare `declare -A` here would be local to this function and vanish the
+  # moment it returns — `-g` is what makes it survive back to the caller that
+  # sourced this file, exactly like AUTOPILOT_REPOS does implicitly as a
+  # global array. Reset on every call so a second load can't inherit a stale
+  # entry from a prior one.
+  declare -gA AUTOPILOT_GATES
+  AUTOPILOT_GATES=()
 
   if [[ ! -r "$file" ]]; then
     printf 'error: config not readable: %s\n' "$file" >&2
@@ -71,11 +91,26 @@ load_autopilot_config() {
         AUTOPILOT_ENRICH_TIMEOUT="$value"
         ;;
       repo)
-        if ! [[ "$value" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
-          printf 'error: %s:%d: repo must be owner/name: %s\n' "$file" "$lineno" "$value" >&2
+        if [[ "$value" != *:* ]]; then
+          printf 'error: %s:%d: repo needs a :<test-gate workflow file>: %s\n' "$file" "$lineno" "$value" >&2
           return 1
         fi
-        AUTOPILOT_REPOS+=("$value")
+        local repo_name="${value%%:*}" gate="${value#*:}"
+        if ! [[ "$repo_name" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+          printf 'error: %s:%d: repo must be owner/name: %s\n' "$file" "$lineno" "$repo_name" >&2
+          return 1
+        fi
+        # ^[A-Za-z0-9._-]+\.ya?ml$ also closes a path-traversal hole: an
+        # unvalidated gate is interpolated straight into a
+        # repos/<repo>/actions/workflows/<gate>/runs API URL, so `../..`
+        # could point the gate lookup at another repo's green workflow.
+        if ! [[ "$gate" =~ ^[A-Za-z0-9._-]+\.ya?ml$ ]]; then
+          printf 'error: %s:%d: gate must be a bare workflow filename: %s\n' "$file" "$lineno" "$gate" >&2
+          return 1
+        fi
+        AUTOPILOT_REPOS+=("$repo_name")
+        # shellcheck disable=SC2034  # consumed by the caller after sourcing, not in this file
+        AUTOPILOT_GATES["$repo_name"]="$gate"
         ;;
       *)
         printf 'error: %s:%d: unknown key: %s\n' "$file" "$lineno" "$key" >&2

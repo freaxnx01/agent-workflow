@@ -2,8 +2,9 @@
 #
 # run-autopilot-eligible-tests.sh — Layer-1 fixture tests for
 # scripts/lib/autopilot-eligible.sh (no network, gh mocked). Asserts the
-# repo-eligibility gate: ai-review-ai-merge, autopilot-test-gate, and #263
-# (the gate must have at least one completed run).
+# repo-eligibility gate: ai-review-ai-merge, and #263 (the gate — now passed
+# in as an argument, named by the host's autopilot.conf — must have at least
+# one completed run).
 #
 # Usage: tests/run-autopilot-eligible-tests.sh
 # Exit codes: 0 all pass; 1 at least one assertion failed.
@@ -67,7 +68,7 @@ section "eligible"
 
 write_map "$FIX/agent-yml-good.yml" "$FIX/runs-one.json" "$TMPDIR_T/good.map"
 rc=0
-reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/good.map" repo_eligible o/r)" || rc=$?
+reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/good.map" repo_eligible o/r ci.yml)" || rc=$?
 assert_eq "all conditions met returns 0" "0" "$rc"
 case "$reason" in
   *eligible*) pass "reason says eligible" ;;
@@ -82,29 +83,18 @@ section "ai-review-ai-merge not set"
 
 write_map "$FIX/agent-yml-no-merge.yml" "$FIX/runs-one.json" "$TMPDIR_T/nomerge.map"
 rc=0
-reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/nomerge.map" repo_eligible o/r)" || rc=$?
+reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/nomerge.map" repo_eligible o/r ci.yml)" || rc=$?
 assert_eq "ai-review-ai-merge false returns 1" "1" "$rc"
 case "$reason" in
   *ai-review-ai-merge*) pass "reason names ai-review-ai-merge" ;;
   *) fail "reason names ai-review-ai-merge" "reason was: $reason" ;;
 esac
 
-section "no test gate declared"
-
-write_map "$FIX/agent-yml-no-gate.yml" "$FIX/runs-one.json" "$TMPDIR_T/nogate.map"
-rc=0
-reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/nogate.map" repo_eligible o/r)" || rc=$?
-assert_eq "missing autopilot-test-gate returns 1" "1" "$rc"
-case "$reason" in
-  *autopilot-test-gate*) pass "reason names autopilot-test-gate" ;;
-  *) fail "reason names autopilot-test-gate" "reason was: $reason" ;;
-esac
-
 section "test gate has never run"
 
 write_map "$FIX/agent-yml-good.yml" "$FIX/runs-none.json" "$TMPDIR_T/noruns.map"
 rc=0
-reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/noruns.map" repo_eligible o/r)" || rc=$?
+reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/noruns.map" repo_eligible o/r ci.yml)" || rc=$?
 assert_eq "zero completed runs returns 1" "1" "$rc"
 case "$reason" in
   *"never completed"*) pass "reason says the gate never ran" ;;
@@ -119,7 +109,7 @@ section "default branch unreadable"
   printf 'repos/o/r\t%s\n' "$FIX/repo-meta-no-branch.json"
 } > "$TMPDIR_T/nobranch.map"
 rc=0
-reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/nobranch.map" repo_eligible o/r)" || rc=$?
+reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/nobranch.map" repo_eligible o/r ci.yml)" || rc=$?
 assert_eq "missing default_branch returns 1" "1" "$rc"
 case "$reason" in
   *"could not read the default branch"*) pass "reason says the default branch could not be read" ;;
@@ -130,7 +120,7 @@ section "test gate total_count missing"
 
 write_map "$FIX/agent-yml-good.yml" "$FIX/runs-null.json" "$TMPDIR_T/nullruns.map"
 rc=0
-reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/nullruns.map" repo_eligible o/r)" || rc=$?
+reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/nullruns.map" repo_eligible o/r ci.yml)" || rc=$?
 assert_eq "missing total_count returns 1" "1" "$rc"
 case "$reason" in
   *"not found"*) pass "reason says the gate was not found" ;;
@@ -142,7 +132,7 @@ section "test gate does not exist"
 write_map "$FIX/agent-yml-good.yml" "$FIX/runs-one.json" "$TMPDIR_T/gate404.map"
 printf 'actions/workflows/\n' > "$TMPDIR_T/gate404.fail"
 rc=0
-reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/gate404.map" GH_MOCK_FAIL_MAP="$TMPDIR_T/gate404.fail" repo_eligible o/r)" || rc=$?
+reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/gate404.map" GH_MOCK_FAIL_MAP="$TMPDIR_T/gate404.fail" repo_eligible o/r ci.yml)" || rc=$?
 assert_eq "gate 404 returns 1" "1" "$rc"
 case "$reason" in
   *"not found"*) pass "reason says the gate was not found" ;;
@@ -153,7 +143,7 @@ section "no agent.yml at all (a genuine 404)"
 
 printf 'contents/.github/workflows/agent.yml\tHTTP 404: Not Found\n' > "$TMPDIR_T/noyml.fail"
 rc=0
-reason="$(GH_MOCK_FAIL_MAP="$TMPDIR_T/noyml.fail" repo_eligible o/r)" || rc=$?
+reason="$(GH_MOCK_FAIL_MAP="$TMPDIR_T/noyml.fail" repo_eligible o/r ci.yml)" || rc=$?
 assert_eq "no agent.yml returns 1" "1" "$rc"
 case "$reason" in
   *agent.yml*) pass "reason names the missing agent.yml" ;;
@@ -168,7 +158,7 @@ section "gh outage reading agent.yml (D5 — not the same as a missing file)"
 # itself, and sends whoever's debugging at 3am down the wrong path.
 printf 'contents/.github/workflows/agent.yml\n' > "$TMPDIR_T/outage.fail"
 rc=0
-reason="$(GH_MOCK_FAIL_MAP="$TMPDIR_T/outage.fail" repo_eligible o/r)" || rc=$?
+reason="$(GH_MOCK_FAIL_MAP="$TMPDIR_T/outage.fail" repo_eligible o/r ci.yml)" || rc=$?
 assert_eq "a gh outage returns 1" "1" "$rc"
 case "$reason" in
   *"eligibility check failed"*) pass "reason says the check failed, not that the file is missing" ;;

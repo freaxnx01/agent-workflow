@@ -55,21 +55,59 @@ assert_eq "enrich_timeout parsed" "900" "$AUTOPILOT_ENRICH_TIMEOUT"
 assert_eq "two repos parsed" "2" "${#AUTOPILOT_REPOS[@]}"
 assert_eq "first repo" "freaxnx01/agent-action-sandbox" "${AUTOPILOT_REPOS[0]}"
 assert_eq "trailing comment stripped" "freaxnx01/game-tschau-sepp" "${AUTOPILOT_REPOS[1]}"
+assert_eq "two gates parsed" "2" "${#AUTOPILOT_GATES[@]}"
+assert_eq "first repo's gate" "ci.yml" "${AUTOPILOT_GATES[freaxnx01/agent-action-sandbox]}"
+assert_eq "second repo's gate (trailing comment stripped)" "build.yml" "${AUTOPILOT_GATES[freaxnx01/game-tschau-sepp]}"
 
 section "defaults"
 
-printf 'repo=freaxnx01/agent-action-sandbox\n' > "$TMPDIR_T/minimal.conf"
+printf 'repo=freaxnx01/agent-action-sandbox:ci.yml\n' > "$TMPDIR_T/minimal.conf"
 rc=0; load_autopilot_config "$TMPDIR_T/minimal.conf" >/dev/null 2>&1 || rc=$?
 assert_eq "minimal config returns 0" "0" "$rc"
 assert_eq "max_per_run defaults to 3" "3" "$AUTOPILOT_MAX_PER_RUN"
 assert_eq "enrich_timeout defaults to 1800" "1800" "$AUTOPILOT_ENRICH_TIMEOUT"
 
+section "a second load does not inherit stale gates"
+
+# The prior section left AUTOPILOT_GATES holding both config-valid.conf repos.
+# A fresh load of a single-repo config must not still carry the other one —
+# that would prove AUTOPILOT_GATES was reset like AUTOPILOT_REPOS, not just
+# appended to.
+rc=0; load_autopilot_config "$TMPDIR_T/minimal.conf" >/dev/null 2>&1 || rc=$?
+assert_eq "reload after config-valid.conf returns 0" "0" "$rc"
+assert_eq "reload has exactly one gate" "1" "${#AUTOPILOT_GATES[@]}"
+assert_eq "reload's gate is the new repo's" "ci.yml" "${AUTOPILOT_GATES[freaxnx01/agent-action-sandbox]}"
+if [[ -v 'AUTOPILOT_GATES[freaxnx01/game-tschau-sepp]' ]]; then
+  fail "reload does not inherit the prior config's other repo" \
+    "still present: ${AUTOPILOT_GATES[freaxnx01/game-tschau-sepp]}"
+else
+  pass "reload does not inherit the prior config's other repo"
+fi
+
 section "refusals"
 
-for case_name in unknown-key bad-max bad-repo no-repos; do
+for case_name in unknown-key bad-max bad-repo no-repos no-gate bad-gate gate-traversal; do
   rc=0; load_autopilot_config "$FIX/config-$case_name.conf" >/dev/null 2>&1 || rc=$?
   assert_eq "$case_name returns 1" "1" "$rc"
 done
+
+err="$(load_autopilot_config "$FIX/config-no-gate.conf" 2>&1 >/dev/null || true)"
+case "$err" in
+  *"needs a :<test-gate workflow file>"*) pass "a repo with no gate names the problem" ;;
+  *) fail "a repo with no gate names the problem" "stderr was: $err" ;;
+esac
+
+err="$(load_autopilot_config "$FIX/config-bad-gate.conf" 2>&1 >/dev/null || true)"
+case "$err" in
+  *"gate must be a bare workflow filename"*) pass "a gate failing the filename pattern names the problem" ;;
+  *) fail "a gate failing the filename pattern names the problem" "stderr was: $err" ;;
+esac
+
+err="$(load_autopilot_config "$FIX/config-gate-traversal.conf" 2>&1 >/dev/null || true)"
+case "$err" in
+  *"gate must be a bare workflow filename"*) pass "a gate containing ../ is rejected" ;;
+  *) fail "a gate containing ../ is rejected" "stderr was: $err" ;;
+esac
 
 rc=0; load_autopilot_config "$FIX/does-not-exist.conf" >/dev/null 2>&1 || rc=$?
 assert_eq "missing file returns 1" "1" "$rc"
