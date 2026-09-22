@@ -283,7 +283,7 @@ main() {
     local candidates_out candidates_rc=0
     candidates_out="$(autopilot_candidates "$repo" "$remaining")" || candidates_rc=$?
     if (( candidates_rc != 0 )); then
-      log_repo "$repo" "skipped (eligibility check failed)"
+      log_repo "$repo" "skipped (candidate query failed)"
       continue
     fi
 

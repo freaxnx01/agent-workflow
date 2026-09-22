@@ -164,6 +164,37 @@ case "$out" in
   *) fail "the ineligible repo's skip is actually logged" "output was: $out" ;;
 esac
 
+section "a candidate query failure is distinct from an eligibility failure (R2)"
+
+# The repo passes repo_eligible (good agent.yml, a completed gate run) but
+# `gh issue list` itself fails. Before the fix this outcome and repo_eligible's
+# own "eligibility check failed (could not read agent.yml)" reason collapsed
+# onto the same phrase; they are unrelated failures and must log distinctly.
+{
+  printf 'contents/.github/workflows/agent.yml\t%s\n' "$FIX/agent-yml-good.yml"
+  printf 'actions/workflows/\t%s\n' "$FIX/runs-one.json"
+  printf 'repos/o/r\t%s\n' "$FIX/repo-meta.json"
+} > "$TMPDIR_T/gh-candfail.map"
+printf 'issue list\n' > "$TMPDIR_T/gh-candfail-fail.map"
+: > "$GH_MOCK_LOG"
+out="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/gh-candfail.map" GH_MOCK_FAIL_MAP="$TMPDIR_T/gh-candfail-fail.map" \
+  "$DRIVER" --config "$TMPDIR_T/ap.conf" --dry-run 2>&1)"
+case "$out" in
+  *"o/r skipped (candidate query failed)"*)
+    pass "a failed candidate query logs its own distinct outcome (R2)" ;;
+  *) fail "a failed candidate query logs its own distinct outcome (R2)" "output was: $out" ;;
+esac
+case "$out" in
+  *"eligibility check failed"*)
+    fail "the candidate-query outcome does not reuse the eligibility-check phrase (R2)" "output was: $out" ;;
+  *) pass "the candidate-query outcome does not reuse the eligibility-check phrase (R2)" ;;
+esac
+if grep -q 'issue edit' "$GH_MOCK_LOG"; then
+  fail "a candidate query failure never edits an issue" "$(grep 'issue edit' "$GH_MOCK_LOG")"
+else
+  pass "a candidate query failure never edits an issue"
+fi
+
 section "the run lock"
 
 # Hold the lock, then confirm a second run stands down instead of piling on.
@@ -391,24 +422,41 @@ else
   pass "a clone-sync failure touches no labels"
 fi
 
-section "non-allowlisted repos are never touched (Fix 10 / safety coverage)"
+section "non-allowlisted repos are never touched (Fix 10 / R1 safety coverage)"
 
 # The allowlist is the one gate that cannot be flipped from inside a consumer
-# repo (docs/AUTOPILOT.md). $TMPDIR_T/ap.conf allowlists o/r only, but the
-# mocked `gh` would happily answer for any repo asked — so the only thing
-# standing between "o/shadow" and being enriched is the driver actually
-# restricting its loop to AUTOPILOT_REPOS. Assert it never asks, never logs.
+# repo (docs/AUTOPILOT.md). $TMPDIR_T/ap.conf allowlists exactly one repo,
+# o/r. Asserting the log lacks a specific, otherwise-unreachable name (e.g.
+# "o/shadow", which appears in no fixture, no config and no mock) is vacuous
+# — no driver behaviour could ever make that string appear, so the assertion
+# can never fail. Instead extract every repo-identifying token the log
+# ACTUALLY contains — each `--repo <x>` value (issue list/view/edit) and each
+# `repos/<owner>/<name>` API path segment (the three `gh api` calls) — and
+# assert every single one names the allowlisted repo. A driver that iterated
+# any other repo at all, whatever its name, fails this.
 rm -rf "$AUTOPILOT_CACHE_DIR"; : > "$GH_MOCK_LOG"
-out="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/gh-clean.map" "$DRIVER" --config "$TMPDIR_T/ap.conf" --dry-run 2>&1)"
-if grep -q 'o/shadow' "$GH_MOCK_LOG"; then
-  fail "a non-allowlisted repo is never queried" "$(grep 'o/shadow' "$GH_MOCK_LOG")"
+"$DRIVER" --config "$TMPDIR_T/ap.conf" --dry-run >/dev/null 2>&1
+
+repo_tokens="$(
+  {
+    grep -oE -- '--repo [^ ]+' "$GH_MOCK_LOG" | awk '{print $2}'
+    grep -oE 'repos/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+' "$GH_MOCK_LOG" | sed 's#^repos/##'
+  } | sort -u
+)"
+
+if [[ -n "$repo_tokens" ]]; then
+  pass "the run actually named at least one repo (the check has teeth)"
 else
-  pass "a non-allowlisted repo is never queried"
+  fail "the run actually named at least one repo (the check has teeth)" "GH_MOCK_LOG had no repo tokens at all"
 fi
-case "$out" in
-  *"o/shadow"*) fail "a non-allowlisted repo is never logged" "output was: $out" ;;
-  *) pass "a non-allowlisted repo is never logged" ;;
-esac
+
+bad_tokens="$(printf '%s\n' "$repo_tokens" | grep -v '^o/r$' || true)"
+if [[ -z "$bad_tokens" ]]; then
+  pass "every repo token in the log is the allowlisted repo"
+else
+  fail "every repo token in the log is the allowlisted repo" "unexpected repos: $bad_tokens"
+fi
+
 if grep -q 'issue edit' "$GH_MOCK_LOG"; then
   fail "a dry run touching only the allowlist writes nothing" "$(grep 'issue edit' "$GH_MOCK_LOG")"
 else
