@@ -33,7 +33,7 @@ fail *quietly*.
 | 3 | `az boards area project list --query '[].name'` returns nothing — object-wrapped | high |
 | 4 | `az boards iteration project list --query '[].{...}'` returns nothing — same cause | high |
 | 5 | Step 2's example hardcodes closed states that Step 1 exists to derive | high |
-| 6 | `resolve_azdo_context` mis-parses `ssh://host:PORT/v3/...` | medium |
+| 6 | `resolve_azdo_context` misparses `ssh://host:PORT/v3/...` | medium |
 
 ---
 
