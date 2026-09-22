@@ -119,6 +119,27 @@ log() { printf '%s %s\n' "$(now)" "$1" || handle_sigpipe; }
 log_repo() { printf '%s %s %s\n' "$(now)" "$1" "$2" || handle_sigpipe; }
 log_issue() { printf '%s %s#%s %s\n' "$(now)" "$1" "$2" "$3" || handle_sigpipe; }
 
+# Ensures the labels dispatch and escalation depend on — ai-implement,
+# ai-review-ai-merge, needs-human, and the rest of ensure-issue-labels.sh's
+# registry — exist on $1 before this repo's first dispatch this run. That
+# script's own create() already treats "label exists" as success (a
+# per-label `gh label create` failure is swallowed by design, so a
+# consumer's customized color survives unchanged), so calling it once per
+# eligible repo with candidates is safe and cheap next to the nested session
+# it gates.
+#
+# Because per-label failures are swallowed inside ensure-issue-labels.sh,
+# this can only ever fail for something that breaks the whole call — REPO
+# unset, the script missing or unreadable, the shell dying unexpectedly.
+# That is exactly what must stop THIS repo cold: proceeding to enrich an
+# issue we then cannot label is the live #380 failure — a paid nested
+# session spent on an issue that comes back enriched with zero labels and no
+# human flagged.
+ensure_repo_labels() {
+  local repo="$1"
+  REPO="$repo" bash "$ROOT/scripts/ensure-issue-labels.sh" >/dev/null 2>&1
+}
+
 # Holds the lock for the life of the process via fd 9. In the driver rather
 # than the unit on purpose: this protects a manual shell run as well as a timer
 # run, and systemd knows nothing about the former.
@@ -303,6 +324,16 @@ main() {
     fi
     if (( ${#issues[@]} == 0 )); then
       log_repo "$repo" "no candidates"
+      continue
+    fi
+
+    # Bootstrap the pipeline's own labels before the first dispatch write of
+    # this repo this run (#380) — never in --dry-run, which must make no
+    # `gh label create` call at all, only say what it would ensure.
+    if (( DRY_RUN )); then
+      log_repo "$repo" "dry-run: would ensure pipeline labels exist, no gh calls made"
+    elif ! ensure_repo_labels "$repo"; then
+      log_repo "$repo" "skipped (label ensure failed)"
       continue
     fi
 

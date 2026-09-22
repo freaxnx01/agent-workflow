@@ -282,8 +282,12 @@ case "$edits" in
   *"--add-label ai-implement,ai-review-ai-merge"*) pass "both labels in one call (#365)" ;;
   *) fail "both labels in one call (#365)" "edits were: $edits" ;;
 esac
-if grep -q 'enrichment-ongoing' "$GH_MOCK_LOG"; then
-  fail "the driver never touches enrichment-ongoing on success" "$(grep enrichment-ongoing "$GH_MOCK_LOG")"
+# Scoped to 'issue edit' lines (not the whole log, #380): ensure-issue-labels.sh
+# creates an enrichment-ongoing LABEL as part of bootstrapping the repo's
+# label registry, which legitimately puts the substring in the log — the
+# thing under test is that the driver's own issue-edit writes never touch it.
+if grep 'issue edit' "$GH_MOCK_LOG" | grep -q 'enrichment-ongoing'; then
+  fail "the driver never touches enrichment-ongoing on success" "$(grep 'issue edit' "$GH_MOCK_LOG")"
 else
   pass "the driver never touches enrichment-ongoing on success"
 fi
@@ -371,7 +375,10 @@ case "$out" in
   *"o/r#41 needs-human"*) pass "needs-human is logged" ;;
   *) fail "needs-human is logged" "output was: $out" ;;
 esac
-if grep -q 'ai-implement' "$GH_MOCK_LOG"; then
+# Scoped to 'issue edit' lines (not the whole log, #380): ensure-issue-labels.sh
+# creates the ai-implement LABEL as part of bootstrapping the repo's label
+# registry, which legitimately puts the substring in the log.
+if grep 'issue edit' "$GH_MOCK_LOG" | grep -q 'ai-implement'; then
   fail "needs-human withholds ai-implement" "$(grep 'issue edit' "$GH_MOCK_LOG")"
 else
   pass "needs-human withholds ai-implement"
@@ -393,7 +400,10 @@ case "$edits" in
   *) fail "a failed session releases the lock" "edits were: $edits" ;;
 esac
 assert_eq "the failure escalation is a single call" "1" "$(printf '%s\n' "$edits" | grep -c 'issue edit')"
-if grep -q 'ai-implement' "$GH_MOCK_LOG"; then
+# Scoped to $edits (already filtered to 'issue edit' lines, #380): the
+# ai-implement LABEL created by ensure-issue-labels.sh's bootstrap
+# legitimately puts the substring elsewhere in the raw log.
+if printf '%s\n' "$edits" | grep -q 'ai-implement'; then
   fail "a failed session withholds ai-implement" "$edits"
 else
   pass "a failed session withholds ai-implement"
@@ -405,6 +415,57 @@ case "$out" in
   *"timed out"*) pass "a timeout is logged as a timeout, not a bare exit code" ;;
   *) fail "a timeout is logged as a timeout, not a bare exit code" "output was: $out" ;;
 esac
+
+section "ensure-issue-labels wiring (#380)"
+
+# --- 1. --dry-run makes NO `gh label create` call at all. A dry run that
+#     mutates the target repo is a defect (issue #380, non-negotiable). ---
+rm -rf "$AUTOPILOT_CACHE_DIR"; : > "$GH_MOCK_LOG"
+"$DRIVER" --config "$TMPDIR_T/ap.conf" --dry-run >/dev/null 2>&1
+if grep -q 'label create' "$GH_MOCK_LOG"; then
+  fail "a dry run creates no labels (#380)" "$(grep 'label create' "$GH_MOCK_LOG")"
+else
+  pass "a dry run creates no labels (#380)"
+fi
+
+# --- 2. a real run ensures labels before the first dispatch write, in log
+#     order — not just "both happened somewhere in the run". ---
+rm -rf "$AUTOPILOT_CACHE_DIR"; : > "$GH_MOCK_LOG"; : > "$ENRICH_STUB_LOG"
+GH_MOCK_STDOUT_MAP="$TMPDIR_T/gh-clean.map" run_driver >/dev/null 2>&1
+label_line="$(grep -n 'label create ai-implement --repo o/r' "$GH_MOCK_LOG" | head -1 | cut -d: -f1)" || true
+edit_line="$(grep -n 'issue edit' "$GH_MOCK_LOG" | head -1 | cut -d: -f1)" || true
+if [[ -n "$label_line" && -n "$edit_line" ]] && (( label_line < edit_line )); then
+  pass "labels are ensured before the first dispatch write (#380)"
+else
+  fail "labels are ensured before the first dispatch write (#380)" \
+    "label_line=${label_line:-<missing>} edit_line=${edit_line:-<missing>}"
+fi
+
+# --- 3. a label-ensure failure skips the repo with its own outcome, and
+#     never reaches the (paid) enrich session or a dispatch write. Forced by
+#     sourcing the driver and stubbing ensure_repo_labels — the real
+#     ensure-issue-labels.sh only fails outright on REPO being unset, which
+#     the driver always sets correctly, so this is the only way to exercise
+#     the failure branch (same technique as Fix 5's issue_label_state stub
+#     above). ---
+rm -rf "$AUTOPILOT_CACHE_DIR"; : > "$GH_MOCK_LOG"; : > "$ENRICH_STUB_LOG"
+out="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/gh-clean.map" bash -c '
+  set -euo pipefail
+  source "'"$DRIVER"'"
+  ensure_repo_labels() { return 1; }
+  main --config "'"$TMPDIR_T"'/ap.conf" --max 1
+' 2>&1)"
+case "$out" in
+  *"o/r skipped (label ensure failed)"*)
+    pass "a label-ensure failure logs its own distinct outcome (#380)" ;;
+  *) fail "a label-ensure failure logs its own distinct outcome (#380)" "output was: $out" ;;
+esac
+assert_eq "a label-ensure failure never runs the (paid) enrich session (#380)" "" "$(cat "$ENRICH_STUB_LOG")"
+if grep -q 'issue edit' "$GH_MOCK_LOG"; then
+  fail "a label-ensure failure dispatches nothing (#380)" "$(grep 'issue edit' "$GH_MOCK_LOG")"
+else
+  pass "a label-ensure failure dispatches nothing (#380)"
+fi
 
 # --- a clone that cannot be synced ---
 printf 'max_per_run=1\nrepo=o/missing:ci.yml\n' > "$TMPDIR_T/ap-missing.conf"
