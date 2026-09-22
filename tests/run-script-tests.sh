@@ -2894,6 +2894,10 @@ assert_not_contains "$log" 'label create ai-pre-preview'  "does not create depre
 # Outcome label (auto-review epic #3 — ADR-002 §2)
 assert_contains "$log" 'label create ai:review-blocked --repo owner/repo' "creates ai:review-blocked"
 
+# The PR's required checks could not start — distinct from ai:review-blocked,
+# which means the reviewer ran and refused to promote (#364).
+assert_contains "$log" 'label create ai:checks-blocked --repo owner/repo' "creates ai:checks-blocked"
+
 # Coordination labels (read/written by /enrich's concurrency lock; needs-human
 # written by the unattended /autopilot escalation lane)
 assert_contains "$log" 'label create enrichment-ongoing --repo owner/repo' "creates enrichment-ongoing"
@@ -3490,6 +3494,38 @@ for name in detect-forge.sh parse-enrich-args.sh; do
 done
 
 rm -rf "$fake_home"
+
+section "checks-blocked warning (#364)"
+
+# Reuses the existing success fixture: a blocked run is still a SUCCESSFUL run,
+# so the outcome must not change. That is the regression this guards.
+out="$(CHECKS_RUNNABLE=false CHECKS_BLOCKED_REASON=no-app-token \
+  render_only result-success-cheap.json)"
+assert_contains "$out" 'Required checks could not run'  "blocked → warning block rendered"
+assert_contains "$out" 'PIPELINE_APP_ID'                "blocked → names the unset secret"
+assert_contains "$out" 'docs/PIPELINE-APP-SETUP.md'     "blocked → points at the runbook"
+assert_contains "$out" 'ai:checks-blocked'              "blocked → label in LABELS line"
+assert_contains "$out" 'LABELS: ai:done'                "blocked → outcome STILL ai:done"
+
+out="$(CHECKS_RUNNABLE=false CHECKS_BLOCKED_REASON=rollup-empty \
+  render_only result-success-cheap.json)"
+assert_contains "$out" 'pipeline App token was minted' "rollup-empty → different wording"
+assert_contains "$out" 'ai:checks-blocked'               "rollup-empty → label present"
+
+out="$(CHECKS_RUNNABLE=true render_only result-success-cheap.json)"
+assert_not_contains "$out" 'Required checks could not run' "runnable → no warning block"
+assert_not_contains "$out" 'ai:checks-blocked'             "runnable → no label"
+
+out="$(render_only result-success-cheap.json)"
+assert_not_contains "$out" 'Required checks could not run' "unset → no warning block"
+assert_not_contains "$out" 'ai:checks-blocked'             "unset → no label"
+
+# The blocked label is additive, so it must not displace the context label the
+# same run earns — labels_csv() was rewritten to build the list incrementally.
+out="$(CHECKS_RUNNABLE=false CHECKS_BLOCKED_REASON=no-app-token \
+  render_only result-success-cheap.json exec-high-context.ndjson)"
+assert_contains "$out" 'LABELS: ai:done,ctx:high,ai:checks-blocked' \
+  "blocked + high context → all three labels, outcome first"
 
 # --- summary ----------------------------------------------------------------
 

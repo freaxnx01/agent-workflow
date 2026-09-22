@@ -24,9 +24,13 @@
 #                the task-count heuristic; `gh issue edit --add-label` fails
 #                outright on a label that does not exist, so the documented
 #                override is unusable until these are created
-#   outcome    ai:review-blocked
-#              — written by either review job (ADR-002, epic #3) when
-#                the safety envelope or verdict leaves the PR draft
+#   outcome    ai:review-blocked, ai:checks-blocked
+#              — ai:review-blocked is written by either review job (ADR-002,
+#                epic #3) when the safety envelope or verdict leaves the PR
+#                draft. ai:checks-blocked is written by post-run-report.sh when
+#                the PR itself is fine but its required status checks could not
+#                start (#364) — a different problem with a different remedy,
+#                so it gets a different label
 #   coordination enrichment-ongoing, needs-human
 #              — enrichment-ongoing is read/written by /enrich (Step 1.5 / 2.5 / 6)
 #                to prevent two sessions from concurrently enriching the same issue.
@@ -90,6 +94,11 @@ create turns:120 5319E7 'Override the agent turn budget to 120 (classify-turns.s
 create turns:160 5319E7 'Override the agent turn budget to 160 (classify-turns.sh stage 1)'
 
 create ai:review-blocked D73A4A 'Auto-review left the PR draft; human action required'
+
+# Two blocked states, deliberately distinct:
+#   ai:review-blocked  — the reviewer RAN and refused to promote the PR
+#   ai:checks-blocked  — the PR is fine; its required checks cannot run (#364)
+create ai:checks-blocked D73A4A 'Required checks cannot run on the pipeline PR'
 
 create enrichment-ongoing FBCA04 'Another /enrich session is actively enriching this issue — do not start a second one'
 create needs-human D93F0B 'Autopilot could not decide this unattended — a human must resolve it'
