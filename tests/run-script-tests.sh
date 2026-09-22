@@ -3215,6 +3215,64 @@ out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=mai
 assert_contains "$out" 'recovered=true'    "pushed branch → ordinary recovery"
 assert_contains "$out" 'salvaged=false'    "pushed branch → not a salvage"
 
+# --- pr-number output (#364) ------------------------------------------------
+
+# The checks probe needs a PR number. Without one it exits 2 and — carrying
+# continue-on-error — fails silently, which is the very class of bug #364 is
+# about. So assert on the script's own stdout, which is unambiguously its
+# emit(): find-pipeline-pr.sh inherits GITHUB_OUTPUT and writes a pr-number
+# there too, so the file alone could not tell the two apart.
+verify_stdout() {
+  local log; log="$(mktemp)"
+  GH_MOCK_LOG="$log" PATH="$MOCKS:$PATH" "$@" bash "$VERIFY" 2>/dev/null || true
+  rm -f "$log"
+}
+# Last wins, which is how GitHub Actions itself resolves a repeated output key.
+last_output_value() {
+  sed -n "s/^$2=//p" "$1" | tail -1
+}
+
+out="$(verify_stdout env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false \
+        PIPELINE_PRS_JSON='[{"number":123,"isDraft":true,"headRefName":"fix/42-x","author":{"login":"app/github-actions"},"headRefOid":"abc123","body":"Closes #42"}]')"
+assert_contains "$out" 'pr-present=true'   "found PR → pr-present=true"
+assert_contains "$out" 'pr-number=123'     "found PR → pr-number on stdout"
+
+go_found="$(mktemp)"; : > "$go_found"
+verify_stdout env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false GITHUB_OUTPUT="$go_found" \
+        PIPELINE_PRS_JSON='[{"number":123,"isDraft":true,"headRefName":"fix/42-x","author":{"login":"app/github-actions"},"headRefOid":"abc123","body":"Closes #42"}]' >/dev/null
+assert_equals "$(last_output_value "$go_found" pr-number)" "123" \
+  "found PR → pr-number in GITHUB_OUTPUT"
+
+# A genuine agent failure reports no PR, so the number must be empty, not stale.
+go_err="$(mktemp)"; : > "$go_err"
+out="$(verify_stdout env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=true GITHUB_OUTPUT="$go_err")"
+assert_contains "$out" 'pr-number='        "agent failure → pr-number key still emitted"
+assert_not_contains "$out" 'pr-number=123' "agent failure → no stale number"
+assert_equals "$(last_output_value "$go_err" pr-number)" "" \
+  "agent failure → GITHUB_OUTPUT pr-number is empty"
+
+# Recovery opened the PR: the number comes from the URL `gh pr create` printed.
+pr_url_map="$(mktemp)"; pr_url_fixture="$(mktemp)"
+printf 'https://github.com/o/r/pull/456\n' > "$pr_url_fixture"
+printf 'pr create\t%s\n' "$pr_url_fixture" > "$pr_url_map"
+out="$(verify_stdout env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        GH_MOCK_STDOUT_MAP="$pr_url_map")"
+assert_contains "$out" 'recovered=true'    "recovery → recovered=true"
+assert_contains "$out" 'pr-number=456'     "recovery → pr-number parsed from the created PR's URL"
+
+# `gh pr create` failing prints prose, not a URL. Reporting a fragment of it as
+# a PR number would send the probe at a nonexistent PR.
+ctr_num="$(mktemp)"; : > "$ctr_num"
+out="$(verify_stdout env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        GH_RETRY_SLEEP_CMD=: GH_RETRY_NO_JITTER=1 \
+        GH_MOCK_PR_CREATE_FAIL_TIMES=9 GH_MOCK_PR_CREATE_CTR="$ctr_num" \
+        GH_MOCK_PR_CREATE_STDERR='not permitted to create or approve pull requests')"
+assert_contains "$out" 'pr-present=false'  "failed pr create → pr-present=false"
+assert_contains "$out" 'pr-number='        "failed pr create → pr-number key emitted"
+assert_not_contains "$out" 'pr-number=not' "failed pr create → error prose is not a PR number"
+
 section "check-attempt-cap — stop redispatching an issue forever"
 
 CAP="$ROOT/scripts/check-attempt-cap.sh"
