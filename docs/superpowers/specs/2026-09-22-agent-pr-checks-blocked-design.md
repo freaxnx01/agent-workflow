@@ -79,8 +79,7 @@ Runs after the PR is known to exist, alongside `verify-or-recover-pr.sh`.
 Required env: PR_NUMBER
 Optional env: REPO (default $GITHUB_REPOSITORY), APP_TOKEN_CONFIGURED
               (the workflow passes `${{ env.PIPELINE_APP_ID != '' }}`),
-              POLL_INTERVAL (default 10), POLL_TIMEOUT (default 120),
-              PR_CHECKS_JSON (test seam)
+              POLL_INTERVAL (default 10), POLL_TIMEOUT (default 120)
 
 Outputs (stdout, and GITHUB_OUTPUT when set):
   checks-runnable=true|false
@@ -106,6 +105,16 @@ actions:
   Action: configure the App.
 - `rollup-empty` — the App *was* configured and checks still did not start.
   Action: unknown; investigate.
+
+### Component 2b — `verify-or-recover-pr.sh` must report the PR number
+
+The probe needs a PR number, and `verify-or-recover-pr.sh` does not emit one
+today — its documented outputs are `found`, `pr-present`, `recovered`,
+`salvaged`. It gains `pr-number`, empty when there is no PR.
+
+Without it the probe step receives an empty `PR_NUMBER`, exits 2, and — because
+the step carries `continue-on-error` — fails silently: the exact class of bug
+this issue is about.
 
 ### Component 3 — reporting through `post-run-report.sh`
 
@@ -177,6 +186,8 @@ would turn a diagnostic into a failure.
       downgrades a successful implementation
 - [ ] `docs/PIPELINE-APP-SETUP.md` exists and is linked from the warning, the
       run report, and `docs/CONSUMER-SETUP.md`
+- [ ] `verify-or-recover-pr.sh` reports `pr-number`, empty rather than stale
+      when no PR exists
 - [ ] `actionlint` and `shellcheck -x` pass; Layer-1 suites green in <5s
 
 ## Out of scope
