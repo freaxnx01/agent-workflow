@@ -300,6 +300,27 @@ For each: run without `--query` first, record the shape, then confirm the path.
       filed as issue #246.
 - [ ] Pipeline review-agent mid-run timeout on round 4 — filed as issue #247.
 
+## Worktree/branch cleanup (2026-09-22) — one unlanded doc left parked
+
+Swept the repo: 11 local branches, 11 remote branches and 3 worktrees removed
+(all verified content-landed first), and `delete_branch_on_merge` turned **on**
+so merged heads stop accumulating on `origin`.
+
+- [ ] **`worktree-div` holds work that has never landed.** The branch is back —
+      the 2026-08-18 entry below records removing it after confirming its single
+      commit was a duplicate, but `origin/worktree-div` was never deleted, so a
+      later fetch recreated the local branch on top of *different* commits. It
+      now carries `3e3e4a7 docs(planning): add issue prioritization algorithm
+      handover`, whose `docs/ai-notes/issue-prioritization-algorithm.md` (168
+      lines) is **not on `main` under that or any other name** — checked by
+      content and by a rename grep. Its other two commits landed via PR #115.
+      Decide: PR the doc, or delete branch + remote as genuinely abandoned.
+      Kept deliberately in this sweep; it is the only survivor with unlanded work.
+- [ ] **The recurrence is the real lesson** — deleting a local branch while
+      leaving its remote means the next `git fetch` resurrects it. Cleanup has to
+      take both sides, which is what the 2026-09-22 sweep did and 2026-08-18 did
+      not.
+
 ## Worktrees (status as of 2026-08-18)
 
 - [x] `.worktrees/div` (branch `worktree-div`) — removed. Its 1 local commit
