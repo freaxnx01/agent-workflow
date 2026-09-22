@@ -231,6 +231,13 @@ App* (triggers required checks; stable bot login). To enable:
 When `PIPELINE_APP_ID` is unset the workflow mints nothing and falls back to
 `GITHUB_TOKEN` (the draft-PR-only posture) — so this is a no-op until you opt in.
 
+**Optional but recommended:** `PIPELINE_APP_ID` + `PIPELINE_APP_PRIVATE_KEY`.
+Without them the pipeline's PRs are authored by `github-actions` and their
+required checks stall awaiting manual approval — the PR then satisfies no
+required check and sits `BLOCKED` (#364). Each such run says so on the issue
+(`ai:checks-blocked` plus a warning block in the run report). Step-by-step
+runbook: [`PIPELINE-APP-SETUP.md`](PIPELINE-APP-SETUP.md).
+
 > ⚠️ **Experimental:** the App-token path is wired and falls back safely, but has
 > not yet been verified end-to-end against a real installed App.
 

@@ -104,6 +104,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runner's toolchain is unmet, as distinct from `ai:review-blocked`, where the
   reviewer ran and refused to promote the PR. Previously a toolchain failure
   aborted the job and posted nothing at all (#384).
+- **pipeline:** a run whose PR cannot get its required checks to run now says
+  so — a warning at job start when `PIPELINE_APP_ID` is unset, a bounded probe
+  of the PR's `statusCheckRollup` after it opens, an `ai:checks-blocked` label,
+  and a warning block in the run report naming the remedy. Previously a stalled
+  PR was indistinguishable from a finished one (#364).
+- **docs:** `docs/PIPELINE-APP-SETUP.md` — operator runbook for configuring the
+  pipeline GitHub App, which is what actually lets those checks run.
 - **autopilot:** unattended enrich lane — `/autopilot` and
   `scripts/autopilot.sh` quick-enrich `needs-enrichment` issues in allowlisted
   repos and dispatch the clean ones, on a systemd timer, escalating anything
