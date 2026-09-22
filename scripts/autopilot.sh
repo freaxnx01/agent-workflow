@@ -29,8 +29,11 @@
 #
 # Exit codes:
 #   0  ran (including "disabled" and "already running" — neither is an error)
-#   1  SIGPIPE after at least one write — a truncated run that already
-#      mutated something (a clean, no-write SIGPIPE still exits 0)
+#   1  a closed stdout after at least one write — a truncated run that
+#      already mutated something. Two routes land here: the process gets
+#      SIGPIPE (the PIPE trap), or a `printf` log write hits EPIPE directly
+#      and returns non-zero without the process ever taking the signal (a
+#      clean, no-write closed stdout still exits 0 either way)
 #   2  usage error
 #   3  missing dependency
 #   4  config invalid or unreadable
@@ -105,9 +108,16 @@ require_tools() {
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
-log() { printf '%s %s\n' "$(now)" "$1"; }
-log_repo() { printf '%s %s %s\n' "$(now)" "$1" "$2"; }
-log_issue() { printf '%s %s#%s %s\n' "$(now)" "$1" "$2" "$3"; }
+# The `printf` builtin can fail on a closed stdout (EPIPE) without the
+# process ever taking a SIGPIPE signal — bash still delivers the signal, but
+# the write() call underneath printf can return the error synchronously
+# first, and printf reports "write error: Broken pipe" and returns non-zero.
+# That would otherwise hit `set -e` and die with an unhandled status instead
+# of the documented 0/1 contract, so every log write routes a failed printf
+# into the same handler the PIPE trap uses.
+log() { printf '%s %s\n' "$(now)" "$1" || handle_sigpipe; }
+log_repo() { printf '%s %s %s\n' "$(now)" "$1" "$2" || handle_sigpipe; }
+log_issue() { printf '%s %s#%s %s\n' "$(now)" "$1" "$2" "$3" || handle_sigpipe; }
 
 # Holds the lock for the life of the process via fd 9. In the driver rather
 # than the unit on purpose: this protects a manual shell run as well as a timer
