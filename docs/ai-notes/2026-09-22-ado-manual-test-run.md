@@ -299,6 +299,7 @@ new behaviours worth documenting, and §3 is now hardened from "supported" to
 | # | Finding | Severity |
 |---|---|---|
 | 7 | `🧊 parked` is **impossible** as an ADO tag — `TF401407`. Emoji are rejected outright | blocker for the cross-forge convention |
+| 7b | WIQL `CONTAINS` on tags is **whole-tag**, not substring — the section's stated "cost" does not exist | medium |
 | 8 | `--fields "System.Tags=…"` **appends**; it cannot replace or clear tags | medium |
 | 9 | Tags are stored `; `-separated (semicolon **and space**) | low |
 | 3+ | Basic's derived closed set **differs** from bossDMS's — hardcoding is provably wrong | upgrades Finding 5 |
@@ -335,6 +336,36 @@ consequence is one the section does not mention and should:
 
 Good news for the query itself: bare-word matching **works**. With `parked` and
 `roadmap` applied, `NOT CONTAINS` filtered exactly as intended (below).
+
+## Finding 7b — WIQL `CONTAINS` on tags is **whole-tag**, so the stated "cost" is fiction
+
+The section defends bare-word matching by naming a tradeoff:
+
+> The cost is that a tag merely *containing* "parked" would also be dropped —
+> acceptable, since the convention is exactly one parked tag.
+
+Tested directly, with three near-miss tags spread over two work items:
+
+| Work item | Tags | `CONTAINS 'parked'` |
+|---|---|---|
+| #2 | `parked; roadmap; übung` | **matched** |
+| #3 | `parked-later; parkedx; roadmap` | not matched |
+| #4 | `alpha; beta; unparked` | not matched |
+
+```
+CONTAINS 'parked'        → [2]          ← only the exact tag
+NOT CONTAINS 'parked'    → [1, 3, 4]
+CONTAINS 'parked-later'  → [3]          ← exact match on the longer tag works too
+```
+
+Despite its name, WIQL's `CONTAINS` on `System.Tags` matches **whole tags**, not
+substrings within a tag — `unparked`, `parkedx` and `parked-later` are all
+untouched by a `parked` filter.
+
+So the caveat should be **deleted, not reworded**: there is no false-positive
+risk, and the convention does not depend on there being "exactly one parked tag".
+Combined with Finding 7 (the emoji cannot exist at all), the entire rationale
+paragraph in the section is describing a problem that does not exist on this forge.
 
 ## Finding 8 — `System.Tags` on update appends, and cannot clear
 

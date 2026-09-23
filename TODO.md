@@ -82,6 +82,29 @@ Reasoning and caveats are in **ADR-012**; these are the follow-ups it names.
 
 ## Azure DevOps — manual test plan (needs a live org; nothing here can be faked)
 
+> **RUN 2026-09-22/23 — every section has now met a live organization.**
+> Read pass against `bossinfo`; write pass (§7–§9) against a purpose-made
+> `agent-workflow-sandbox` project (Basic template) in the personal org
+> `AndreasImboden0022`, which is **left in place** so a fix can be verified.
+> Full results, per checkbox, in
+> [`docs/ai-notes/2026-09-22-ado-manual-test-run.md`](docs/ai-notes/2026-09-22-ado-manual-test-run.md).
+>
+> | Section | Outcome |
+> |---|---|
+> | §1 detection | pass, except `ssh://host:PORT/v3/…` → **#387** |
+> | §2 auth failure | pass — errors in 0s, no hang |
+> | §3 metadata | **pass, and proven** across two genuinely different templates |
+> | §4 WIQL | **fails** — `az boards query` returns 0 bytes → **#386** |
+> | §5 `--query` paths | 2 of 4 wrong (both classification-node listings) → **#386** |
+> | §6 area guard | works, but a miss **errors** (`TF51011`) rather than returning empty → **#386** |
+> | §7 WIP derivation | **pass** |
+> | §8 tags | **cannot pass as written** — emoji tags are rejected by the server |
+> | §9 iterations | **pass** — the `--depth` trap is real |
+> | §10 guards | pass, verified by inspection |
+>
+> The remaining unchecked boxes below are left as the original specification;
+> the table above and the note are the authoritative result.
+
 Everything below is what `--help` and the fixture tests **cannot** reach. The unit
 tests cover remote-URL parsing only; they build throwaway repos and never call
 `az`. So treat every JSON shape, WIQL clause and `--query` path in `/issues`'
@@ -176,9 +199,14 @@ For each: run without `--query` first, record the shape, then confirm the path.
 
 ### 8. Tags
 
-- [ ] Tag a work item `🧊 parked` → it drops out. This is the real test of the
-      deliberate decision to match the bare word `parked`: confirm `CONTAINS
-      'parked'` matches a tag whose stored value carries the emoji.
+- [!] **CANNOT PASS** — tag a work item `🧊 parked`. Azure DevOps **rejects emoji
+      in tag names** (`TF401407`), with or without the space, while non-ASCII such
+      as `übung` is fine. The tag cannot be created, so the question is void rather
+      than answered. ADO must use a bare `parked`; the convention is **not**
+      portable across forges. Separately, WIQL `CONTAINS` on tags turns out to be
+      **whole-tag**, not substring (`unparked`, `parkedx`, `parked-later` are all
+      untouched by a `parked` filter) — so the section's stated "cost" of bare-word
+      matching does not exist either. Both feed **#386**.
 - [ ] Tag another `roadmap` → it drops out.
 - [ ] Write tags via `--fields "System.Tags=a;b"` (semicolon-delimited) and
       confirm both land — `work-item create` has no `--tags` flag.
