@@ -446,16 +446,24 @@ clause to the step-2 query:
 
 ```bash
 az boards iteration project list --org "$org_url" --project "$AZDO_PROJECT" \
-  --depth 3 --output json --query '[].{name:name,path:path}'
+  --depth 3 --output json --only-show-errors --query 'children[].{name:name,path:path}'
 ```
 
 ```text
 AND [System.IterationPath] UNDER '<resolved iteration path>'
 ```
 
+`children[]`, not a top-level `[]`, for the same reason as the area listing in
+step 3: the response is a single object, so `'[].{…}'` silently returns nothing.
+`children` is `null` on a project with no iterations, so ``length(children)``
+errors — `children[]` yields nothing instead.
+
 `--depth` defaults to 1 here too, and **iterations nest** — unlike a flat GitHub
 milestone — so a depth-1 listing hides the sprints that actually hold work items.
-Match the argument against the leaf **name**, but filter on the full **path**.
+Verified: with `Sprint 1\Week A` present, both `--depth 1` **and the default**
+report `Sprint 1` as having no children, while `--depth 2` and `--depth 3` show
+`Week A`. Match the argument against the leaf **name**, but filter on the full
+**path**.
 
 Show a compact table — id, title, **iteration + finish date**, tags, age (relative), author. Render a work item with no iteration as `no milestone` rather than a blank column, so the column reads the same as on the other forges. No preamble. If there are none, just say so — and when an iteration was in scope, say which one, so "none" doesn't read as "nothing anywhere".
 
