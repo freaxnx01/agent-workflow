@@ -142,6 +142,30 @@ Two properties worth noting, both visible here and not in the tables below:
 | **claude-code-plugins** | GH private | Distribution | Personal (non-public) plugin marketplace. Counterpart to `agent-skills`. |
 | **config** | GH public | Machine setup | Shell, oh-my-posh prompt, Windows tooling. **No Claude content** — that all lives in `agent-workflow`. |
 
+### Factory repos are implemented by Claude
+
+Every repo in the table above runs `agent: claude` in its `agent.yml`, not the
+cheap fleet default. These are the tooling every other repo's pipeline runs on,
+so a bad implementation here propagates to every consumer rather than staying in
+one product. The measurement behind the fleet default (#294 — `glm-5.2` shipped
+15 of 18 runs at $4.25, against 59% for `claude-opus-4-7` at $181.70) still holds
+for **product** repos; it just isn't the trade to make on the factory itself.
+
+Two traps when setting this on a consumer:
+
+- **`agent:` defaults to `opencode`** in the reusable workflow. Setting only
+  `default-model: claude-sonnet-5` without `agent: claude` asks for a Claude
+  model from the opencode runner.
+- **Omitting `OPENROUTER_API_KEY` looks like it works.** `classify-agent.sh`'s
+  credential guard falls back to Claude when the key is absent, so a repo can
+  run Claude by accident and flip to the fleet default the moment that secret is
+  added for any reason. Declare `agent: claude` explicitly rather than relying on
+  a missing credential.
+
+Selecting `claude` also re-enables `classify-task.sh`'s keyword escalation, which
+is Claude-only — under `opencode` every run is pinned to the default model with no
+per-task triage.
+
 > **Note on the `bridge` row.** An earlier revision of this map described
 > `bridge` as "a Go MCP server". That was wrong, and it was wrong for a
 > reproducible reason: an assistant holding `bridge mcp serve`'s tools in

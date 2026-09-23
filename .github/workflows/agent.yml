@@ -39,19 +39,28 @@ jobs:
     uses: ./.github/workflows/agent-implement.yml
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      # Required by the opencode path below. Without it classify-agent.sh's
-      # credential guard silently falls back to Claude, so the agent setting
-      # would look flipped while every run stayed on Claude.
+      # Kept although this repo now defaults to Claude: it is what makes a
+      # per-issue `agent:opencode` label actually work. Without it
+      # classify-agent.sh's credential guard silently falls back to Claude, so
+      # the label would look honoured while the run stayed on Claude.
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
     with:
       issue-number: ${{ github.event.issue.number }}
       runner-labels: '["ubuntu-latest"]'
-      # Dogfoods the fleet defaults: glm-5.2 shipped 15 of 18 runs at $4.25
-      # total, against 59% for claude-opus-4-7 at $181.70. Retries escalate to
-      # Claude (escalate-on-retry), and a missing OPENROUTER_API_KEY falls back
-      # to Claude rather than failing the run.
-      agent: opencode
-      default-model: z-ai/glm-5.2
+      # Factory repos run Claude, not the cheap fleet default. agent-workflow,
+      # bridge, ai-instructions and the rest of the core table in
+      # docs/FACTORY-MAP.md are the tooling every other repo's pipeline runs
+      # on, so a bad implementation here propagates to every consumer instead
+      # of staying in one product. The measurement that picked glm-5.2 for the
+      # fleet (#294: 15 of 18 runs at $4.25, against 59% for claude-opus-4-7 at
+      # $181.70) still stands for product repos — it just isn't the trade to
+      # make on the factory itself.
+      #
+      # Selecting `claude` also re-enables classify-task.sh's keyword
+      # escalation, which is claude-only: under opencode every run was pinned
+      # to the default model with no per-task triage at all.
+      agent: claude
+      default-model: claude-sonnet-5
       local-scripts: true
       ai-review-human-merge: true
       # The action's own default is 10 minutes, which kills a multi-task plan
