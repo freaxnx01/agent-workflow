@@ -9,6 +9,8 @@ Tools the pipeline expects on the runner. `scripts/ensure-toolchain.sh` installs
 | `rg` (ripgrep) | apt: `ripgrep` | Claude Code's Grep tool prefers it; faster + gitignore-aware |
 | `jq` | apt: `jq` | Used by `post-run-report.sh`, `classify-failure.sh`, `find-next-blocked-issue.sh` |
 | `gh` | apt: `gh` (pre-installed on `ubuntu-latest`) | Every issue/PR/label operation |
+| `curl` | apt: `curl` | Fetches the Claude Code CLI installer in the review / self-fix jobs (`scripts/install-claude-cli.sh`) |
+| `sha256sum` | apt: `coreutils` | Verifies the pinned checksum of that installer before it is executed |
 
 Pre-installed on `ubuntu-latest` — `ensure-toolchain.sh` is a no-op there in practice. Self-hosted runners must have these baked in via the Ansible role (see homelab repo).
 
