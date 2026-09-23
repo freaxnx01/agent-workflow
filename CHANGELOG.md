@@ -357,6 +357,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **runners:** opencode installs via its native installer (checksum-pinned)
+  instead of `npm install -g`, which resolved to the shared global prefix and
+  died with `EACCES` on a persistent runner whose prefix was ever written as
+  root (#395 — the same hazard #302 fixed for the claude path). With this, no
+  pipeline path uses npm: `nodejs` is no longer a runner requirement.
 - **runners:** the review and self-fix jobs install the Claude Code CLI via the
   native installer (checksum-pinned) instead of `npm`, matching how the
   implement job's base action acquires it. Removes the last `npm` dependency

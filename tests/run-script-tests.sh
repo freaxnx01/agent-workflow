@@ -3589,6 +3589,31 @@ out="$(CHECKS_RUNNABLE=false CHECKS_BLOCKED_REASON=no-app-token \
 assert_contains "$out" 'LABELS: ai:done,ctx:high,ai:checks-blocked' \
   "blocked + high context → all three labels, outcome first"
 
+section "no npm anywhere in the pipeline (#395)"
+
+# #302 took the claude path off npm; #395 takes opencode off it. Nothing in
+# scripts/ should shell out to npm any more, in any shape. The guard is
+# inverted on purpose: it stops npm coming BACK, rather than asserting that
+# some particular mitigation is still in place.
+#
+# `^[^#]*` restricts this to INVOCATIONS. Both installers carry a comment
+# naming `npm install -g` to record which hazard they exist to avoid, and that
+# rationale is the most useful thing in either header — a guard that banned the
+# word would force it out and leave the next maintainer to rediscover #302.
+assert_equals "$(grep -rnE '^[^#]*npm install' "$ROOT/scripts" 2>/dev/null | wc -l | tr -d ' ')" "0" \
+  "no script installs anything with npm"
+
+# The canonical pin stays in exactly one place and is passed down.
+assert_equals "$(grep -c '^OPENCODE_VERSION=' "$ROOT/scripts/ensure-toolchain.sh" || true)" "1" \
+  "OPENCODE_VERSION is declared exactly once"
+
+assert_contains "$(cat "$ROOT/scripts/ensure-toolchain.sh")" 'install-opencode.sh' \
+  "ensure_opencode delegates to the native installer"
+
+# The runner contract no longer demands Node.js.
+assert_not_contains "$(cat "$ROOT/docs/RUNNER-REQUIREMENTS.md")" 'nodejs' \
+  "RUNNER-REQUIREMENTS no longer requires nodejs"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"
