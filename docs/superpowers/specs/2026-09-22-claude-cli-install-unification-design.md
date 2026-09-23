@@ -200,6 +200,6 @@ verdict.
 
 ## Out of scope
 
-- `ensure_opencode`'s `npm install -g` into the shared prefix (D5 — follow-up issue)
+- `ensure_opencode`'s `npm install -g` into the shared prefix (D5 — follow-up: #395)
 - Provisioning the homelab runner's toolchain (#384 problem 1 — homelab Ansible role)
 - A job-start runner preflight covering all requirements at once (#384 open Q3)
