@@ -376,22 +376,41 @@ and not empty — so default it on every read rather than indexing it directly.
 
 ### Step 3 — the Area Path guard (do not skip this)
 
-Scoping by Area Path fails **silently**: a project that does not mirror repo names
-into its area tree returns zero rows, which is indistinguishable from "no open
-issues". So when step 2 comes back empty, check whether the area even exists
-before reporting nothing:
+A missing Area Path does **not** return zero rows — it fails the query outright:
 
-```bash
-az boards area project list --org "$org_url" --project "$AZDO_PROJECT" \
-  --depth 3 --output json --query '[].name'
+```text
+ERROR: TF51011: The specified area path does not exist.
+       The error is caused by «'MyProject\my-repo'».
 ```
 
-`--depth` **defaults to 1**, so nested areas are invisible without it — pass it.
+So branch on **the error**, not on emptiness. These are two different answers and
+conflating them is how the wrong one gets reported:
 
-If no area matches `$AZDO_REPO`, say exactly that: *"no Area Path matching
-`<repo>` in project `<project>` — this project may not scope work items by repo."*
-Then **ask** whether to re-run project-wide. **Never widen automatically** — in a
-multi-repo project that silently presents other repos' work as this repo's.
+- **`TF51011` in stderr** → the area does not exist. List the ones that do:
+
+  ```bash
+  az boards area project list --org "$org_url" --project "$AZDO_PROJECT" \
+    --depth 3 --output json --only-show-errors --query 'children[].name'
+  ```
+
+  Then say exactly: *"no Area Path matching `<repo>` in project `<project>` — this
+  project may not scope work items by repo."* Then **ask** whether to re-run
+  project-wide. **Never widen automatically** — in a multi-repo project that
+  silently presents other repos' work as this repo's, which is not hypothetical:
+  a real project was found with 7 of its 10 repos mirrored into areas and 3 not.
+
+- **A clean run returning no rows** → the area exists and holds nothing open.
+  Report that as "nothing open", not as a failure.
+
+Two traps in the listing itself:
+
+- The response is a **single object**, not an array, so a top-level `'[].name'`
+  silently yields nothing at all — no output, no error, exit 0. Use `children[]`.
+- `children` is **`null`** on a project with no child areas, which makes
+  `length(children)` *error* rather than return 0. `children[].name` handles it
+  by yielding nothing; if you need a count, use ``length(children || `[]`)``.
+
+`--depth` **defaults to 1**, so nested areas are invisible without it — pass it.
 
 ### Step 4 — drop the WIP ones
 
