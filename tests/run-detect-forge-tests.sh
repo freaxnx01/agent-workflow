@@ -82,6 +82,20 @@ run_resolve_azdo() {
   )
 }
 
+# run_url_path <repo-dir> — echoes _forge_url_path's result for that repo's
+# origin. resolve_azdo_context bails on non-ADO hosts, so this is the only way
+# to assert the shared path parser against a GitHub or Forgejo remote.
+run_url_path() {
+  local dir="$1"
+  (
+    cd "$dir"
+    # shellcheck disable=SC1090
+    source "$LIB"
+    _forge_url_path "$(git remote get-url origin)"
+    printf '\n'
+  )
+}
+
 # --- cases -------------------------------------------------------------
 
 section "github"
@@ -213,6 +227,34 @@ rm -rf "$REPO"
 REPO="$(make_repo "https://github.com/freaxnx01/agent-workflow.git")"
 assert_eq "non-ADO remote resolves nothing and fails" "FAIL" \
   "$(run_resolve_azdo "$REPO")"
+rm -rf "$REPO"
+
+section "shared path parser (_forge_url_path)"
+
+# The same expression that broke ADO broke any forge on a non-standard SSH port.
+REPO="$(make_repo "ssh://git@git.home.freaxnx01.ch:2222/freax/hello-forgejo")"
+assert_eq "forgejo ssh:// with explicit port" "freax/hello-forgejo" \
+  "$(run_url_path "$REPO")"
+rm -rf "$REPO"
+
+REPO="$(make_repo "ssh://git@github.com:2222/freaxnx01/agent-workflow")"
+assert_eq "github ssh:// with explicit port" "freaxnx01/agent-workflow" \
+  "$(run_url_path "$REPO")"
+rm -rf "$REPO"
+
+# scp-style has no port: the `:` is the path separator and must stay one.
+REPO="$(make_repo "git@github.com:freaxnx01/agent-workflow")"
+assert_eq "scp-style colon is the path separator" "freaxnx01/agent-workflow" \
+  "$(run_url_path "$REPO")"
+rm -rf "$REPO"
+
+# Load-bearing: ssh:// carrying the scp-style `:v3` with NO port. After #387 the
+# `v3` is consumed as part of the authority rather than by resolve_azdo_context's
+# ${path#v3/} strip. Same result, different route — do not "simplify" either side
+# without re-running this.
+REPO="$(make_repo "ssh://git@ssh.dev.azure.com:v3/contoso/MyProject/my-repo")"
+assert_eq "ssh:// :v3 with no port still resolves" "contoso/MyProject/my-repo" \
+  "$(run_url_path "$REPO")"
 rm -rf "$REPO"
 
 # --- summary -------------------------------------------------------------
