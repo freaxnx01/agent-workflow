@@ -349,11 +349,14 @@ fixed list is right on both, which is the entire reason step 1 exists.
 
 Two notes on the tag clauses:
 
-- They match the bare word **`parked`**, not the full `🧊 parked`, on purpose:
-  it keeps a non-ASCII literal out of a query string that crosses `az`, the REST
-  layer and WIQL's own parser. The cost is that a tag merely *containing*
-  "parked" would also be dropped — acceptable, since the convention is exactly
-  one parked tag.
+- The tags are matched as the bare words **`parked`** and **`roadmap`**, which on
+  this forge is simply what they are called. **Azure DevOps rejects emoji in tag
+  names** (`TF401407`, with or without a space), so the `🧊 parked` form used on
+  GitHub and Forgejo **cannot exist here at all**. The convention is therefore
+  **not portable across forges** — see #397, which owns that decision.
+- There is no substring false-positive to guard against: WIQL's `CONTAINS` on
+  `System.Tags` matches **whole tags**, despite the operator's name. Verified — a
+  `parked` filter leaves `unparked`, `parkedx` and `parked-later` untouched.
 - `NOT CONTAINS` is a single WIQL operator; it is not spelled `NOT ... CONTAINS`.
 
 ### Step 2b — resolve the fields
