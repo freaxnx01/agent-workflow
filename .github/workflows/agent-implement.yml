@@ -1088,25 +1088,35 @@ jobs:
         run: bash .claude-pipeline/scripts/check-issue-link.sh
 
       - name: Install Claude Code CLI
-        # review-pr.sh's default AGENT_CMD invokes `claude`; this job
-        # doesn't use anthropics/claude-code-base-action (which installs
-        # the CLI in the implement job), so we install it here directly.
+        # review-pr.sh's default AGENT_CMD invokes `claude`; this job doesn't
+        # use anthropics/claude-code-base-action (which installs the CLI in the
+        # implement job), so we install it here directly — via the SAME native
+        # installer, not npm. See scripts/install-claude-cli.sh for why npm was
+        # the wrong shape on a persistent runner (#302) and on a runner with no
+        # Node.js at all (#384).
         # Skipped under stub-review-verdict — the stub step below
         # synthesizes the verdict.
+        id: install_cli
         if: |
           steps.self_mod_guard.outputs.blocked != 'true'
           && steps.find_pr.outputs.found == 'true'
           && inputs.stub-review-verdict == ''
-        # Job-local prefix, never the shared global one. `npm install -g` resolves to
-        # `npm config get prefix` (/usr/local on a typical runner), which on a PERSISTENT
-        # self-hosted runner is shared across every job and every run. Once that prefix has
-        # been written as root, a later `npm install -g` as the runner user cannot rename
-        # the existing package directory and dies with `EACCES / syscall rename` before the
-        # reviewer starts — 100% of the time, not intermittently (#302). The implement job
-        # never hits this because claude-code-base-action installs the CLI itself.
-        run: |
-          npm install --prefix "$RUNNER_TEMP/claude-cli" @anthropic-ai/claude-code
-          printf '%s\n' "$RUNNER_TEMP/claude-cli/node_modules/.bin" >> "$GITHUB_PATH"
+        run: bash .claude-pipeline/scripts/install-claude-cli.sh
+
+      - name: Mark issue runner-blocked
+        # The "Mark issue blocked" step below inherits the default success(),
+        # so before this existed an install failure aborted the job and posted
+        # NOTHING on the issue — indistinguishable from a review that ran and
+        # blocked (#384).
+        if: failure() && steps.install_cli.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
+          EXIT_CODE: ${{ steps.install_cli.outputs.exit-code }}
+          JOB_NAME: AI review, human merge
+        run: bash .claude-pipeline/scripts/post-runner-block.sh
 
       - name: Run agent review
         if: |
@@ -1422,14 +1432,24 @@ jobs:
         run: bash .claude-pipeline/scripts/check-issue-link.sh
 
       - name: Install Claude Code CLI
+        # Native installer, not npm — see the note on the same step in the
+        # ai_review_human_merge job above (#302, #384).
+        id: install_cli
         if: |
           steps.find_pr.outputs.found == 'true'
           && inputs.stub-review-verdict == ''
-        # Job-local prefix — see the note on the same step in the ai_review_human_merge
-        # job above (#302).
-        run: |
-          npm install --prefix "$RUNNER_TEMP/claude-cli" @anthropic-ai/claude-code
-          printf '%s\n' "$RUNNER_TEMP/claude-cli/node_modules/.bin" >> "$GITHUB_PATH"
+        run: bash .claude-pipeline/scripts/install-claude-cli.sh
+
+      - name: Mark issue runner-blocked
+        if: failure() && steps.install_cli.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
+          EXIT_CODE: ${{ steps.install_cli.outputs.exit-code }}
+          JOB_NAME: AI review, AI merge
+        run: bash .claude-pipeline/scripts/post-runner-block.sh
 
       - name: Run agent review
         if: |

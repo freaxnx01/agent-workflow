@@ -26,13 +26,13 @@ The version pin lives in `scripts/ensure-toolchain.sh` at the top (`OPENCODE_VER
 
 `ensure-toolchain.sh` skips the OpenCode install entirely when `AGENT` is unset or `claude` — Claude-only consumers pay zero cost for the multi-agent feature.
 
-If `npm` is not on the runner (rare on `ubuntu-latest`), the script fails with a clear error. Self-hosted runners that intend to support `AGENT=opencode` must include Node.js / npm.
+If `npm` is not on the runner (rare on `ubuntu-latest`), `ensure-toolchain.sh` fails with a clear error naming the requirement. **This promise covers the `AGENT=opencode` path only** — it is the only path that still uses npm. The `AGENT=claude` path installs via `scripts/install-claude-cli.sh` and needs no Node.js at all; its own prerequisites (`curl`, `sha256sum`) are guarded the same way.
 
 ### When `AGENT=claude`
 
 | Tool | Source |
 |---|---|
-| `claude` (Claude Code CLI) | Installed by `anthropics/claude-code-base-action` in the `implement` job, OR by an explicit `npm install -g @anthropic-ai/claude-code` step in the `auto_review` job (see `agent-implement.yml`) |
+| `claude` (Claude Code CLI) | Installed by `anthropics/claude-code-base-action` in the `implement` job, and by `scripts/install-claude-cli.sh` (native installer — requires `curl` + `sha256sum`) in the review and self-fix jobs |
 
 ## Provisioning self-hosted runners
 
@@ -43,7 +43,7 @@ github_actions_runner_packages:
   - ripgrep
   - jq
   - gh
-  - nodejs   # for npm-based installs (opencode, claude-code)
+  - nodejs   # opencode only; the claude path no longer needs npm
 ```
 
 …and provision via `apt`. `ensure-toolchain.sh` does the per-run `command -v` check anyway, so this is belt-and-suspenders.

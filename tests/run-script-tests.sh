@@ -2772,11 +2772,19 @@ wf_exec="$(grep -vE '^[[:space:]]*#' "$WF")"
 assert_equals "$(printf '%s' "$wf_exec" | grep -c 'npm install -g' || true)" "0" \
   "agent-implement.yml never installs into the shared global npm prefix"
 
-assert_equals "$(grep -c 'npm install --prefix' "$WF" || true)" "2" \
-  "both CLI installs use a job-local prefix"
+# The job-local-prefix mitigation is gone: npm is off the AGENT=claude path
+# entirely. Both jobs now call the native installer, the same mechanism
+# claude-code-base-action uses in the implement job — one dependency, one
+# mechanism (#302). The assertion is inverted deliberately: it guards that npm
+# does not come BACK, not that the old mitigation is still present.
+assert_equals "$(printf '%s' "$wf_exec" | grep -c 'npm install' || true)" "0" \
+  "no npm install of any shape survives on the AGENT=claude path"
 
-assert_equals "$(grep -c 'GITHUB_PATH' "$WF" || true)" "2" \
-  "each job-local install puts its bin dir on PATH for later steps"
+assert_equals "$(printf '%s' "$wf_exec" | grep -c 'install-claude-cli.sh' || true)" "2" \
+  "both CLI installs go through the checksum-pinned native installer"
+
+assert_equals "$(printf '%s' "$wf_exec" | grep -c 'post-runner-block.sh' || true)" "2" \
+  "each install has a failure path that surfaces a toolchain block (#384)"
 
 section "check-issue-link — warn when the PR will not auto-close its issue (#303)"
 
