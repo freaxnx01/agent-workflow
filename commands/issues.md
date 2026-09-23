@@ -242,10 +242,13 @@ Neither has an equivalent on GitHub or Forgejo, and both change the query shape:
 1. **Work items are project-scoped, not repo-scoped.** A repo does not own work
    items, so "this repo's issues" has to be *chosen* rather than read off the
    remote. This command scopes by **Area Path** matching the repo name (see the
-   guard below — the failure mode is silence, not an error).
+   guard below — a *missing* area errors with `TF51011`, while a *present* area
+   that simply holds nothing returns an empty set; the two are different answers).
 2. **There is no `az boards work-item list`.** The verbs are `create`, `delete`,
-   `show`, `update` only. Every listing goes through **WIQL** via
-   `az boards query --wiql`.
+   `show`, `update` only. Every listing goes through **WIQL** — and, since
+   `az boards query` returns nothing at all (see step 2), via
+   `az devops invoke --area wit --resource wiql`, which then needs a second
+   `workitemsbatch` call to turn the ids it returns into fields.
 
 ### Azure DevOps access
 
@@ -306,21 +309,43 @@ rather than repeating it.
 
 ### Step 2 — WIQL for the candidate work items
 
-Interpolate the closed-state list from step 1. `@project` resolves against
-`--project`, so the team-project clause needs no quoting of its own:
+**Do not use `az boards query`.** On `az` 2.87.0 with azure-devops 1.0.4 it exits
+**0 and prints nothing at all** — not `[]`, zero bytes — in every output format
+(`json`, `table`, `tsv`, `yaml`), verified against two organizations and three
+projects. It is not auth and not the query: the identical WIQL through the REST
+escape hatch returns rows in the same shell with the same token. Go through
+`az devops invoke`:
 
 ```bash
-az boards query --org "$org_url" --project "$AZDO_PROJECT" --output json --wiql "
-SELECT [System.Id], [System.Title], [System.State], [System.Tags],
-       [System.IterationPath], [System.CreatedDate], [System.CreatedBy]
+# $closed is the list derived in step 1 — never a literal.
+wiql="SELECT [System.Id]
 FROM WorkItems
 WHERE [System.TeamProject] = @project
   AND [System.AreaPath] UNDER '$AZDO_PROJECT\\$AZDO_REPO'
-  AND [System.State] NOT IN ('Closed', 'Done', 'Removed')
+  AND [System.State] NOT IN ($closed)
   AND [System.Tags] NOT CONTAINS 'parked'
   AND [System.Tags] NOT CONTAINS 'roadmap'
 ORDER BY [System.CreatedDate] DESC"
+
+az devops invoke --org "$org_url" --area wit --resource wiql \
+  --route-parameters project="$AZDO_PROJECT" \
+  --http-method POST --in-file /dev/stdin --api-version 7.1 \
+  --output json --only-show-errors \
+  <<<"$(python3 -c 'import json,sys; print(json.dumps({"query": sys.argv[1]}))' "$wiql")"
 ```
+
+Build the JSON body with `python3`, not by hand: the query contains both single
+quotes and a backslash, and hand-quoting it into a JSON string is where the
+escaping breaks.
+
+`@project` resolves against `--route-parameters project=`, so the team-project
+clause needs no quoting of its own. The single backslash in `'$AZDO_PROJECT\\$AZDO_REPO'`
+is correct and survives bash → `az` → REST → the WIQL parser intact.
+
+**Interpolate the state list from step 1 — never write state names out.** They are
+template-specific: a **Basic** project derives `Closed, Completed, Done, Inactive,
+Removed`, while an **Agile**-derived one derives the same set *without* `Done`. No
+fixed list is right on both, which is the entire reason step 1 exists.
 
 Two notes on the tag clauses:
 
@@ -330,6 +355,24 @@ Two notes on the tag clauses:
   "parked" would also be dropped — acceptable, since the convention is exactly
   one parked tag.
 - `NOT CONTAINS` is a single WIQL operator; it is not spelled `NOT ... CONTAINS`.
+
+### Step 2b — resolve the fields
+
+The WIQL call returns **ids only**. The `SELECT`ed columns come back as a
+`columns[]` *description* of the fields, not as their values, so titles and states
+need a second call:
+
+```bash
+az devops invoke --org "$org_url" --area wit --resource workitemsbatch \
+  --route-parameters project="$AZDO_PROJECT" \
+  --http-method POST --in-file /dev/stdin --api-version 7.1 \
+  --output json --only-show-errors \
+  <<<"{\"ids\":[$ids],\"fields\":[\"System.Id\",\"System.Title\",\"System.State\",\"System.Tags\",\"System.IterationPath\"]}"
+```
+
+Fields land at `.value[].fields."System.Title"` and friends. **`System.Tags` is
+absent from `fields` when a work item has no tags** — the key is missing, not null
+and not empty — so default it on every read rather than indexing it directly.
 
 ### Step 3 — the Area Path guard (do not skip this)
 
