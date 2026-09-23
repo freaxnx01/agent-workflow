@@ -44,6 +44,12 @@ jobs:
       # classify-agent.sh's credential guard silently falls back to Claude, so
       # the label would look honoured while the run stayed on Claude.
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      # Forwarded explicitly — this stub does not use `secrets: inherit`, so a
+      # secret that is set on the repo but not listed here never reaches the
+      # reusable workflow, and the App silently stays inert with no error
+      # anywhere. See docs/PIPELINE-APP-SETUP.md step 7.
+      PIPELINE_APP_ID: ${{ secrets.PIPELINE_APP_ID }}
+      PIPELINE_APP_PRIVATE_KEY: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
     with:
       issue-number: ${{ github.event.issue.number }}
       runner-labels: '["ubuntu-latest"]'
@@ -63,6 +69,12 @@ jobs:
       default-model: claude-sonnet-5
       local-scripts: true
       ai-review-human-merge: true
+      # The App opens the PR, so its author is `freaxnx01-pipeline[bot]`, not
+      # the default `github-actions[bot]`. Without this the review job stops
+      # recognising its own PR and reports "could not find a pipeline-opened
+      # draft PR ... from an allowlisted author" — which reads like a missing
+      # PR rather than a rejected author (docs/PIPELINE-APP-SETUP.md step 7).
+      pipeline-author-allowlist: freaxnx01-pipeline[bot]
       # The action's own default is 10 minutes, which kills a multi-task plan
       # mid-implementation while max_turns is nowhere near spent (#280 died
       # there twice). At the ~7.7s/turn this repo actually measures, the
