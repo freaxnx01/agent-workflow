@@ -2846,6 +2846,41 @@ assert_contains "$out" 'delay-seconds=20' "transient attempt=2 → 20s backoff"
 out="$(CLASS=transient ATTEMPT=3 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 bash "$RETRY")"
 assert_contains "$out" 'decision=stop'  "transient attempt=cap → stop"
 
+# --- real dispatch path: the 403 that made every retry silently fail ---------
+# retry-dispatch.sh calls `gh workflow run`, which needs `actions: write` on the
+# CALLING workflow. A consumer that omits it gets a bare "Resource not
+# accessible by integration" naming neither the permission nor the workflow, so
+# the retry the classifier just decided on never happens and a transient failure
+# becomes a hard one. Assert the diagnosis, not just the failure.
+rd_dir="$(mktemp -d)"
+printf 'workflow run\tHTTP 403: Resource not accessible by integration\n' > "$rd_dir/failmap"
+set +e
+out="$(CLASS=transient ATTEMPT=1 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=0 \
+  DELAY_OVERRIDE_SEC=0 CONSUMER_WORKFLOW=agent.yml \
+  GH_MOCK_LOG="$rd_dir/gh.log" GH_MOCK_FAIL_MAP="$rd_dir/failmap" \
+  PATH="$MOCKS:$PATH" bash "$RETRY" 2>&1)"
+rc=$?
+set -e
+assert_equals "1" "$rc" "403 re-dispatch exits non-zero"
+assert_contains "$out" 'actions: write'            "403 names the missing permission"
+assert_contains "$out" 'agent.yml'                 "403 names the workflow that needs it"
+assert_contains "$out" 'CONSUMER-SETUP'            "403 points at the fix"
+assert_contains "$(cat "$rd_dir/gh.log")" 'workflow run agent.yml' "it did attempt the dispatch"
+
+# A non-403 dispatch failure still fails, but must NOT claim a permission problem.
+printf 'workflow run\tHTTP 502: Bad Gateway\n' > "$rd_dir/failmap"
+: > "$rd_dir/gh.log"
+set +e
+out="$(CLASS=transient ATTEMPT=1 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=0 \
+  DELAY_OVERRIDE_SEC=0 CONSUMER_WORKFLOW=agent.yml \
+  GH_MOCK_LOG="$rd_dir/gh.log" GH_MOCK_FAIL_MAP="$rd_dir/failmap" \
+  PATH="$MOCKS:$PATH" bash "$RETRY" 2>&1)"
+rc=$?
+set -e
+assert_equals "1" "$rc" "non-403 dispatch failure still exits non-zero"
+assert_not_contains "$out" 'actions: write' "a 502 is not blamed on permissions"
+rm -rf "$rd_dir"
+
 # task_failure: only retry once (default MAX_RETRIES_TASK=1)
 out="$(CLASS=task_failure ATTEMPT=1 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 bash "$RETRY")"
 assert_contains "$out" 'decision=retry' "task_failure attempt=1 → retry once"

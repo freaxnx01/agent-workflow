@@ -26,6 +26,12 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  # retry-dispatch.sh re-dispatches this workflow with `gh workflow run`, which
+  # POSTs to /actions/workflows/{id}/dispatches and needs `actions: write`.
+  # Without it the retry 403s ("Resource not accessible by integration"), the
+  # step exits 1, and a transient failure the classifier had already decided to
+  # retry becomes a hard ai:failed instead — so escalate-on-retry never fires.
+  actions: write
 
 jobs:
   claude:

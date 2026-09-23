@@ -156,6 +156,8 @@ permissions:            # the reusable jobs need these; a caller can't grant a
   contents: write       # reusable workflow more than it has, and the repo's
   pull-requests: write  # default GITHUB_TOKEN is read-only on most repos, so
   issues: write         # omitting this fails the run at startup (see below)
+  actions: write        # retry-dispatch.sh re-dispatches THIS workflow; without
+                        # it every retry 403s and transient failures go hard
 
 jobs:
   claude:

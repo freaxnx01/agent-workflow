@@ -121,7 +121,21 @@ fi
 printf 'sleeping %ds before retrying (attempt %d → %d)\n' "$delay" "$ATTEMPT" "$((ATTEMPT + 1))"
 sleep "$delay"
 
-gh workflow run "$CONSUMER_WORKFLOW" \
+# Diagnose the one failure that looks opaque. `gh workflow run` POSTs to
+# /actions/workflows/{id}/dispatches, which needs `actions: write` on the
+# CALLING workflow -- a reusable workflow cannot grant itself more than its
+# caller has. A consumer whose agent.yml omits it gets a bare "Resource not
+# accessible by integration" naming neither the permission nor the workflow, so
+# the retry the classifier just decided on silently never happens.
+if ! err=$(gh workflow run "$CONSUMER_WORKFLOW" \
   --repo "$REPO" \
   -f issue-number="$ISSUE_NUMBER" \
-  -f attempt="$((ATTEMPT + 1))"
+  -f attempt="$((ATTEMPT + 1))" 2>&1); then
+  printf '%s\n' "$err" >&2
+  if [[ "$err" == *403* || "$err" == *"not accessible by integration"* ]]; then
+    printf 'error: re-dispatch was forbidden. %s needs "actions: write" in its\n' "$CONSUMER_WORKFLOW" >&2
+    printf '       top-level permissions block -- see docs/CONSUMER-SETUP.md. Until it is\n' >&2
+    printf '       added, every retry fails here and transient failures become hard ones.\n' >&2
+  fi
+  exit 1
+fi
