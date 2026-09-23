@@ -80,22 +80,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **runners:** the review and self-fix jobs install the Claude Code CLI via the
-  native installer (checksum-pinned) instead of `npm`, matching how the
-  implement job's base action acquires it. Removes the last `npm` dependency
-  from the `AGENT=claude` path, which failed with `EACCES` on a persistent
-  runner with a root-owned global prefix (#302) and with a bare
-  `npm: command not found` on a runner with no Node.js (#384).
-
-### Added
-
-- **runners:** `ai:runner-blocked` — the review never started because the
-  runner's toolchain is unmet, as distinct from `ai:review-blocked`, where the
-  reviewer ran and refused to promote the PR. Previously a toolchain failure
-  aborted the job and posted nothing at all (#384).
-
 ### Deprecated
 
 - **naming:** the inputs `auto-review` / `pre-preview`, the labels
@@ -116,6 +100,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **runners:** `ai:runner-blocked` — the review never started because the
+  runner's toolchain is unmet, as distinct from `ai:review-blocked`, where the
+  reviewer ran and refused to promote the PR. Previously a toolchain failure
+  aborted the job and posted nothing at all (#384).
 - **autopilot:** unattended enrich lane — `/autopilot` and
   `scripts/autopilot.sh` quick-enrich `needs-enrichment` issues in allowlisted
   repos and dispatch the clean ones, on a systemd timer, escalating anything
@@ -362,6 +350,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **runners:** the review and self-fix jobs install the Claude Code CLI via the
+  native installer (checksum-pinned) instead of `npm`, matching how the
+  implement job's base action acquires it. Removes the last `npm` dependency
+  from the `AGENT=claude` path, which failed with `EACCES` on a persistent
+  runner with a root-owned global prefix (#302) and with a bare
+  `npm: command not found` on a runner with no Node.js (#384).
 - **just:** `lint` now runs `pre-commit run --all-files`, the exact command CI
   runs, so a clean local run predicts a clean CI lint. It is therefore the whole
   polyglot gate rather than "actionlint + shellcheck", and it needs `pre-commit`
