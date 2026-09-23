@@ -441,6 +441,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **pipeline:** the implementation contract now actually reaches the agent. The
+  prompt was built from `gh issue view --json title,body`, so issue *comments*
+  were never fetched — and the contract `/gh:implement` posts is a comment. It
+  reached no agent, in any run, ever, which is why the push-per-task and
+  TDD-evidence rules went unobserved while inlined plans were followed closely
+  (two channels; one of them worked). Prompt assembly moves to
+  `scripts/build-agent-prompt.sh`, which includes comments minus
+  pipeline-generated chatter (run reports, enrichment locks, review-held
+  notices) and is fixture-tested (#393).
 - **ci:** the pre-commit shellcheck hook now passes `-x -e SC1091`, so CI follows
   sourced files and a `# shellcheck source=` directive is verified rather than
   inert. Without it a script sourcing a `lib/` helper was clean under `just lint`
