@@ -473,27 +473,28 @@ Show a compact table — id, title, **iteration + finish date**, tags, age (rela
 My arguments:
 $ARGUMENTS
 
-### Azure DevOps blockers
+### Verified
 
-**Epistemic status: the command names and flags above were verified against `az`
-2.87.0 with azure-devops 1.0.4 by running `--help` on every one of them — but the
-JSON field names, the `workitemtypes` response shape, the WIQL clauses and every
-`--query` path were *not* run against a live organization**, because none was
-reachable from the machine where this was written.
+Every command, JSON shape, WIQL clause and `--query` path in this section has been
+run against **live Azure DevOps organizations** (`az` 2.87.0, azure-devops 1.0.4),
+and the section reproduces its documented output end to end. See
+`docs/ai-notes/2026-09-22-ado-manual-test-run.md` for the run and its findings.
 
-`--query` deserves singling out, because its failure is quiet. It is a global `az`
-argument, so it always *exists* — but a JMESPath like `[].pullRequestId` assumes
-the response is a **top-level array**, and if a command instead wraps its results
-in an object, the expression yields nothing and the step reports an empty result
-rather than an error. If any `--query` here comes back empty where the web UI shows
-data, re-run the same call with plain `--output json`, look at the real shape, and
-fix the path — that is the most likely thing on this page to be wrong. That is the same status the `tea` sections carry,
-and this repo has already been bitten by it once (`tea issues create` takes
-`--description`, not `--body`).
+Three things remain worth knowing:
 
-So: if a field name, an `az devops invoke` resource, or a WIQL operator turns out
-different in practice, **find the working form and update this command** — and
-drop the paragraph above once a live run has confirmed the whole path.
+- **`az boards query` is unusable** — it exits 0 and prints nothing at all, in
+  every output format. That is why step 2 goes through `az devops invoke`. Do not
+  "simplify" it back.
+- **A `--query` path that stops matching fails silently.** It is a global `az`
+  argument, so it always *exists*, but a JMESPath like `[].name` against an
+  object-wrapped response yields nothing rather than erroring — and on this
+  command an empty result is also a legitimate answer. When a call comes back
+  empty where the web UI shows data, re-run it with plain `--output json`, read
+  the real shape, and fix the path. Two paths on this page were wrong this way.
+- **Run the plain call before adding the `--query`,** always, for the same reason.
+
+If a field name, an `az devops invoke` resource, or a WIQL operator turns out
+different in practice, **find the working form and update this command.**
 
 ## Unknown host
 
