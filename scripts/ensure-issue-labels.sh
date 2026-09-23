@@ -91,5 +91,10 @@ create turns:160 5319E7 'Override the agent turn budget to 160 (classify-turns.s
 
 create ai:review-blocked D73A4A 'Auto-review left the PR draft; human action required'
 
+# Two blocked states, deliberately distinct (#384):
+#   ai:review-blocked  — the reviewer RAN and refused to promote the PR
+#   ai:runner-blocked  — the reviewer NEVER STARTED; runner toolchain unmet
+create ai:runner-blocked D73A4A 'Review never started — runner toolchain unmet'
+
 create enrichment-ongoing FBCA04 'Another /enrich session is actively enriching this issue — do not start a second one'
 create needs-human D93F0B 'Autopilot could not decide this unattended — a human must resolve it'
