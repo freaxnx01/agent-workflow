@@ -267,3 +267,208 @@ The epistemic-status paragraph in `commands/issues.md` **stays** for now. Removi
 it is defined as the marker that this pass is complete, and §7–§9 are not — nor
 should it come out while Findings 1–5 are unfixed, since the section does not yet
 work end to end on a live org.
+
+---
+
+# Write pass — sections 7, 8, 9 (2026-09-23)
+
+The read-only pass above left §7, §8 and the write half of §9 open for want of a
+project that could safely be written to. `bossinfo` turned out not to offer one —
+the org has **no "+ New project" button** for this account, confirming the
+identity lacks org-level project-create rights. Testing moved to the user's own
+organization instead.
+
+- **Org:** `AndreasImboden0022` (personal). **Project:** `agent-workflow-sandbox`,
+  created for this run with the **Basic** process template.
+- **Repo:** `agent-workflow-sandbox`, auto-created with the project, initialized
+  here with `main` + `feat/sandbox-pr`.
+- **Area path:** `agent-workflow-sandbox\agent-workflow-sandbox`, created to match
+  the repo name so §6's positive case is real rather than incidental.
+- **Work items:** four `Issue`s, ids 1–4.
+- **PAT:** separate token for this org, from Passbolt, in
+  `~/repos/ado/personal/.envrc`. The `bossinfo` PAT is org-scoped and returns
+  `requires user authentication` against this org — PATs do not span orgs unless
+  explicitly created for all accessible ones.
+
+## Verdict
+
+**§7 and §9 pass as designed. §8 does not — and cannot.** One new blocker, three
+new behaviours worth documenting, and §3 is now hardened from "supported" to
+"proven". The corrected end-to-end flow was run and works.
+
+| # | Finding | Severity |
+|---|---|---|
+| 7 | `🧊 parked` is **impossible** as an ADO tag — `TF401407`. Emoji are rejected outright | blocker for the cross-forge convention |
+| 8 | `--fields "System.Tags=…"` **appends**; it cannot replace or clear tags | medium |
+| 9 | Tags are stored `; `-separated (semicolon **and space**) | low |
+| 3+ | Basic's derived closed set **differs** from bossDMS's — hardcoding is provably wrong | upgrades Finding 5 |
+
+---
+
+## Finding 7 (blocker) — the emoji tag cannot exist on Azure DevOps
+
+```
+az boards work-item update --id 2 --fields "System.Tags=🧊 parked"
+→ ERROR: TF401407: The tag name is invalid. It contains invalid characters.   (rc=1)
+```
+
+Rejected with **or** without the space (`🧊parked` fails identically). This is
+not a Unicode restriction — `übung` stores fine. Azure DevOps refuses emoji in
+tag names specifically.
+
+The `## Azure DevOps` section currently frames bare-word matching as a *clever
+workaround*:
+
+> They match the bare word `parked`, not the full `🧊 parked`, on purpose: it
+> keeps a non-ASCII literal out of a query string that crosses `az`, the REST
+> layer and WIQL's own parser. The cost is that a tag merely *containing*
+> "parked" would also be dropped.
+
+That reasoning is now moot, and the stated "cost" is not a cost at all. **There is
+no emoji tag on this forge to avoid** — the tag simply *is* `parked`. The real
+consequence is one the section does not mention and should:
+
+> **The parked/roadmap convention is not portable.** GitHub and Forgejo use
+> `🧊 parked`; Azure DevOps must use a bare `parked`, because the emoji form is
+> rejected by the server. Any doc, command or onboarding step that tells a user to
+> apply "the `🧊 parked` label" is wrong on ADO.
+
+Good news for the query itself: bare-word matching **works**. With `parked` and
+`roadmap` applied, `NOT CONTAINS` filtered exactly as intended (below).
+
+## Finding 8 — `System.Tags` on update appends, and cannot clear
+
+Successive updates accumulate rather than replace:
+
+```
+--fields "System.Tags=parked"          → stored [parked]
+--fields "System.Tags=übung"           → stored [parked; übung]
+--fields "System.Tags=parked;roadmap"  → stored [parked; roadmap; übung]
+--fields "System.Tags="                → stored [parked; roadmap; übung]   (no-op)
+```
+
+So `work-item update` is **additive** for this field, and an empty value does not
+clear it. Any command that means to *set* tags needs a different mechanism (a
+json-patch `replace`), and `/parked`-style "unpark" verbs cannot be built on
+`--fields` alone. Worth settling before the `/parked` and `/roadmap` ports in #286.
+
+Note: `az devops invoke … --media-type application/json-patch+json` failed with an
+internal `'type'` traceback in extension 1.0.4, so the patch route needs its own
+investigation.
+
+## Finding 9 — separator is `; `, not `;`
+
+Input `alpha;beta` is stored and returned as `alpha; beta`. Splitting on a bare
+`;` leaves leading whitespace on every tag after the first. Confirms the design's
+claim that `work-item create` has **no `--tags` flag** and the field is the way in.
+
+Re-confirmed from the read pass: **`System.Tags` is absent from `fields`** when a
+work item has no tags — the key is missing, not null or empty.
+
+---
+
+## §3 hardened — the derived closed set genuinely differs by template
+
+The read pass could only compare four `bossinfo` projects, all inherited variants
+of one template, so all four derived the same closed list and the note recorded
+the claim as *supported but not maximally stressed*. A **Basic** project settles it:
+
+| Project | Template | Derived closed states |
+|---|---|---|
+| `bossDMS` + 3 others | Agile-derived (inherited) | `Closed, Completed, Inactive, Removed` |
+| `agent-workflow-sandbox` | **Basic** | `Closed, Completed, **Done**, Inactive, Removed` |
+
+Basic introduces `To Do / Doing / Done`, and `Done` correctly carries category
+`Completed`. So:
+
+- The **category mechanism is template-independent** — deriving from
+  `.states[].category` produced the right answer on both templates. ADR-012's
+  decision is **proven**, not merely plausible.
+- The **derived list itself is not** stable across templates. Which is exactly why
+  it must be derived.
+
+This promotes Finding 5 from "the hardcoded list is wrong here" to **no single
+hardcoded list can be right**: `NOT IN ('Closed','Done','Removed')` misses
+`Completed` and `Inactive` on *both* templates, while `Done` exists on one and not
+the other.
+
+---
+
+## 6 — Area Path guard, positive case (controlled)
+
+With an area created to match the repo name, `[System.AreaPath] UNDER
+'agent-workflow-sandbox\agent-workflow-sandbox'` returned **all four** work items.
+Area-path scoping works when the area exists; per Finding 2 its absence is
+`TF51011`, not an empty set.
+
+## 7 — WIP derivation
+
+| Step | Result |
+|---|---|
+| PR #1 created from `feat/sandbox-pr` → `main` with `--work-items 1` | `status=active` |
+| `az repos pr list --status active --query '[].pullRequestId'` | `1` — **documented path correct** |
+| `az repos pr work-item list --id 1 --query '[].id'` | `1` — **documented path correct** |
+| → work item 1 is WIP and excluded | as designed |
+| `az repos pr update --id 1 --status abandoned` | `abandoned` |
+| `--status active` afterwards | `[]` |
+| → work item 1 returns | **as designed** |
+
+Both `--query` paths that the read pass confirmed against `bossinfo` are
+re-confirmed here with data this run created. `active`-only WIP semantics behave
+exactly as the section claims: an abandoned PR does not make a work item WIP.
+
+## 9 — the `--depth` trap is real
+
+The read pass could not settle this, because nothing in `bossinfo` was nested.
+Creating `Sprint 1\Week A` settles it:
+
+| Listing | `Sprint 1`'s children |
+|---|---|
+| `--depth 1` | **0 — nested iteration hidden** |
+| **default (no `--depth`)** | **0 — same as depth 1** |
+| `--depth 2` | 1 — `Week A` visible |
+| `--depth 3` | 1 |
+
+The documented claim — *"`--depth` defaults to 1 … so a depth-1 listing hides the
+sprints that actually hold work items"* — is **correct**. Pass `--depth`.
+
+(Basic pre-creates a `Sprint 1`, so the first create returned `VS402371` name-in-use;
+the nested `Week A` under it succeeded.)
+
+---
+
+## End-to-end, with every correction applied
+
+Ran the whole `/issues` flow as it *should* read after #386, against the sandbox:
+
+1. Derived closed states from metadata → `'Closed','Completed','Done','Inactive','Removed'`
+2. WIQL **via `az devops invoke --area wit --resource wiql`** (not `az boards query`),
+   with that list interpolated, area filter, and both tag filters → candidates `[4, 1]`
+3. Active-PR work items → none (PR abandoned)
+4. Fields via `workitemsbatch` → `.value[].fields."System.Title"`
+
+```
+  ID   STATE     TAGS           TITLE
+  1    To Do     -              A linked to an active PR (section 7)
+  4    To Do     alpha; beta    D plain control - should always appear
+```
+
+Correct on every axis: #2 dropped as `parked`, #3 dropped as `roadmap`, #1 back
+now that its PR is abandoned, #4 the untouched control, ordered newest-first.
+
+**The design is sound. The implementation's query layer is not.** #386 has what it
+needs to fix it, and this is the shape to fix it to.
+
+## Sandbox state
+
+Left in place, not torn down — it is the only reachable ADO project where writes
+are safe, and #386 will need it to verify a fix. Contents: 4 work items, 1
+abandoned PR, an area path matching the repo, and `Sprint 1\Week A`. Delete the
+project in the UI when it has served its purpose.
+
+## Closing the loop
+
+The "Epistemic status" paragraph in `commands/issues.md` **still stays**. Every
+section of the manual test plan has now been run — but the section does not work
+end to end as written, and removing the caveat before #386 lands would assert a
+confidence the code has not earned.
