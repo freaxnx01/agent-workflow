@@ -50,9 +50,54 @@ because the secrets are unset.
 
 6. **Delete the local `.pem`** once the secret is set.
 
-A consumer repo calling the reusable workflow must also pass both secrets
-through in its stub — see
-[`CONSUMER-SETUP.md`](CONSUMER-SETUP.md#enabling-the-github-app-for-pr-creation-55).
+7. **Wire it into the repo's stub.** The secrets alone are not enough — two
+   edits in `.github/workflows/agent.yml`:
+
+   ```yaml
+   jobs:
+     claude:
+       uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2
+       with:
+         issue-number: ${{ github.event.issue.number }}
+         # Without this the review job stops finding its own PR: the default
+         # is `github-actions[bot]`, and an App-authored PR is `<app>[bot]`.
+         pipeline-author-allowlist: my-app[bot]
+       secrets:
+         CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+         # The stub passes secrets EXPLICITLY, not via `secrets: inherit`.
+         # A secret that is set but not listed here never reaches the
+         # workflow, and the App silently stays inert.
+         PIPELINE_APP_ID: ${{ secrets.PIPELINE_APP_ID }}
+         PIPELINE_APP_PRIVATE_KEY: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
+   ```
+
+   Both are easy to miss and fail quietly. Skipping the pass-through leaves the
+   App unused with no error; skipping the allowlist makes the review job report
+   that it *"could not find a pipeline-opened draft PR … from an allowlisted
+   author"*, which reads like a missing PR rather than a rejected author.
+
+   `docs/CONSUMER-SETUP.md` §*Enabling the GitHub App for PR creation (#55)* is
+   the canonical version of this step.
+
+## Once, or per repo?
+
+The App is created **once**. Almost everything else is **per repo**.
+
+| Step | Scope |
+|---|---|
+| Create the App, permissions, private key | once, ever |
+| Install the App on a repo | per repo — or choose *All repositories* at install time |
+| `PIPELINE_APP_ID` / `PIPELINE_APP_PRIVATE_KEY` secrets | per repo |
+| Pass both secrets through in `agent.yml` | per repo |
+| `pipeline-author-allowlist: <app>[bot]` | per repo |
+
+Both secrets are declared under `workflow_call` in `agent-implement.yml`, so
+they resolve in the **calling** repo. A reusable workflow cannot supply its own
+secrets, which is why every consumer needs its own copy.
+
+**Organization secrets would collapse the per-repo rows into one** — set once,
+visible to every selected repo. They are only available to organization
+accounts; on a personal account each repo needs its own two secrets.
 
 ## Verify it worked
 
@@ -66,9 +111,16 @@ gh pr view <n> --json author,statusCheckRollup \
 - `author` should be `app/<your-app-name>`, not `github-actions`.
 - `checks` should be non-zero within a couple of minutes.
 
-If it is still `github-actions`, the secret is not visible to the run — check
-it is a **repository** secret on the repo the workflow runs in, and that the
-App is installed on that repo.
+If it is still `github-actions`, the App token was never minted. In order of
+likelihood:
+
+1. **The stub does not forward the secrets** — step 7. This is the common one,
+   because the secret exists and looks correct in the repo's settings.
+2. The secrets are not **repository** secrets on the repo the workflow runs in.
+3. The App is not installed on that repo.
+
+If the author *is* the App but the review job says it could not find a
+pipeline-opened draft PR, the allowlist is missing — also step 7.
 
 ## If you skip this
 
