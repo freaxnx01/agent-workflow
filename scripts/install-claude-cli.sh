@@ -53,53 +53,29 @@ INSTALLER_SHA256="${INSTALLER_SHA256:-3a68d3406cf674e17bed1733a4dcf37805e2e47d87
 
 DOC='docs/RUNNER-REQUIREMENTS.md'
 
-# Publish the exit code as a step output before dying. The workflow's
-# failure-path step reads `steps.install_cli.outputs.exit-code` to pick the
-# right reason in post-runner-block.sh; without this it would always be empty
-# and every failure would get the generic wording.
+# shellcheck source=lib/fetch-verified-installer.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/fetch-verified-installer.sh"
+
+# Kept as a thin alias: the exit paths below read as `die <code>`, and the
+# helper owns publishing the step output.
 die() {
-  local code="$1"
-  if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-    printf 'exit-code=%s\n' "$code" >> "$GITHUB_OUTPUT"
-  fi
-  exit "$code"
+  publish_exit_code "$1"
+  exit "$1"
 }
 
-require_tool() {
-  local tool="$1"
-  command -v "$tool" >/dev/null 2>&1 && return 0
-  printf 'error: required tool %q is not present on this runner.\n' "$tool" >&2
-  printf '       It is needed to install the Claude Code CLI for the review job.\n' >&2
-  printf '       Unmet runner requirement — see %s\n' "$DOC" >&2
-  die 64
-}
-
-require_tool curl
-require_tool sha256sum
+require_tool curl "install the Claude Code CLI for the review job"
+require_tool sha256sum "install the Claude Code CLI for the review job"
 
 if [[ "${DRY_RUN:-0}" == "1" ]]; then
   printf 'prerequisites present; install skipped (DRY_RUN)\n'
   exit 0
 fi
 
-WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
-
-printf 'fetching installer from %s\n' "$INSTALLER_URL"
-curl -fsSL -o "$WORK/install.sh" "$INSTALLER_URL"
-
-actual_sha="$(sha256sum "$WORK/install.sh" | cut -d' ' -f1)"
-if [[ "$actual_sha" != "$INSTALLER_SHA256" ]]; then
-  printf 'error: installer checksum mismatch — refusing to execute.\n' >&2
-  printf '       expected %s\n' "$INSTALLER_SHA256" >&2
-  printf '       actual   %s\n' "$actual_sha" >&2
-  printf '       Either upstream changed install.sh (bump the pin in this script\n' >&2
-  printf '       after reviewing the diff) or the download was tampered with.\n' >&2
-  die 65
-fi
+new_installer_workdir
+installer="$(fetch_verified_installer "$INSTALLER_URL" "$INSTALLER_SHA256")"
 
 printf 'installing Claude Code CLI %s\n' "$CLAUDE_CLI_VERSION"
-bash "$WORK/install.sh" "$CLAUDE_CLI_VERSION"
+bash "$installer" "$CLAUDE_CLI_VERSION"
 
 # Locate the installed binary. The native installer targets ~/.local/bin; the
 # candidates list keeps this from being a single hardcoded guess.
