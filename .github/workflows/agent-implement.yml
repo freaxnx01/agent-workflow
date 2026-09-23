@@ -422,6 +422,19 @@ jobs:
           app-id: ${{ secrets.PIPELINE_APP_ID }}
           private-key: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
 
+      - name: Warn when no pipeline App token is configured
+        # Knowable at second zero, so say it before any agent cost is incurred:
+        # without an App token the PR is authored by github-actions and its
+        # pull_request runs stall at action_required (#364). Warning only —
+        # the run proceeds and the PR is still opened and reviewable.
+        if: ${{ env.PIPELINE_APP_ID == '' }}
+        run: |
+          printf '::warning title=No pipeline App token::PR will be authored by github-actions; its required checks will need manual approval. See docs/PIPELINE-APP-SETUP.md\n'
+          cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
+          > [!WARNING]
+          > No `PIPELINE_APP_ID` configured — this run will need its checks approved by hand. See `docs/PIPELINE-APP-SETUP.md`.
+          SUMMARY
+
       - name: Checkout agent-workflow scripts
         if: ${{ !inputs.local-scripts }}
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
@@ -927,6 +940,20 @@ jobs:
           GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
         run: bash .claude-pipeline/scripts/verify-or-recover-pr.sh
 
+      - name: Check the PR's required checks can run
+        id: pr_checks
+        # Diagnostic only (#364). continue-on-error is what guarantees this can
+        # never fail the implement job — the script's own exit 2 on missing env
+        # would otherwise do exactly that.
+        continue-on-error: true
+        if: always() && !inputs.dry-run && steps.verify_pr.outputs.pr-present == 'true'
+        env:
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ steps.verify_pr.outputs.pr-number }}
+          APP_TOKEN_CONFIGURED: ${{ env.PIPELINE_APP_ID != '' }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+        run: bash .claude-pipeline/scripts/check-pr-checks-runnable.sh
+
       - name: Post run report
         if: always() && (steps.claude.outputs.result-file != '' || steps.opencode_adapt.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
         env:
@@ -942,6 +969,8 @@ jobs:
           MAX_TURNS: ${{ steps.triage_turns.outputs.turns }}
           PR_PRESENT: ${{ steps.verify_pr.outputs.pr-present }}
           SALVAGED: ${{ steps.verify_pr.outputs.salvaged }}
+          CHECKS_RUNNABLE: ${{ steps.pr_checks.outputs.checks-runnable }}
+          CHECKS_BLOCKED_REASON: ${{ steps.pr_checks.outputs.checks-blocked-reason }}
           HAS_PLAN: ${{ steps.issue.outputs.has-plan }}
         run: bash .claude-pipeline/scripts/post-run-report.sh
 
