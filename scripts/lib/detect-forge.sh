@@ -25,9 +25,27 @@ _forge_host() {
 }
 
 # _forge_url_path <url>  echoes everything after the hostname, no leading slash.
-# The host separator is `[:/]` for the same scp-style reason as above.
+#
+# The two remote shapes give `:` opposite meanings, so they are parsed apart:
+#   URL form   scheme://[user@]host[:port]/path   `:` separates a PORT
+#   scp-style  [user@]host:path                   `:` separates the PATH
+# git supports no port in scp-style syntax, which is what makes them separable.
 _forge_url_path() {
-  printf '%s' "$1" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#^[^@/]*@##; s#^[^:/]+[:/]##'
+  local url=$1
+  case "$url" in
+    [a-zA-Z]*://*)
+      # The path begins at the first `/` after the authority, so userinfo and
+      # any `:port` fall away with it — neither needs its own step.
+      url=${url#*://}
+      printf '%s' "${url#*/}"
+      ;;
+    *)
+      # Strip userinfo only when the `@` precedes the `:`; an `@` after it
+      # belongs to the path, not to a user.
+      if [[ "${url%%:*}" == *@* ]]; then url=${url#*@}; fi
+      printf '%s' "${url#*:}"
+      ;;
+  esac
 }
 
 # _forge_urldecode <string>  decodes %XX escapes. ADO project names are allowed

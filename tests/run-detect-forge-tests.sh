@@ -161,6 +161,24 @@ assert_eq "ssh:// v3 form" "contoso|MyProject|my-repo" \
   "$(run_resolve_azdo "$REPO")"
 rm -rf "$REPO"
 
+# An ssh:// remote may carry an explicit port. The port must not be mistaken for
+# a path segment — doing so shifts org/project/repo each by one. See #387.
+REPO="$(make_repo "ssh://git@ssh.dev.azure.com:22/v3/contoso/MyProject/my-repo")"
+assert_eq "ssh:// with explicit port 22" "contoso|MyProject|my-repo" \
+  "$(run_resolve_azdo "$REPO")"
+rm -rf "$REPO"
+
+REPO="$(make_repo "ssh://git@ssh.dev.azure.com:7999/v3/contoso/MyProject/my-repo")"
+assert_eq "ssh:// with non-standard port" "contoso|MyProject|my-repo" \
+  "$(run_resolve_azdo "$REPO")"
+rm -rf "$REPO"
+
+# No userinfo, with a port — the authority is host:port alone.
+REPO="$(make_repo "ssh://ssh.dev.azure.com:22/v3/contoso/MyProject/my-repo")"
+assert_eq "ssh:// port, no userinfo" "contoso|MyProject|my-repo" \
+  "$(run_resolve_azdo "$REPO")"
+rm -rf "$REPO"
+
 # The reason AZDO_* are variables rather than a space-separated echo.
 REPO="$(make_repo "https://dev.azure.com/contoso/My%20Project/_git/my-repo")"
 assert_eq "percent-encoded space in project name" "contoso|My Project|my-repo" \
