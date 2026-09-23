@@ -317,7 +317,7 @@ The Task 1 assertions must still pass.
 
 ```bash
 # azdo_fields <ids-csv> <fields-csv>  echoes one JSON object per work item.
-# WIQL returns ids ONLY -- the SELECTed columns come back as a description, not
+# WIQL returns ids ONLY -- the selected columns come back as a description, not
 # values -- so fields need this second call. System.Tags is ABSENT from `fields`
 # when a work item has no tags (the key is missing, not null), hence the default.
 azdo_fields() {
