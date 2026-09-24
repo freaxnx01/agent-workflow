@@ -101,9 +101,20 @@ They read `ISSUE_LABELS` / `ISSUE_BODY` when set and only call `gh` as a
 | `classify-task.sh` | **yes** |
 | `classify-turns.sh` | **yes** |
 | `build-agent-prompt.sh` | no — calls `gh` unconditionally |
-| `check-attempt-cap.sh` | no — calls `gh` unconditionally |
+| `check-attempt-cap.sh` | **yes**, for its read half (`ISSUE_COMMENTS_JSON`) |
 
-So three of the five need **no code change whatsoever**. Populate `ISSUE_LABELS`
+> **Corrected 2026-09-24 while implementing step 1.** The first pass of this audit
+> grepped only for `ISSUE_LABELS` / `ISSUE_BODY` and so missed that
+> `check-attempt-cap.sh` already has a seam under a different name,
+> `ISSUE_COMMENTS_JSON`, because it reads *comments* rather than labels. Its
+> remaining `gh` calls are **writes** (post a comment, add a label), which belong
+> to step 2. So **four of five** read paths already have a seam, not three, and
+> step 1 has to add exactly one.
+>
+> `build-agent-prompt.sh` is the real gap, and it needs `title,body,comments`
+> together — richer than `ISSUE_BODY` alone, so its seam is `ISSUE_JSON`.
+
+So four of the five need **no code change whatsoever**. Populate `ISSUE_LABELS`
 and `ISSUE_BODY` once, per forge, before they run, and they are already portable.
 
 This changes the shape of step 1 and lowers its risk sharply. Rather than
@@ -144,8 +155,8 @@ callers change from `gh issue view …` to `forge_issue_read "$N"` and nothing e
 Follows the issue's own order, with the audit's correction:
 
 1. **`scripts/lib/forge.sh` + `forge-github.sh`**, populating `ISSUE_LABELS` and
-   `ISSUE_BODY` once per run. Add the same seam to `build-agent-prompt.sh` and
-   `check-attempt-cap.sh`; the other three classifiers need no change. Fixture
+   `ISSUE_BODY` once per run. Add an `ISSUE_JSON` seam to `build-agent-prompt.sh`,
+   the one read path that lacks one; the other four need no change. Fixture
    tests prove byte-identical behaviour on GitHub. **No ADO yet** — this step
    must be a provable no-op.
 2. **Migrate the write scripts** (`post-run-report`, `ensure-issue-labels`,

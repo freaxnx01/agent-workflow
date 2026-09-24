@@ -42,6 +42,10 @@
 #
 # Exit codes:
 #   0  prompt written
+#   ISSUE_JSON        Pre-fetched `gh issue view --json title,body,comments`
+#                     output. When set, skips the gh call -- used by tests and by
+#                     scripts/lib/forge.sh on a non-GitHub forge (#253).
+#
 #   2  required env missing
 set -euo pipefail
 IFS=$'\n\t'
@@ -54,11 +58,19 @@ fi
 REPO="${REPO:-${GITHUB_REPOSITORY:-}}"
 PROMPT_FILE="${PROMPT_FILE:-${RUNNER_TEMP:-/tmp}/claude-prompt.md}"
 
-# shellcheck disable=SC2054  # the commas belong to gh's --json field list,
-# which is one argument; they are not array element separators.
-gh_args=(issue view "$ISSUE_NUMBER" --json title,body,comments)
-[[ -n "$REPO" ]] && gh_args+=(--repo "$REPO")
-issue_json="$(gh "${gh_args[@]}")"
+# Prefer an injected payload, fall back to gh. This is the same seam
+# classify-agent, classify-turns and check-attempt-cap already carry -- it lets a
+# caller that has already read the issue (or read it from a forge gh does not
+# speak) hand the result straight in. See scripts/lib/forge.sh and #253.
+if [[ -n "${ISSUE_JSON:-}" ]]; then
+  issue_json="$ISSUE_JSON"
+else
+  # shellcheck disable=SC2054  # the commas belong to gh's --json field list,
+  # which is one argument; they are not array element separators.
+  gh_args=(issue view "$ISSUE_NUMBER" --json title,body,comments)
+  [[ -n "$REPO" ]] && gh_args+=(--repo "$REPO")
+  issue_json="$(gh "${gh_args[@]}")"
+fi
 
 title="$(printf '%s' "$issue_json" | jq -r '.title // ""')"
 body="$(printf '%s' "$issue_json" | jq -r '.body // ""')"
