@@ -1,0 +1,7 @@
+{
+  "count": 1,
+  "totalCount": 1,
+  "comments": [
+    { "id": 1, "text": "A discussion comment.", "format": "html" }
+  ]
+}

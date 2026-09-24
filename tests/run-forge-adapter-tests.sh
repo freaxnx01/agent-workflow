@@ -123,10 +123,14 @@ section "an unsupported forge fails loudly, never silently empty"
 # An empty ISSUE_LABELS is indistinguishable from "this issue has no labels",
 # which every classifier would act on: no agent override, no model override,
 # default turn budget. Exit 2 rather than leave that ambiguity.
-REPO_ADO="$(make_repo 'https://dev.azure.com/contoso/MyProject/_git/my-repo')"
-assert_eq "azdo returns 2 (no read adapter yet)" "2" "$(forge_field "$REPO_ADO" RC)"
+#
+# Forgejo is the unimplemented forge now -- azdo gained its adapter in #253
+# step 3. This case is about the DEFAULT branch, not about any one forge, so it
+# follows whichever is still unimplemented.
+REPO_FJ="$(make_repo 'https://git.home.freaxnx01.ch/freax/hello.git')"
+assert_eq "an unimplemented forge returns 2" "2" "$(forge_field "$REPO_FJ" RC)"
 
-rm -rf "$REPO_GH" "$REPO_ADO"
+rm -rf "$REPO_GH" "$REPO_FJ"
 
 section "export-issue-context.sh — GITHUB_ENV is injection-resistant"
 
@@ -268,16 +272,21 @@ assert_eq "label remove" "issue edit 42 --repo o/r --remove-label a" \
 assert_eq "label ensure" "label create x --repo o/r --color FF0000 --description d" \
   "$(run_write forge_label_ensure x FF0000 d)"
 
-section "write verbs refuse an unsupported forge"
+section "write verbs refuse an unimplemented forge"
 
 # Same rule as the read verb: a write that silently does nothing is worse than
 # one that fails, because the caller reports success.
-REPO_WA="$(make_repo 'https://dev.azure.com/contoso/MyProject/_git/my-repo')"
+REPO_WA="$(make_repo 'https://git.home.freaxnx01.ch/freax/hello.git')"
 # shellcheck disable=SC2030,SC2031
 azdo_rc() {
   (
     cd "$REPO_WA"
+    # GH_MOCK_AUTH_HOSTS must EXCLUDE this host. The gh mock exits 0 for any
+    # host by default, so without it detect_forge's auth probe succeeds and an
+    # unimplemented forge is detected as github -- and the verb passes for the
+    # wrong reason.
     export PATH="$MOCKS:$PATH" GH_MOCK_LOG="$w_dir/a.log" REPO=o/r
+    export GH_MOCK_AUTH_HOSTS="github.com"
     # shellcheck disable=SC1090
     source "$ROOT/scripts/lib/detect-forge.sh"
     # shellcheck disable=SC1090
@@ -286,11 +295,78 @@ azdo_rc() {
     printf '%s' "$rc"
   )
 }
-assert_eq "comment on azdo returns 2"      "2" "$(azdo_rc forge_issue_comment 42 "$w_dir/body.md")"
-assert_eq "label add on azdo returns 2"    "2" "$(azdo_rc forge_issue_label_add 42 'a')"
-assert_eq "label ensure on azdo returns 2" "2" "$(azdo_rc forge_label_ensure x FF0000 d)"
+assert_eq "comment on an unimplemented forge returns 2"      "2" "$(azdo_rc forge_issue_comment 42 "$w_dir/body.md")"
+assert_eq "label add on an unimplemented forge returns 2"    "2" "$(azdo_rc forge_issue_label_add 42 'a')"
+assert_eq "label ensure on an unimplemented forge returns 2" "2" "$(azdo_rc forge_label_ensure x FF0000 d)"
 
 rm -rf "$w_dir" "$REPO_W" "$REPO_WA"
+
+section "azdo read branch — normalised to gh's shape"
+
+# The two calls return different documents, so the mock needs a per-call map.
+az_dir="$(mktemp -d)"
+az_map="$az_dir/map"
+printf 'work-item show\t%s/forge-workitem-azdo.json\n' "$FIXTURES" > "$az_map"
+printf 'resource comments\t%s/forge-comments-azdo.json\n' "$FIXTURES" >> "$az_map"
+REPO_AZ="$(make_repo 'https://dev.azure.com/contoso/MyProject/_git/my-repo')"
+
+# shellcheck disable=SC2030,SC2031
+az_read() {
+  (
+    cd "$REPO_AZ"
+    export PATH="$MOCKS:$PATH"
+    export AZ_MOCK_FIXTURE="$FIXTURES/forge-workitem-azdo.json"
+    export AZ_MOCK_MAP="$az_map"
+    export REPO=ignored-on-azdo
+    # shellcheck disable=SC1090
+    source "$ROOT/scripts/lib/detect-forge.sh"
+    # shellcheck disable=SC1090
+    source "$LIB"
+    forge_export_issue 42 >/dev/null 2>&1 || true
+    printf 'L<<\n%s\n>>\n' "${ISSUE_LABELS:-}"
+    printf 'B<<\n%s\n>>\n' "${ISSUE_BODY:-}"
+    printf 'J<<\n%s\n>>\n' "${ISSUE_JSON:-}"
+  )
+}
+az_block() { az_read | sed -n "/^$1<</,/^>>$/p" | sed '1d;$d'; }
+
+# Tags are `; `-separated -- semicolon AND space. Splitting on the bare
+# character leaves leading whitespace on every tag after the first.
+assert_eq "tags become labels, one per line, stripped" "$(printf 'ai-implement\nturns:80')" \
+  "$(az_block L)"
+
+assert_eq "System.Description becomes the body" "Implement the thing." "$(az_block B)"
+
+# An ADO comment's text is `.text`; build-agent-prompt reads `.body`. Without the
+# mapping every comment renders EMPTY -- and silently, which is the whole risk.
+assert_eq "comments are normalised from .text to .body" "A discussion comment." \
+  "$(az_block J | python3 -c 'import sys,json; print(json.load(sys.stdin)["comments"][0]["body"])')"
+
+rm -rf "$az_dir" "$REPO_AZ"
+
+section "azdo tag arithmetic — read-modify-write, since set_tags REPLACES"
+
+# The label verbs are read-modify-write on this forge: azdo_set_tags replaces the
+# whole field, because the --fields form appends and cannot clear. This is the
+# arithmetic that decides what gets written.
+retag() {
+  printf '%s' "$1" | python3 -c '
+import sys
+cur = [t.strip() for t in sys.stdin.read().splitlines() if t.strip()]
+add = [t.strip() for t in sys.argv[1].split(",") if t.strip()]
+rm  = {t.strip() for t in sys.argv[2].split(",") if t.strip()}
+out = [t for t in cur if t not in rm]
+for t in add:
+    if t not in out:
+        out.append(t)
+print(";".join(out))' "$2" "$3"
+}
+
+assert_eq "add appends"            "a;b;c"  "$(retag "$(printf 'a\nb')" 'c' '')"
+assert_eq "add is idempotent"      "a;b"    "$(retag "$(printf 'a\nb')" 'b' '')"
+assert_eq "remove drops one"       "b"      "$(retag "$(printf 'a\nb')" '' 'a')"
+assert_eq "add and remove together" "b;c"   "$(retag "$(printf 'a\nb')" 'c' 'a')"
+assert_eq "removing everything clears" ""   "$(retag "$(printf 'a\nb')" '' 'a,b')"
 
 # --- summary -------------------------------------------------------------
 
