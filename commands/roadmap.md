@@ -289,15 +289,60 @@ match the write), find a fix and update this command for the future.
 
 ## Azure DevOps
 
-`detect_forge` said `azdo`, so the remote is an Azure DevOps one — and **this
-command has no Azure DevOps section yet**. Say exactly that and **stop**.
+Roadmap **work items** — the same shape as `/parked`, keyed on the `roadmap` tag.
 
-Do **not** fall back to the GitHub or Forgejo section. Neither `gh` nor `tea` can
-read ADO work items, so running either against this remote fails confusingly at
-best; on a command that *writes*, it would aim the write at the wrong forge
-entirely. `/issues` is the only command with ADO support today — see **ADR-012**
-in agent-workflow's `docs/DECISIONS.md` for the object mapping, and its `TODO.md`
-for the port status.
+```bash
+source "$HOME/.claude/scripts/lib/detect-forge.sh"
+source "$HOME/.claude/scripts/lib/azdo.sh"
+resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
+```
+
+### Tags on this forge
+
+**The tags here are plain `roadmap` and `parked`.** Azure DevOps rejects
+emoji in tag names (`TF401407`), so the GitHub and Forgejo spelling cannot exist
+here. See **ADR-016**; this is a per-forge difference, not a typo to "fix".
+
+**Write tags with `azdo_set_tags`, never with `--fields`.**
+`az boards work-item update --fields "System.Tags=..."` **appends** — successive
+calls accumulate — and an empty value is a silent **no-op**, so removing a tag is
+impossible through it. `azdo_set_tags` does a json-patch `replace`, which both
+shrinks and clears.
+
+Tags come back separated by a **semicolon *and* a space**, not a bare `;`.
+Splitting on `;` alone leaves leading whitespace on every tag after the first.
+
+### list
+
+```bash
+rc=0; ids=$(azdo_wiql "SELECT [System.Id] FROM WorkItems
+WHERE [System.TeamProject] = @project
+  AND [System.AreaPath] UNDER '$AZDO_PROJECT\\$AZDO_REPO'
+  AND [System.State] NOT IN ($(azdo_closed_states))
+  AND [System.Tags] CONTAINS 'roadmap'
+ORDER BY [System.CreatedDate] DESC" | tr '\n' ',' | sed 's/,$//') || rc=$?
+```
+
+### promote `<n>` to `<milestone>`
+
+Drop the `roadmap` tag with `azdo_set_tags` — reading the current tags and
+writing back the remainder, as `/parked`'s unpark does — then set the iteration:
+
+```bash
+az boards work-item update --id "<n>" --org "$(azdo_org_url)" \
+  --fields "System.IterationPath=$AZDO_PROJECT\\<iteration>" \
+  --output tsv --only-show-errors --query 'fields."System.IterationPath"'
+```
+
+`System.IterationPath` **replaces** rather than appends — unlike `System.Tags`,
+it holds a single value — so `--fields` is correct for it. Resolve `<milestone>`
+against `azdo_iterations` first; if it matches nothing, say which exist rather
+than creating one implicitly.
+
+### defer `<n>` "<reason>"
+
+Add `roadmap` to the existing tags via `azdo_set_tags`, and post the reason with
+`--discussion`.
 
 ## Unknown host
 

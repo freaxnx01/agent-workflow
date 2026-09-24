@@ -42,6 +42,9 @@ assert_eq() {
 
 # run_lib <fixture> <function> [args...] — sources the library with `az` mocked
 # and the AZDO_* context pre-set, then calls one function.
+# SC2030/SC2031: the exports below are deliberately local to the subshell -- that
+# isolation is what keeps each case independent. shellcheck flags every one.
+# shellcheck disable=SC2030,SC2031
 run_lib() {
   local fixture="$1"; shift
   (
@@ -153,6 +156,50 @@ printf 'repos pr list\t%s/azdo-pr-list-empty.tsv\n' "$FIXTURES" > "$az_map"
 assert_eq "no active PRs means nothing is WIP" "" \
   "$(AZ_MOCK_MAP="$az_map" run_lib azdo-pr-list-empty.tsv azdo_active_pr_work_items)"
 rm -f "$az_map"
+
+section "azdo_set_tags — REPLACES, which --fields cannot do"
+
+# `az boards work-item update --fields "System.Tags=..."` appends and an empty
+# value is a no-op, so an unpark verb cannot be built on it. These assert the
+# behaviour that difference exists for: shrinking a list, and clearing it.
+ct_dir="$(mktemp -d)"
+# shellcheck disable=SC2030,SC2031
+run_set_tags() {
+  local fixture="$1"; shift
+  (
+    export PATH="$MOCKS:$PATH"
+    export AZ_MOCK_FIXTURE="$FIXTURES/azdo-wiql-rows.json"
+    export CURL_MOCK_FIXTURE="$FIXTURES/$fixture"
+    export CURL_MOCK_BODY_LOG="$ct_dir/body.txt" CURL_MOCK_LOG="$ct_dir/argv.txt"
+    export AZDO_ORG=contoso AZDO_PROJECT=MyProject AZDO_REPO=my-repo
+    export AZURE_DEVOPS_EXT_PAT=not-a-real-token
+    # shellcheck disable=SC1090
+    source "$LIB"
+    azdo_set_tags "$@"
+  )
+}
+
+assert_eq "replacing shrinks the list" "alpha" \
+  "$(run_set_tags azdo-set-tags-replaced.json 4 'alpha')"
+
+assert_eq "an empty value CLEARS rather than no-ops" "" \
+  "$(run_set_tags azdo-set-tags-cleared.json 4 '')"
+
+# The request must be a json-patch `replace`, not an `add` -- `add` on this field
+# is what appends, which is the behaviour being escaped.
+assert_eq "sends a json-patch replace on System.Tags" "replace" \
+  "$(python3 -c '
+import json,sys
+print(json.loads(open(sys.argv[1]).read().strip().splitlines()[0])[0]["op"])' "$ct_dir/body.txt")"
+
+# The PAT travels by `curl -K -` on stdin, never argv, so it cannot leak into a
+# process listing. Assert it is absent from the recorded command line.
+if grep -q 'not-a-real-token' "$ct_dir/argv.txt"; then
+  fail "the PAT never appears on curl's command line" "found it in argv"
+else
+  pass "the PAT never appears on curl's command line"
+fi
+rm -rf "$ct_dir"
 
 # --- summary -------------------------------------------------------------
 

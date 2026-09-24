@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+#
+# curl — stand-in for the real curl in Layer-1 fixture tests.
+#
+# Echoes $CURL_MOCK_FIXTURE. Captures the request body (-d) to
+# $CURL_MOCK_BODY_LOG and the argv to $CURL_MOCK_LOG when those are set, so a
+# test can assert what was SENT and not only what came back.
+#
+# Also drains stdin. azdo_set_tags passes credentials via `curl -K -`, and the
+# mock must consume that config rather than leave the writer blocked on a pipe.
+# Nothing read from stdin is ever logged: it carries the PAT.
+set -euo pipefail
+IFS=$'\n\t'
+
+: "${CURL_MOCK_FIXTURE:?CURL_MOCK_FIXTURE must be set when using the curl mock}"
+
+argv="$( IFS=' '; printf '%s' "$*" )"
+[[ -n "${CURL_MOCK_LOG:-}" ]] && printf '%s\n' "$argv" >> "$CURL_MOCK_LOG"
+
+# Consume the config on stdin when -K - was passed, and discard it.
+[[ "$argv" == *"-K -"* ]] && cat >/dev/null
+
+if [[ -n "${CURL_MOCK_BODY_LOG:-}" ]]; then
+  prev=""
+  for a in "$@"; do
+    [[ "$prev" == "-d" ]] && printf '%s\n' "$a" >> "$CURL_MOCK_BODY_LOG"
+    prev="$a"
+  done
+fi
+
+cat "$CURL_MOCK_FIXTURE"
