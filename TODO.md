@@ -60,11 +60,13 @@ they do **not** record is below.
 PR #307 added ADO detection plus an `## Azure DevOps` section to `/issues` only.
 Reasoning and caveats are in **ADR-012**; these are the follow-ups it names.
 
-- [x] **Guard the other 11 commands** — done in PR #307. Each carries a
+- [x] **Guard the other 12 commands** — done in PR #307. Each carries a
       `## Azure DevOps` section that names the forge, refuses the GitHub/Forgejo
       fallback and stops; all 12 `## Unknown host` sections now name
       `az devops login` too. They are unsupported but safe.
-- [ ] **Port the 11 sections properly**, once the `/issues` model is confirmed
+- [ ] **Port the 12 sections properly** — `done`, `enrich`, `enrich-phased`,
+      `milestone`, `new`, `parked`, `prs`, `queue`, `roadmap`, `route`, `triage`,
+      `work`. Now unblocked: the `/issues` model was confirmed
       against a live org. `/milestone` is the interesting one: iteration create
       is two steps (`iteration project create` then `iteration team add`, or the
       result is unassignable), iterations nest where GitHub milestones are flat,
@@ -218,7 +220,7 @@ For each: run without `--query` first, record the shape, then confirm the path.
       hides it while `--depth 3` shows it — the documented trap.
 - [ ] Matching on the leaf name while filtering on the full path behaves.
 
-### 10. The guards on the other 11 commands
+### 10. The guards on the other 12 commands
 
 - [ ] On an ADO remote, run `/milestone`, `/new`, `/prs`, `/triage`, `/work` and
       confirm each **names the forge and stops** — no `gh` call, and in
@@ -229,7 +231,7 @@ For each: run without `--query` first, record the shape, then confirm the path.
 - [ ] Fold every correction back into `commands/issues.md`, then **delete its
       "Epistemic status" paragraph** — that paragraph is the marker that this
       pass has not happened, so removing it is the definition of done.
-- [ ] Only then port the other 11 sections (see the previous section).
+- [ ] Only then port the other 12 sections (see the previous section).
 
 ## Re-enable GitHub Copilot Coding Agent once access is restored (disabled 2026-09-01, PR #282)
 
