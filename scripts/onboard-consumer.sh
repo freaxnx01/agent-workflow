@@ -331,7 +331,12 @@ build_agent_yml() {
   with_block+=$'\n      runner-labels: '"'$RUNNER_LABELS'"
   with_block+=$'\n      default-model: '"$MODEL"
   with_block+=$'\n      pipeline-ref: '"$REF"
-  [[ "$AGENT" == opencode ]] && with_block+=$'\n      agent: opencode'
+  # Always emit this, never only for opencode. agent-implement.yml's own `agent`
+  # input defaults to `opencode`, so a stub that omits the line silently runs the
+  # opposite of this script's documented default (claude) -- and a repo can then
+  # appear to run Claude purely because no OPENROUTER_API_KEY is present, flipping
+  # the moment that secret is added for any reason.
+  with_block+=$'\n      agent: '"$AGENT"
   [[ "$AI_MERGE" == true ]] && with_block+=$'\n      ai-review-ai-merge: true'
   [[ "$HUMAN_MERGE" == true ]] && with_block+=$'\n      ai-review-human-merge: true'
 
@@ -345,6 +350,8 @@ permissions:            # a reusable workflow can't be granted more than its
   contents: write       # caller; the repo's default GITHUB_TOKEN is read-only,
   pull-requests: write  # so omitting this fails the run at startup_failure.
   issues: write
+  actions: write        # retry-dispatch.sh re-dispatches THIS workflow; without
+                        # it every retry 403s and transient failures go hard
 
 jobs:
   claude:
