@@ -3363,6 +3363,74 @@ assert_not_contains "$out" 'issue edit'  "DRY_RUN makes no label writes"
 ec="$(run_capture_ec env REPO=o/r bash "$CAP")"
 assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 
+# --- non-starts (#393) ------------------------------------------------------
+# A run that reported 0 turns and $0.00 never reached the agent: it executed no
+# step of the plan and spent nothing. Counting it as an attempt parked #302
+# after a single real attempt, and also spent classify-agent.sh's
+# escalate-on-retry on a run that never happened.
+
+# shellcheck disable=SC2016  # literal dollar amounts, not expansions
+real_report='{"body":"## ai-implement run\n\n**Outcome:** :x: failed\n**Duration:** 11m 26s · **Turns:** 104 / cap 120 · **Cost:** $7.28"}'
+# shellcheck disable=SC2016  # literal dollar amounts, not expansions
+nonstart_report='{"body":"## ai-implement run\n\n**Outcome:** :x: failed\n**Duration:** 0s · **Turns:** 0 / cap 120 · **Cost:** $0.00"}'
+# shellcheck disable=SC2016  # literal dollar amounts, not expansions
+turns_only='{"body":"## ai-implement run\n\n**Outcome:** :x: failed\n**Duration:** 2m · **Turns:** 5 / cap 120 · **Cost:** $0.00"}'
+# shellcheck disable=SC2016  # literal dollar amounts, not expansions
+cost_only='{"body":"## ai-implement run\n\n**Outcome:** :x: failed\n**Duration:** 2m · **Turns:** 0 / cap 120 · **Cost:** $1.20"}'
+
+# Two non-starts plus one real attempt is ONE attempt at the work.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r \
+        ISSUE_COMMENTS_JSON="[$nonstart_report,$real_report,$nonstart_report]")"
+assert_contains "$out" 'proceed=true'   "non-starts do not consume attempts"
+assert_contains "$out" 'attempt=2'      "attempt counts only runs that ran"
+assert_contains "$out" 'non-starts=2'   "non-starts are reported separately"
+
+# Two real attempts still park, exactly as before.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r \
+        ISSUE_COMMENTS_JSON="[$real_report,$real_report]")"
+assert_contains "$out" 'proceed=false'  "two real attempts → park"
+
+# Half-zero is not a non-start: the run did something.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r \
+        ISSUE_COMMENTS_JSON="[$turns_only,$turns_only]")"
+assert_contains "$out" 'proceed=false'  "turns>0 with zero cost counts as a real attempt"
+
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r \
+        ISSUE_COMMENTS_JSON="[$cost_only,$cost_only]")"
+assert_contains "$out" 'proceed=false'  "cost>0 with zero turns counts as a real attempt"
+
+# Fail closed: a report whose fields cannot be parsed is a real attempt.
+unparseable='{"body":"## ai-implement run\n\n**Outcome:** :x: failed"}'
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r \
+        ISSUE_COMMENTS_JSON="[$unparseable,$unparseable]")"
+assert_contains "$out" 'proceed=false'  "unparseable report counts as a real attempt"
+assert_contains "$out" 'non-starts=0'   "unparseable report is not a non-start"
+
+# The non-start ceiling still stops a broken credential looping forever.
+five_nonstarts="[$nonstart_report,$nonstart_report,$nonstart_report,$nonstart_report,$nonstart_report]"
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r ISSUE_COMMENTS_JSON="$five_nonstarts")"
+assert_contains "$out" 'proceed=false'      "five non-starts → park"
+assert_contains "$out" 'non-starts=5'       "five non-starts → reported"
+assert_contains "$out" 'max-non-starts=5'   "the non-start ceiling is reported"
+assert_contains "$out" 'issue comment'      "non-start park → explains itself"
+
+# Four non-starts is still under the ceiling.
+four_nonstarts="[$nonstart_report,$nonstart_report,$nonstart_report,$nonstart_report]"
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r ISSUE_COMMENTS_JSON="$four_nonstarts")"
+assert_contains "$out" 'proceed=true'   "four non-starts → still under the ceiling"
+assert_contains "$out" 'attempt=1'      "non-starts never advance the attempt number"
+
+# MAX_NON_STARTS is configurable, like MAX_ATTEMPTS.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r MAX_NON_STARTS=2 \
+        ISSUE_COMMENTS_JSON="[$nonstart_report,$nonstart_report]")"
+assert_contains "$out" 'proceed=false'      "a lowered MAX_NON_STARTS parks sooner"
+assert_contains "$out" 'max-non-starts=2'   "reports the configured non-start ceiling"
+
+# DRY_RUN decides without writing, on the non-start path too.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 ISSUE_COMMENTS_JSON="$five_nonstarts")"
+assert_contains "$out" 'proceed=false'   "DRY_RUN decides on the non-start ceiling"
+assert_not_contains "$out" 'issue edit'  "DRY_RUN makes no label writes on the non-start path"
+
 # --- setup/link-partials.sh -------------------------------------------------
 
 section "setup/link-partials.sh"
