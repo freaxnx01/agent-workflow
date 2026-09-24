@@ -106,3 +106,106 @@ import sys, json
 for w in json.load(sys.stdin).get("workItems", []):
     print(w["id"])'
 }
+
+# azdo_work_item_types  echoes the project's work-item type names, one per line.
+#
+# What /new offers and what /triage orders by: Azure DevOps has no `bug` LABEL,
+# it has a Bug TYPE, so "bugs first" keys off this rather than a tag. Shares the
+# workitemtypes call with azdo_closed_states -- a caller needing both should
+# capture them from one invocation rather than paying for two round trips.
+azdo_work_item_types() {
+  : "${AZDO_PROJECT:?AZDO_PROJECT must be set — call resolve_azdo_context first}"
+  az devops invoke --org "$(azdo_org_url)" --area wit --resource workitemtypes \
+    --route-parameters project="$AZDO_PROJECT" \
+    --api-version 7.1 --output json --only-show-errors \
+  | python3 -c '
+import sys, json
+for t in json.load(sys.stdin).get("value", []):
+    print(t["name"])'
+}
+
+# azdo_fields <ids-csv>  echoes one JSON object per work item, one per line,
+# with keys: id, title, state, tags, iteration.
+#
+# This second call is not optional. WIQL returns IDS ONLY -- the SELECTTed
+# columns come back as a `columns[]` description of the fields, not their
+# values -- so anything beyond the id needs workitemsbatch.
+#
+# System.Tags is ABSENT from the response when a work item has no tags: the key
+# is missing, not null and not an empty string. Defaulted here so callers never
+# have to remember.
+azdo_fields() {
+  local ids="${1:?azdo_fields requires a comma-separated id list}"
+  : "${AZDO_PROJECT:?AZDO_PROJECT must be set — call resolve_azdo_context first}"
+  [[ -n "${ids//,/}" ]] || return 0
+
+  python3 -c '
+import json, sys
+print(json.dumps({"ids": [int(i) for i in sys.argv[1].split(",") if i.strip()],
+                  "fields": ["System.Id", "System.Title", "System.State",
+                             "System.Tags", "System.IterationPath"]}))' "$ids" \
+  | az devops invoke --org "$(azdo_org_url)" --area wit --resource workitemsbatch \
+      --route-parameters project="$AZDO_PROJECT" \
+      --http-method POST --in-file /dev/stdin --api-version 7.1 \
+      --output json --only-show-errors \
+  | python3 -c '
+import sys, json
+for w in json.load(sys.stdin).get("value", []):
+    f = w.get("fields", {})
+    print(json.dumps({
+        "id":        f.get("System.Id"),
+        "title":     f.get("System.Title", ""),
+        "state":     f.get("System.State", ""),
+        "tags":      f.get("System.Tags", ""),
+        "iteration": f.get("System.IterationPath", ""),
+    }))'
+}
+
+# _azdo_nodes <area|iteration>  shared by azdo_areas / azdo_iterations.
+#
+# Two traps, both silent. The response is a SINGLE OBJECT, not an array, so the
+# obvious `--query '[].name'` returns nothing at all -- no output, no error,
+# exit 0 -- which is indistinguishable from a project that has no nodes. And
+# `children` is null rather than [] on a childless project, so `length(children)`
+# ERRORS. Parsing in python rather than JMESPath sidesteps both.
+#
+# --depth is passed because it defaults to 1, which hides nested nodes -- the
+# sprints that actually hold work items.
+_azdo_nodes() {
+  : "${AZDO_PROJECT:?AZDO_PROJECT must be set — call resolve_azdo_context first}"
+  az boards "$1" project list --org "$(azdo_org_url)" --project "$AZDO_PROJECT" \
+    --depth 3 --output json --only-show-errors \
+  | python3 -c '
+import sys, json
+for c in (json.load(sys.stdin).get("children") or []):
+    print(c["name"])'
+}
+
+azdo_areas()      { _azdo_nodes area; }
+azdo_iterations() { _azdo_nodes iteration; }
+
+# azdo_active_pr_work_items  echoes the ids of work items linked to an ACTIVE
+# pull request, one per line, sorted and deduplicated.
+#
+# "Not WIP" means no *active* PR: a completed or abandoned one does not count,
+# which is why --status is `active` and not `all`. Note there is no `open` --
+# the values are active / completed / abandoned / all.
+#
+# Iterates the active PRs (few) and asks each for its work items, rather than
+# asking every work item for its PRs (many). Both --query paths here were
+# verified against a live organization.
+#
+# Empty output is a legitimate answer meaning nothing is WIP, not a failure.
+azdo_active_pr_work_items() {
+  : "${AZDO_PROJECT:?AZDO_PROJECT must be set — call resolve_azdo_context first}"
+  : "${AZDO_REPO:?AZDO_REPO must be set — call resolve_azdo_context first}"
+  local org_url pr
+  org_url="$(azdo_org_url)"
+
+  for pr in $(az repos pr list --org "$org_url" --project "$AZDO_PROJECT" \
+                --repository "$AZDO_REPO" --status active \
+                --output tsv --only-show-errors --query '[].pullRequestId'); do
+    az repos pr work-item list --org "$org_url" --id "$pr" \
+      --output tsv --only-show-errors --query '[].id'
+  done | sort -u
+}

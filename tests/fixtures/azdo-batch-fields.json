@@ -1,0 +1,24 @@
+{
+  "count": 2,
+  "value": [
+    {
+      "id": 1,
+      "fields": {
+        "System.Id": 1,
+        "System.IterationPath": "MyProject",
+        "System.State": "To Do",
+        "System.Title": "A linked to an active PR (section 7)"
+      }
+    },
+    {
+      "id": 4,
+      "fields": {
+        "System.Id": 4,
+        "System.IterationPath": "MyProject",
+        "System.State": "To Do",
+        "System.Tags": "alpha; beta; unparked",
+        "System.Title": "D plain control - should always appear"
+      }
+    }
+  ]
+}

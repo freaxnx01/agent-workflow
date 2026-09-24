@@ -47,6 +47,7 @@ run_lib() {
   (
     export PATH="$MOCKS:$PATH"
     export AZ_MOCK_FIXTURE="$FIXTURES/$fixture"
+    [[ -n "${AZ_MOCK_MAP:-}" ]] && export AZ_MOCK_MAP
     export AZDO_ORG=contoso AZDO_PROJECT=MyProject AZDO_REPO=my-repo
     # shellcheck disable=SC1090
     source "$LIB"
@@ -103,6 +104,55 @@ assert_eq "the body is valid JSON and the query survives intact" \
 
 rm -f "$AZ_MOCK_STDIN_LOG"
 unset AZ_MOCK_STDIN_LOG
+
+section "azdo_work_item_types — what /new offers and /triage orders by"
+
+# ADO has no `bug` label, it has a Bug TYPE, so /triage's bugs-first ordering
+# keys off this rather than a tag.
+assert_eq "lists the project's types" "$(printf 'Issue\nEpic\nTask')" \
+  "$(run_lib azdo-workitemtypes-basic.json azdo_work_item_types | head -3)"
+
+section "azdo_fields — System.Tags is ABSENT, not empty, when unset"
+
+# Work item 1 genuinely carries no tags, and the API omits the key entirely
+# rather than returning null or "". Indexing it directly is the bug this guards.
+assert_eq "absent tags default to empty string" "1||A linked to an active PR (section 7)" \
+  "$(run_lib azdo-batch-fields.json azdo_fields 1,4 | head -1 \
+     | python3 -c 'import sys,json; d=json.loads(sys.stdin.readline()); print("%s|%s|%s" % (d["id"], d["tags"], d["title"]))')"
+
+assert_eq "present tags come through" "alpha; beta; unparked" \
+  "$(run_lib azdo-batch-fields.json azdo_fields 1,4 | tail -1 \
+     | python3 -c 'import sys,json; print(json.loads(sys.stdin.readline())["tags"])')"
+
+section "azdo_areas / azdo_iterations — children[] and the null case"
+
+# The response is a SINGLE OBJECT, so a top-level [] query silently returns
+# nothing. And `children` is null on a childless project, which makes
+# length(children) error rather than return 0 -- so a childless project must
+# yield nothing quietly, not blow up.
+assert_eq "childless project yields nothing, does not error" "" \
+  "$(run_lib azdo-areas-childless.json azdo_areas)"
+
+assert_eq "nested project lists its children" "$(printf 'MyProject\nempty-area')" \
+  "$(run_lib azdo-areas-nested.json azdo_areas)"
+
+section "azdo_active_pr_work_items — WIP is an ACTIVE pr, nothing else"
+
+# These two calls run with `--output tsv --query ...`, so the fixture is what az
+# PRINTS after that processing, not the raw JSON body. The .json siblings are
+# kept alongside as documentation of the underlying shape -- both are top-level
+# arrays, which is why their --query paths were the two that turned out correct.
+az_map="$(mktemp)"
+printf 'repos pr list\t%s/azdo-pr-list-active.tsv\n' "$FIXTURES" > "$az_map"
+printf 'repos pr work-item list\t%s/azdo-pr-workitems.tsv\n' "$FIXTURES" >> "$az_map"
+assert_eq "collects work items linked to active PRs" "1" \
+  "$(AZ_MOCK_MAP="$az_map" run_lib azdo-pr-list-active.tsv azdo_active_pr_work_items)"
+
+# No active PRs is a legitimate answer meaning "nothing is WIP", not a failure.
+printf 'repos pr list\t%s/azdo-pr-list-empty.tsv\n' "$FIXTURES" > "$az_map"
+assert_eq "no active PRs means nothing is WIP" "" \
+  "$(AZ_MOCK_MAP="$az_map" run_lib azdo-pr-list-empty.tsv azdo_active_pr_work_items)"
+rm -f "$az_map"
 
 # --- summary -------------------------------------------------------------
 

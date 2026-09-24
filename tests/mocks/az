@@ -16,7 +16,11 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-: "${AZ_MOCK_FIXTURE:?AZ_MOCK_FIXTURE must be set when using the az mock}"
+# AZ_MOCK_MAP lets one test drive a function that makes SEVERAL different az
+# calls (e.g. `repos pr list` then `repos pr work-item list`): a file of
+# "<substring>\t<fixture>" lines, first match in argv wins. Same shape as the gh
+# mock's GH_MOCK_STDOUT_MAP. AZ_MOCK_FIXTURE remains the single-call default.
+: "${AZ_MOCK_FIXTURE:=}"
 
 # Space-joined argv. `$*` alone joins on the first IFS character, which this
 # script sets to a newline, so a match on "--in-file /dev/stdin" would never fire.
@@ -28,8 +32,17 @@ if [[ -n "${AZ_MOCK_STDIN_LOG:-}" && "$argv" == *"--in-file /dev/stdin"* ]]; the
   cat >> "$AZ_MOCK_STDIN_LOG"
 fi
 
-if [[ "$AZ_MOCK_FIXTURE" == *.txt ]]; then
-  cat "$AZ_MOCK_FIXTURE" >&2
+fixture="$AZ_MOCK_FIXTURE"
+if [[ -n "${AZ_MOCK_MAP:-}" && -r "${AZ_MOCK_MAP}" ]]; then
+  while IFS=$'\t' read -r pattern mapped || [[ -n "$pattern" ]]; do
+    [[ -z "$pattern" ]] && continue
+    if [[ "$argv" == *"$pattern"* ]]; then fixture="$mapped"; break; fi
+  done < "$AZ_MOCK_MAP"
+fi
+[[ -n "$fixture" ]] || { printf 'az mock: no fixture for: %s\n' "$argv" >&2; exit 64; }
+
+if [[ "$fixture" == *.txt ]]; then
+  cat "$fixture" >&2
   exit 1
 fi
-cat "$AZ_MOCK_FIXTURE"
+cat "$fixture"
