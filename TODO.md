@@ -201,7 +201,7 @@ For each: run without `--query` first, record the shape, then confirm the path.
 
 ### 8. Tags
 
-- [!] **CANNOT PASS** — tag a work item `🧊 parked`. Azure DevOps **rejects emoji
+- [!] **CANNOT PASS** — tag a work item `parked`. Azure DevOps **rejects emoji
       in tag names** (`TF401407`), with or without the space, while non-ASCII such
       as `übung` is fine. The tag cannot be created, so the question is void rather
       than answered. ADO must use a bare `parked`; the convention is **not**

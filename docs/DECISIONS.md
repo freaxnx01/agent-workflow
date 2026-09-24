@@ -1546,3 +1546,55 @@ list rather than an interactive permission prompt, so the tool set the headless
 enrich may use is fixed at the wrapper. The driver learns the outcome by
 re-reading the issue's labels, not from the session's exit code — see the spec's
 "Dispatch" section.
+
+## ADR-016 — The parked label is plain ASCII `parked` (2026-09-24)
+
+**Status:** accepted. Supersedes the tag-filter rationale in **ADR-012**.
+
+**Context.** Azure DevOps rejects emoji in tag names:
+
+```text
+az boards work-item update --id 2 --fields "System.Tags=🧊 parked"
+→ ERROR: TF401407: The tag name is invalid. It contains invalid characters.
+```
+
+Rejected with and without the space. This is not a Unicode restriction — `übung`
+stores fine; ADO refuses emoji specifically. So the label as previously spelled
+**cannot exist** on that forge, by any client, and the convention did not port.
+
+ADR-012 anticipated the symptom but got the cause wrong. It recorded:
+
+> **Tag filters match the bare word `parked`, not `🧊 parked`**, to keep a
+> non-ASCII literal out of a query string that crosses `az`, the REST layer and
+> WIQL's own parser.
+
+Two things turned out false when that was finally run against a live
+organization (see `docs/ai-notes/2026-09-22-ado-manual-test-run.md`):
+
++ There is no emoji literal to keep out of the query, because the tag cannot be
+  created in that form at all.
++ The stated cost of bare-word matching — that a tag merely *containing*
+  "parked" would also be dropped — does not exist. WIQL's `CONTAINS` on
+  `System.Tags` matches **whole tags** despite the operator's name: a `parked`
+  filter leaves `unparked`, `parkedx` and `parked-later` untouched.
+
+**Decision.** The label is **`parked`** on all three forges. It was the only
+emoji-bearing label in the scheme — every other label `ensure-issue-labels.sh`
+creates is already ASCII — so one rename buys portability and removes the
+inconsistency rather than encoding it.
+
+**Rejected: a per-forge mapping** (`🧊 parked` on GitHub and Forgejo, `parked` on
+ADO). It avoids a migration, and a partial seam already existed in
+`check-attempt-cap.sh`'s `PARK_LABEL`. Rejected because it makes every
+label-touching command consult a mapping forever, to preserve decoration on the
+one label in the scheme that carried any.
+
+**Consequences.**
+
++ Existing repos migrate with `gh label edit '🧊 parked' --name 'parked'`. It must
+  be a rename **in place**: delete-and-create would silently unpark every parked
+  issue, which is precisely what the label exists to prevent.
++ `PARK_LABEL` keeps its override seam, defaulting to `parked`, so a consumer
+  that has not migrated can export the old value.
++ ADR-012's tag-filter bullet stays as written. It records what was believed
+  then; this ADR records what a live run showed instead.

@@ -48,7 +48,7 @@ Three gates, all required. Failing any one is logged with its reason:
    default branch. No auto-merge on an unrun gate (#263).
 
 And per issue: open, `needs-enrichment`, a non-empty body, and none of
-`🧊 parked`, `enrichment-ongoing`, `needs-human`, `ai-implement`.
+`parked`, `enrichment-ongoing`, `needs-human`, `ai-implement`.
 
 ## Setup
 
@@ -96,9 +96,9 @@ script:
 | `failed (enrich exited <rc>)` | The nested enrich session crashed; escalated to `needs-human` |
 | `failed (…); ESCALATION FAILED: needs-human not applied, enrichment-ongoing may still be set` | The crash above, AND the escalation call itself failed — the issue may be stuck; fix by hand |
 | `needs-human` | The enrich session hit a one-way door or a `[low]` assumption and handed it over |
-| `skipped (could not read labels — not dispatching)` | A post-enrich label re-read (`needs-human`, `needs-enrichment`, or `🧊 parked`) failed, or returned a state the driver did not expect; refuses to dispatch rather than guess |
+| `skipped (could not read labels — not dispatching)` | A post-enrich label re-read (`needs-human`, `needs-enrichment`, or `parked`) failed, or returned a state the driver did not expect; refuses to dispatch rather than guess |
 | `skipped (enrich did not complete — needs-enrichment still present)` | The nested session exited 0 but never actually enriched the issue (prose-only reply, a denied tool, a silent no-op) — `needs-enrichment` is the positive evidence `/enrich` clears on genuine success, and it is still there |
-| `skipped (parked during enrich — not dispatching)` | A human applied `🧊 parked` while the (up to 30-minute) nested session was running; the driver re-reads it after the session returns and refuses to dispatch |
+| `skipped (parked during enrich — not dispatching)` | A human applied `parked` while the (up to 30-minute) nested session was running; the driver re-reads it after the session returns and refuses to dispatch |
 | `failed (dispatch labels not applied); escalated to needs-human` | The enrich session came out clean, but applying `ai-implement`/`ai-review-ai-merge` failed even after retry; escalated to a human instead of silently dropping the issue |
 | `failed (dispatch labels not applied); ESCALATION FAILED: needs-human not applied` | The dispatch write failed, AND the escalation write also failed — the issue is now enriched with no dispatch labels and no `needs-human`; fix by hand |
 | `enriched` | Spec, plan and issue body written; `ai-implement` + `ai-review-ai-merge` applied |

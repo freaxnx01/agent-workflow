@@ -111,7 +111,7 @@ read-back must show it: a silent assignment is always *reported*, never implicit
 
 - **Silence is never an assignment.** No answer means no milestone.
 - **`none` is always offered**, and is a legitimate answer — `roadmap` and
-  `🧊 parked` issues are *defined* by having no milestone.
+  `parked` issues are *defined* by having no milestone.
 - This pre-selection does **not** contradict `/milestone triage`'s "No default
   milestone, no inferring from labels or title". That rule forbids assigning
   *without an explicit answer*, which this still requires. Don't "fix" the

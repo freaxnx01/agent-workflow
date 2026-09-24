@@ -18,7 +18,7 @@ section and the `case` branch below (see git history).
 
 ## Preconditions — confirm before assigning
 
-1. The issue is **open**, **not parked** (`🧊 parked`), and not already assigned to an agent —
+1. The issue is **open**, **not parked** (`parked`), and not already assigned to an agent —
    `gh issue view <N> --json state,labels,assignees`. If parked or already agent-owned, stop and say so.
 2. The issue is **actionable** — it has clear scope/AC. If it's `❓ to-be-defined` or
    `needs-enrichment`, warn that the agent will likely produce a weak PR, and confirm before proceeding.

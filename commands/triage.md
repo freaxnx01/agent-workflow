@@ -42,7 +42,7 @@ zero by construction. Say which milestone you scoped to instead.
 ## GitHub
 
 Fetch open issues with body, labels, and **milestone**, dropping the ones that
-aren't current work — **not parked** (no `🧊 parked` label) and **not roadmap**
+aren't current work — **not parked** (no `parked` label) and **not roadmap**
 (no `roadmap` label). Parked issues are deliberately deferred; list them with
 `/parked`. Roadmap issues are planned for a future milestone rather than current
 work; list them with `/roadmap`.
@@ -63,7 +63,7 @@ that flag entirely when it is not:
 gh issue list --state open --limit 100 \
   --milestone "<resolved title>" \
   --json number,title,labels,body,createdAt,milestone \
-  --jq 'map(select([.labels[].name] | index("🧊 parked") | not))
+  --jq 'map(select([.labels[].name] | index("parked") | not))
     | map(select([.labels[].name] | index("roadmap") | not))
     | .[] | [
         .number,
@@ -138,7 +138,7 @@ tea api --login git-home "repos/$repo/issues?state=open&type=issues&limit=100&so
 import sys, json
 for i in json.load(sys.stdin):
     labels = [l["name"] for l in i.get("labels") or []]
-    if "🧊 parked" in labels or "roadmap" in labels: continue
+    if "parked" in labels or "roadmap" in labels: continue
     m = i.get("milestone") or {}
     print(i["number"], "||", m.get("title") or "-", "||", (m.get("due_on") or "-")[:10],
           "||", i["title"], "||", ",".join(labels) or "-",

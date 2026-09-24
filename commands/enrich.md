@@ -116,7 +116,7 @@ needs must end up there.
 gh issue view $ISSUE --comments
 ```
 
-If the issue is closed, already has `ai-implement` label, or is `🧊 parked`, stop and say so.
+If the issue is closed, already has `ai-implement` label, or is `parked`, stop and say so.
 
 ### Step 1.5 — Check for an existing enrichment lock
 
@@ -486,7 +486,7 @@ tea issues $ISSUE --login git-home
 tea api --login git-home "repos/$repo/issues/$ISSUE/comments"
 ```
 
-If the issue is closed or `🧊 parked`, stop and say so.
+If the issue is closed or `parked`, stop and say so.
 
 ### Step 1.5 — Check for an existing enrichment lock
 
