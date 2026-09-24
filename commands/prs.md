@@ -70,15 +70,55 @@ there is (agent/WIP PRs are often drafts). If none, say so.
 
 ## Azure DevOps
 
-`detect_forge` said `azdo`, so the remote is an Azure DevOps one — and **this
-command has no Azure DevOps section yet**. Say exactly that and **stop**.
+Show open pull requests that need review in the current repo.
 
-Do **not** fall back to the GitHub or Forgejo section. Neither `gh` nor `tea` can
-read ADO work items, so running either against this remote fails confusingly at
-best; on a command that *writes*, it would aim the write at the wrong forge
-entirely. `/issues` is the only command with ADO support today — see **ADR-012**
-in agent-workflow's `docs/DECISIONS.md` for the object mapping, and its `TODO.md`
-for the port status.
+```bash
+source "$HOME/.claude/scripts/lib/detect-forge.sh"
+source "$HOME/.claude/scripts/lib/azdo.sh"
+resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
+org_url="$(azdo_org_url)"
+```
+
+**`--status` takes `active` / `completed` / `abandoned` / `all` — there is no
+`open`.** Passing `open` is not an error you will notice; it simply matches
+nothing. "Needs review" means `active`.
+
+```bash
+az repos pr list --org "$org_url" --project "$AZDO_PROJECT" \
+  --repository "$AZDO_REPO" --status active \
+  --output json --only-show-errors
+```
+
+This response **is** a top-level array, unlike the classification-node listings
+in `/milestone` and `/issues`, so `--query '[].pullRequestId'` is correct here.
+Both PR `--query` paths were checked against a live organization; don't "fix"
+them to `children[]`.
+
+Reviewer state lives on each PR's `reviewers[]`, with `vote` as an **integer**.
+Measured against a live PR by casting each vote and reading it back, rather than
+taken from the docs:
+
+| `vote` | meaning | `az repos pr set-vote --vote` |
+|---|---|---|
+| `10` | approved | `approve` |
+| `5` | approved with suggestions | `approve-with-suggestions` |
+| `0` | no vote yet | `reset` |
+| `-5` | waiting for author | `wait-for-author` |
+| `-10` | rejected | `reject` |
+
+So "awaiting review" is a PR with at least one reviewer whose `vote` is `0`, and
+"my review requested" is one where that reviewer is me. There is no
+`review-requested:@me` search equivalent — filter the list locally.
+
+Linked work items, which is what makes a PR reviewable in context:
+
+```bash
+az repos pr work-item list --org "$org_url" --id <pr> \
+  --output tsv --only-show-errors --query '[].id'
+```
+
+Compact table: id, title, author, age, review state, linked work items. Exclude
+drafts (`isDraft: true`) unless that's all there is. If none, say so.
 
 ## Unknown host
 
