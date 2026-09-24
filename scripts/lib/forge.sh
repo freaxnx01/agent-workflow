@@ -74,3 +74,67 @@ print(json.dumps(json.load(sys.stdin).get("comments", [])))')"
 
   export ISSUE_LABELS ISSUE_BODY ISSUE_JSON ISSUE_COMMENTS_JSON
 }
+
+# --- write verbs -------------------------------------------------------------
+#
+# Each mirrors one gh call the implement job already makes. They exist so the
+# call sites stop naming a forge, not to add behaviour: same arguments, same
+# exit codes, same idempotence as the gh form they replace.
+#
+# All four refuse an unsupported forge with exit 2 rather than doing nothing.
+# A write that silently no-ops is worse than one that fails, because the caller
+# reports success and the issue is left in a state nobody expects.
+
+# forge_issue_comment <issue-number> <body-file>
+#
+# Takes a FILE, never a string. A run report is multi-line and long enough that
+# passing it as an argument is a real risk; post-run-report.sh already uses
+# --body-file for that reason and this must not regress it.
+forge_issue_comment() {
+  local n="${1:?forge_issue_comment requires an issue number}"
+  local f="${2:?forge_issue_comment requires a body file}"
+  : "${REPO:?REPO must be set}"
+  case "$(detect_forge | awk '{print $1}')" in
+    github) gh issue comment "$n" --repo "$REPO" --body-file "$f" ;;
+    *) printf 'forge.sh: no comment adapter for this forge yet (#253)\n' >&2; return 2 ;;
+  esac
+}
+
+# forge_issue_label_add <issue-number> <comma-separated-names>
+forge_issue_label_add() {
+  local n="${1:?forge_issue_label_add requires an issue number}"
+  local labels="${2:?forge_issue_label_add requires labels}"
+  : "${REPO:?REPO must be set}"
+  case "$(detect_forge | awk '{print $1}')" in
+    github) gh issue edit "$n" --repo "$REPO" --add-label "$labels" ;;
+    *) printf 'forge.sh: no label adapter for this forge yet (#253)\n' >&2; return 2 ;;
+  esac
+}
+
+# forge_issue_label_remove <issue-number> <name>
+forge_issue_label_remove() {
+  local n="${1:?forge_issue_label_remove requires an issue number}"
+  local label="${2:?forge_issue_label_remove requires a label}"
+  : "${REPO:?REPO must be set}"
+  case "$(detect_forge | awk '{print $1}')" in
+    github) gh issue edit "$n" --repo "$REPO" --remove-label "$label" ;;
+    *) printf 'forge.sh: no label adapter for this forge yet (#253)\n' >&2; return 2 ;;
+  esac
+}
+
+# forge_label_ensure <name> <color> <description>
+#
+# Idempotent by contract: an existing label is left exactly as it is, colour
+# included. ensure-issue-labels.sh depends on that and documents it, so the
+# caller keeps whatever error suppression it already has -- `gh label create`
+# errors on an existing label and that is the expected, tolerated path.
+forge_label_ensure() {
+  local name="${1:?forge_label_ensure requires a name}"
+  local color="${2:?forge_label_ensure requires a color}"
+  local desc="${3:?forge_label_ensure requires a description}"
+  : "${REPO:?REPO must be set}"
+  case "$(detect_forge | awk '{print $1}')" in
+    github) gh label create "$name" --repo "$REPO" --color "$color" --description "$desc" ;;
+    *) printf 'forge.sh: no label adapter for this forge yet (#253)\n' >&2; return 2 ;;
+  esac
+}
