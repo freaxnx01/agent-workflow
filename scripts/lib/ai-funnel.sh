@@ -189,7 +189,7 @@ map(
   | . as $i
   | (.dispatches | length) as $attempts
   | ((.shipped_prs | length) > 0) as $shipped
-  | (has("🧊 parked")) as $parked
+  | (has("parked")) as $parked
   | (has("needs-enrichment") or has("❓ to-be-defined")) as $needs_enrichment
   | (has("ai-implement")) as $queued
   | ([ (if $parked then "parked" else empty end),
