@@ -10,7 +10,13 @@
 # call sites; it fills the two variables they already look for, per forge, once
 # per run. Five scripts stop needing the forge without any of them changing.
 #
-#   forge_export_issue <issue-number>   exports ISSUE_LABELS and ISSUE_BODY
+#   forge_export_issue <issue-number>   exports the four variables the implement
+#                                       job's read paths already prefer, from a
+#                                       SINGLE forge call:
+#                                         ISSUE_LABELS        classify-agent/task/turns
+#                                         ISSUE_BODY          classify-turns
+#                                         ISSUE_JSON          build-agent-prompt
+#                                         ISSUE_COMMENTS_JSON check-attempt-cap
 #
 # Requires: detect-forge.sh sourced first (for detect_forge), and REPO set.
 #
@@ -40,7 +46,9 @@ forge_export_issue() {
 
   case "$forge" in
     github)
-      json="$(gh issue view "$n" --repo "$REPO" --json labels,title,body)" || return 1
+      # One call, four consumers. Fetching labels/title/body/comments together
+      # replaces what were five separate `gh issue view` calls across the job.
+      json="$(gh issue view "$n" --repo "$REPO" --json labels,title,body,comments)" || return 1
       ISSUE_LABELS="$(printf '%s' "$json" | python3 -c '
 import sys, json
 for l in json.load(sys.stdin).get("labels", []):
@@ -48,6 +56,15 @@ for l in json.load(sys.stdin).get("labels", []):
       ISSUE_BODY="$(printf '%s' "$json" | python3 -c '
 import sys, json
 print(json.load(sys.stdin).get("body", ""))')"
+      # build-agent-prompt wants title+body+comments in gh's own shape.
+      ISSUE_JSON="$(printf '%s' "$json" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+print(json.dumps({"title": d.get("title", ""), "body": d.get("body", ""),
+                  "comments": d.get("comments", [])}))')"
+      ISSUE_COMMENTS_JSON="$(printf '%s' "$json" | python3 -c '
+import sys, json
+print(json.dumps(json.load(sys.stdin).get("comments", [])))')"
       ;;
     *)
       printf 'forge.sh: no read adapter for forge "%s" yet (see #253)\n' "$forge" >&2
@@ -55,5 +72,5 @@ print(json.load(sys.stdin).get("body", ""))')"
       ;;
   esac
 
-  export ISSUE_LABELS ISSUE_BODY
+  export ISSUE_LABELS ISSUE_BODY ISSUE_JSON ISSUE_COMMENTS_JSON
 }

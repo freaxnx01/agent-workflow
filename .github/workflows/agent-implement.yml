@@ -510,6 +510,34 @@ jobs:
       - name: Ensure toolchain
         run: bash .claude-pipeline/scripts/ensure-toolchain.sh
 
+      # Fill the four variables the read paths already prefer, from ONE forge
+      # call, before any classifier runs. classify-agent/task/turns,
+      # build-agent-prompt and check-attempt-cap each check their own variable
+      # first and fall back to `gh` only when it is unset -- so populating them
+      # here makes the read path forge-agnostic without touching those scripts.
+      # forge.sh returns 2 on a forge it has no adapter for, which fails the step
+      # rather than leaving the variables empty: an empty ISSUE_LABELS is
+      # indistinguishable from "this issue carries no labels", and every
+      # classifier would act on that. See #253.
+      - name: Export issue context for the classifiers
+        if: ${{ !inputs.stub-claude }}
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+        run: |
+          source .claude-pipeline/scripts/lib/detect-forge.sh
+          source .claude-pipeline/scripts/lib/forge.sh
+          forge_export_issue "$ISSUE_NUMBER"
+          # Heredoc delimiters, not KEY=value: an issue body is multi-line and
+          # arbitrary, and a plain assignment truncates it at the first newline.
+          {
+            printf 'ISSUE_LABELS<<PIPELINE_EOF\n%s\nPIPELINE_EOF\n' "$ISSUE_LABELS"
+            printf 'ISSUE_BODY<<PIPELINE_EOF\n%s\nPIPELINE_EOF\n' "$ISSUE_BODY"
+            printf 'ISSUE_JSON<<PIPELINE_EOF\n%s\nPIPELINE_EOF\n' "$ISSUE_JSON"
+            printf 'ISSUE_COMMENTS_JSON<<PIPELINE_EOF\n%s\nPIPELINE_EOF\n' "$ISSUE_COMMENTS_JSON"
+          } >> "$GITHUB_ENV"
+
       - name: Fetch issue context
         if: ${{ !inputs.stub-claude }}
         id: issue
