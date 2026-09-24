@@ -138,3 +138,23 @@ forge_label_ensure() {
     *) printf 'forge.sh: no label adapter for this forge yet (#253)\n' >&2; return 2 ;;
   esac
 }
+
+# forge_issue_label_edit <issue-number> <add-csv> <remove-csv>
+#
+# Add and remove in ONE call. check-attempt-cap.sh parks an issue by adding the
+# park label and removing the dispatch label together, and that atomicity
+# matters: split into two calls, a failure between them leaves the issue parked
+# but still carrying ai-implement, which invites a re-dispatch loop. Either
+# argument may be empty.
+forge_issue_label_edit() {
+  local n="${1:?forge_issue_label_edit requires an issue number}"
+  local add="${2-}" rm="${3-}"
+  : "${REPO:?REPO must be set}"
+  local args=(issue edit "$n" --repo "$REPO")
+  [[ -n "$add" ]] && args+=(--add-label "$add")
+  [[ -n "$rm" ]] && args+=(--remove-label "$rm")
+  case "$(detect_forge | awk '{print $1}')" in
+    github) gh "${args[@]}" ;;
+    *) printf 'forge.sh: no label adapter for this forge yet (#253)\n' >&2; return 2 ;;
+  esac
+}
