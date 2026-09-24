@@ -406,15 +406,149 @@ so the next run doesn't rediscover it.
 
 ## Azure DevOps
 
-`detect_forge` said `azdo`, so the remote is an Azure DevOps one — and **this
-command has no Azure DevOps section yet**. Say exactly that and **stop**.
+A milestone on this forge is an **iteration** — see **ADR-012** for why Iteration
+Path and not Area Path or a parent Feature.
 
-Do **not** fall back to the GitHub or Forgejo section. Neither `gh` nor `tea` can
-read ADO work items, so running either against this remote fails confusingly at
-best; on a command that *writes*, it would aim the write at the wrong forge
-entirely. `/issues` is the only command with ADO support today — see **ADR-012**
-in agent-workflow's `docs/DECISIONS.md` for the object mapping, and its `TODO.md`
-for the port status.
+### Setup
+
+Source the shared helpers once. `azdo.sh` holds the query primitives; do not
+inline `az` calls that duplicate them.
+
+```bash
+source "$HOME/.claude/scripts/lib/detect-forge.sh"
+source "$HOME/.claude/scripts/lib/azdo.sh"
+resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
+org_url="$(azdo_org_url)"
+team="$AZDO_PROJECT Team"     # the default team; a project may have others
+```
+
+Needs `az` with the **`azure-devops` extension** and a PAT in
+`AZURE_DEVOPS_EXT_PAT` — prefer an `.envrc` direnv already allows, reached with
+`direnv exec <dir> …`, since the agent shell fires no direnv hook. If neither a
+PAT nor a login is present, say so and stop; **don't** fall through to a bare
+`az` call whose auth prompt would hang.
+
+### Parse the verb
+
+**Four verbs only** — `list`, `new`, `assign`, `triage`. Same forms as the other
+forges:
+
+```text
+/milestone list
+/milestone new <name> [due <date>]
+/milestone assign <issue> to <name>
+/milestone triage
+```
+
+No arguments → `list`. A first word that isn't one of the four → print the four
+forms and **stop**. Don't guess, don't fuzzy-match.
+
+### Three rules that apply to every verb
+
+> **Iterations nest; GitHub milestones are flat.** `--depth` **defaults to 1**,
+> which hides exactly the sprints that hold work items. Always pass it — verified:
+> with `Sprint 1\Week A` present, both `--depth 1` *and* the default report
+> `Sprint 1` as childless, while `--depth 2` and `3` show `Week A`.
+>
+> **Match the argument against the leaf `name`, but filter on the full `path`.**
+> Two sprints under different parents may share a leaf name; the path is what is
+> unique and what `System.IterationPath` stores.
+>
+> **Report every write from a read-back — never from the exit code.** The same
+> rule the GitHub section carries, and it bites harder here: `az` has been
+> observed printing an error to stderr while the step still continues. After
+> `new` and `assign`, re-read and report what the read-back says.
+
+### list
+
+```bash
+azdo_iterations
+```
+
+That wraps `az boards iteration project list … --depth 3` and selects
+`children[]`, not a top-level `[]` — the response is a single object, so the
+obvious query returns nothing at all, with no error. It also tolerates `children`
+being `null` on a project with no iterations, which would otherwise make
+`length(children)` fail.
+
+Show name, full path and finish date. If there are none, say so plainly.
+
+### new
+
+**Creation is two steps.** The first makes the iteration exist as a project
+classification node; the second is what makes it **assignable**. Skipping the
+second leaves an iteration that looks created and cannot be used:
+
+```bash
+az boards iteration project create --name "<name>" \
+  --org "$org_url" --project "$AZDO_PROJECT" --output json --only-show-errors
+
+# The identifier comes from the listing, not from the create response's `id`.
+iid=$(az boards iteration project list --org "$org_url" --project "$AZDO_PROJECT" \
+        --depth 3 --output json --only-show-errors \
+      | python3 -c '
+import sys, json
+name = sys.argv[1]
+for c in (json.load(sys.stdin).get("children") or []):
+    if c["name"] == name:
+        print(c["identifier"]); break' "<name>")
+
+az boards iteration team add --team "$team" --id "$iid" \
+  --org "$org_url" --project "$AZDO_PROJECT" --output none --only-show-errors
+```
+
+Verified: before `iteration team add` the new iteration is absent from
+`az boards iteration team list`; after it, it appears. Read that list back and
+report from it.
+
+A `due <date>` argument maps to the iteration's **finish date**, set with
+`--finish-date YYYY-MM-DD` on the create. There is no separate "due" field.
+
+`VS402371` on create means the name is already in use under that parent — report
+it as "already exists", not as a failure to create.
+
+### assign
+
+An issue on this forge is a **work item**, and assignment sets its
+`System.IterationPath` to the iteration's **full path**:
+
+```bash
+az boards work-item update --id <work-item-id> --org "$org_url" \
+  --fields "System.IterationPath=$AZDO_PROJECT\\<iteration name>" \
+  --output tsv --only-show-errors --query 'fields."System.IterationPath"'
+```
+
+Unlike `System.Tags`, this field **replaces** rather than appends — it holds one
+value. To unassign, set it back to the project root (`$AZDO_PROJECT` alone).
+
+Resolve `<name>` to a path via `list` first, and if it matches no iteration, say
+which names exist rather than creating one implicitly.
+
+### triage
+
+Work items with **no** iteration — the equivalent of "no milestone". An item at
+the project root (`System.IterationPath` equal to `$AZDO_PROJECT`) is unassigned:
+
+```bash
+rc=0; ids=$(azdo_wiql "SELECT [System.Id] FROM WorkItems
+WHERE [System.TeamProject] = @project
+  AND [System.AreaPath] UNDER '$AZDO_PROJECT\\$AZDO_REPO'
+  AND [System.IterationPath] = '$AZDO_PROJECT'
+ORDER BY [System.CreatedDate] DESC") || rc=$?
+```
+
+Capture the status rather than calling bare: sourcing `azdo.sh` applies `set -e`,
+and `azdo_wiql` returns **2** when the Area Path does not exist (`TF51011`) —
+which is a different answer from "nothing is unassigned" and must not be reported
+as one. See its header for the full idiom.
+
+Then resolve fields with `azdo_fields "$ids"` and show a compact table. Offer to
+assign each to an iteration, one at a time; never bulk-assign without asking.
+
+### No forge context
+
+If `resolve_azdo_context` fails, report the remote and stop — don't guess an org
+or project.
 
 ## Unknown host
 
