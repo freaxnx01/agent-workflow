@@ -209,3 +209,47 @@ azdo_active_pr_work_items() {
       --output tsv --only-show-errors --query '[].id'
   done | sort -u
 }
+
+# azdo_set_tags <work-item-id> <tags>  REPLACES a work item's tags outright.
+# <tags> is semicolon-delimited ("a;b"); an empty string clears them.
+#
+# This exists because `az boards work-item update --fields "System.Tags=..."`
+# cannot do it. That form APPENDS -- successive calls accumulate -- and an empty
+# value is a silent no-op, so an "unpark" verb cannot be built on it at all.
+# Verified: alpha;beta;unparked stayed put on every --fields attempt, and was
+# reduced to alpha and then cleared only through the json-patch below.
+#
+# It goes through curl rather than `az devops invoke` because the latter cannot
+# send this media type: `--media-type application/json-patch+json` fails with an
+# internal "'type'" traceback in azure-devops extension 1.0.4. Revisit if that
+# is fixed upstream.
+#
+# The PAT is passed via a curl config on stdin (`-K -`), never on the command
+# line, so it does not appear in `ps` output or a process listing.
+#
+# Exit codes: 0 replaced; 1 the request failed; 2 usage.
+azdo_set_tags() {
+  local id="${1:?azdo_set_tags requires a work-item id}"
+  local tags="${2?azdo_set_tags requires a tag string (empty clears)}"
+  : "${AZURE_DEVOPS_EXT_PAT:?AZURE_DEVOPS_EXT_PAT must be set}"
+  local url body out
+  url="$(azdo_org_url)/_apis/wit/workitems/${id}?api-version=7.1"
+
+  body=$(python3 -c '
+import json, sys
+print(json.dumps([{"op": "replace", "path": "/fields/System.Tags",
+                   "value": sys.argv[1]}]))' "$tags")
+
+  out=$(printf 'user = ":%s"\n' "$AZURE_DEVOPS_EXT_PAT" \
+    | curl -sS -K - \
+        -H 'Content-Type: application/json-patch+json' \
+        -X PATCH "$url" -d "$body") || return 1
+
+  printf '%s' "$out" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+if "fields" not in d:
+    sys.stderr.write("azdo_set_tags: unexpected response: %s\n" % str(d)[:200])
+    sys.exit(1)
+print(d["fields"].get("System.Tags", ""))'
+}

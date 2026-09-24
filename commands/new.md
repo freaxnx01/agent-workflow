@@ -249,15 +249,57 @@ if it misbehaves, and update this command.
 
 ## Azure DevOps
 
-`detect_forge` said `azdo`, so the remote is an Azure DevOps one — and **this
-command has no Azure DevOps section yet**. Say exactly that and **stop**.
+Create a **work item** from notes.
 
-Do **not** fall back to the GitHub or Forgejo section. Neither `gh` nor `tea` can
-read ADO work items, so running either against this remote fails confusingly at
-best; on a command that *writes*, it would aim the write at the wrong forge
-entirely. `/issues` is the only command with ADO support today — see **ADR-012**
-in agent-workflow's `docs/DECISIONS.md` for the object mapping, and its `TODO.md`
-for the port status.
+```bash
+source "$HOME/.claude/scripts/lib/detect-forge.sh"
+source "$HOME/.claude/scripts/lib/azdo.sh"
+resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
+```
+
+### Pick the type first
+
+There is no universal default. **Which types exist is template-specific** — a
+Basic project offers `Issue`, `Epic`, `Task` and the test/feedback types and has
+**no `Bug` at all**, while an Agile-derived one does. Read the list and choose
+from it rather than assuming:
+
+```bash
+azdo_work_item_types
+```
+
+If the notes describe a defect and no defect-shaped type exists, say so and use
+the project's general type rather than inventing one.
+
+### Create
+
+`az boards work-item create` has **no `--tags` flag**; tags go through `--fields`,
+semicolon-delimited. Set the Area Path too, or the item lands at the project root
+and will not be found by any of the repo-scoped queries in `/issues`, `/queue` or
+`/triage`:
+
+```bash
+az boards work-item create --org "$(azdo_org_url)" --project "$AZDO_PROJECT" \
+  --type "<type>" --title "<title>" \
+  --fields "System.AreaPath=$AZDO_PROJECT\\$AZDO_REPO" \
+            "System.Description=<body>" \
+  --output json --only-show-errors
+```
+
+**Do not apply `needs-enrichment`.** That tag exists to gate GitHub's
+`/gh:implement`, and there is no pipeline dispatch on this forge (ADR-012), so it
+would signal a readiness state nothing here acts on.
+
+### Tags afterwards
+
+If the item needs tags beyond creation, use **`azdo_set_tags`**, not a second
+`--fields` call: that form appends and cannot clear, so it can only ever grow the
+list. The tags here are plain ASCII — `parked`, `roadmap` — because Azure DevOps
+rejects emoji in tag names (ADR-016).
+
+### Report from a read-back
+
+Re-read the created item and report what it says, not what the create returned.
 
 ## Unknown host
 
