@@ -81,6 +81,41 @@ different semantics (see `/prs`' vote table). **This verb should be out of scope
 for a first adapter**: the ADO path opens a draft PR and stops, leaving review
 and merge to a human.
 
+## Most of step 1 already exists
+
+The classifiers were built with an **injection seam** for their own Layer-1 tests,
+and nobody appears to have connected it to forge portability:
+
+```bash
+if [[ -z "${ISSUE_LABELS:-}" ]]; then
+  ISSUE_LABELS="$(gh issue view "$ISSUE_NUMBER" --repo "$REPO" --json labels --jq '.labels[].name')"
+fi
+```
+
+They read `ISSUE_LABELS` / `ISSUE_BODY` when set and only call `gh` as a
+**fallback**. Measured across the five read-only scripts:
+
+| Script | Has the seam? |
+|---|---|
+| `classify-agent.sh` | **yes** |
+| `classify-task.sh` | **yes** |
+| `classify-turns.sh` | **yes** |
+| `build-agent-prompt.sh` | no — calls `gh` unconditionally |
+| `check-attempt-cap.sh` | no — calls `gh` unconditionally |
+
+So three of the five need **no code change whatsoever**. Populate `ISSUE_LABELS`
+and `ISSUE_BODY` once, per forge, before they run, and they are already portable.
+
+This changes the shape of step 1 and lowers its risk sharply. Rather than
+rewriting every call site to a `forge_issue_read` verb, the adapter's job is to
+**fill the two variables the scripts already prefer**, and the only code change is
+adding the same seam to the two scripts that lack it — matching a convention the
+repo already uses rather than introducing one.
+
+It also means the "provable no-op" bar is close to free: with the variables
+populated, the `gh` fallback is simply never reached, and the existing fixture
+tests already drive these scripts through exactly that path.
+
 ## Design
 
 ### Shape: a shell adapter, not a skill
@@ -108,11 +143,11 @@ callers change from `gh issue view …` to `forge_issue_read "$N"` and nothing e
 
 Follows the issue's own order, with the audit's correction:
 
-1. **`scripts/lib/forge.sh` + `forge-github.sh`**, and migrate the **five
-   read-only** scripts (`classify-agent`, `classify-task`, `classify-turns`,
-   `build-agent-prompt`, `check-attempt-cap`'s read half). Fixture tests prove
-   byte-identical behaviour on GitHub. **No ADO yet** — this step must be a
-   provable no-op.
+1. **`scripts/lib/forge.sh` + `forge-github.sh`**, populating `ISSUE_LABELS` and
+   `ISSUE_BODY` once per run. Add the same seam to `build-agent-prompt.sh` and
+   `check-attempt-cap.sh`; the other three classifiers need no change. Fixture
+   tests prove byte-identical behaviour on GitHub. **No ADO yet** — this step
+   must be a provable no-op.
 2. **Migrate the write scripts** (`post-run-report`, `ensure-issue-labels`,
    `verify-or-recover-pr`, `check-attempt-cap`'s write half). Same bar.
 3. **`forge-azdo.sh`** implementing verbs 1–5 on top of `azdo.sh`.
