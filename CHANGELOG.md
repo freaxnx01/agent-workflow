@@ -446,6 +446,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **pipeline:** the attempt cap no longer counts a run that never started. A
+  report stating 0 turns and `$0.00` never reached the agent, so it is not an
+  attempt at the work — on #302 one such run consumed half the issue's dispatch
+  budget and also spent `classify-agent.sh`'s escalate-on-retry on a run that
+  never happened. Non-starts now have their own higher ceiling
+  (`MAX_NON_STARTS`, default 5) so a missing credential still parks eventually,
+  with a park message naming the credential rather than advising
+  re-enrichment (#393).
 - **pipeline:** the implementation contract now actually reaches the agent. The
   prompt was built from `gh issue view --json title,body`, so issue *comments*
   were never fetched — and the contract `/gh:implement` posts is a comment. It
