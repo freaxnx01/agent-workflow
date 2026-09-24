@@ -76,6 +76,8 @@ _forge_env() {
     env | grep -c '^ISSUE_BODY=' | sed 's/^/EXPORTED_BODY=/'
     printf 'LABELS<<\n%s\n>>\n' "${ISSUE_LABELS:-}"
     printf 'BODY<<\n%s\n>>\n' "${ISSUE_BODY:-}"
+    printf 'JSON<<\n%s\n>>\n' "${ISSUE_JSON:-}"
+    printf 'COMMENTS<<\n%s\n>>\n' "${ISSUE_COMMENTS_JSON:-}"
   )
   rm -f "$map" "$ghlog"
 }
@@ -107,6 +109,14 @@ assert_eq "ISSUE_BODY is exported, not shell-local" "1" \
   "$(forge_field "$REPO_GH" EXPORTED_BODY)"
 
 assert_eq "github path succeeds" "0" "$(forge_field "$REPO_GH" RC)"
+
+# build-agent-prompt and check-attempt-cap prefer their own payloads. Filling all
+# four from ONE gh call replaces what were five separate reads across the job.
+assert_eq "ISSUE_JSON carries title, body and comments" "Do the thing|Implement the thing.|1" \
+  "$(forge_block "$REPO_GH" JSON | python3 -c 'import sys,json; d=json.load(sys.stdin); print("%s|%s|%d" % (d["title"], d["body"], len(d["comments"])))')"
+
+assert_eq "ISSUE_COMMENTS_JSON is the comments array" "1" \
+  "$(forge_block "$REPO_GH" COMMENTS | python3 -c 'import sys,json; print(len(json.load(sys.stdin)))')"
 
 section "an unsupported forge fails loudly, never silently empty"
 
