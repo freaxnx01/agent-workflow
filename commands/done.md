@@ -57,15 +57,38 @@ Compact table: number, title, when closed (relative), labels. Concise.
 
 ## Azure DevOps
 
-`detect_forge` said `azdo`, so the remote is an Azure DevOps one — and **this
-command has no Azure DevOps section yet**. Say exactly that and **stop**.
+Recently **completed** work items.
 
-Do **not** fall back to the GitHub or Forgejo section. Neither `gh` nor `tea` can
-read ADO work items, so running either against this remote fails confusingly at
-best; on a command that *writes*, it would aim the write at the wrong forge
-entirely. `/issues` is the only command with ADO support today — see **ADR-012**
-in agent-workflow's `docs/DECISIONS.md` for the object mapping, and its `TODO.md`
-for the port status.
+```bash
+source "$HOME/.claude/scripts/lib/detect-forge.sh"
+source "$HOME/.claude/scripts/lib/azdo.sh"
+resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
+```
+
+Closed is `State IN (closed states)` — the inverse of every other query here — and
+the state list is **derived**, never written out, because it is template-specific:
+a Basic project has `Done`, an Agile-derived one does not.
+
+```bash
+rc=0; ids=$(azdo_wiql "SELECT [System.Id] FROM WorkItems
+WHERE [System.TeamProject] = @project
+  AND [System.AreaPath] UNDER '$AZDO_PROJECT\\$AZDO_REPO'
+  AND [System.State] IN ($(azdo_closed_states))
+  AND [System.ChangedDate] >= @today - 30
+ORDER BY [System.ChangedDate] DESC" | tr '\n' ',' | sed 's/,$//') || rc=$?
+```
+
+Capture `azdo_wiql`'s status; never call it bare. Sourcing `azdo.sh` applies
+`set -e`, and the function returns **2** when the Area Path does not exist
+(`TF51011`) — a different answer from "nothing matched", which must not be
+reported as one.
+
+`@today - 30` is valid WIQL and is the recency window; adjust the number rather
+than filtering in the shell. There is no "closed at" field to sort on —
+`System.ChangedDate` is the closest, and it moves on any edit, so treat the
+ordering as approximate and say so if it matters.
+
+Resolve fields with `azdo_fields "$ids"` and show id, title, state and iteration.
 
 ## Unknown host
 

@@ -267,13 +267,42 @@ The local-signal checks (`git worktree list`, `git branch --list`,
 
 ## Azure DevOps
 
-`detect_forge` said `azdo`, so the remote is an Azure DevOps one — and **this
-command has no Azure DevOps section yet**. Say exactly that and **stop**.
+Open **work items** in implementation order, each with whether it is already in
+flight.
 
-Do **not** fall back to the GitHub or Forgejo section. Neither `gh` nor `tea` can
-read ADO work items, so running either against this remote fails confusingly.
-`/issues` is the only command with ADO support today — see **ADR-012** in
-`docs/DECISIONS.md` for the object mapping, and `TODO.md` for the port status.
+```bash
+source "$HOME/.claude/scripts/lib/detect-forge.sh"
+source "$HOME/.claude/scripts/lib/azdo.sh"
+resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
+```
+
+```bash
+rc=0; ids=$(azdo_wiql "SELECT [System.Id] FROM WorkItems
+WHERE [System.TeamProject] = @project
+  AND [System.AreaPath] UNDER '$AZDO_PROJECT\\$AZDO_REPO'
+  AND [System.State] NOT IN ($(azdo_closed_states))
+  AND [System.Tags] NOT CONTAINS 'parked'
+  AND [System.Tags] NOT CONTAINS 'roadmap'
+ORDER BY [System.CreatedDate] DESC" | tr '\n' ',' | sed 's/,$//') || rc=$?
+
+wip="$(azdo_active_pr_work_items)"      # ids linked to an ACTIVE pull request
+```
+
+Capture `azdo_wiql`'s status; never call it bare. Sourcing `azdo.sh` applies
+`set -e`, and the function returns **2** when the Area Path does not exist
+(`TF51011`) — a different answer from "nothing matched", which must not be
+reported as one.
+
+**In flight** means an **active** PR links the work item. A completed or
+abandoned one does not count — `azdo_active_pr_work_items` already encodes that,
+so don't re-derive it from `--status all`.
+
+Resolve fields with `azdo_fields "$ids"` and show id, title, state, iteration and
+an in-flight marker. Order as the other forges do; the ordering rules are
+forge-independent.
+
+There is no `ai-implement` dispatch on this forge — the pipeline is GitHub-only —
+so report readiness, and don't offer to dispatch.
 
 ## Unknown host
 

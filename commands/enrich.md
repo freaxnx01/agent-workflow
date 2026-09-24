@@ -756,15 +756,40 @@ Blocked item and the issue is handed over with `needs-human`. See
 
 ## Azure DevOps
 
-`detect_forge` said `azdo`, so the remote is an Azure DevOps one — and **this
-command has no Azure DevOps section yet**. Say exactly that and **stop**.
+**Reads work, writes do not — and the write is the point of this command.**
 
-Do **not** fall back to the GitHub or Forgejo section. Neither `gh` nor `tea` can
-read ADO work items, so running either against this remote fails confusingly at
-best; on a command that *writes*, it would aim the write at the wrong forge
-entirely. `/issues` is the only command with ADO support today — see **ADR-012**
-in agent-workflow's `docs/DECISIONS.md` for the object mapping, and its `TODO.md`
-for the port status.
+```bash
+source "$HOME/.claude/scripts/lib/detect-forge.sh"
+source "$HOME/.claude/scripts/lib/azdo.sh"
+resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
+```
+
+The read half is fine: fetch the work item, brainstorm a spec, write a plan.
+
+```bash
+az boards work-item show --id <id> --org "$(azdo_org_url)" \
+  --output json --only-show-errors
+```
+
+What is **not** ported, and why it is not half-done:
+
+- **The issue-body update.** This command's contract is that the implementing
+  agent can work from the body alone. On ADO that means rewriting
+  `System.Description`, and `az boards work-item update --fields` has an
+  append-versus-replace behaviour that differs per field — proven for
+  `System.Tags`, which appends and cannot be cleared. Until that is settled for
+  the description, a partial write would silently mangle an existing one.
+- **The enrichment lock.** It is a label plus a timestamped comment. Tag writes
+  on this forge append rather than replace, so acquiring a lock is possible but
+  *releasing* one is not, with `--fields` alone.
+
+So on an ADO remote: do the spec and plan, commit them under
+`docs/superpowers/`, and **tell the user the work item was not updated**, naming
+the paths instead. Do not apply or clear any tag. Do not claim the issue is
+ready to implement.
+
+Tracked in **#286** Task 6, which needs an `azdo_set_tags` built on a json-patch
+`replace` rather than `--fields`.
 
 ## Unknown host
 

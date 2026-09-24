@@ -196,15 +196,33 @@ recommend the closest sensible option, and update this command for the future.
 
 ## Azure DevOps
 
-`detect_forge` said `azdo`, so the remote is an Azure DevOps one — and **this
-command has no Azure DevOps section yet**. Say exactly that and **stop**.
+Recommend how to implement a **work item**, by complexity and readiness.
 
-Do **not** fall back to the GitHub or Forgejo section. Neither `gh` nor `tea` can
-read ADO work items, so running either against this remote fails confusingly at
-best; on a command that *writes*, it would aim the write at the wrong forge
-entirely. `/issues` is the only command with ADO support today — see **ADR-012**
-in agent-workflow's `docs/DECISIONS.md` for the object mapping, and its `TODO.md`
-for the port status.
+```bash
+source "$HOME/.claude/scripts/lib/detect-forge.sh"
+source "$HOME/.claude/scripts/lib/azdo.sh"
+resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
+```
+
+Read the one work item rather than querying a set:
+
+```bash
+az boards work-item show --id <id> --org "$(azdo_org_url)" \
+  --output json --only-show-errors
+```
+
+The routing judgement itself is forge-independent — size, clarity, blast radius,
+whether acceptance criteria exist — so apply the same rubric the GitHub section
+uses. Two differences in the inputs:
+
+- **There is no `ai-implement` dispatch here.** agent-workflow's pipeline is
+  GitHub-only (ADR-012), so the "hand it to the pipeline" route is unavailable.
+  Recommend local execution instead, and say why rather than silently dropping
+  the option.
+- **Complexity signals come from the work-item *type*, not labels.** Azure DevOps
+  has no `bug` / `chore` labels; it has `Bug`, `Task`, `Epic` types — and which
+  of those exist is template-specific. Use `azdo_work_item_types` rather than
+  assuming.
 
 ## Unknown host
 
