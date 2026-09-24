@@ -542,15 +542,34 @@ command for the future.
 
 ## Azure DevOps
 
-`detect_forge` said `azdo`, so the remote is an Azure DevOps one — and **this
-command has no Azure DevOps section yet**. Say exactly that and **stop**.
+Same position as `/enrich`: **the reads work, the writes do not.**
 
-Do **not** fall back to the GitHub or Forgejo section. Neither `gh` nor `tea` can
-read ADO work items, so running either against this remote fails confusingly at
-best; on a command that *writes*, it would aim the write at the wrong forge
-entirely. `/issues` is the only command with ADO support today — see **ADR-012**
-in agent-workflow's `docs/DECISIONS.md` for the object mapping, and its `TODO.md`
-for the port status.
+```bash
+source "$HOME/.claude/scripts/lib/detect-forge.sh"
+source "$HOME/.claude/scripts/lib/azdo.sh"
+resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
+```
+
+Each phase's *thinking* half is forge-independent — spec, then plan, with a
+`/clear` between them to keep the contexts isolated. Fetch the work item with:
+
+```bash
+az boards work-item show --id <id> --org "$(azdo_org_url)" \
+  --output json --only-show-errors
+```
+
+The phase boundary is where this breaks. `/enrich-phased` relies on the
+**enrichment lock** surviving a `/clear`, and the lock is a label plus a
+timestamped comment. On this forge `az boards work-item update --fields` appends
+to `System.Tags` rather than replacing it, and an empty value is a no-op — so a
+lock can be acquired and **not released**. A phased run that cannot release its
+lock leaves the work item blocked for the full 24-hour staleness window.
+
+So on an ADO remote: say the phased flow is unavailable, and offer the
+single-pass read-only path from `/enrich`'s section instead — spec and plan
+committed to `docs/superpowers/`, work item untouched.
+
+Tracked in **#286** Task 6.
 
 ## Unknown host
 

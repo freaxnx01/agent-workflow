@@ -70,15 +70,34 @@ detect this issue as WIP even before a PR exists.
 
 ## Azure DevOps
 
-`detect_forge` said `azdo`, so the remote is an Azure DevOps one — and **this
-command has no Azure DevOps section yet**. Say exactly that and **stop**.
+Work a **work item** end to end.
 
-Do **not** fall back to the GitHub or Forgejo section. Neither `gh` nor `tea` can
-read ADO work items, so running either against this remote fails confusingly at
-best; on a command that *writes*, it would aim the write at the wrong forge
-entirely. `/issues` is the only command with ADO support today — see **ADR-012**
-in agent-workflow's `docs/DECISIONS.md` for the object mapping, and its `TODO.md`
-for the port status.
+```bash
+source "$HOME/.claude/scripts/lib/detect-forge.sh"
+source "$HOME/.claude/scripts/lib/azdo.sh"
+resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
+```
+
+The read half works: fetch the item, plan against it, implement locally.
+
+```bash
+az boards work-item show --id <id> --org "$(azdo_org_url)" \
+  --output json --only-show-errors
+```
+
+**Two things this command does on GitHub that it cannot do here — say so plainly
+rather than half-doing them:**
+
+- **No pipeline dispatch.** agent-workflow's pipeline is GitHub-only (ADR-012),
+  so there is no `ai-implement` label to apply and no draft PR to wait on. This
+  command's ADO path is local execution only.
+- **No issue-body enrichment.** `/enrich` is not ported for writes (see its own
+  section), so the plan is not written back to the work item. Keep the plan in
+  the repo under `docs/superpowers/plans/` and reference it.
+
+What does work end to end: read the item, write the spec and plan, implement,
+open a PR with `az repos pr create --work-items <id>` so the item is linked, and
+report from a read-back rather than from the exit code.
 
 ## Unknown host
 
