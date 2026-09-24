@@ -149,6 +149,34 @@ JSON
 printf 'issue view\t%s\n' "$tmp/quoted.json" > "$tmp/map.tsv"
 assert_contains "$(build_out)" "has-plan=false"  "plan heading only in a comment → still false"
 
+section "ISSUE_JSON seam — an injected payload skips the gh call (#253)"
+
+# The same seam classify-agent, classify-turns and check-attempt-cap already
+# carry. It lets a caller that has already read the issue -- or read it from a
+# forge gh does not speak -- hand the result straight in.
+seam_dir="$(mktemp -d)"
+seam_out="$seam_dir/prompt.md"
+seam_log="$seam_dir/gh.log"
+: > "$seam_log"
+
+env PATH="$MOCKS:$PATH" GH_MOCK_LOG="$seam_log" \
+  ISSUE_JSON='{"title":"Injected title","body":"Injected body.","comments":[]}' \
+  ISSUE_NUMBER=42 REPO=o/r PROMPT_FILE="$seam_out" \
+  bash "$SCRIPT" >/dev/null 2>&1 || true
+
+assert_contains "$(cat "$seam_out" 2>/dev/null || true)" 'Injected body.' \
+  "the injected payload is used"
+
+# The point of the seam is that gh is never reached. A non-empty log means the
+# fallback ran anyway, which would defeat the whole purpose on another forge.
+if [[ -s "$seam_log" ]]; then
+  fail "gh is not called when ISSUE_JSON is set" "gh.log: $(head -1 "$seam_log")"
+else
+  pass "gh is not called when ISSUE_JSON is set"
+fi
+rm -rf "$seam_dir"
+
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then
   printf 'failed:\n'; printf '  - %s\n' "${FAIL_NAMES[@]}"
