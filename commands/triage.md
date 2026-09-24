@@ -198,15 +198,69 @@ $ARGUMENTS
 
 ## Azure DevOps
 
-`detect_forge` said `azdo`, so the remote is an Azure DevOps one — and **this
-command has no Azure DevOps section yet**. Say exactly that and **stop**.
+Same job as the other forges — open work items ordered for triage — with one real
+behavioural difference, below.
 
-Do **not** fall back to the GitHub or Forgejo section. Neither `gh` nor `tea` can
-read ADO work items, so running either against this remote fails confusingly at
-best; on a command that *writes*, it would aim the write at the wrong forge
-entirely. `/issues` is the only command with ADO support today — see **ADR-012**
-in agent-workflow's `docs/DECISIONS.md` for the object mapping, and its `TODO.md`
-for the port status.
+```bash
+source "$HOME/.claude/scripts/lib/detect-forge.sh"
+source "$HOME/.claude/scripts/lib/azdo.sh"
+resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
+```
+
+### Bugs first means work-item TYPE, not a label
+
+**Azure DevOps has no `bug` label. It has a Bug *type*.** Every other forge's
+"bugs first" rule keys off labels like `bug` / `type:bug` / `regression`; here
+that finds nothing, and the bucket silently comes back empty rather than wrong —
+which is harder to notice.
+
+Select the type in the query and bucket on it:
+
+```bash
+rc=0; ids=$(azdo_wiql "SELECT [System.Id] FROM WorkItems
+WHERE [System.TeamProject] = @project
+  AND [System.AreaPath] UNDER '$AZDO_PROJECT\\$AZDO_REPO'
+  AND [System.State] NOT IN ($(azdo_closed_states))
+  AND [System.Tags] NOT CONTAINS 'parked'
+  AND [System.Tags] NOT CONTAINS 'roadmap'
+ORDER BY [System.CreatedDate] DESC" | tr '\n' ',' | sed 's/,$//') || rc=$?
+```
+
+Capture the status; don't call bare. Sourcing `azdo.sh` applies `set -e`, and
+`azdo_wiql` returns **2** when the Area Path does not exist (`TF51011`) — a
+different answer from "nothing is open", and one that must not be reported as
+one. On `2`, say no Area Path matches the repo and **ask** before widening.
+
+Interpolate `azdo_closed_states` — never write state names out. They are
+template-specific: a Basic project has `Done`, an Agile-derived one does not.
+
+`azdo_work_item_types` lists the project's valid types, which is what tells you
+which of them mean "defect" here. It shares the underlying call with
+`azdo_closed_states`, so capture both from one invocation rather than paying for
+two round trips.
+
+**Do not assume a `Bug` type exists.** It is template-specific, and the check is
+not academic: a **Basic** project offers `Issue`, `Epic`, `Task` and the test/
+feedback types — and **no `Bug` at all** — while an Agile-derived one does have
+it. Read the list, pick the defect-ish types from what is actually there, and if
+none of them is defect-shaped, say so rather than silently returning an empty
+bugs bucket.
+
+### Ordering
+
+1. **Bugs / fixes first** — work items whose **type** signals a defect (`Bug`,
+   or the project's equivalent from `azdo_work_item_types`), then clear bug
+   wording in the title.
+2. **Then quick wins** — remaining small-scope items, easiest first.
+3. **Everything else.**
+
+Resolve fields with `azdo_fields "$ids"` and show: id, title, type, key tags,
+**iteration + finish date**, and a 3–6 word reason for the bucket. Render an item
+with no iteration as `no milestone` — it sits at the project root — and close
+with a count of those, since they are what `/milestone triage` walks.
+
+Milestone is **shown, not sorted on**: the buckets stay bugs → quick wins → rest.
+Be concise; this is a reading aid, don't start any work.
 
 ## Unknown host
 
