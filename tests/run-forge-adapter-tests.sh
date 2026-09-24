@@ -226,6 +226,72 @@ fi
 
 rm -rf "$inj_dir" "$REPO_INJ"
 
+section "write verbs — the call reaches the forge intact"
+
+# A write verb's contract IS the call it makes, so assert on the argv the mock
+# records rather than on a return value.
+w_dir="$(mktemp -d)"
+w_log="$w_dir/gh.log"
+REPO_W="$(make_repo 'https://github.com/o/r.git')"
+
+# shellcheck disable=SC2030,SC2031
+run_write() {
+  : > "$w_log"
+  (
+    cd "$REPO_W"
+    export PATH="$MOCKS:$PATH" GH_MOCK_LOG="$w_log" GH_MOCK_AUTH_HOSTS="github.com" REPO=o/r
+    # shellcheck disable=SC1090
+    source "$ROOT/scripts/lib/detect-forge.sh"
+    # shellcheck disable=SC1090
+    source "$LIB"
+    "$@"
+  ) >/dev/null 2>&1
+  # detect_forge probes with `gh auth token` and that lands in the same log, so
+  # take the last line: the write itself, which is what the verb's contract is.
+  tail -1 "$w_log"
+}
+
+printf 'hello\n' > "$w_dir/body.md"
+
+# The comment verb takes a FILE, never a string: a run report is multi-line and
+# long enough that passing it as an argument is a real risk.
+assert_eq "comment passes a body file" \
+  "issue comment 42 --repo o/r --body-file $w_dir/body.md" \
+  "$(run_write forge_issue_comment 42 "$w_dir/body.md")"
+
+assert_eq "label add" "issue edit 42 --repo o/r --add-label a,b" \
+  "$(run_write forge_issue_label_add 42 'a,b')"
+
+assert_eq "label remove" "issue edit 42 --repo o/r --remove-label a" \
+  "$(run_write forge_issue_label_remove 42 'a')"
+
+assert_eq "label ensure" "label create x --repo o/r --color FF0000 --description d" \
+  "$(run_write forge_label_ensure x FF0000 d)"
+
+section "write verbs refuse an unsupported forge"
+
+# Same rule as the read verb: a write that silently does nothing is worse than
+# one that fails, because the caller reports success.
+REPO_WA="$(make_repo 'https://dev.azure.com/contoso/MyProject/_git/my-repo')"
+# shellcheck disable=SC2030,SC2031
+azdo_rc() {
+  (
+    cd "$REPO_WA"
+    export PATH="$MOCKS:$PATH" GH_MOCK_LOG="$w_dir/a.log" REPO=o/r
+    # shellcheck disable=SC1090
+    source "$ROOT/scripts/lib/detect-forge.sh"
+    # shellcheck disable=SC1090
+    source "$LIB"
+    rc=0; "$@" >/dev/null 2>&1 || rc=$?
+    printf '%s' "$rc"
+  )
+}
+assert_eq "comment on azdo returns 2"      "2" "$(azdo_rc forge_issue_comment 42 "$w_dir/body.md")"
+assert_eq "label add on azdo returns 2"    "2" "$(azdo_rc forge_issue_label_add 42 'a')"
+assert_eq "label ensure on azdo returns 2" "2" "$(azdo_rc forge_label_ensure x FF0000 d)"
+
+rm -rf "$w_dir" "$REPO_W" "$REPO_WA"
+
 # --- summary -------------------------------------------------------------
 
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"
