@@ -898,7 +898,7 @@ ec="$(run_capture_ec env REPO=o/r bash "$CLASSIFY_AGENT")"
 assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 
 # Missing REPO → exit 2
-ec="$(run_capture_ec env ISSUE_NUMBER=1 bash "$CLASSIFY_AGENT")"
+ec="$(run_capture_ec env -u REPO ISSUE_NUMBER=1 bash "$CLASSIFY_AGENT")"
 assert_equals "$ec" "2" "missing REPO → exit 2"
 
 section "check-opencode-auth — OpenRouter key preflight (#164)"
@@ -1007,7 +1007,7 @@ ec="$(run_capture_ec env REPO=o/r INPUT_AI_REVIEW_AI_MERGE=true bash "$AGATE")"
 assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 
 # Missing REPO → exit 2
-ec="$(run_capture_ec env ISSUE_NUMBER=1 INPUT_AI_REVIEW_AI_MERGE=true bash "$AGATE")"
+ec="$(run_capture_ec env -u REPO ISSUE_NUMBER=1 INPUT_AI_REVIEW_AI_MERGE=true bash "$AGATE")"
 assert_equals "$ec" "2" "missing REPO → exit 2"
 
 section "check-human-merge-gate — input + label combinations"
@@ -1071,7 +1071,7 @@ ec="$(run_capture_ec env REPO=o/r INPUT_AI_REVIEW_HUMAN_MERGE=true bash "$HGATE"
 assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 
 # Missing REPO → exit 2
-ec="$(run_capture_ec env ISSUE_NUMBER=1 INPUT_AI_REVIEW_HUMAN_MERGE=true bash "$HGATE")"
+ec="$(run_capture_ec env -u REPO ISSUE_NUMBER=1 INPUT_AI_REVIEW_HUMAN_MERGE=true bash "$HGATE")"
 assert_equals "$ec" "2" "missing REPO → exit 2"
 
 section "review-prompt — ADR-002 §2.4 auto-block rules present in template"
@@ -1218,20 +1218,20 @@ section "parse-chain — extract Blocks: / Blocked by: markers (ADR-003)"
 
 PARSE_CHAIN="$ROOT/scripts/parse-chain.sh"
 
-out="$(printf 'Title\n\nBlocks: #42, #43\nBlocked by: #100\n' | bash "$PARSE_CHAIN")"
+out="$(printf 'Title\n\nBlocks: #42, #43\nBlocked by: #100\n' | env -u ISSUE_BODY bash "$PARSE_CHAIN")"
 assert_contains "$out" 'blocks=#42 #43'    "single Blocks: line with commas → two refs"
 assert_contains "$out" 'blocked-by=#100'   "single Blocked by: line → one ref"
 
 # Multiple `Blocks:` lines union into a set
-out="$(printf 'Blocks: #1\nsome text\nBlocks: #2\n' | bash "$PARSE_CHAIN")"
+out="$(printf 'Blocks: #1\nsome text\nBlocks: #2\n' | env -u ISSUE_BODY bash "$PARSE_CHAIN")"
 assert_contains "$out" 'blocks=#1 #2'      "multiple Blocks: lines → union"
 
 # Cross-repo refs parsed-and-discarded per ADR-003 §6
-out="$(printf 'Blocks: #5, org/other-repo#99, #6\n' | bash "$PARSE_CHAIN")"
+out="$(printf 'Blocks: #5, org/other-repo#99, #6\n' | env -u ISSUE_BODY bash "$PARSE_CHAIN")"
 assert_contains "$out" 'blocks=#5 #6'      "cross-repo refs ignored"
 
 # `Also Blocks: #44` — not at line start, must not match
-out="$(printf 'Also Blocks: #44\n' | bash "$PARSE_CHAIN")"
+out="$(printf 'Also Blocks: #44\n' | env -u ISSUE_BODY bash "$PARSE_CHAIN")"
 assert_contains "$out" 'blocks='           "inline 'Blocks:' (not at line start) → ignored"
 
 # Body via env var instead of stdin
@@ -1239,7 +1239,7 @@ out="$(ISSUE_BODY=$'Blocked by: #7\n' bash "$PARSE_CHAIN" < /dev/null)"
 assert_contains "$out" 'blocked-by=#7'     "ISSUE_BODY env seam"
 
 # Missing body → exit 2
-ec="$(run_capture_ec env bash "$PARSE_CHAIN" < /dev/null)"
+ec="$(run_capture_ec env -u ISSUE_BODY bash "$PARSE_CHAIN" < /dev/null)"
 assert_equals "$ec" "2" "no body provided → exit 2"
 
 section "find-next-blocked-issue — eligibility per ADR-003"
@@ -1393,7 +1393,7 @@ assert_equals "$ec" "2" "missing ISSUE_NUMBER etc. → exit 2"
 ec="$(run_capture_ec env REPO=o/r bash "$FIND_NEXT")"
 assert_equals "$ec" "2" "missing CLOSED_ISSUE_NUMBER → exit 2"
 
-ec="$(run_capture_ec env CLOSED_ISSUE_NUMBER=100 CANDIDATES_JSON='[]' bash "$FIND_NEXT")"
+ec="$(run_capture_ec env -u REPO CLOSED_ISSUE_NUMBER=100 CANDIDATES_JSON='[]' bash "$FIND_NEXT")"
 assert_equals "$ec" "2" "missing REPO → exit 2"
 
 section "verify-gh-mock-merge — detect gh pr merge in the mock log"
@@ -1634,7 +1634,7 @@ assert_equals "$ec" "2" "missing pr-number/concerns args → exit 2"
 ec="$(run_capture_ec env REPO=o/r HEAD_REF=x ITERATION=1 bash "$SELF_FIX_PR" 99 /no/such/file.json)"
 assert_equals "$ec" "2" "unreadable concerns file → exit 2"
 
-ec="$(run_capture_ec env HEAD_REF=x ITERATION=1 bash "$SELF_FIX_PR" 99 "$CONCERNS")"
+ec="$(run_capture_ec env -u REPO HEAD_REF=x ITERATION=1 bash "$SELF_FIX_PR" 99 "$CONCERNS")"
 assert_equals "$ec" "2" "missing REPO → exit 2"
 
 # Real self-fix-pr.sh, no ambient git identity (repo has none, global/system
@@ -2275,7 +2275,7 @@ assert_equals "$(cat "$ctr_fp")" "3"   "  → retried FIND_PR_RETRY_MAX times, t
 ec="$(run_capture_ec env REPO=o/r bash "$FIND_PR")"
 assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 
-ec="$(run_capture_ec env ISSUE_NUMBER=1 PIPELINE_PRS_JSON='[]' bash "$FIND_PR")"
+ec="$(run_capture_ec env -u REPO ISSUE_NUMBER=1 PIPELINE_PRS_JSON='[]' bash "$FIND_PR")"
 assert_equals "$ec" "2" "missing REPO → exit 2"
 
 section "check-merge-envelope — per-gate evaluation (ADR-002)"
@@ -2590,7 +2590,7 @@ assert_contains "$out" 'failed-gates=1,5,6,7' "all four gates listed in order"
 ec="$(run_capture_ec env REPO=o/r bash "$ENVELOPE")"
 assert_equals "$ec" "2" "missing PR_NUMBER → exit 2"
 
-ec="$(run_capture_ec env PR_NUMBER=1 \
+ec="$(run_capture_ec env -u REPO PR_NUMBER=1 \
         PR_AUTHOR='github-actions[bot]' PR_FILES='x' \
         REQUIRED_CHECKS_STATUS=pass REPO_ALLOWS_SQUASH=true REPO_ALLOWS_AUTO_MERGE=true \
         bash "$ENVELOPE")"
@@ -2818,7 +2818,7 @@ assert_equals "$(printf '%s' "$out" | grep -c '::warning::' || true)" "0" \
 ec="$(run_capture_ec env REPO=o/r bash "$LINK_CHK")"
 assert_equals "$ec" "2" "missing ISSUE_NUMBER/PR_NUMBER -> exit 2"
 
-ec="$(run_capture_ec env ISSUE_NUMBER=1 PR_NUMBER=2 GITHUB_REPOSITORY= bash "$LINK_CHK")"
+ec="$(run_capture_ec env -u REPO ISSUE_NUMBER=1 PR_NUMBER=2 GITHUB_REPOSITORY= bash "$LINK_CHK")"
 assert_equals "$ec" "3" "missing REPO -> exit 3"
 
 section "retry-dispatch — policy decisions (DRY_RUN, no real dispatch)"
@@ -2898,7 +2898,7 @@ out="$(CLASS=rate_limit ATTEMPT=1 ISSUE_NUMBER=42 REPO=o/r DELAY_OVERRIDE_SEC=0 
 assert_contains "$out" 'DRY_RUN: would sleep'  "DRY_RUN prints would-dispatch message"
 
 # Missing required env
-ec="$(run_capture_ec env CLASS=success ATTEMPT=1 ISSUE_NUMBER=42 bash "$RETRY")"
+ec="$(run_capture_ec env -u REPO CLASS=success ATTEMPT=1 ISSUE_NUMBER=42 bash "$RETRY")"
 assert_equals "$ec" "2" "missing REPO → exit 2"
 
 section "ensure-issue-labels — issues label-create calls under gh mock"
@@ -2951,7 +2951,7 @@ assert_contains "$log" 'label create turns:80 --repo owner/repo'  "creates turns
 assert_contains "$log" 'label create turns:120 --repo owner/repo' "creates turns:120"
 assert_contains "$log" 'label create turns:160 --repo owner/repo' "creates turns:160"
 
-ec="$(run_capture_ec env bash "$ROOT/scripts/ensure-issue-labels.sh")"
+ec="$(run_capture_ec env -u REPO bash "$ROOT/scripts/ensure-issue-labels.sh")"
 assert_equals "$ec" "2" "missing REPO → exit 2"
 
 section "ensure-toolchain — happy path + dry-run"
