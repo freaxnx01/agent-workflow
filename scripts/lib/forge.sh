@@ -27,6 +27,14 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# _forge_source_azdo  sources azdo.sh once, from beside this file.
+_forge_source_azdo() {
+  [[ -n "${_FORGE_AZDO_SOURCED:-}" ]] && return 0
+  # shellcheck source=scripts/lib/azdo.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/azdo.sh"
+  _FORGE_AZDO_SOURCED=1
+}
+
 # forge_export_issue <issue-number>
 #
 # ISSUE_LABELS is newline-separated, matching what `gh issue view --json labels
@@ -66,6 +74,65 @@ print(json.dumps({"title": d.get("title", ""), "body": d.get("body", ""),
 import sys, json
 print(json.dumps(json.load(sys.stdin).get("comments", [])))')"
       ;;
+    azdo)
+      # Requires azdo.sh's context. resolve_azdo_context sets AZDO_ORG /
+      # AZDO_PROJECT / AZDO_REPO from the remote.
+      _forge_source_azdo
+      resolve_azdo_context || return 1
+
+      local wi comments
+      wi="$(az boards work-item show --id "$n" --org "$(azdo_org_url)" \
+              --output json --only-show-errors)" || return 1
+
+      # Comments are NOT on the work item: they live at their own resource, and
+      # at api-version 7.1-PREVIEW rather than 7.1.
+      comments="$(az devops invoke --org "$(azdo_org_url)" \
+                    --area wit --resource comments \
+                    --route-parameters project="$AZDO_PROJECT" workItemId="$n" \
+                    --api-version 7.1-preview --output json --only-show-errors)" || comments='{"comments":[]}'
+
+      # Tags are this forge's labels. `; `-separated -- semicolon AND space --
+      # so split on the semicolon and strip, never on the bare character.
+      ISSUE_LABELS="$(printf '%s' "$wi" | python3 -c '
+import sys, json
+f = json.load(sys.stdin).get("fields", {})
+for t in (f.get("System.Tags") or "").split(";"):
+    t = t.strip()
+    if t:
+        print(t)')"
+
+      ISSUE_BODY="$(printf '%s' "$wi" | python3 -c '
+import sys, json
+print(json.load(sys.stdin).get("fields", {}).get("System.Description", ""))')"
+
+      # Normalise to gh's shape. An ADO comment's text is `.text`; a GitHub
+      # comment's is `.body`, and build-agent-prompt reads `.body`. Without this
+      # mapping every comment would render empty -- silently.
+      #
+      # Both documents go via temp files, not one stream: `az` pretty-prints
+      # JSON across many lines, so any attempt to separate two responses on
+      # stdin by a newline parses the first brace as the whole document.
+      local _wf _cf
+      _wf="$(mktemp)"; _cf="$(mktemp)"
+      printf '%s' "$wi" > "$_wf"
+      printf '%s' "$comments" > "$_cf"
+      ISSUE_JSON="$(python3 -c '
+import json, sys
+wi = json.load(open(sys.argv[1]))
+cm = json.load(open(sys.argv[2]))
+f = wi.get("fields", {})
+print(json.dumps({
+    "title": f.get("System.Title", ""),
+    "body": f.get("System.Description", ""),
+    "comments": [{"body": c.get("text", "")} for c in cm.get("comments", [])],
+}))' "$_wf" "$_cf")"
+      rm -f "$_wf" "$_cf"
+
+      ISSUE_COMMENTS_JSON="$(printf '%s' "$comments" | python3 -c '
+import sys, json
+print(json.dumps([{"body": c.get("text", "")}
+                  for c in json.load(sys.stdin).get("comments", [])]))')"
+      ;;
     *)
       printf 'forge.sh: no read adapter for forge "%s" yet (see #253)\n' "$forge" >&2
       return 2
@@ -73,6 +140,38 @@ print(json.dumps(json.load(sys.stdin).get("comments", [])))')"
   esac
 
   export ISSUE_LABELS ISSUE_BODY ISSUE_JSON ISSUE_COMMENTS_JSON
+}
+
+# _forge_azdo_tags <work-item-id>  echoes the item's current tags, one per line.
+# Every label write on this forge is read-modify-write: azdo_set_tags REPLACES
+# the whole field, because the --fields form appends and cannot clear.
+_forge_azdo_tags() {
+  az boards work-item show --id "$1" --org "$(azdo_org_url)" \
+    --output json --only-show-errors \
+  | python3 -c '
+import sys, json
+f = json.load(sys.stdin).get("fields", {})
+for t in (f.get("System.Tags") or "").split(";"):
+    t = t.strip()
+    if t:
+        print(t)'
+}
+
+# _forge_azdo_retag <id> <add-csv> <remove-csv>  read-modify-write in one go.
+_forge_azdo_retag() {
+  local id="$1" add="${2-}" rm="${3-}" cur new
+  cur="$(_forge_azdo_tags "$id")" || return 1
+  new="$(printf '%s' "$cur" | python3 -c '
+import sys
+cur = [t.strip() for t in sys.stdin.read().splitlines() if t.strip()]
+add = [t.strip() for t in sys.argv[1].split(",") if t.strip()]
+rm  = {t.strip() for t in sys.argv[2].split(",") if t.strip()}
+out = [t for t in cur if t not in rm]
+for t in add:
+    if t not in out:
+        out.append(t)
+print(";".join(out))' "$add" "$rm")" || return 1
+  azdo_set_tags "$id" "$new" >/dev/null
 }
 
 # --- write verbs -------------------------------------------------------------
@@ -96,6 +195,12 @@ forge_issue_comment() {
   : "${REPO:?REPO must be set}"
   case "$(detect_forge | awk '{print $1}')" in
     github) gh issue comment "$n" --repo "$REPO" --body-file "$f" ;;
+    azdo)
+      _forge_source_azdo; resolve_azdo_context || return 1
+      # --discussion takes the text directly; read the file in.
+      az boards work-item update --id "$n" --org "$(azdo_org_url)" \
+        --discussion "$(cat "$f")" --output none --only-show-errors
+      ;;
     *) printf 'forge.sh: no comment adapter for this forge yet (#253)\n' >&2; return 2 ;;
   esac
 }
@@ -107,6 +212,7 @@ forge_issue_label_add() {
   : "${REPO:?REPO must be set}"
   case "$(detect_forge | awk '{print $1}')" in
     github) gh issue edit "$n" --repo "$REPO" --add-label "$labels" ;;
+    azdo) _forge_source_azdo; resolve_azdo_context || return 1; _forge_azdo_retag "$n" "$labels" "" ;;
     *) printf 'forge.sh: no label adapter for this forge yet (#253)\n' >&2; return 2 ;;
   esac
 }
@@ -118,6 +224,7 @@ forge_issue_label_remove() {
   : "${REPO:?REPO must be set}"
   case "$(detect_forge | awk '{print $1}')" in
     github) gh issue edit "$n" --repo "$REPO" --remove-label "$label" ;;
+    azdo) _forge_source_azdo; resolve_azdo_context || return 1; _forge_azdo_retag "$n" "" "$label" ;;
     *) printf 'forge.sh: no label adapter for this forge yet (#253)\n' >&2; return 2 ;;
   esac
 }
@@ -135,6 +242,12 @@ forge_label_ensure() {
   : "${REPO:?REPO must be set}"
   case "$(detect_forge | awk '{print $1}')" in
     github) gh label create "$name" --repo "$REPO" --color "$color" --description "$desc" ;;
+    azdo)
+      # A no-op by design. Azure DevOps tags are created on first use -- there is
+      # no label registry to seed, and no colour or description to carry. Verified
+      # live: azdo_set_tags created a previously unseen tag with no prior step.
+      return 0
+      ;;
     *) printf 'forge.sh: no label adapter for this forge yet (#253)\n' >&2; return 2 ;;
   esac
 }
@@ -155,6 +268,7 @@ forge_issue_label_edit() {
   [[ -n "$rm" ]] && args+=(--remove-label "$rm")
   case "$(detect_forge | awk '{print $1}')" in
     github) gh "${args[@]}" ;;
+    azdo) _forge_source_azdo; resolve_azdo_context || return 1; _forge_azdo_retag "$n" "$add" "$rm" ;;
     *) printf 'forge.sh: no label adapter for this forge yet (#253)\n' >&2; return 2 ;;
   esac
 }

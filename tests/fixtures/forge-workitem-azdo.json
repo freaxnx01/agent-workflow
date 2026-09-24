@@ -1,0 +1,9 @@
+{
+  "id": 42,
+  "fields": {
+    "System.Id": 42,
+    "System.Title": "Do the thing",
+    "System.Description": "Implement the thing.",
+    "System.Tags": "ai-implement; turns:80"
+  }
+}
