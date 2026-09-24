@@ -43,6 +43,13 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# The forge write verbs (#253).
+_CAC_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/detect-forge.sh
+source "$_CAC_HERE/lib/detect-forge.sh"
+# shellcheck source=scripts/lib/forge.sh
+source "$_CAC_HERE/lib/forge.sh"
+
 require_env() {
   if [[ -z "${!1:-}" ]]; then
     printf 'error: %s must be set\n' "$1" >&2
@@ -178,12 +185,18 @@ fi
 
 # ensure-issue-labels.sh runs later in the job, so the park label may not exist
 # yet in a consumer repo. Create it first — --add-label fails on a missing label.
-gh label create "$PARK_LABEL" --repo "$REPO" \
-  --color BFD4F2 --description 'Parked for a human — agent attempt cap reached' \
-  >/dev/null 2>&1 || true
+forge_label_ensure "$PARK_LABEL" BFD4F2 \
+  'Parked for a human — agent attempt cap reached' >/dev/null 2>&1 || true
 
-gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body "$park_body" >/dev/null 2>&1 || true
-gh issue edit "$ISSUE_NUMBER" --repo "$REPO" \
-  --add-label "$PARK_LABEL" --remove-label "$DISPATCH_LABEL" >/dev/null 2>&1 || true
+# forge_issue_comment takes a file, not a string -- a body long enough to matter
+# does not belong on a command line. mktemp + trap per this repo's convention.
+_park_body_file="$(mktemp)"
+trap 'rm -f "$_park_body_file"' EXIT
+printf '%s' "$park_body" > "$_park_body_file"
+forge_issue_comment "$ISSUE_NUMBER" "$_park_body_file" >/dev/null 2>&1 || true
+
+# Add and remove in ONE call, as before. Split, a failure between them would
+# leave the issue parked but still carrying the dispatch label.
+forge_issue_label_edit "$ISSUE_NUMBER" "$PARK_LABEL" "$DISPATCH_LABEL" >/dev/null 2>&1 || true
 
 exit 0

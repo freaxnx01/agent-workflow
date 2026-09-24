@@ -56,6 +56,13 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# The forge write verbs (#253).
+_EIL_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/detect-forge.sh
+source "$_EIL_HERE/lib/detect-forge.sh"
+# shellcheck source=scripts/lib/forge.sh
+source "$_EIL_HERE/lib/forge.sh"
+
 if [[ -z "${REPO:-}" ]]; then
   printf 'error: REPO must be set\n' >&2
   exit 2
@@ -63,7 +70,7 @@ fi
 
 create() {
   local name="$1" color="$2" desc="$3"
-  if gh label create "$name" --repo "$REPO" --color "$color" --description "$desc" >/dev/null 2>&1; then
+  if forge_label_ensure "$name" "$color" "$desc" >/dev/null 2>&1; then
     printf 'created: %s\n' "$name"
   else
     printf 'present: %s\n' "$name"

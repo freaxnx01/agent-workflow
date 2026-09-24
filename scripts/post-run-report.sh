@@ -45,6 +45,14 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# The forge write verbs (#253). Same calls this script made directly; routing
+# them through the adapter is what lets the read/write path stop naming a forge.
+_PRR_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/detect-forge.sh
+source "$_PRR_HERE/lib/detect-forge.sh"
+# shellcheck source=scripts/lib/forge.sh
+source "$_PRR_HERE/lib/forge.sh"
+
 require_env() {
   local var="$1"
   if [[ -z "${!var:-}" ]]; then
@@ -353,9 +361,9 @@ tmpfile="$(mktemp)"
 trap 'rm -f "$tmpfile"' EXIT
 render_comment > "$tmpfile"
 
-gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body-file "$tmpfile"
-gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "$(labels_csv)"
+forge_issue_comment "$ISSUE_NUMBER" "$tmpfile"
+forge_issue_label_add "$ISSUE_NUMBER" "$(labels_csv)"
 # Best-effort cleanup of stale lifecycle labels from prior runs. Each call
 # errors when the label isn't present; that's expected and ignored.
-gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label 'ai:running'         2>/dev/null || true
-gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label "$STATUS_LABEL_OPPOSITE" 2>/dev/null || true
+forge_issue_label_remove "$ISSUE_NUMBER" 'ai:running'         2>/dev/null || true
+forge_issue_label_remove "$ISSUE_NUMBER" "$STATUS_LABEL_OPPOSITE" 2>/dev/null || true
