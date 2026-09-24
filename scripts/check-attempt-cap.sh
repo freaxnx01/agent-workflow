@@ -19,7 +19,7 @@
 #
 # Optional environment variables:
 #   MAX_ATTEMPTS       Attempts allowed before parking. Default 2.
-#   PARK_LABEL         Label applied when parking. Default "🧊 parked".
+#   PARK_LABEL         Label applied when parking. Default "parked".
 #   DISPATCH_LABEL     Label removed when parking. Default "ai-implement".
 #   ISSUE_COMMENTS_JSON  Seam (tests): JSON array of {body}, skips the API call.
 #   DRY_RUN            If "1", decide and report but make no GitHub writes.
@@ -50,7 +50,7 @@ if [[ -z "$REPO" ]]; then
 fi
 
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-2}"
-PARK_LABEL="${PARK_LABEL:-🧊 parked}"
+PARK_LABEL="${PARK_LABEL:-parked}"
 DISPATCH_LABEL="${DISPATCH_LABEL:-ai-implement}"
 DRY_RUN="${DRY_RUN:-0}"
 

@@ -320,7 +320,7 @@ fi
 
 # --- Fix 3: a human parks the issue while the (up to 30-minute) nested
 #     session is still running. The post-enrich re-read must catch it. ---
-printf '{"labels":[{"name":"🧊 parked"}]}\n' > "$TMPDIR_T/labels-parked.json"
+printf '{"labels":[{"name":"parked"}]}\n' > "$TMPDIR_T/labels-parked.json"
 {
   printf 'contents/.github/workflows/agent.yml\t%s\n' "$FIX/agent-yml-good.yml"
   printf 'actions/workflows/\t%s\n' "$FIX/runs-one.json"

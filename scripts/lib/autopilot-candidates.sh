@@ -8,7 +8,7 @@
 #
 # An issue is a candidate iff all of:
 #   - open, and carries needs-enrichment              (both filtered server-side)
-#   - carries none of: 🧊 parked, enrichment-ongoing, needs-human, ai-implement
+#   - carries none of: parked, enrichment-ongoing, needs-human, ai-implement
 #   - has a non-whitespace body
 #
 # enrichment-ongoing is an *exclusion only*. /enrich owns that lock and acquires
@@ -31,7 +31,7 @@ autopilot_candidates() {
       | select(((.body // "") | gsub("\\s"; "") | length) > 0)
       | select(
           [.labels[].name]
-          | any(. == "🧊 parked"
+          | any(. == "parked"
                 or . == "enrichment-ongoing"
                 or . == "needs-human"
                 or . == "ai-implement")

@@ -219,7 +219,7 @@ process_issue() {
   # graceful no-op all exit 0 too). So dispatch requires POSITIVE evidence:
   # needs-enrichment must be gone (that removal happens only on a genuine
   # `/enrich` success — see commands/enrich.md), needs-human must be absent
-  # (the session may have escalated instead of enriching), and 🧊 parked must
+  # (the session may have escalated instead of enriching), and parked must
   # be absent (a human may have parked the issue during the up-to-30-minute
   # nested session). Every arm below is explicit — state 1 (absent) is the
   # ONLY state that proceeds, and every other state, including one the case
@@ -244,7 +244,7 @@ process_issue() {
   esac
 
   local parked_state=0
-  issue_label_state "$repo" "$n" '🧊 parked' || parked_state=$?
+  issue_label_state "$repo" "$n" 'parked' || parked_state=$?
   case "$parked_state" in
     1) : ;; # absent — proceed
     0) log_issue "$repo" "$n" "skipped (parked during enrich — not dispatching)"; return 0 ;;
