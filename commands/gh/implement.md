@@ -12,7 +12,7 @@ Claude Code implements the issue on a new branch and opens a draft PR.
 ## Preconditions — check before labeling
 
 1. **Issue is open and not parked** — `gh issue view <N> --json state,labels`; stop if
-   closed or carrying `🧊 parked`.
+   closed or carrying `parked`.
 2. **Not already queued** — if `ai-implement` is already on the issue, say so and stop
    (avoid double-triggering).
 3. **Pipeline is wired up** — `.github/workflows/agent.yml` must exist in the repo;

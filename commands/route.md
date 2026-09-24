@@ -23,7 +23,7 @@ gh issue view <N> --comments --json number,title,state,labels,body,assignees
 ```
 
 Also note any linked spec/plan files and existing PRs. If it's closed, parked
-(`🧊 parked`), or already assigned to an agent, say so and stop.
+(`parked`), or already assigned to an agent, say so and stop.
 
 ### Step 2 — Readiness gate (first, non-negotiable)
 
@@ -148,7 +148,7 @@ tea api --login git-home "repos/$repo/issues/$ARGUMENTS/comments"
 ```
 
 Note any linked spec/plan files and existing PRs. If it's closed, parked
-(`🧊 parked`), or already being worked (an `issue-$ARGUMENTS-*` branch or open PR
+(`parked`), or already being worked (an `issue-$ARGUMENTS-*` branch or open PR
 exists), say so and stop.
 
 ### Step 2 — Readiness gate (first, non-negotiable)

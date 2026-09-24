@@ -43,7 +43,7 @@ Then dispatch to the matching phase below.
 ### Phase `spec`
 
 1. `gh issue view <issue> --comments`. If the issue is closed, already has
-   `ai-implement`, or is `🧊 parked`, stop and say so. **On a resume** (a state
+   `ai-implement`, or is `parked`, stop and say so. **On a resume** (a state
    file already existed for this run — see *On invocation*), this run already
    holds the lock from a prior step 4, and stopping here abandons it without
    releasing. Release it first — no `2>/dev/null || true`, since this run
@@ -307,7 +307,7 @@ Then dispatch to the matching phase below.
 ### Phase `spec`
 
 1. `tea issues <issue> --login git-home` + `tea api --login git-home
-   "repos/$repo/issues/<issue>/comments"`. If the issue is closed or `🧊 parked`,
+   "repos/$repo/issues/<issue>/comments"`. If the issue is closed or `parked`,
    stop and say so. **On a resume** (a state file already existed for this run
    — see *On invocation*), this run already holds the lock from a prior
    step 4, and stopping here abandons it without releasing:

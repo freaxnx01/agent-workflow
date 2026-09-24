@@ -48,7 +48,7 @@ Whenever a milestone **is** in scope, say which one you scoped to.
 
 ## GitHub
 
-List open issues in the current repo that are **not work-in-progress** — i.e. have no **open** PR — **not parked** (no `🧊 parked` label), and **not roadmap** (no `roadmap` label) — **newest first**. Issues whose only linked PR is already merged still count as not-WIP and are shown. Parked issues are deliberately deferred; list them with `/parked`. Roadmap issues are planned for a future milestone rather than current work; list them with `/roadmap`.
+List open issues in the current repo that are **not work-in-progress** — i.e. have no **open** PR — **not parked** (no `parked` label), and **not roadmap** (no `roadmap` label) — **newest first**. Issues whose only linked PR is already merged still count as not-WIP and are shown. Parked issues are deliberately deferred; list them with `/parked`. Roadmap issues are planned for a future milestone rather than current work; list them with `/roadmap`.
 
 For `pick`, or to resolve any `<name>` (see above — required for an exact title
 too), list the open milestones first. The **number** in the first column is what
@@ -60,7 +60,7 @@ gh api "repos/$repo/milestones?state=open&per_page=100" \
   --jq 'sort_by(.due_on // "9999") | .[] | [.number, .title, (.due_on // "-"), .open_issues] | @tsv'
 ```
 
-`gh issue list` can't see PR links, so query the timeline via GraphQL and drop any issue that has an open linked PR (a `Closes #`/cross-reference or a development-linked PR still in flight), then drop any issue carrying the `🧊 parked` label, then any carrying the `roadmap` label.
+`gh issue list` can't see PR links, so query the timeline via GraphQL and drop any issue that has an open linked PR (a `Closes #`/cross-reference or a development-linked PR still in flight), then drop any issue carrying the `parked` label, then any carrying the `roadmap` label.
 
 Add `-f ms=<number>` when a milestone is in scope; **omit the flag entirely** when
 it is not (see the trap below — an empty value is not the same as no value):
@@ -94,7 +94,7 @@ query($owner:String!,$name:String!,$ms:String){
     | "prefilter_total=\(.totalCount) fetched=\(.nodes | length)",
       (.nodes
         | map(select([.timelineItems.nodes[] | (.source // .subject) | .state] | map(select(. == "OPEN")) | length == 0))
-        | map(select([.labels.nodes[].name] | index("🧊 parked") | not))
+        | map(select([.labels.nodes[].name] | index("parked") | not))
         | map(select([.labels.nodes[].name] | index("roadmap") | not))
         | .[] | {number, title, milestone: (.milestone.title // "-"), due: ((.milestone.dueOn // "-") | .[0:10]), labels: [.labels.nodes[].name], age: .createdAt, author: .author.login})'
 ```
@@ -131,7 +131,7 @@ $ARGUMENTS
 ## Forgejo
 
 List open issues in the current Forgejo repo that are **not work-in-progress** —
-i.e. have no **open** linked PR — **not parked** (no `🧊 parked` label), and **not
+i.e. have no **open** linked PR — **not parked** (no `parked` label), and **not
 roadmap** (no `roadmap` label) — **newest first**. Issues whose only linked PR is
 already merged/closed still count as not-WIP and are shown. Parked issues are
 deliberately deferred; list them with `/parked`. Roadmap issues are planned for
@@ -200,7 +200,7 @@ want = ""                             # <- resolved milestone title when scoped,
 wip=set(int(x) for x in open("/tmp/fj_wip.txt").read().split())
 for i in json.load(sys.stdin):
     labels=[l["name"] for l in i.get("labels") or []]
-    if i["number"] in wip or "🧊 parked" in labels or "roadmap" in labels: continue
+    if i["number"] in wip or "parked" in labels or "roadmap" in labels: continue
     m=i.get("milestone") or {}
     if want and (m.get("title") or "") != want: continue
     print(i["number"], "|", i["title"], "|", m.get("title") or "-", "|",
@@ -231,7 +231,7 @@ future.
 ## Azure DevOps
 
 List open **work items** in the current project that are **not work-in-progress** —
-i.e. have no **active** pull request linked — **not parked** (no `🧊 parked` tag),
+i.e. have no **active** pull request linked — **not parked** (no `parked` tag),
 and **not roadmap** (no `roadmap` tag) — **newest first**. Work items whose only
 linked PR is already `completed`/`abandoned` still count as not-WIP and are shown.
 
@@ -351,7 +351,7 @@ Two notes on the tag clauses:
 
 - The tags are matched as the bare words **`parked`** and **`roadmap`**, which on
   this forge is simply what they are called. **Azure DevOps rejects emoji in tag
-  names** (`TF401407`, with or without a space), so the `🧊 parked` form used on
+  names** (`TF401407`, with or without a space), so the `parked` form used on
   GitHub and Forgejo **cannot exist here at all**. The convention is therefore
   **not portable across forges** — see #397, which owns that decision.
 - There is no substring false-positive to guard against: WIQL's `CONTAINS` on

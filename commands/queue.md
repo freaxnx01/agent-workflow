@@ -138,7 +138,7 @@ query($owner:String!,$name:String!){
   --jq '.data.repository.issues
     | "prefilter_total=\(.totalCount) fetched=\(.nodes | length)",
       (.nodes
-        | map(select([.labels.nodes[].name] | index("🧊 parked") | not))
+        | map(select([.labels.nodes[].name] | index("parked") | not))
         | map(select([.labels.nodes[].name] | index("roadmap") | not))
         | .[] | {
             number, title,
@@ -211,7 +211,7 @@ import sys, json, re
 dep = re.compile(r"(?:blocked by|depends on)\s*#(\d+)", re.I)
 for i in json.load(sys.stdin):
     labels = [l["name"] for l in i.get("labels") or []]
-    if "🧊 parked" in labels or "roadmap" in labels: continue
+    if "parked" in labels or "roadmap" in labels: continue
     body = i.get("body") or ""
     blocked = sorted({int(n) for n in dep.findall(body)})
     print(i["number"], "||", i["title"], "||", ",".join(labels) or "-",

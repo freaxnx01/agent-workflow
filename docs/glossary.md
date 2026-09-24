@@ -58,14 +58,14 @@ combine.
 ## Label
 
 A label is an **orthogonal categorization axis** — `bug`, `epic`,
-`needs-enrichment`, `🧊 parked` — and nothing more. It is a tag, not a
+`needs-enrichment`, `parked` — and nothing more. It is a tag, not a
 grouping or containment mechanism: labelling ten issues `epic` doesn't relate
 them to each other or to anything else. An issue can carry any number of
 labels at once.
 
 In this repo, labels drive routing rather than structure: `needs-enrichment`
 marks an issue for `/enrich`, `ai-implement` hands it to the agent-workflow,
-`🧊 parked` keeps it out of `/issues`. A label named `epic` just marks an
+`parked` keeps it out of `/issues`. A label named `epic` just marks an
 issue as being an epic-tracker so it can be filtered for — it doesn't make
 anything belong to it.
 

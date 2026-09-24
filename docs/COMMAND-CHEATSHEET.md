@@ -39,7 +39,7 @@ allowlist a repo cannot opt itself into, and its default is a dry run — see
 |---|---|---|
 | Capture | `/capture-idea <idea>` | a line in the repo's `docs/ideas.md` — no issue yet |
 | File | `/new` | an issue, usually carrying `needs-enrichment` |
-| Sort | `/triage` | labels, milestone, and a `🧊 parked` decision for what isn't now |
+| Sort | `/triage` | labels, milestone, and a `parked` decision for what isn't now |
 | Sequence | `/queue` | the same issues in implementation order, with what is already in flight |
 | **Enrich** | `/enrich <N>` | a spec, a plan, and the plan **inlined into the issue body** |
 | Dispatch | `/gh:implement <N>` | the `ai-implement` label — the pipeline takes it from here |
@@ -86,7 +86,7 @@ total → open → live (not parked) → carrying a plan → ready to dispatch
 
 The headline is **queue depth**: how many issues could be dispatched *right now*.
 It applies `/gh:implement`'s own preconditions, so an issue counted there is one
-that command will accept — open, not `🧊 parked`, not already carrying
+that command will accept — open, not `parked`, not already carrying
 `ai-implement`, no `needs-enrichment` / `❓ to-be-defined`, and a plan in the body.
 
 ```bash
@@ -226,7 +226,7 @@ complete and pushed, with nothing pointing at the PR.
 | Run burns its whole budget, no PR | dispatched with no plan → `UNPLANNED_MAX_TURNS`, spent rediscovering the decomposition | enrich, then redispatch |
 | Big plan, tiny budget | task headings are `## Task N`, not `### Task N` | fix the heading level; `/ai-funnel` names the affected issues |
 | `ai:review-blocked` | the review returned `request_changes` | read the verdict; if it faults the *plan*, correct the spec and re-enrich rather than redispatching |
-| `🧊 parked` after N runs | the attempt cap | re-enrich, **then** raise `max-attempts` by one in the consumer's `agent.yml` — the cap counts append-only run reports and cannot yet be told you re-enriched ([#321](https://github.com/freaxnx01/agent-workflow/issues/321)). Comment the bump with a revert-when-#321-lands note; it weakens the guard repo-wide |
+| `parked` after N runs | the attempt cap | re-enrich, **then** raise `max-attempts` by one in the consumer's `agent.yml` — the cap counts append-only run reports and cannot yet be told you re-enriched ([#321](https://github.com/freaxnx01/agent-workflow/issues/321)). Comment the bump with a revert-when-#321-lands note; it weakens the guard repo-wide |
 | Review "held", PR exists | the PR was opened ready-for-review, not draft | review by hand; [#322](https://github.com/freaxnx01/agent-workflow/issues/322) |
 | PR has no CI | agent-authored PRs don't start workflows | push an **empty commit** — it fires `push`, which the required workflows do listen to |
 

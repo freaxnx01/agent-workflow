@@ -29,7 +29,7 @@ Derived from signals that already exist — no new label vocabulary:
 
 | State | Signal |
 | --- | --- |
-| `Parked` | `🧊 parked` label |
+| `Parked` | `parked` label |
 | `Roadmap` | `roadmap` label |
 | `WIP` | open linked PR (GitHub timeline) or `issue-N-*` branch (Forgejo) — same rule `/issues` uses |
 | `Blocked` | a `Blocked by:` reference that resolves to a still-open issue |
@@ -218,7 +218,7 @@ PRIO = {"P0", "P1", "P2"}
 
 def state(i, blks):
     labels = i["labels"]
-    if "🧊 parked" in labels: return "Parked"
+    if "parked" in labels: return "Parked"
     if "roadmap" in labels:   return "Roadmap"
     if i["wip"]:              return "WIP"
     # a blocker still in the open set blocks; anything else is closed

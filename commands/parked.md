@@ -1,5 +1,5 @@
 ---
-description: List and triage parked (🧊) issues — list | unpark <n> | repark <n> "<reason>" | review
+description: List and triage parked issues — list | unpark <n> | repark <n> "<reason>" | review
 argument-hint: list | unpark <n> | repark <n> "<reason>" | review
 ---
 
@@ -32,8 +32,8 @@ Manage parked issues in the current GitHub repo with **`gh`**.
 ### list
 
 List open issues in the current repo that are **parked** — i.e. carry the
-`🧊 parked` label — **newest first**. Keep the existing table shape and add a
-`reason` column from the most recent `🧊 parked:` comment.
+`parked` label — **newest first**. Keep the existing table shape and add a
+`reason` column from the most recent `parked:` comment.
 
 ```bash
 gh api graphql \
@@ -53,11 +53,11 @@ query($owner:String!,$name:String!){
   }
 }' \
   --jq '.data.repository.issues.nodes
-    | map(select([.labels.nodes[].name] | index("🧊 parked")))
+    | map(select([.labels.nodes[].name] | index("parked")))
     | .[] | [ .number, .title,
               ([.labels.nodes[].name] | join(",")),
               .createdAt, .author.login,
-              ( [ .comments.nodes[] | (.body // "") | select(startswith("🧊 parked:")) ]
+              ( [ .comments.nodes[] | (.body // "") | select(startswith("parked:")) ]
                 | last // "—" | split("\n")[0] ) ] | @tsv'
 ```
 
@@ -66,14 +66,14 @@ No preamble. If there are none, just say so.
 
 ### unpark
 
-Remove only the `🧊 parked` label, then confirm from a read-back:
+Remove only the `parked` label, then confirm from a read-back:
 
 ```bash
-gh issue edit <n> --remove-label "🧊 parked"
+gh issue edit <n> --remove-label "parked"
 gh issue view <n> --json number,labels --jq '[.number, ([.labels[].name] | join(","))] | @tsv'
 ```
 
-Report from the read-back. If `🧊 parked` is still present, say the removal
+Report from the read-back. If `parked` is still present, say the removal
 failed and stop — do not continue to routing.
 
 **Then offer the recorded milestone back.** `repark` writes a `milestone-was:` line
@@ -82,7 +82,7 @@ silently:
 
 ```bash
 gh issue view <n> --json comments \
-  --jq '[.comments[] | (.body // "") | select(startswith("🧊 parked:"))] | last // ""
+  --jq '[.comments[] | (.body // "") | select(startswith("parked:"))] | last // ""
         | split("\n") | map(select(startswith("milestone-was:"))) | first // ""
         | sub("^milestone-was:\\s*"; "")'
 ```
@@ -110,10 +110,10 @@ was=$(gh issue view <n> --json milestone --jq '.milestone.title // ""')
 
 # 2 — reason comment; the milestone-was line is added only when there was one
 if [ -n "$was" ]; then
-  gh issue comment <n> --body "🧊 parked: <reason>
+  gh issue comment <n> --body "parked: <reason>
 milestone-was: $was"
 else
-  gh issue comment <n> --body "🧊 parked: <reason>"
+  gh issue comment <n> --body "parked: <reason>"
 fi
 ```
 
@@ -121,12 +121,12 @@ fi
 here takes `split("\n")[0]`, so `/parked list` and the confirmation below keep
 showing the reason alone, never the bookkeeping line.
 
-Then read back the newest comment whose body starts with `🧊 parked:` and confirm
+Then read back the newest comment whose body starts with `parked:` and confirm
 from it, never from the exit code:
 
 ```bash
 gh issue view <n> --json comments \
-  --jq '[.comments[] | (.body // "") | select(startswith("🧊 parked:"))] | last // "—" | split("\n")[0]'
+  --jq '[.comments[] | (.body // "") | select(startswith("parked:"))] | last // "—" | split("\n")[0]'
 ```
 
 Only then strip it:
@@ -138,7 +138,7 @@ gh issue view <n> --json number,milestone --jq '[.number, (.milestone.title // "
 ```
 
 **Why the strip.** A parked issue is paused on purpose and not scheduled, so a
-milestone contradicts the label — and `/milestone triage` filters `🧊 parked`
+milestone contradicts the label — and `/milestone triage` filters `parked`
 out of the un-milestoned gap, so it can never surface the contradiction. `unpark`
 offers the recorded milestone back, so the round trip is recoverable — but only
 when `repark` is what stripped it.
@@ -205,7 +205,7 @@ repo=$(echo "$url" | sed -E 's#.*[:/]([^/]+/[^/]+)$#\1#')
 
 Forgejo has no GraphQL, so we can't get everything in one query. List parked
 issues first, then fetch comments for each parked issue to extract the newest
-`🧊 parked:` reason.
+`parked:` reason.
 
 ```bash
 # open PRs → set of referenced issue numbers (for the WIP annotation)
@@ -226,18 +226,18 @@ import sys,json
 wip=set(int(x) for x in open("/tmp/fj_wip.txt").read().split())
 for i in json.load(sys.stdin):
     labels=[l["name"] for l in i.get("labels") or []]
-    if "🧊 parked" not in labels: continue
+    if "parked" not in labels: continue
     print(i["number"],"|",i["title"],"|",",".join(labels),"|",i["created_at"],"|",(i.get("user") or {}).get("login","?"),"|","WIP" if i["number"] in wip else "")'
 
 # then, per parked issue number, its most recent reason
 tea api --login git-home "repos/$repo/issues/<n>/comments" \
   | python3 -c '
 import sys,json
-reasons=[c["body"] for c in json.load(sys.stdin) if (c.get("body") or "").startswith("🧊 parked:")]
+reasons=[c["body"] for c in json.load(sys.stdin) if (c.get("body") or "").startswith("parked:")]
 print(reasons[-1].split("\n")[0] if reasons else "—")'
 ```
 
-> Client-side filtering is used deliberately: `labels=🧊 parked` in the query string
+> Client-side filtering is used deliberately: `labels=parked` in the query string
 > isn't URL-encoded by `tea api`, so the space+emoji breaks the request.
 
 Show a compact table — number, title, labels, age (relative), author, open-PR
@@ -245,10 +245,10 @@ note, reason. No preamble. If there are none, just say so.
 
 ### unpark
 
-Remove only the `🧊 parked` label, then confirm from a read-back:
+Remove only the `parked` label, then confirm from a read-back:
 
 ```bash
-tea issues edit <n> --login git-home --remove-labels "🧊 parked"
+tea issues edit <n> --login git-home --remove-labels "parked"
 
 tea api --login git-home "repos/$repo/issues/<n>" | python3 -c '
 import sys,json
@@ -256,7 +256,7 @@ i=json.load(sys.stdin)
 print(i["number"], ",".join([l["name"] for l in i.get("labels") or []]), sep="\t")'
 ```
 
-Report from the read-back. If `🧊 parked` is still present, say removal failed
+Report from the read-back. If `parked` is still present, say removal failed
 and stop — do not continue to routing.
 
 **Then offer the recorded milestone back** — same rules as the GitHub section: ask
@@ -266,7 +266,7 @@ first, open milestones only, never recreate a closed one.
 tea api --login git-home "repos/$repo/issues/<n>/comments" | python3 -c '
 import sys, json
 bodies = [(c.get("body") or "") for c in json.load(sys.stdin)
-          if (c.get("body") or "").startswith("🧊 parked:")]
+          if (c.get("body") or "").startswith("parked:")]
 lines = bodies[-1].split("\n") if bodies else []
 was = [l for l in lines if l.startswith("milestone-was:")]
 print(was[-1].split(":", 1)[1].strip() if was else "")'
@@ -294,24 +294,24 @@ print(m.get("title") or "")')
 
 # 2 — reason comment; the milestone-was line only when there was one
 if [ -n "$was" ]; then
-  tea comment <n> "🧊 parked: <reason>
+  tea comment <n> "parked: <reason>
 milestone-was: $was"
 else
-  tea comment <n> "🧊 parked: <reason>"
+  tea comment <n> "parked: <reason>"
 fi
 ```
 
 `milestone-was:` sits on the **second** line deliberately — every reason read-back
 here takes the first line only, so it stays invisible to `/parked list`.
 
-Then read back the newest comment whose body starts with `🧊 parked:` and confirm
+Then read back the newest comment whose body starts with `parked:` and confirm
 from it, never from the exit code:
 
 ```bash
 tea api --login git-home "repos/$repo/issues/<n>/comments" | python3 -c '
 import sys,json
 comments=json.load(sys.stdin)
-reasons=[(c.get("body") or "") for c in comments if (c.get("body") or "").startswith("🧊 parked:")]
+reasons=[(c.get("body") or "") for c in comments if (c.get("body") or "").startswith("parked:")]
 print(reasons[-1].split("\n")[0] if reasons else "—")'
 ```
 
@@ -329,7 +329,7 @@ tea milestones issues remove --login git-home "<name>" <n>
 ```
 
 **Why the strip.** A parked issue is paused on purpose and not scheduled, so a
-milestone contradicts the label — and `/milestone triage` filters `🧊 parked`
+milestone contradicts the label — and `/milestone triage` filters `parked`
 out of the un-milestoned gap, so it can never surface the contradiction. `unpark`
 offers the recorded milestone back, so the round trip is recoverable — but only
 when `repark` is what stripped it.

@@ -130,7 +130,7 @@ If the milestone name doesn't exist, `gh` rejects it — print the open mileston
 Open issues with **no milestone** — the gap `list` deliberately doesn't show.
 Two phases: show the whole gap first, then walk it one issue at a time.
 
-Excludes `🧊 parked` (paused on purpose) and `roadmap` (*planned for future work,
+Excludes `parked` (paused on purpose) and `roadmap` (*planned for future work,
 not yet scheduled to a milestone* — being un-milestoned is its whole meaning, so
 nagging about it is noise). Pull requests are excluded by `gh issue list`.
 
@@ -139,7 +139,7 @@ nagging about it is noise). Pull requests are excluded by `gh issue list`.
 ```bash
 gh issue list --state open --limit 200 --json number,title,labels,milestone,createdAt \
   --jq 'map(select(.milestone == null))
-    | map(select([.labels[].name] | index("🧊 parked") | not))
+    | map(select([.labels[].name] | index("parked") | not))
     | map(select([.labels[].name] | index("roadmap") | not))
     | sort_by(.createdAt) | reverse
     | .[] | [.number, .title, (([.labels[].name] | join(",")) | if . == "" then "-" else . end)] | @tsv'
@@ -329,7 +329,7 @@ above) and stop. **No fuzzy matching, no silent creation.**
 Open issues with **no milestone** — the gap `list` deliberately doesn't show.
 Two phases: show the whole gap first, then walk it one issue at a time.
 
-Excludes `🧊 parked` (paused on purpose) and `roadmap` (*planned for future work,
+Excludes `parked` (paused on purpose) and `roadmap` (*planned for future work,
 not yet scheduled to a milestone* — being un-milestoned is its whole meaning, so
 nagging about it is noise). Pull requests are excluded by `type=issues`.
 
@@ -343,7 +343,7 @@ rows=[]
 for i in json.load(sys.stdin):
     if i.get("milestone"): continue
     labels=[l["name"] for l in i.get("labels") or []]
-    if "🧊 parked" in labels or "roadmap" in labels: continue
+    if "parked" in labels or "roadmap" in labels: continue
     rows.append((i["number"], i["title"], ",".join(labels) or "-"))
 print(len(rows), "un-milestoned")
 for n,t,l in rows: print(n, "|", t, "|", l)'

@@ -38,7 +38,7 @@ total → open → live (not parked) → carrying a plan → ready to dispatch
 
 **Ready to dispatch** is the number that matters — the queue depth an operator can
 actually fill right now. It applies `/gh:implement`'s own preconditions, so an issue
-counted here is one that command will accept: open, not `🧊 parked`, not already
+counted here is one that command will accept: open, not `parked`, not already
 carrying `ai-implement`, no `needs-enrichment` / `❓ to-be-defined`, and an
 `## Implementation Plan` section in the body.
 

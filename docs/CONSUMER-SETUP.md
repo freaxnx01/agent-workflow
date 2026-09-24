@@ -608,3 +608,18 @@ gh issue list --label ai-auto-review --json number --jq '.[].number' \
 The old labels are left in place; delete them yourself once no issue carries
 one. Consumers still calling `claude-implement.yml` (the v1 shim) need no
 change: its public inputs and outputs keep their v1 names.
+
+### Migrating an existing repo's parked label
+
+The parked label was `🧊 parked` before 2026-09-24. Azure DevOps rejects emoji in
+tag names (`TF401407`), so it is now plain `parked` — see **ADR-016**. Rename it
+**in place**; do **not** delete and re-create, which would silently unpark every
+parked issue:
+
+```bash
+gh label edit '🧊 parked' --name 'parked' --repo <owner>/<repo>
+```
+
+Repos onboarded after that date get the new name from `ensure-issue-labels.sh`
+and need nothing. If you cannot migrate yet, `export PARK_LABEL='🧊 parked'` keeps
+`check-attempt-cap.sh` matching the old name.
