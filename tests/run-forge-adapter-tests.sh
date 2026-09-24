@@ -128,6 +128,104 @@ assert_eq "azdo returns 2 (no read adapter yet)" "2" "$(forge_field "$REPO_ADO" 
 
 rm -rf "$REPO_GH" "$REPO_ADO"
 
+section "export-issue-context.sh — GITHUB_ENV is injection-resistant"
+
+# An issue body in a public repo is written by anyone. With a FIXED heredoc
+# delimiter, a body containing that delimiter followed by KEY=value closes the
+# heredoc early and sets arbitrary environment variables for every later step in
+# the job. The delimiter is randomised per run precisely to stop that.
+EXPORT="$ROOT/scripts/export-issue-context.sh"
+inj_dir="$(mktemp -d)"
+inj_map="$inj_dir/map"
+cat > "$inj_dir/malicious.json" <<'JSON'
+{
+  "labels": [{ "name": "ai-implement" }],
+  "title": "Looks ordinary",
+  "body": "Normal text.\nPIPELINE_EOF\nINJECTED_VAR=pwned\nISSUE_BODY<<PIPELINE_EOF\nrest",
+  "comments": []
+}
+JSON
+printf 'issue view\t%s/malicious.json\n' "$inj_dir" > "$inj_map"
+
+REPO_INJ="$(make_repo 'https://github.com/o/r.git')"
+genv="$inj_dir/github_env"
+: > "$genv"
+# SC2030/SC2031: the exports are deliberately local to each subshell -- that
+# isolation is what makes the three runs below independent.
+# shellcheck disable=SC2030,SC2031
+(
+  cd "$REPO_INJ"
+  export PATH="$MOCKS:$PATH"
+  export GH_MOCK_LOG="$inj_dir/gh.log"
+  export GH_MOCK_STDOUT_MAP="$inj_map"
+  export GH_MOCK_AUTH_HOSTS="github.com"
+  export REPO=o/r ISSUE_NUMBER=42 GITHUB_ENV="$genv"
+  bash "$EXPORT"
+) >/dev/null 2>&1
+
+# Parse $GITHUB_ENV the way the runner does and assert the injected key is NOT
+# among the variables it would set.
+# Parse the way the RUNNER does: it honours both `KEY<<DELIM` heredocs and plain
+# `KEY=value` lines. A parser that only understood heredocs would miss exactly
+# the injected assignment this test exists to catch.
+keys="$(python3 -c '
+import re, sys
+txt = open(sys.argv[1]).read()
+out, i, lines = [], 0, txt.splitlines()
+while i < len(lines):
+    m = re.match(r"^(\w+)<<(\S+)$", lines[i])
+    if m:
+        name, delim = m.groups()
+        out.append(name)
+        i += 1
+        while i < len(lines) and lines[i] != delim:
+            i += 1
+        i += 1
+        continue
+    m = re.match(r"^(\w+)=", lines[i])
+    if m:
+        out.append(m.group(1))
+    i += 1
+print(" ".join(out))' "$genv")"
+
+assert_eq "only the four intended keys are set" \
+  "ISSUE_LABELS ISSUE_BODY ISSUE_JSON ISSUE_COMMENTS_JSON" "$keys"
+
+# $keys is a space-separated list of NAMES, so test membership rather than an
+# anchored `NAME=` pattern -- which could never match and would pass vacuously.
+if [[ " $keys " == *" INJECTED_VAR "* ]]; then
+  fail "a crafted issue body cannot inject an env var" "INJECTED_VAR escaped the heredoc"
+else
+  pass "a crafted issue body cannot inject an env var"
+fi
+
+# And the delimiter must differ run to run, or it is guessable again.
+: > "$genv"
+# shellcheck disable=SC2030,SC2031
+(
+  cd "$REPO_INJ"
+  export PATH="$MOCKS:$PATH" GH_MOCK_LOG="$inj_dir/gh2.log" GH_MOCK_STDOUT_MAP="$inj_map"
+  export GH_MOCK_AUTH_HOSTS="github.com" REPO=o/r ISSUE_NUMBER=42 GITHUB_ENV="$genv"
+  bash "$EXPORT"
+) >/dev/null 2>&1
+d2="$(sed -n 's/^ISSUE_LABELS<<//p' "$genv" | head -1)"
+: > "$genv"
+# shellcheck disable=SC2030,SC2031
+(
+  cd "$REPO_INJ"
+  export PATH="$MOCKS:$PATH" GH_MOCK_LOG="$inj_dir/gh3.log" GH_MOCK_STDOUT_MAP="$inj_map"
+  export GH_MOCK_AUTH_HOSTS="github.com" REPO=o/r ISSUE_NUMBER=42 GITHUB_ENV="$genv"
+  bash "$EXPORT"
+) >/dev/null 2>&1
+d3="$(sed -n 's/^ISSUE_LABELS<<//p' "$genv" | head -1)"
+if [[ -n "$d2" && "$d2" != "$d3" ]]; then
+  pass "the delimiter differs between runs"
+else
+  fail "the delimiter differs between runs" "got '$d2' twice"
+fi
+
+rm -rf "$inj_dir" "$REPO_INJ"
+
 # --- summary -------------------------------------------------------------
 
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"

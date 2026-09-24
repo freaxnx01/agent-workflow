@@ -525,18 +525,7 @@ jobs:
           GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
-        run: |
-          source .claude-pipeline/scripts/lib/detect-forge.sh
-          source .claude-pipeline/scripts/lib/forge.sh
-          forge_export_issue "$ISSUE_NUMBER"
-          # Heredoc delimiters, not KEY=value: an issue body is multi-line and
-          # arbitrary, and a plain assignment truncates it at the first newline.
-          {
-            printf 'ISSUE_LABELS<<PIPELINE_EOF\n%s\nPIPELINE_EOF\n' "$ISSUE_LABELS"
-            printf 'ISSUE_BODY<<PIPELINE_EOF\n%s\nPIPELINE_EOF\n' "$ISSUE_BODY"
-            printf 'ISSUE_JSON<<PIPELINE_EOF\n%s\nPIPELINE_EOF\n' "$ISSUE_JSON"
-            printf 'ISSUE_COMMENTS_JSON<<PIPELINE_EOF\n%s\nPIPELINE_EOF\n' "$ISSUE_COMMENTS_JSON"
-          } >> "$GITHUB_ENV"
+        run: bash .claude-pipeline/scripts/export-issue-context.sh
 
       - name: Fetch issue context
         if: ${{ !inputs.stub-claude }}
