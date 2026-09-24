@@ -388,6 +388,11 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
+      # retry-dispatch.sh ends in `gh workflow run` against the consumer's
+      # agent.yml. A job-level permissions block REPLACES the inherited set,
+      # so granting actions: write in the caller alone is silently dropped
+      # here and every retry dies on HTTP 403 (#351).
+      actions: write
     outputs:
       outcome:             ${{ steps.outputs.outputs.outcome }}
       cost-usd:            ${{ steps.outputs.outputs.cost-usd }}
