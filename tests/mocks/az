@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+#
+# az — minimal stand-in for the Azure CLI used by Layer-1 fixture tests.
+#
+# Echoes the fixture named by $AZ_MOCK_FIXTURE. A `.txt` fixture is treated as an
+# error payload: it goes to stderr with exit 1, which is how the real `az`
+# reports a WIQL failure such as TF51011. That distinction is the point — the
+# library has to tell a missing Area Path from an empty result, and they differ
+# only in stream and exit code.
+#
+# Appends each invocation's argv to $AZ_MOCK_LOG when set, so a test can assert
+# which call was made rather than only what came back. When $AZ_MOCK_STDIN_LOG
+# is set and the call reads `--in-file /dev/stdin`, the request body is captured
+# there too -- the WIQL query travels by stdin, not argv, and its quoting is the
+# thing most likely to break in transit.
+set -euo pipefail
+IFS=$'\n\t'
+
+: "${AZ_MOCK_FIXTURE:?AZ_MOCK_FIXTURE must be set when using the az mock}"
+
+# Space-joined argv. `$*` alone joins on the first IFS character, which this
+# script sets to a newline, so a match on "--in-file /dev/stdin" would never fire.
+argv="$( IFS=' '; printf '%s' "$*" )"
+
+[[ -n "${AZ_MOCK_LOG:-}" ]] && printf '%s\n' "$argv" >> "$AZ_MOCK_LOG"
+
+if [[ -n "${AZ_MOCK_STDIN_LOG:-}" && "$argv" == *"--in-file /dev/stdin"* ]]; then
+  cat >> "$AZ_MOCK_STDIN_LOG"
+fi
+
+if [[ "$AZ_MOCK_FIXTURE" == *.txt ]]; then
+  cat "$AZ_MOCK_FIXTURE" >&2
+  exit 1
+fi
+cat "$AZ_MOCK_FIXTURE"

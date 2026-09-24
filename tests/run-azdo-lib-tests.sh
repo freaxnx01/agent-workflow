@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+#
+# run-azdo-lib-tests.sh — Layer-1 fixture tests for scripts/lib/azdo.sh.
+# `az` is mocked via tests/mocks/az; no network, no live organization.
+#
+# Usage: tests/run-azdo-lib-tests.sh
+# Exit codes: 0 all pass; 1 at least one assertion failed.
+set -euo pipefail
+IFS=$'\n\t'
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+LIB="$ROOT/scripts/lib/azdo.sh"
+MOCKS="$ROOT/tests/mocks"
+FIXTURES="$ROOT/tests/fixtures"
+
+PASS=0
+FAIL=0
+FAIL_NAMES=()
+
+if [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]]; then
+  C_GREEN=$'\033[32m'; C_RED=$'\033[31m'; C_DIM=$'\033[2m'; C_OFF=$'\033[0m'
+else
+  C_GREEN=''; C_RED=''; C_DIM=''; C_OFF=''
+fi
+
+section() { printf '\n%s── %s ──%s\n' "$C_DIM" "$1" "$C_OFF"; }
+pass() { PASS=$((PASS + 1)); printf '  %s✓%s %s\n' "$C_GREEN" "$C_OFF" "$1"; }
+fail() {
+  FAIL=$((FAIL + 1)); FAIL_NAMES+=("$1")
+  printf '  %s✗%s %s\n' "$C_RED" "$C_OFF" "$1"
+  [ $# -gt 1 ] && printf '      %s\n' "$2"
+  return 0
+}
+assert_eq() {
+  local name="$1" expected="$2" actual="$3"
+  if [[ "$actual" == "$expected" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected: $expected | actual: $actual"
+  fi
+}
+
+# run_lib <fixture> <function> [args...] — sources the library with `az` mocked
+# and the AZDO_* context pre-set, then calls one function.
+run_lib() {
+  local fixture="$1"; shift
+  (
+    export PATH="$MOCKS:$PATH"
+    export AZ_MOCK_FIXTURE="$FIXTURES/$fixture"
+    export AZDO_ORG=contoso AZDO_PROJECT=MyProject AZDO_REPO=my-repo
+    # shellcheck disable=SC1090
+    source "$LIB"
+    "$@"
+  )
+}
+
+# --- cases -------------------------------------------------------------
+
+section "azdo_org_url"
+
+assert_eq "builds the org url from AZDO_ORG" "https://dev.azure.com/contoso" \
+  "$(run_lib azdo-wiql-rows.json azdo_org_url)"
+
+section "azdo_closed_states — derived from metadata, never hardcoded"
+
+# The two fixtures are real responses from two live projects on different
+# process templates. Basic has a Done state; the Agile-derived one does not.
+# That difference is the whole reason this is derived rather than written out:
+# no fixed list is correct on both.
+assert_eq "basic template includes Done" "'Closed','Completed','Done','Inactive','Removed'" \
+  "$(run_lib azdo-workitemtypes-basic.json azdo_closed_states)"
+
+assert_eq "agile-derived template omits Done" "'Closed','Completed','Inactive','Removed'" \
+  "$(run_lib azdo-workitemtypes-agile.json azdo_closed_states)"
+
+section "azdo_wiql — rows, empty and TF51011 are three outcomes"
+
+assert_eq "returns ids one per line" "$(printf '1\n2\n4')" \
+  "$(run_lib azdo-wiql-rows.json azdo_wiql 'SELECT [System.Id] FROM WorkItems')"
+
+# A missing Area Path ERRORS rather than returning no rows, so it gets its own
+# exit code: a caller must be able to tell "this repo has no area" from
+# "nothing is open". Conflating them is how the wrong answer gets reported.
+set +e
+run_lib azdo-wiql-tf51011.txt azdo_wiql 'SELECT [System.Id] FROM WorkItems' >/dev/null 2>&1
+rc=$?
+set -e
+assert_eq "TF51011 exits 2, distinct from empty" "2" "$rc"
+
+# The query travels by stdin as a JSON body, crossing bash, python3, az, REST
+# and the WIQL parser, and it carries BOTH single quotes and a backslash. That
+# is the combination that breaks when the body is hand-quoted instead of encoded,
+# so assert it arrives intact rather than mangled.
+AZ_MOCK_STDIN_LOG="$(mktemp)"
+export AZ_MOCK_STDIN_LOG
+run_lib azdo-wiql-rows.json azdo_wiql \
+  "SELECT [System.Id] FROM WorkItems WHERE [System.AreaPath] UNDER 'MyProject\\my-repo'" >/dev/null
+
+# Decode the body the way the REST layer would, and compare to the query as written.
+got="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["query"])' "$AZ_MOCK_STDIN_LOG" 2>/dev/null || echo PARSE-FAILED)"
+assert_eq "the body is valid JSON and the query survives intact" \
+  "SELECT [System.Id] FROM WorkItems WHERE [System.AreaPath] UNDER 'MyProject\\my-repo'" "$got"
+
+rm -f "$AZ_MOCK_STDIN_LOG"
+unset AZ_MOCK_STDIN_LOG
+
+# --- summary -------------------------------------------------------------
+
+printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"
+printf '  %s%d passed%s' "$C_GREEN" "$PASS" "$C_OFF"
+if [ "$FAIL" -gt 0 ]; then
+  printf ', %s%d failed%s\n' "$C_RED" "$FAIL" "$C_OFF"
+  printf '\nFailed:\n'
+  for n in "${FAIL_NAMES[@]}"; do printf '  - %s\n' "$n"; done
+  exit 1
+fi
+printf '\n'
+exit 0
