@@ -32,6 +32,13 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# The forge PR verb (#253).
+_VRP_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/detect-forge.sh
+source "$_VRP_HERE/lib/detect-forge.sh"
+# shellcheck source=scripts/lib/forge.sh
+source "$_VRP_HERE/lib/forge.sh"
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=scripts/lib/gh-retry.sh disable=SC1091  # hook runs without -x; SC1091 is conventionally suppressed
 source "$HERE/lib/gh-retry.sh"
@@ -68,19 +75,16 @@ emit() {
 open_draft_pr() {
   local head="$1" body="$2" out ec=0
   set +x
+  # forge_pr_create_draft echoes the PR NUMBER, not a URL: each forge reports a
+  # created PR differently and normalising that is the adapter's job, not this
+  # script's. The regex guard below still matters -- on the `exists` and
+  # `failed` paths $out is an error message, not a number.
   out="$(GH_TOKEN="${GH_TOKEN:-}" with_backoff \
-    gh pr create --repo "$REPO" --draft \
-      --base "$default_branch" --head "$head" \
-      --title "Implement #${ISSUE_NUMBER}" \
-      --body "$body" 2>&1)" || ec=$?
+    forge_pr_create_draft "$head" "$default_branch" \
+      "Implement #${ISSUE_NUMBER}" "$body" "$ISSUE_NUMBER" 2>&1)" || ec=$?
   if [[ "$ec" -eq 0 ]]; then
     PR_CREATE_RESULT=created
-    # `gh pr create` prints the PR URL; the last path segment is the number.
-    # The regex guard matters: on the `exists` and `failed` paths `out` is an
-    # error message, not a URL, so without it a fragment of prose would travel
-    # into $GITHUB_OUTPUT as a PR number.
     PR_NUMBER_OUT="$(printf '%s' "$out" | tr -d '[:space:]')"
-    PR_NUMBER_OUT="${PR_NUMBER_OUT##*/}"
     [[ "$PR_NUMBER_OUT" =~ ^[0-9]+$ ]] || PR_NUMBER_OUT=''
   elif printf '%s' "$out" | grep -qi 'already exists'; then
     PR_CREATE_RESULT=exists

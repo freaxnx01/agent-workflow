@@ -99,7 +99,10 @@ REPO_GH="$(make_repo 'https://github.com/o/r.git')"
 assert_eq "labels arrive one per line" "$(printf 'ai-implement\nturns:80')" \
   "$(forge_block "$REPO_GH" LABELS)"
 
-assert_eq "body is exported" "Implement the thing." \
+# title + "\n" + body, matching what classify-turns.sh's own gh fallback builds.
+# Body alone would make the injected path score differently from the fallback
+# for any issue whose signal is in the title.
+assert_eq "body is title + newline + body" "$(printf 'Do the thing\nImplement the thing.')" \
   "$(forge_block "$REPO_GH" BODY)"
 
 assert_eq "ISSUE_LABELS is exported, not shell-local" "1" \
@@ -335,7 +338,11 @@ az_block() { az_read | sed -n "/^$1<</,/^>>$/p" | sed '1d;$d'; }
 assert_eq "tags become labels, one per line, stripped" "$(printf 'ai-implement\nturns:80')" \
   "$(az_block L)"
 
-assert_eq "System.Description becomes the body" "Implement the thing." "$(az_block B)"
+# Same shape as the GitHub branch. Including the title also stops this being
+# EMPTY for a work item with no description -- which the classifiers' guards
+# would read as "not injected" and fall back to gh for.
+assert_eq "body is title + newline + description" "$(printf 'Do the thing\nImplement the thing.')" \
+  "$(az_block B)"
 
 # An ADO comment's text is `.text`; build-agent-prompt reads `.body`. Without the
 # mapping every comment renders EMPTY -- and silently, which is the whole risk.

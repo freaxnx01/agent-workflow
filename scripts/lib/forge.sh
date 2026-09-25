@@ -61,9 +61,14 @@ forge_export_issue() {
 import sys, json
 for l in json.load(sys.stdin).get("labels", []):
     print(l["name"])')"
+      # title + "\n" + body, NOT body alone. classify-turns.sh's own gh fallback
+      # builds it that way, and its heuristic greps the result -- so a body-only
+      # value would make the injected path score differently from the fallback
+      # for any issue whose signal is in the title.
       ISSUE_BODY="$(printf '%s' "$json" | python3 -c '
 import sys, json
-print(json.load(sys.stdin).get("body", ""))')"
+d = json.load(sys.stdin)
+print(d.get("title", "") + "\n" + d.get("body", ""))')"
       # build-agent-prompt wants title+body+comments in gh's own shape.
       ISSUE_JSON="$(printf '%s' "$json" | python3 -c '
 import sys, json
@@ -101,9 +106,14 @@ for t in (f.get("System.Tags") or "").split(";"):
     if t:
         print(t)')"
 
+      # Same shape as the GitHub branch: title + "\n" + description. On this
+      # forge it also stops the value being EMPTY for a work item with no
+      # description, which classify-turns would read as "not injected" and fall
+      # back to gh for -- against a repo gh cannot reach.
       ISSUE_BODY="$(printf '%s' "$wi" | python3 -c '
 import sys, json
-print(json.load(sys.stdin).get("fields", {}).get("System.Description", ""))')"
+f = json.load(sys.stdin).get("fields", {})
+print(f.get("System.Title", "") + "\n" + f.get("System.Description", ""))')"
 
       # Normalise to gh's shape. An ADO comment's text is `.text`; a GitHub
       # comment's is `.body`, and build-agent-prompt reads `.body`. Without this
@@ -270,5 +280,50 @@ forge_issue_label_edit() {
     github) gh "${args[@]}" ;;
     azdo) _forge_source_azdo; resolve_azdo_context || return 1; _forge_azdo_retag "$n" "$add" "$rm" ;;
     *) printf 'forge.sh: no label adapter for this forge yet (#253)\n' >&2; return 2 ;;
+  esac
+}
+
+# forge_pr_create_draft <head-branch> <base-branch> <title> <body> [issue-number]
+#
+# Echoes the created PR's NUMBER on success. Draft, always: find-pipeline-pr.sh
+# selects only drafts, so a ready-for-review PR gets no pipeline review at all
+# (agent-workflow#322).
+#
+# The issue number is optional on GitHub -- the body carries the link -- but on
+# Azure DevOps it is how the work item and the PR are associated at all, via
+# --work-items. There is no "Closes #N" convention there.
+forge_pr_create_draft() {
+  local head="${1:?forge_pr_create_draft requires a head branch}"
+  local base="${2:?forge_pr_create_draft requires a base branch}"
+  local title="${3:?forge_pr_create_draft requires a title}"
+  local body="${4-}" issue="${5-}"
+
+  case "$(detect_forge | awk '{print $1}')" in
+    github)
+      : "${REPO:?REPO must be set}"
+      # gh prints the PR URL; the last path segment is the number.
+      local url
+      url="$(gh pr create --repo "$REPO" --draft \
+               --base "$base" --head "$head" \
+               --title "$title" --body "$body")" || return 1
+      printf '%s' "${url##*/}"
+      ;;
+    azdo)
+      _forge_source_azdo; resolve_azdo_context || return 1
+      local args=(repos pr create --org "$(azdo_org_url)"
+                  --project "$AZDO_PROJECT" --repository "$AZDO_REPO"
+                  --source-branch "$head" --target-branch "$base"
+                  --title "$title" --draft
+                  --output tsv --only-show-errors --query pullRequestId)
+      [[ -n "$body" ]] && args+=(--description "$body")
+      # Without this the work item and the PR are unrelated: ADO has no
+      # "Closes #N" convention, so the link IS the association.
+      [[ -n "$issue" ]] && args+=(--work-items "$issue")
+      az "${args[@]}" || return 1
+      ;;
+    *)
+      printf 'forge.sh: no PR adapter for this forge yet (#253)\n' >&2
+      return 2
+      ;;
   esac
 }
