@@ -177,6 +177,33 @@ fi
 rm -rf "$seam_dir"
 
 
+section "PROMPT_FORGE=azdo — the closing instructions are forge-specific"
+
+# On GitHub the agent opens its own PR and "Closes #N" is what
+# find-pipeline-pr.sh keys on. On Azure DevOps neither applies: gh cannot reach
+# that forge, there is no Closes-# convention, and implement-azdo.sh opens the PR
+# itself -- so telling the agent to open one would either fail or leave a second,
+# unlinked PR behind.
+fs_dir="$(mktemp -d)"
+fs_json='{"title":"T","body":"B","comments":[]}'
+
+env ISSUE_JSON="$fs_json" ISSUE_NUMBER=7 REPO=o/r PROMPT_FILE="$fs_dir/gh.md" \
+  bash "$SCRIPT" >/dev/null 2>&1 || true
+env ISSUE_JSON="$fs_json" ISSUE_NUMBER=7 REPO=o/r PROMPT_FILE="$fs_dir/az.md" \
+  PROMPT_FORGE=azdo bash "$SCRIPT" >/dev/null 2>&1 || true
+
+gh_tail="$(cat "$fs_dir/gh.md" 2>/dev/null || true)"
+az_tail="$(cat "$fs_dir/az.md" 2>/dev/null || true)"
+
+assert_contains "$gh_tail" 'Closes #7'          "github keeps the Closes-# phrase"
+assert_contains "$gh_tail" 'open a DRAFT pull'  "github asks the agent to open the PR"
+assert_not_contains "$az_tail" 'Closes #7'      "azdo drops the Closes-# phrase"
+assert_not_contains "$az_tail" 'open a DRAFT pull' "azdo does not ask the agent to open a PR"
+assert_contains "$az_tail" 'Do NOT open a pull request yourself' "azdo says who opens it"
+assert_contains "$az_tail" 'push the'            "azdo still requires a branch and push"
+rm -rf "$fs_dir"
+
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then
   printf 'failed:\n'; printf '  - %s\n' "${FAIL_NAMES[@]}"
