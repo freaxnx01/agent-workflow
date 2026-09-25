@@ -100,8 +100,11 @@ PROMPT_FILE="$PROMPT_FILE" PROMPT_FORGE=azdo bash "$HERE/build-agent-prompt.sh" 
 # Same wrapper the GitHub job uses, same contract: AGENT_CMD <prompt> <result>.
 printf 'running the agent (max %s turns)...\n\n' "${turns:-80}"
 agent_rc=0
+# agent-cmd-claude.sh is review-pr.sh's wrapper: --print with no tool
+# permissions. Pointed at an implement prompt it reads the task, cannot write a
+# file, and exits 0 having done nothing -- observed on the first real run here.
 MODEL="${MODEL:-claude-sonnet-5}" MAX_TURNS="${turns:-80}" \
-  bash "$HERE/lib/agent-cmd-claude.sh" "$PROMPT_FILE" "$RESULT_FILE" || agent_rc=$?
+  bash "$HERE/lib/agent-cmd-claude-implement.sh" "$PROMPT_FILE" "$RESULT_FILE" || agent_rc=$?
 
 # --- classify the outcome ---------------------------------------------------
 # classify-failure.sh is the one pipeline script that was already forge-agnostic.
@@ -119,12 +122,28 @@ fi
 # Through the adapter, so the work item and the PR are linked -- Azure DevOps
 # has no "Closes #N" convention, the --work-items association IS the link.
 head_branch="$(git rev-parse --abbrev-ref HEAD)"
-default_branch="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')"
+
+# `|| true` is load-bearing. origin/HEAD is only set by `git clone`, not by
+# `git remote add` -- so in a clone built by hand it is absent, symbolic-ref
+# exits 1, and under `set -e` the assignment kills the script. With stderr sent
+# to /dev/null that failure is completely silent: the run ends at exit 0 having
+# implemented the change and opened nothing. Observed on the first real run.
+default_branch="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)"
 default_branch="${default_branch:-main}"
 
 if [[ "$head_branch" == "$default_branch" ]]; then
   printf 'error: still on %s — the agent did not branch, so there is nothing to PR.\n' "$default_branch" >&2
   exit 1
+fi
+
+# Push the branch if the agent committed but did not push. A PR cannot be
+# opened against a ref the server has never seen, and "commit but never push" is
+# the single largest measured failure mode in this pipeline.
+if ! git ls-remote --exit-code --heads origin "$head_branch" >/dev/null 2>&1; then
+  printf 'pushing  : %s (agent committed but did not push)\n' "$head_branch"
+  _auth="Authorization: Basic $(printf ':%s' "$AZURE_DEVOPS_EXT_PAT" | base64 -w0)"
+  git -c http.extraheader="$_auth" push -q -u origin "$head_branch" || {
+    printf 'error: could not push %s\n' "$head_branch" >&2; exit 1; }
 fi
 
 pr="$(forge_pr_create_draft "$head_branch" "$default_branch" \
