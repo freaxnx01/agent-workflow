@@ -94,7 +94,7 @@ fi
 PROMPT_FILE="$(mktemp --suffix=.md)"
 RESULT_FILE="$(mktemp --suffix=.json)"
 trap 'rm -f "$out" "$PROMPT_FILE" "$RESULT_FILE"' EXIT
-PROMPT_FILE="$PROMPT_FILE" bash "$HERE/build-agent-prompt.sh" >/dev/null
+PROMPT_FILE="$PROMPT_FILE" PROMPT_FORGE=azdo bash "$HERE/build-agent-prompt.sh" >/dev/null
 
 # --- run the agent ----------------------------------------------------------
 # Same wrapper the GitHub job uses, same contract: AGENT_CMD <prompt> <result>.

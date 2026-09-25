@@ -42,6 +42,9 @@
 #
 # Exit codes:
 #   0  prompt written
+#   PROMPT_FORGE      "azdo" swaps the closing instructions for that forge:
+#                     branch-and-push only, no PR and no "Closes #N", because
+#                     implement-azdo.sh opens the PR itself. Default "github".
 #   ISSUE_JSON        Pre-fetched `gh issue view --json title,body,comments`
 #                     output. When set, skips the gh call -- used by tests and by
 #                     scripts/lib/forge.sh on a non-GitHub forge (#253).
@@ -107,10 +110,24 @@ comments="$(printf '%s' "$issue_json" \
 
   printf -- '---\n\n'
   printf 'Read CLAUDE.md and follow the house rules.\n'
-  printf 'Implement the change on a new branch and open a DRAFT pull request.\n'
-  printf 'The PR body MUST include "Closes #%s" on its own line so the\n' "$ISSUE_NUMBER"
-  printf 'pipeline can link the PR back to this issue (find-pipeline-pr.sh\n'
-  printf 'searches for that exact phrase).\n'
+
+  # The closing instructions are forge-specific. On GitHub the agent opens its
+  # own PR and the "Closes #N" phrase is what find-pipeline-pr.sh keys on. On
+  # Azure DevOps neither applies: gh cannot reach that forge, there is no
+  # Closes-# convention, and implement-azdo.sh opens the PR itself through the
+  # adapter -- so telling the agent to open one would either fail or produce a
+  # second, unlinked PR.
+  if [[ "${PROMPT_FORGE:-github}" == "azdo" ]]; then
+    printf 'Implement the change on a NEW BRANCH. Commit your work and push the\n'
+    printf 'branch. Do NOT open a pull request yourself -- the caller opens it and\n'
+    printf 'links it to work item #%s. There is no "Closes #N" convention on this\n' "$ISSUE_NUMBER"
+    printf 'forge, so do not add one.\n'
+  else
+    printf 'Implement the change on a new branch and open a DRAFT pull request.\n'
+    printf 'The PR body MUST include "Closes #%s" on its own line so the\n' "$ISSUE_NUMBER"
+    printf 'pipeline can link the PR back to this issue (find-pipeline-pr.sh\n'
+    printf 'searches for that exact phrase).\n'
+  fi
 } > "$PROMPT_FILE"
 
 # Enrichment marker, read by /ai-stats. Derived from the body alone: a plan
