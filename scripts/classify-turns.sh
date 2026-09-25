@@ -75,7 +75,12 @@ UNPLANNED_MAX_TURNS="${UNPLANNED_MAX_TURNS:-120}"
 
 # --- 1) explicit override label -------------------------------------------
 
-if [[ -z "${ISSUE_LABELS:-}" ]]; then
+# `+x` tests whether the variable is SET, not whether it is non-empty.
+# An issue with no labels -- or an Azure DevOps work item with no tags or
+# description -- yields an empty but injected value, and `-z` would treat
+# that as "not injected" and fall back to a forge call. On GitHub that is a
+# wasted round trip; on a forge gh cannot reach it is fatal. See #253.
+if [[ -z "${ISSUE_LABELS+x}" ]]; then
   ISSUE_LABELS="$(gh issue view "$ISSUE_NUMBER" --repo "$REPO" --json labels --jq '.labels[].name')"
 fi
 
@@ -93,7 +98,12 @@ done <<< "$ISSUE_LABELS"
 # --- 2) heuristic over title+body -----------------------------------------
 
 if [[ -z "$chosen" ]]; then
-  if [[ -z "${ISSUE_BODY:-}" ]]; then
+  # `+x` tests whether the variable is SET, not whether it is non-empty.
+  # An issue with no labels -- or an Azure DevOps work item with no tags or
+  # description -- yields an empty but injected value, and `-z` would treat
+  # that as "not injected" and fall back to a forge call. On GitHub that is a
+  # wasted round trip; on a forge gh cannot reach it is fatal. See #253.
+  if [[ -z "${ISSUE_BODY+x}" ]]; then
     ISSUE_BODY="$(gh issue view "$ISSUE_NUMBER" --repo "$REPO" --json title,body --jq '.title + "\n" + .body')"
   fi
 
