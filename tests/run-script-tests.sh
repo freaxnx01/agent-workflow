@@ -20,7 +20,19 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # assertions passed locally and failed the moment the suite first ran in CI
 # (#354). Clearing them here fixes the whole class rather than one call site;
 # a test that wants one sets it per-invocation.
-unset GITHUB_REPOSITORY GITHUB_OUTPUT GITHUB_ACTIONS GITHUB_TOKEN
+#
+# The same shape recurs whenever a workflow step exports something job-wide
+# and an agent then runs this suite inside that step: export-issue-context.sh
+# writes ISSUE_LABELS/ISSUE_BODY/ISSUE_JSON/ISSUE_COMMENTS_JSON to
+# $GITHUB_ENV for the whole implement job (#253), and the self-fix step in
+# agent-implement.yml sets REPO/PR_NUMBER/MODEL/FIX_AGENT/FIX_MODEL as step
+# env for the fix agent it spawns — which is exactly the process that would
+# run this suite (#264). Unsetting the whole set here, instead of an `env -u`
+# guard per call site, covers every "missing X -> exit N" assertion that
+# depends on one of these being absent, present and future.
+unset GITHUB_REPOSITORY GITHUB_OUTPUT GITHUB_ACTIONS GITHUB_TOKEN \
+      REPO ISSUE_BODY ISSUE_LABELS ISSUE_JSON ISSUE_COMMENTS_JSON \
+      PR_NUMBER FIX_AGENT FIX_MODEL MODEL
 SCRIPT="$ROOT/scripts/post-run-report.sh"
 FIXTURES="$ROOT/tests/fixtures"
 MOCKS="$ROOT/tests/mocks"
@@ -1239,7 +1251,7 @@ out="$(ISSUE_BODY=$'Blocked by: #7\n' bash "$PARSE_CHAIN" < /dev/null)"
 assert_contains "$out" 'blocked-by=#7'     "ISSUE_BODY env seam"
 
 # Missing body → exit 2
-ec="$(run_capture_ec env bash "$PARSE_CHAIN" < /dev/null)"
+ec="$(run_capture_ec bash "$PARSE_CHAIN" < /dev/null)"
 assert_equals "$ec" "2" "no body provided → exit 2"
 
 section "find-next-blocked-issue — eligibility per ADR-003"
