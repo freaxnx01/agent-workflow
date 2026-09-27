@@ -3813,6 +3813,18 @@ assert_equals "$granted" "$needed" \
 assert_contains "$granted" "actions: write" \
   "the caller grants actions: write (the #421 regression)"
 
+# Every opencode ensure-toolchain step must honour dry-run. The Layer-2
+# scenarios put tests/mocks/ on PATH; install-opencode.sh calls curl, hits the
+# mock, downloads nothing, and the checksum guard correctly refuses — failing
+# every self-fix scenario. This was invisible for four days because the Layer-2
+# guard itself was startup_failing (#435), and the old npm path was never
+# mocked so it never hit this.
+callee_raw="$(cat "$CALLEE_WF")"
+assert_equals "$(printf '%s' "$callee_raw" | grep -c 'AGENT: opencode' || true)" "3" \
+  "three steps run ensure-toolchain.sh with AGENT=opencode"
+assert_equals "$(printf '%s' "$callee_raw" | grep -c 'OPENCODE_DRY_RUN: ..{ inputs.dry-run' || true)" "3" \
+  "each of them honours dry-run, so a dry run installs nothing"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"

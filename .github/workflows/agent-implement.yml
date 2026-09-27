@@ -588,6 +588,13 @@ jobs:
         if: ${{ !inputs.stub-claude && steps.classify_agent.outputs.agent == 'opencode' }}
         env:
           AGENT: opencode
+          # dry-run means "touch nothing outside this runner", and installing a
+          # CLI is exactly that. Without it the Layer-2 scenarios put
+          # tests/mocks/ on PATH, install-opencode.sh calls the curl mock, no
+          # file is downloaded, and the checksum guard correctly refuses —
+          # failing every self-fix scenario (#435). The guard was dead when
+          # #395 moved this path from npm (never mocked) to curl (mocked).
+          OPENCODE_DRY_RUN: ${{ inputs.dry-run && '1' || '0' }}
         run: bash .claude-pipeline/scripts/ensure-toolchain.sh
 
       - name: Triage model
@@ -1237,6 +1244,13 @@ jobs:
           && needs.implement.outputs.agent == 'opencode'
         env:
           AGENT: opencode
+          # dry-run means "touch nothing outside this runner", and installing a
+          # CLI is exactly that. Without it the Layer-2 scenarios put
+          # tests/mocks/ on PATH, install-opencode.sh calls the curl mock, no
+          # file is downloaded, and the checksum guard correctly refuses —
+          # failing every self-fix scenario (#435). The guard was dead when
+          # #395 moved this path from npm (never mocked) to curl (mocked).
+          OPENCODE_DRY_RUN: ${{ inputs.dry-run && '1' || '0' }}
         run: bash .claude-pipeline/scripts/ensure-toolchain.sh
 
       - name: Self-fix loop (AI-merge optional self-fix pass)
@@ -1581,6 +1595,13 @@ jobs:
           && needs.implement.outputs.agent == 'opencode'
         env:
           AGENT: opencode
+          # dry-run means "touch nothing outside this runner", and installing a
+          # CLI is exactly that. Without it the Layer-2 scenarios put
+          # tests/mocks/ on PATH, install-opencode.sh calls the curl mock, no
+          # file is downloaded, and the checksum guard correctly refuses —
+          # failing every self-fix scenario (#435). The guard was dead when
+          # #395 moved this path from npm (never mocked) to curl (mocked).
+          OPENCODE_DRY_RUN: ${{ inputs.dry-run && '1' || '0' }}
         run: bash .claude-pipeline/scripts/ensure-toolchain.sh
 
       - name: Self-fix loop (human-merge optional self-fix pass)
