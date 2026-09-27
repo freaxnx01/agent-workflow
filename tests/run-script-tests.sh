@@ -3717,6 +3717,54 @@ assert_contains "$(cat "$ROOT/scripts/ensure-toolchain.sh")" 'install-opencode.s
 assert_not_contains "$(cat "$ROOT/docs/RUNNER-REQUIREMENTS.md")" 'nodejs' \
   "RUNNER-REQUIREMENTS no longer requires nodejs"
 
+section "agent-implement.yml — pipeline pushes act as the App (#430)"
+
+# Configuring the App made pipeline PRs App-authored, but every `git push` was
+# still github-actions[bot], so the runs those pushes trigger stalled at
+# action_required exactly as before. Observed on PR #424: opened by the App at
+# 14:36 with checks running, then runs created at 14:47 with
+# actor=github-actions[bot] stalled and the PR dropped to checks: 0.
+WF430="$ROOT/.github/workflows/agent-implement.yml"
+
+# Strip comments before asserting: the steps deliberately explain why the token
+# is needed, and matching the whole file would count the explanation.
+wf430_exec="$(grep -vE '^[[:space:]]*#' "$WF430")"
+
+# The agent pushes with the credentials actions/checkout persists.
+assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'token: ..{ steps.app_token' || true)" "1" \
+  "the consumer checkout receives the App token"
+
+# Ordering: the mint must come before the checkout that consumes it. Compare
+# line numbers within the implement job.
+mint_line="$(grep -n 'id: app_token' "$WF430" | head -1 | cut -d: -f1)"
+ckout_line="$(grep -n 'name: Checkout consumer repo' "$WF430" | head -1 | cut -d: -f1)"
+if [[ -n "$mint_line" && -n "$ckout_line" ]] && (( mint_line < ckout_line )); then
+  pass "the mint step precedes the consumer checkout it serves"
+else
+  fail "the mint step precedes the consumer checkout it serves" \
+    "mint at ${mint_line:-none}, checkout at ${ckout_line:-none}"
+fi
+
+# The pipeline-ref checkouts fetch agent-workflow itself and must keep the
+# default token — scoping the change.
+assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'ref: ..{ inputs.pipeline-ref' || true)" "3" \
+  "the three pipeline-ref checkouts are still present and untouched"
+
+# Both review jobs must mint their own token. Passing one between jobs via a
+# job output is not an option: job outputs are not secret-masked.
+assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'id: app_token' || true)" "3" \
+  "all three jobs mint an installation token"
+
+# The mint's if: tests env.PIPELINE_APP_ID because the secrets context is not
+# available in if:. Without the job-level env line the condition evaluates
+# empty and the step silently never runs.
+assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'PIPELINE_APP_ID: ..{ secrets' || true)" "3" \
+  "all three jobs declare PIPELINE_APP_ID at job level"
+
+# self-fix pushes; it must not be handed the ambient token.
+assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'GH_TOKEN: ..{ steps.app_token' || true)" "8" \
+  "both self-fix steps get the App token (6 implement-job callers + 2)"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"
