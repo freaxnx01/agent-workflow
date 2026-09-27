@@ -3765,6 +3765,54 @@ assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'PIPELINE_APP_ID: ..{ secre
 assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'GH_TOKEN: ..{ steps.app_token' || true)" "8" \
   "both self-fix steps get the App token (6 implement-job callers + 2)"
 
+section "agent-implement.test.yml — caller permissions cover the callee (#435)"
+
+# A reusable workflow's caller must grant at least what the callee's jobs
+# declare. Grant less and GitHub rejects the workflow AT LOAD: startup_failure,
+# no jobs, no assertions — while still showing up in the checks list looking
+# like an ordinary failure.
+#
+# This has now happened twice. #34 fixed it once; #421 added `actions: write`
+# to the implement job without widening the caller, and the Layer-2 guard
+# startup_failed on every invocation for four days across six branches before
+# anyone noticed. A green run cannot prove the sets agree in future, because
+# the failure mode is that nothing runs — so it is asserted here, in a test
+# that cannot itself fail to start.
+CALLEE_WF="$ROOT/.github/workflows/agent-implement.yml"
+CALLER_WF="$ROOT/.github/workflows/agent-implement.test.yml"
+
+perm_union() {
+  # Union of every job's permissions in the callee, as sorted "key: value" lines.
+  python3 -c '
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+need = {}
+for job in d["jobs"].values():
+    for k, v in (job.get("permissions") or {}).items():
+        need[k] = v
+print("\n".join(f"{k}: {v}" for k, v in sorted(need.items())))
+' "$1"
+}
+
+perm_caller() {
+  python3 -c '
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+p = d.get("permissions") or {}
+print("\n".join(f"{k}: {v}" for k, v in sorted(p.items())))
+' "$1"
+}
+
+needed="$(perm_union "$CALLEE_WF")"
+granted="$(perm_caller "$CALLER_WF")"
+
+assert_equals "$granted" "$needed" \
+  "the test caller grants exactly the union of the callee's job permissions"
+
+# Pin the specific regression: actions: write is what #421 added and #435 restored.
+assert_contains "$granted" "actions: write" \
+  "the caller grants actions: write (the #421 regression)"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"
