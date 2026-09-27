@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.7](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.0.7) - 2026-09-27
+
+### Fixed
+
+- **pipeline:** Grant `actions: write` on the implement job so the retry dispatch can fire (#421)
+
+  A job-level `permissions:` block replaces the inherited set rather than merging with
+  it, so `actions: write` granted by a consumer's caller was dropped at the job boundary
+  and every retry died on `HTTP 403: Resource not accessible by integration`. A
+  recoverable provider hiccup therefore became a permanent `ai:failed` needing a human.
+  Patch release off 2.0.6: this is the only change, so consumers pinned to `v2` get the
+  fix without the unreleased work on `main`.
+
 ## [2.0.6](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.0.6) - 2026-09-14
 
 ### Added
