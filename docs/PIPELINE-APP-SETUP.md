@@ -137,10 +137,10 @@ pipeline-opened draft PR, the allowlist is missing — also step 7.
 
 When a workflow step uses the App token rather than `GITHUB_TOKEN`, the job's
 `permissions:` block **no longer governs that call** — the App's installed
-permissions do. The four granted above (contents, issues, pull requests,
-workflows, all read/write) cover everything the pipeline pushes. Drop
-workflows and the pipeline can still do everything *except* push a branch
-that touches `.github/workflows/`.
+permissions do. What the pipeline can push is therefore exactly what the four
+permissions above (contents, issues, pull requests, workflows, all read/write)
+allow: drop workflows and the pipeline can still do everything *except* push a
+branch that touches `.github/workflows/`.
 
 This inverts a reasonable expectation: narrowing a job's `permissions:` later
 will not constrain the App-token calls. If you need to restrict what the

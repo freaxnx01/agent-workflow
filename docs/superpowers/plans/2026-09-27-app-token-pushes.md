@@ -24,8 +24,10 @@ push is rejected with:
   workflow `.github/workflows/agent-implement.yml` without `workflows` permission)
 ```
 
-— and the run ends with no branch and no PR, losing the work. This predates
-#430; it is also why #364 silently skipped its `.github/workflows/` edits twice.
+— and the run ends with no branch and no PR, losing the work. The rejection is
+whole-push: a commit that touches a workflow file takes the rest of the branch
+down with it, so the signature to look for is a missing branch, not a partially
+applied change. This predates #430.
 
 Grant it at `https://github.com/settings/apps/<app>/permissions`, then accept
 the new permission on the installation at

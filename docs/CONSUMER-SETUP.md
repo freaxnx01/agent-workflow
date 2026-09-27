@@ -208,7 +208,11 @@ App* (triggers required checks; stable bot login). To enable:
 
 1. **Create a GitHub App** — Settings → Developer settings → GitHub Apps → New.
    Repository permissions: **Contents: R/W**, **Pull requests: R/W**,
-   **Issues: R/W**. No webhook needed.
+   **Issues: R/W**, and **Workflows: R/W** if any plan will edit a file under
+   `.github/workflows/` — without it such a push is rejected outright and the
+   run ends with no branch and no PR. No webhook needed. See
+   [`PIPELINE-APP-SETUP.md`](PIPELINE-APP-SETUP.md) for the full permission
+   table and what each one is used for.
 2. **Generate a private key** (downloads a `.pem`) and **install the App** on the
    consumer repo.
 3. **Add two repo secrets:** `PIPELINE_APP_ID` (the numeric App ID) and
