@@ -341,24 +341,18 @@ Refs #430"
 - Consumes: the behaviour delivered by Tasks 1 and 2.
 - Produces: no interface.
 
-- [ ] **Step 1: Record the permissions inversion**
+- [x] **Step 1: Record the permissions inversion — ALREADY LANDED**
 
-The runbook tells operators which permissions to grant. It should also say what
-those permissions now govern. Append to `docs/PIPELINE-APP-SETUP.md`, before
-*"If you skip this"*:
+Done in commit `d4f615d` on this branch. `docs/PIPELINE-APP-SETUP.md` carries a
+`## What the App token governs` section, and `docs/CONSUMER-SETUP.md` lists
+**Workflows: R/W** alongside the other three.
 
-```markdown
-## What the App token governs
-
-When a workflow step uses the App token rather than `GITHUB_TOKEN`, the job's
-`permissions:` block **no longer governs that call** — the App's installed
-permissions do. The three granted above (contents, issues, pull requests, all
-read/write) cover everything the pipeline pushes.
-
-This inverts a reasonable expectation: narrowing a job's `permissions:` later
-will not constrain the App-token calls. If you need to restrict what the
-pipeline can do, change the App's permissions, not the workflow's.
-```
+**Do not append it again.** A second `## What the App token governs` in the same
+file is a duplicate sibling heading and trips markdownlint MD024
+(`siblings_only: true` in `.markdownlint-cli2.yaml`) — the same failure this
+plan warns about for `CHANGELOG.md` in Step 2. Read the shipped section instead;
+it names **four** permissions including Workflows, not the three an earlier draft
+of this step described.
 
 - [ ] **Step 2: Add the changelog entry**
 
