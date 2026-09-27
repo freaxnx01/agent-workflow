@@ -14,7 +14,7 @@
 
 This plan edits `.github/workflows/agent-implement.yml`, and **no push of that
 file succeeds until the pipeline App is granted repository permission
-**Workflows: Read and write** and the installation accepts it.** An Actions
+`Workflows: Read and write` and the installation accepts it.** An Actions
 `permissions:` block has no `workflows` key, so `GITHUB_TOKEN` can never push a
 workflow-file change; a GitHub App can, but only once granted. Without it the
 push is rejected with:

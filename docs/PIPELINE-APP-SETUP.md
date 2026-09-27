@@ -32,7 +32,7 @@ because the secrets are unset.
    | Contents | Read and write | Push the agent's branch |
    | Pull requests | Read and write | `gh pr create`, promote from draft |
    | Issues | Read and write | Run report comments, labels |
-   | Workflows | Read and write | Push a branch that touches `.github/workflows/` |
+   | Workflows | Read and write | Push a branch that touches `.github/workflows/` — needed only if plans will edit workflow files |
 
    **Workflows is not optional if any plan will edit a workflow file.** An
    Actions `permissions:` block has no `workflows` key, so `GITHUB_TOKEN` can
@@ -96,6 +96,7 @@ The App is created **once**. Almost everything else is **per repo**.
 | Step | Scope |
 |---|---|
 | Create the App, permissions, private key | once, ever |
+| Accept a later permission change (e.g. adding Workflows) | per installation |
 | Install the App on a repo | per repo — or choose *All repositories* at install time |
 | `PIPELINE_APP_ID` / `PIPELINE_APP_PRIVATE_KEY` secrets | per repo |
 | Pass both secrets through in `agent.yml` | per repo |
@@ -136,8 +137,10 @@ pipeline-opened draft PR, the allowlist is missing — also step 7.
 
 When a workflow step uses the App token rather than `GITHUB_TOKEN`, the job's
 `permissions:` block **no longer governs that call** — the App's installed
-permissions do. The three granted above (contents, issues, pull requests, all
-read/write) cover everything the pipeline pushes.
+permissions do. The four granted above (contents, issues, pull requests,
+workflows, all read/write) cover everything the pipeline pushes. Drop
+workflows and the pipeline can still do everything *except* push a branch
+that touches `.github/workflows/`.
 
 This inverts a reasonable expectation: narrowing a job's `permissions:` later
 will not constrain the App-token calls. If you need to restrict what the
