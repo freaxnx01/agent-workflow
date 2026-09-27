@@ -446,6 +446,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **pipeline:** pushes now act as the GitHub App, not `github-actions[bot]`.
+  Configuring the App made pipeline *PRs* App-authored, but `actions/checkout`
+  persisted `github.token`, so every push still stalled its runs at
+  `action_required` — which mattered increasingly once agents began pushing
+  after every task. The implement job's checkout takes the App token (and its
+  mint step moved above the checkout to make that possible), and both review
+  jobs now mint a token and hand it to self-fix. Consumers without the App are
+  unaffected: every reference falls back to `github.token` (#430).
 - **pipeline:** the attempt cap no longer counts a run that never started. A
   report stating 0 turns and `$0.00` never reached the agent, so it is not an
   attempt at the work — on #302 one such run consumed half the issue's dispatch

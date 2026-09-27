@@ -409,9 +409,6 @@ jobs:
       # `if:`). Empty → the agent falls back to GITHUB_TOKEN (draft-only posture).
       PIPELINE_APP_ID: ${{ secrets.PIPELINE_APP_ID }}
     steps:
-      - name: Checkout consumer repo
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
-
       - name: Mint pipeline App token (optional)
         # When PIPELINE_APP_ID + PIPELINE_APP_PRIVATE_KEY are provided, mint a
         # short-lived installation token so the agent opens the PR *as the App*.
@@ -439,6 +436,17 @@ jobs:
           > [!WARNING]
           > No `PIPELINE_APP_ID` configured — this run will need its checks approved by hand. See `docs/PIPELINE-APP-SETUP.md`.
           SUMMARY
+
+      - name: Checkout consumer repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          # The agent pushes with the credentials this step persists
+          # (persist-credentials defaults to true). Without a token here those
+          # pushes are github-actions[bot], and the runs they trigger stall at
+          # action_required even though the PR itself is App-authored (#430).
+          # Falls back to github.token, so a consumer without the App is
+          # unaffected.
+          token: ${{ steps.app_token.outputs.token || github.token }}
 
       - name: Checkout agent-workflow scripts
         if: ${{ !inputs.local-scripts }}
@@ -997,6 +1005,11 @@ jobs:
       && needs.implement.outputs.ai-review-human-merge-enabled != 'true'
     runs-on: ${{ fromJSON(inputs.runner-labels) }}
     timeout-minutes: 15
+    env:
+      # Mirrors the implement job: the mint step's `if:` tests this, because
+      # the `secrets` context is not available in `if:`. Without it the
+      # condition evaluates empty and the mint silently never runs (#430).
+      PIPELINE_APP_ID: ${{ secrets.PIPELINE_APP_ID }}
     permissions:
       contents: write
       pull-requests: write
@@ -1005,6 +1018,19 @@ jobs:
       merge-attempted:         ${{ steps.verify_mock.outputs.merge-attempted }}
       self-fix-iterations-used: ${{ steps.final.outputs.iterations-used }}
     steps:
+      - name: Mint pipeline App token (optional)
+        # self-fix-pr.sh pushes, and injects whatever GH_TOKEN it is given into
+        # the clone's remote URL. Without an App token here those pushes are
+        # github-actions[bot] and their runs stall at action_required (#430).
+        # Each job mints its own: an installation token must never travel
+        # between jobs through a job output, which is not secret-masked.
+        id: app_token
+        if: ${{ env.PIPELINE_APP_ID != '' }}
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349  # v2.2.2
+        with:
+          app-id: ${{ secrets.PIPELINE_APP_ID }}
+          private-key: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
+
       - name: Checkout consumer repo
         # Needed so .claude-auto-merge-blocklist (if present) is on disk
         # for check-merge-envelope.sh to read.
@@ -1221,7 +1247,7 @@ jobs:
           && inputs.self-fix
         id: self_fix
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
           HEAD_SHA: ${{ steps.find_pr.outputs.head-sha }}
@@ -1382,6 +1408,11 @@ jobs:
       && needs.implement.outputs.ai-review-human-merge-enabled == 'true'
     runs-on: ${{ fromJSON(inputs.runner-labels) }}
     timeout-minutes: 10
+    env:
+      # Mirrors the implement job: the mint step's `if:` tests this, because
+      # the `secrets` context is not available in `if:`. Without it the
+      # condition evaluates empty and the mint silently never runs (#430).
+      PIPELINE_APP_ID: ${{ secrets.PIPELINE_APP_ID }}
     permissions:
       contents: write
       pull-requests: write
@@ -1391,6 +1422,19 @@ jobs:
       ready-attempted: ${{ steps.verify_mock.outputs.ready-attempted }}
       self-fix-iterations-used: ${{ steps.final.outputs.iterations-used }}
     steps:
+      - name: Mint pipeline App token (optional)
+        # self-fix-pr.sh pushes, and injects whatever GH_TOKEN it is given into
+        # the clone's remote URL. Without an App token here those pushes are
+        # github-actions[bot] and their runs stall at action_required (#430).
+        # Each job mints its own: an installation token must never travel
+        # between jobs through a job output, which is not secret-masked.
+        id: app_token
+        if: ${{ env.PIPELINE_APP_ID != '' }}
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349  # v2.2.2
+        with:
+          app-id: ${{ secrets.PIPELINE_APP_ID }}
+          private-key: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
+
       - name: Checkout consumer repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
 
@@ -1546,7 +1590,7 @@ jobs:
           && inputs.self-fix
         id: self_fix
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
           HEAD_SHA: ${{ steps.find_pr.outputs.head-sha }}
