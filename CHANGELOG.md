@@ -454,6 +454,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   grants the union of the callee's job permissions, and a Layer-1 test asserts
   the two sets agree so the same regression cannot recur silently a third time
   (#435, previously #34).
+- **ci:** the OpenCode toolchain steps honour `dry-run`. #395 moved
+  `ensure_opencode` from `npm install -g` to a `curl`-based native installer;
+  the Layer-2 scenarios put `tests/mocks/` on `PATH`, so `curl` hit the mock,
+  nothing downloaded, and the checksum guard correctly refused — failing every
+  self-fix scenario. The old npm path was never mocked, so it never hit this,
+  and the Layer-2 guard was `startup_failing` at the time so nothing caught it
+  (#435).
 - **pipeline:** pushes now act as the GitHub App, not `github-actions[bot]`.
   Configuring the App made pipeline *PRs* App-authored, but `actions/checkout`
   persisted `github.token`, so every push still stalled its runs at
