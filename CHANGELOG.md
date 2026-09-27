@@ -446,6 +446,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **ci:** `agent-implement.test.yml` runs again. The Layer-2 guard had ended in
+  `startup_failure` on every invocation since 2026-09-24 — starting no jobs and
+  asserting nothing while still appearing in the checks list — because #421 added
+  `actions: write` to the callee's implement job without widening the caller, and
+  a caller granting less than the callee is rejected at load. The caller now
+  grants the union of the callee's job permissions, and a Layer-1 test asserts
+  the two sets agree so the same regression cannot recur silently a third time
+  (#435, previously #34).
 - **pipeline:** pushes now act as the GitHub App, not `github-actions[bot]`.
   Configuring the App made pipeline *PRs* App-authored, but `actions/checkout`
   persisted `github.token`, so every push still stalled its runs at

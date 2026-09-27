@@ -19,9 +19,16 @@ permissions:
   # declares; a caller granting less than the callee requests causes
   # GitHub to reject the workflow at load (silent startup_failure,
   # root cause of #34).
+  #
+  # This must be the UNION of every job's permissions in the callee, not any
+  # one job's. #421 added `actions: write` to the implement job and did not
+  # widen this block, and the workflow startup_failed on every invocation for
+  # the next four days without anyone noticing — the same regression #34 fixed
+  # (#435). `tests/run-script-tests.sh` now asserts the two sets agree.
   contents: write
   pull-requests: write
   issues: write
+  actions: write
 
 concurrency:
   group: claude-implement-test-${{ github.ref }}
