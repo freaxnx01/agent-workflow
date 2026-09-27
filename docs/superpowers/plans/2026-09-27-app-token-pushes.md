@@ -10,6 +10,27 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-27-app-token-pushes-design.md`
 
+## Prerequisite — the App needs the Workflows permission
+
+This plan edits `.github/workflows/agent-implement.yml`, and **no push of that
+file succeeds until the pipeline App is granted repository permission
+**Workflows: Read and write** and the installation accepts it.** An Actions
+`permissions:` block has no `workflows` key, so `GITHUB_TOKEN` can never push a
+workflow-file change; a GitHub App can, but only once granted. Without it the
+push is rejected with:
+
+```text
+! [remote rejected] ... (refusing to allow a GitHub App to create or update
+  workflow `.github/workflows/agent-implement.yml` without `workflows` permission)
+```
+
+— and the run ends with no branch and no PR, losing the work. This predates
+#430; it is also why #364 silently skipped its `.github/workflows/` edits twice.
+
+Grant it at `https://github.com/settings/apps/<app>/permissions`, then accept
+the new permission on the installation at
+`https://github.com/settings/installations`. See `docs/PIPELINE-APP-SETUP.md`.
+
 ## Global Constraints
 
 - Every new token reference is `${{ steps.app_token.outputs.token || github.token }}`. **The fallback is mandatory** — it is what keeps this a no-op for consumers without the App.

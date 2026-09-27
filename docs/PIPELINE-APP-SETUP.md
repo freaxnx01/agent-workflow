@@ -32,6 +32,16 @@ because the secrets are unset.
    | Contents | Read and write | Push the agent's branch |
    | Pull requests | Read and write | `gh pr create`, promote from draft |
    | Issues | Read and write | Run report comments, labels |
+   | Workflows | Read and write | Push a branch that touches `.github/workflows/` |
+
+   **Workflows is not optional if any plan will edit a workflow file.** An
+   Actions `permissions:` block has no `workflows` key, so `GITHUB_TOKEN` can
+   never push such a change; the App can, but only once granted this. Without
+   it the push is rejected outright — `refusing to allow a GitHub App to create
+   or update workflow ... without 'workflows' permission` — and the run ends
+   with no branch and no PR. Granting it after installation requires the
+   **installation** to accept the new permission: GitHub → Settings →
+   Installations → the App → review and accept.
 
 3. **Install it** on the repo (or the org, scoped to selected repositories).
 
@@ -121,6 +131,17 @@ likelihood:
 
 If the author *is* the App but the review job says it could not find a
 pipeline-opened draft PR, the allowlist is missing — also step 7.
+
+## What the App token governs
+
+When a workflow step uses the App token rather than `GITHUB_TOKEN`, the job's
+`permissions:` block **no longer governs that call** — the App's installed
+permissions do. The three granted above (contents, issues, pull requests, all
+read/write) cover everything the pipeline pushes.
+
+This inverts a reasonable expectation: narrowing a job's `permissions:` later
+will not constrain the App-token calls. If you need to restrict what the
+pipeline can do, change the App's permissions, not the workflow's.
 
 ## If you skip this
 
