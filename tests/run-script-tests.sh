@@ -1974,6 +1974,33 @@ assert_contains "$out" '  claude:'        "  → including indentation"
 out="$(printf 'name: unrelated\n' | rewrite v2)"
 assert_contains "$out" 'name: unrelated'  "a file with no pin passes through unchanged"
 
+section "migrate-consumers — inventory flags stubs that under-grant (#434)"
+
+mig_tmp="$(mktemp -d)"
+printf 'deadbeef\n' > "$mig_tmp/sha"
+stub_full=$'on:\n  issues:\n    types: [labeled]\npermissions:\n  contents: write\n  pull-requests: write\n  issues: write\n  actions: write\njobs:\n  claude:\n    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2\n'
+printf '%s' "$stub_full" | base64 -w0 > "$mig_tmp/ok.b64"
+# game-sky-fury's agent.yml before game-sky-fury#7: everything but actions.
+printf '%s' "$stub_full" | grep -v 'actions: write' | base64 -w0 > "$mig_tmp/stale.b64"
+# ORDER MATTERS: the mock returns the first match, and only the sha call
+# carries `.sha`.
+printf '.sha\t%s\nrepos/o/stale/contents\t%s\nrepos/o/ok/contents\t%s\n' \
+  "$mig_tmp/sha" "$mig_tmp/stale.b64" "$mig_tmp/ok.b64" > "$mig_tmp/map"
+
+out="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$mig_tmp/log" GH_MOCK_STDOUT_MAP="$mig_tmp/map" \
+       CONSUMERS=$'o/stale\no/ok' bash "$MIGRATE")"
+assert_contains "$out" 'o/stale  v2  inventory  perms:MISSING actions' "a stub without actions: write is flagged"
+assert_contains "$out" 'o/ok  v2  inventory  perms:ok'                 "a complete stub reads perms:ok"
+
+out="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$mig_tmp/log" GH_MOCK_STDOUT_MAP="$mig_tmp/map" \
+       CONSUMERS='o/stale' bash "$MIGRATE" --to v2)"
+assert_contains "$out" 'already on target  perms:MISSING actions' "  → also when already on the target ref"
+
+out="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$mig_tmp/log" GH_MOCK_STDOUT_MAP="$mig_tmp/map" \
+       CONSUMERS='o/stale' bash "$MIGRATE" --to v3)"
+assert_contains "$out" 'would migrate → v3  perms:MISSING actions' "  → and in a dry-run migration"
+rm -rf "$mig_tmp"
+
 # Bad invocation is a usage error, not a silent pass.
 set +e
 REWRITE_STDIN=1 bash "$MIGRATE" </dev/null >/dev/null 2>&1
