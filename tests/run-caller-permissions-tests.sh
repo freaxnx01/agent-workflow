@@ -81,6 +81,62 @@ assert_clean "a caller's job-level block replaces its workflow-level one"
 RC=0; bash "$CHECK" >/dev/null 2>&1 || RC=$?
 if [[ "$RC" -eq 2 ]]; then pass "missing arguments exit 2"; else fail "missing arguments exit 2" "rc=$RC"; fi
 
+IMPLEMENT="$ROOT/.github/workflows/agent-implement.yml"
+CHAIN="$ROOT/.github/workflows/chain-dispatch.yml"
+
+# yaml_fences <md> <uses-pattern> — every complete stub (a fence with both an
+# `on:` trigger and a `uses:` of the pattern) in a doc, NUL-separated.
+yaml_fences() {
+  awk -v pat="$2" '
+    /^```yaml/ { inside = 1; buf = ""; next }
+    /^```/     { if (inside && buf ~ pat && buf ~ /(^|\n)on:/) printf "%s%c", buf, 0; inside = 0; next }
+    inside     { buf = buf $0 "\n" }' "$1"
+}
+
+# onboard_stub <function> — what onboard-consumer.sh generates, extracted from
+# the shipped script so the test cannot drift from it.
+onboard_stub() {
+  # shellcheck disable=SC2034
+  (
+    AGENT=claude MODEL=claude-sonnet-5 REF=v2 RUNNER_LABELS='["ubuntu-latest"]'
+    PIPELINE_REPO=freaxnx01/agent-workflow AI_MERGE=false HUMAN_MERGE=true
+    # shellcheck disable=SC1090
+    source <(sed -n "/^$1()/,/^}/p" "$ROOT/scripts/onboard-consumer.sh")
+    "$1"
+  )
+}
+
+# --- the invariant ------------------------------------------------------
+
+section "invariant — every shipped stub grants what its reusable workflow requests"
+
+n=0
+while IFS= read -r -d '' stub; do
+  n=$((n + 1))
+  check "$IMPLEMENT" < <(printf '%s' "$stub")
+  assert_clean "CONSUMER-SETUP.md agent stub #$n ⊇ agent-implement.yml"
+done < <(yaml_fences "$ROOT/docs/CONSUMER-SETUP.md" 'agent-implement[.]yml@')
+# A vacuous pass is the failure mode to fear here: rename the fence and the
+# loop above silently checks nothing.
+if (( n >= 1 )); then pass "found the documented agent stub"; else fail "found the documented agent stub" "no fence matched"; fi
+
+n=0
+while IFS= read -r -d '' stub; do
+  n=$((n + 1))
+  check "$CHAIN" < <(printf '%s' "$stub")
+  assert_clean "CONSUMER-SETUP.md chain stub #$n ⊇ chain-dispatch.yml"
+done < <(yaml_fences "$ROOT/docs/CONSUMER-SETUP.md" 'chain-dispatch[.]yml@')
+if (( n >= 1 )); then pass "found the documented chain stub"; else fail "found the documented chain stub" "no fence matched"; fi
+
+check "$IMPLEMENT" < <(onboard_stub build_agent_yml)
+assert_clean "onboard-consumer.sh agent stub ⊇ agent-implement.yml"
+
+check "$CHAIN" < <(onboard_stub build_chain_yml)
+assert_clean "onboard-consumer.sh chain stub ⊇ chain-dispatch.yml"
+
+check "$IMPLEMENT" < "$ROOT/.github/workflows/agent.yml"
+assert_clean "this repo's own agent.yml ⊇ agent-implement.yml"
+
 # --- summary ------------------------------------------------------------
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
