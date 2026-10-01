@@ -402,6 +402,14 @@ Claude-path labels (`model:opus` / `model:sonnet` / `model:haiku` / `model:fable
 > is what opencode documents. Since #164 the pipeline preflights the secret and
 > fails with an explicit `OPENROUTER_API_KEY is not set` message instead.
 > Verify with `gh secret list -R <owner>/<repo>`.
+>
+> If the key *is* present (the run log shows `OPENROUTER_API_KEY present`) and
+> the run died at **0 turns**, opencode most likely failed to fetch its model
+> catalog at startup and fell back to a bundled snapshot that doesn't know
+> newer models. Since #439 the pipeline classifies that as `transient` and
+> retries it automatically; with `escalate-on-retry` the retry runs on Claude.
+> Only a failure that **recurs** on retry with an `agent:opencode` label points
+> to a genuinely wrong model id.
 
 - The same `ai-review-ai-merge` opt-in (§2) and chain semantics (§4 — below) apply regardless of which agent ran the implementation.
 
