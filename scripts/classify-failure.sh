@@ -13,7 +13,7 @@
 #   - success      → no retry, post-run-report handles it
 #   - rate_limit   → 429 / quota exceeded — retry after delay
 #   - api_auth     → 401 / invalid token — operator intervention, no retry
-#   - transient    → 5xx / network / timeout — retry with exponential backoff
+#   - transient    → 5xx / network / timeout / 0-turn model-not-found — retry with exponential backoff
 #   - task_failure → max-turns or similar Claude-side failure — at most one retry
 #   - bug          → unclassified is_error=true — no retry, ping operator
 #
@@ -35,6 +35,7 @@ jq -e . "$RESULT_FILE" >/dev/null 2>&1 || { printf 'error: RESULT_FILE not valid
 is_error="$(jq -r '.is_error // false' "$RESULT_FILE")"
 subtype="$(jq -r '.subtype // ""' "$RESULT_FILE")"
 result_text="$(jq -r '.result // ""' "$RESULT_FILE")"
+num_turns="$(jq -r '.num_turns // ""' "$RESULT_FILE")"
 
 # A terminal `subtype` of error_* is authoritative even when is_error is false:
 # the CLI reports `error_max_turns` with `"is_error": false`, so keying off
@@ -58,6 +59,14 @@ elif printf '%s' "$result_text" | grep -qiE '"?401"?|"?403"?|invalid.bearer|auth
 elif printf '%s' "$result_text" | grep -qiE '"?5[0-9]{2}"?|service.unavailable|timeout|econn|network|upstream.error|provider.error'; then
   # `upstream.error` / `provider.error` cover OpenRouter's pass-through
   # failures from the underlying model provider.
+  class=transient
+elif [[ "$num_turns" == "0" ]] && printf '%s' "$result_text" | grep -qiE 'model not found|ProviderModelNotFoundError'; then
+  # opencode resolves the model against a catalog it fetches at startup; when
+  # that fetch fails it falls back to a bundled snapshot that may not know a
+  # newer model, and dies before the first step (#439). Transient: retry, and
+  # escalate-on-retry moves attempt 2 to Claude. The 0-turn guard keeps a
+  # mid-run model error in `bug`; api_auth is matched first, so the #164
+  # missing-key preflight never lands here.
   class=transient
 elif [[ "$subtype" == "error_max_turns" ]]; then
   class=task_failure
