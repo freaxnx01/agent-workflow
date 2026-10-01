@@ -133,10 +133,13 @@ case "$reason" in
   *) fail "reason says the gate was not found" "reason was: $reason" ;;
 esac
 
-section "test gate does not exist"
+section "test gate does not exist (a genuine 404)"
 
+# The stderr signature is what makes this a real absence rather than a `gh`
+# outage; without it this case asserted the conflation #381 fixes — see "gate
+# runs query unreadable" below.
 write_map "$FIX/agent-yml-good.yml" "$FIX/runs-one.json" "$TMPDIR_T/gate404.map"
-printf 'actions/workflows/\n' > "$TMPDIR_T/gate404.fail"
+printf 'actions/workflows/\tHTTP 404: Not Found\n' > "$TMPDIR_T/gate404.fail"
 rc=0
 reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/gate404.map" GH_MOCK_FAIL_MAP="$TMPDIR_T/gate404.fail" repo_eligible o/r ci.yml)" || rc=$?
 assert_eq "gate 404 returns 1" "1" "$rc"
@@ -174,6 +177,82 @@ case "$reason" in
   *"no .github/workflows/agent.yml"*)
     fail "an outage is not reported as a missing file" "reason was: $reason" ;;
   *) pass "an outage is not reported as a missing file" ;;
+esac
+
+section "gate has never run on a pull request (#381)"
+
+# The condition exists to satisfy #263 — no auto-merge on an unrun gate. A
+# workflow_dispatch-only workflow satisfies "has completed a run on the default
+# branch" while gating nothing: observed on agent-action-sandbox, whose gate
+# file's own header read "Manual only. Not part of the agent pipeline".
+write_map "$FIX/agent-yml-good.yml" "$FIX/runs-one.json" "$TMPDIR_T/noprruns.map" \
+  "$FIX/runs-none.json"
+rc=0
+reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/noprruns.map" repo_eligible o/r ci.yml)" || rc=$?
+assert_eq "gate with no pull_request runs returns 1" "1" "$rc"
+case "$reason" in
+  *"pull request"*) pass "reason names the pull request" ;;
+  *) fail "reason names the pull request" "reason was: $reason" ;;
+esac
+
+section "default branch has no required status checks (#381)"
+
+write_map "$FIX/agent-yml-good.yml" "$FIX/runs-one.json" "$TMPDIR_T/nocontexts.map" \
+  "$FIX/runs-one.json" "$FIX/protection-no-contexts.json"
+rc=0
+reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/nocontexts.map" repo_eligible o/r ci.yml)" || rc=$?
+assert_eq "protection with empty contexts returns 1" "1" "$rc"
+case "$reason" in
+  *"required status checks"*) pass "reason names required status checks" ;;
+  *) fail "reason names required status checks" "reason was: $reason" ;;
+esac
+
+section "branch protection absent vs unreadable (#381)"
+
+# A genuine 404 means the branch is unprotected. Both refuse — the distinction
+# is what the operator reads at 3am. Reporting an outage as "no protection"
+# sends them to configure something already configured.
+write_map "$FIX/agent-yml-good.yml" "$FIX/runs-one.json" "$TMPDIR_T/prot404.map"
+printf 'branches/main/protection\tHTTP 404: Not Found\n' > "$TMPDIR_T/prot404.fail"
+rc=0
+reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/prot404.map" \
+          GH_MOCK_FAIL_MAP="$TMPDIR_T/prot404.fail" repo_eligible o/r ci.yml)" || rc=$?
+assert_eq "protection 404 returns 1" "1" "$rc"
+case "$reason" in
+  *"no branch protection"*) pass "404 reads as unprotected" ;;
+  *) fail "404 reads as unprotected" "reason was: $reason" ;;
+esac
+
+# No stderr message at all — an opaque gh failure, i.e. an outage.
+printf 'branches/main/protection\n' > "$TMPDIR_T/protdown.fail"
+rc=0
+reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/prot404.map" \
+          GH_MOCK_FAIL_MAP="$TMPDIR_T/protdown.fail" repo_eligible o/r ci.yml)" || rc=$?
+assert_eq "protection outage returns 1" "1" "$rc"
+case "$reason" in
+  *"check failed"*) pass "an outage reads as a failed check" ;;
+  *) fail "an outage reads as a failed check" "reason was: $reason" ;;
+esac
+case "$reason" in
+  *"no branch protection"*) fail "an outage is not reported as unprotected" "reason was: $reason" ;;
+  *) pass "an outage is not reported as unprotected" ;;
+esac
+
+section "gate runs query unreadable is not 'gate not found' (#381)"
+
+# The same conflation, three lines above the one the agent.yml check fixes.
+printf 'actions/workflows/\n' > "$TMPDIR_T/runsdown.fail"
+rc=0
+reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/prot404.map" \
+          GH_MOCK_FAIL_MAP="$TMPDIR_T/runsdown.fail" repo_eligible o/r ci.yml)" || rc=$?
+assert_eq "gate runs outage returns 1" "1" "$rc"
+case "$reason" in
+  *"check failed"*) pass "a runs outage reads as a failed check" ;;
+  *) fail "a runs outage reads as a failed check" "reason was: $reason" ;;
+esac
+case "$reason" in
+  *"not found"*) fail "a runs outage is not reported as 'gate not found'" "reason was: $reason" ;;
+  *) pass "a runs outage is not reported as 'gate not found'" ;;
 esac
 
 printf '\n%s──────────%s\n' "$C_DIM" "$C_OFF"
