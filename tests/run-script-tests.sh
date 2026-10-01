@@ -2679,6 +2679,12 @@ assert_contains "$out" 'class=api_auth'   "opencode 403 / forbidden → class=ap
 out="$(adapter_to_classifier opencode-missing-key.json)"
 assert_contains "$out" 'class=api_auth' "missing OPENROUTER_API_KEY → api_auth (no retry)"
 
+# Transient opencode catalog miss (#439): 0 turns + "Model not found" is an
+# infrastructure blip, not a bug. Retrying it (and escalating to Claude on
+# attempt 2) is what the operator ended up doing by hand.
+out="$(adapter_to_classifier opencode-model-not-found.json)"
+assert_contains "$out" 'class=transient' "opencode 0-turn model-not-found → transient (retried)"
+
 # Error paths
 ec="$(run_capture_ec env bash "$ADAPT_OC")"
 assert_equals "$ec" "2" "adapter: missing EXECUTION_FILE → exit 2"
@@ -2728,6 +2734,18 @@ out="$(RENDER_ONLY=1 \
 assert_contains "$out" '0.0035'      "post-run-report includes opencode cost (\$0.0035)"
 assert_contains "$out" '1,200'       "post-run-report formats input_tokens with thousands separator"
 assert_contains "$out" 'success'     "post-run-report shows success outcome"
+
+# The model-not-found branch is guarded by num_turns == 0: a catalog miss can only
+# happen before the first step. The same text after real turns is something else
+# and must still reach the operator as a bug (#439).
+mnf_tmp="$(mktemp --suffix=.json)"
+jq -nc '{type:"result",subtype:"error_during_execution",is_error:true,duration_ms:0,num_turns:0,total_cost_usd:0,session_id:"s",result:"Model not found: openrouter/z-ai/glm-5.2. Did you mean: z-ai/glm-4.5?",usage:{input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0}}' > "$mnf_tmp"
+out="$(RESULT_FILE="$mnf_tmp" bash "$CLASSIFY_FAIL")"
+assert_contains "$out" 'class=transient' "model-not-found at 0 turns → transient"
+jq -c '.num_turns = 3' "$mnf_tmp" > "$mnf_tmp.3" && mv "$mnf_tmp.3" "$mnf_tmp"
+out="$(RESULT_FILE="$mnf_tmp" bash "$CLASSIFY_FAIL")"
+assert_contains "$out" 'class=bug' "model-not-found after real turns → still bug"
+rm -f "$mnf_tmp"
 
 ec="$(run_capture_ec env bash "$CLASSIFY_FAIL")"
 assert_equals "$ec" "2" "missing RESULT_FILE → exit 2"
