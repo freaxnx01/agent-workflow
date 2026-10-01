@@ -2635,6 +2635,18 @@ assert_equals "$(printf '%s' "$out" | jq -r '.is_error')" "true" \
 assert_contains "$(printf '%s' "$out" | jq -r '.result')" 'OPENROUTER_API_KEY is not set' \
   "missing-key preflight → result carries the actionable message"
 
+# Transient catalog miss (#439): opencode emits the useful message FIRST and a
+# generic "Unexpected server error" LAST. Keeping only the last error event threw
+# away the one line the classifier can bucket, so the run became class=bug.
+# Fixture is verbatim from game-sky-fury run 36632007246.
+out="$(EXECUTION_FILE="$FIXTURES/opencode-model-not-found.json" MODEL=z-ai/glm-5.2 bash "$ADAPT_OC")"
+assert_equals "$(printf '%s' "$out" | jq -r '.is_error')"  "true" "model-not-found → is_error true"
+assert_equals "$(printf '%s' "$out" | jq -r '.num_turns')" "0"    "model-not-found → num_turns 0"
+assert_contains "$(printf '%s' "$out" | jq -r '.result')" 'Model not found: openrouter/z-ai/glm-5.2' \
+  "multi-error stream → result keeps the first error message"
+assert_contains "$(printf '%s' "$out" | jq -r '.result')" 'Unexpected server error' \
+  "multi-error stream → result keeps the last error message too"
+
 # Unparseable input → bug-bucket result
 TMP_BAD="$(mktemp)"
 printf 'this is not json {{ bad' > "$TMP_BAD"

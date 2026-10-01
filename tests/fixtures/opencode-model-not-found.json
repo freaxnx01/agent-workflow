@@ -1,0 +1,2 @@
+{"type":"error","timestamp":1790716558351,"sessionID":"ses_f10f9c524ffesGQuaVc2YkeLUu","error":{"name":"UnknownError","data":{"message":"Model not found: openrouter/z-ai/glm-5.2. Did you mean: z-ai/glm-4-32b, z-ai/glm-4.5, z-ai/glm-4.5-air?"}}}
+{"type":"error","timestamp":1790716558351,"sessionID":"ses_f10f9c524ffesGQuaVc2YkeLUu","error":{"name":"UnknownError","data":{"message":"Unexpected server error. Check server logs for details.","ref":"err_662ec1ef"}}}
