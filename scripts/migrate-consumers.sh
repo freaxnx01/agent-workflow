@@ -105,14 +105,20 @@ current_ref() {
     | head -1 | sed 's|.*@||' || printf ''
 }
 
-# perms_verdict — stub on stdin; prints `perms:ok` or `perms:MISSING <scopes>`.
+# perms_verdict — stub on stdin; prints `perms:ok`, `perms:MISSING <scopes>`,
+# or `perms:ERROR` when the checker could not run (its reason goes to stderr).
 # A stub that grants less than agent-implement.yml's jobs request fails every
 # dispatch at startup_failure with no logs (#434), so the inventory says so.
+# Keyed on the exit code, not on empty output: a checker that never ran must
+# not read as "no gaps" for the whole fleet.
 perms_verdict() {
-  local gaps
-  gaps="$(bash "$SCRIPT_DIR/check-caller-permissions.sh" - "$REUSABLE" \
-            | sed 's/:.*//' | paste -sd, -)" || true
-  if [[ -z "$gaps" ]]; then printf 'perms:ok'; else printf 'perms:MISSING %s' "$gaps"; fi
+  local out rc=0
+  out="$(bash "$SCRIPT_DIR/check-caller-permissions.sh" - "$REUSABLE")" || rc=$?
+  case "$rc" in
+    0) printf 'perms:ok' ;;
+    1) printf 'perms:MISSING %s' "$(printf '%s\n' "$out" | sed 's/:.*//' | paste -sd, -)" ;;
+    *) printf 'perms:ERROR' ;;
+  esac
 }
 
 if [[ "${REWRITE_STDIN:-}" == "1" ]]; then
