@@ -51,16 +51,22 @@ export GH_MOCK_LOG="$TMPDIR_T/gh.log"
 # shellcheck source=scripts/lib/autopilot-eligible.sh disable=SC1091
 source "$ROOT/scripts/lib/autopilot-eligible.sh"
 
-# The three gh calls repo_eligible makes are distinguished by these substrings:
-#   contents/.github/workflows/agent.yml   → the consumer stub
-#   actions/workflows/                     → the test gate's runs
-#   repos/o/r --jq .default_branch         → the default branch
+# The gh calls repo_eligible makes, distinguished by these substrings.
+#
+# ORDER MATTERS: the mock returns the FIRST matching line, and both run queries
+# contain `actions/workflows/`. The event=pull_request line must come first or
+# it can never be reached — and the pull-request check would silently read the
+# branch query's fixture instead of its own.
 write_map() {
   local agent_yml="$1" runs="$2" dest="$3"
+  local pr_runs="${4:-$FIX/runs-one.json}"
+  local protection="${5:-$FIX/protection-required.json}"
   {
-    printf 'contents/.github/workflows/agent.yml\t%s\n' "$agent_yml"
-    printf 'actions/workflows/\t%s\n' "$runs"
-    printf 'repos/o/r\t%s\n' "$FIX/repo-meta.json"
+    printf 'event=pull_request\t%s\n'                      "$pr_runs"
+    printf 'contents/.github/workflows/agent.yml\t%s\n'    "$agent_yml"
+    printf 'actions/workflows/\t%s\n'                      "$runs"
+    printf 'branches/main/protection\t%s\n'                "$protection"
+    printf 'repos/o/r\t%s\n'                               "$FIX/repo-meta.json"
   } > "$dest"
 }
 
