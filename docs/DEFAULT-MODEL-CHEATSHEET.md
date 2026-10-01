@@ -154,7 +154,12 @@ in a loop; outliers (different hash) need their own hand-merged version.
 
 - **`ProviderModelNotFoundError` / "Model not found: openrouter/…"** — almost
   always a missing `OPENROUTER_API_KEY`, not a bad model id. See
-  [`CONSUMER-SETUP.md`](CONSUMER-SETUP.md#security-notes).
+  [`CONSUMER-SETUP.md`](CONSUMER-SETUP.md#security-notes). If the key is present
+  and the run died at 0 turns, opencode probably failed to fetch its model
+  catalog and fell back to a bundled snapshot lacking newer models — since #439
+  that is classified `transient` and retried (on Claude, with
+  `escalate-on-retry`). Only a failure that recurs on retry with an
+  `agent:opencode` label means the model id is genuinely wrong.
 - **"No endpoints found that support tool use"** — the model doesn't advertise
   `tools`; pick a different one (see the `supported_parameters` check above).
 - **Edits silently don't happen, no error** — model advertises `tools` but
