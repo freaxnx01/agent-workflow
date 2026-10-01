@@ -3855,6 +3855,23 @@ assert_equals "$(printf '%s' "$callee_raw" | grep -c 'AGENT: opencode' || true)"
 assert_equals "$(printf '%s' "$callee_raw" | grep -c 'OPENCODE_DRY_RUN: ..{ inputs.dry-run' || true)" "3" \
   "each of them honours dry-run, so a dry run installs nothing"
 
+section "agent-implement.yml — a failed agent run fails the implement job (#439)"
+
+# The OpenCode step swallows opencode's exit code on purpose so the adapter,
+# classifier, retry and run report still run. Nothing turned the failure back into
+# a red job, so game-sky-fury run 36632007246 showed green with
+# "Outcome: failed: error_during_execution" in its report.
+WF439="$ROOT/.github/workflows/agent-implement.yml"
+impl439="$(awk '/^  implement:$/{f=1;next} f && /^  [a-z_]+:$/{exit} f' "$WF439")"
+last439="$(printf '%s\n' "$impl439" | grep -E '^      - name: ' | tail -1 | sed 's/^      - name: //')"
+assert_equals "$last439" "Fail the job when the agent run failed" \
+  "the implement job's LAST step fails it on a failed run (post-run steps run first)"
+step439="$(printf '%s\n' "$impl439" | awk '/^      - name: Fail the job when the agent run failed$/{f=1;print;next} f && /^      - name: /{exit} f' | grep -vE '^[[:space:]]*#')"
+assert_contains "$step439" 'always()'                                  "fail step runs after earlier failures too"
+assert_contains "$step439" '!inputs.stub-claude'                       "fail step skips stub runs (act suite asserts outputs)"
+assert_contains "$step439" "steps.outputs.outputs.outcome == 'failed'" "fail step keys off the run outcome"
+assert_contains "$step439" 'exit 1'                                    "fail step actually fails"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"
