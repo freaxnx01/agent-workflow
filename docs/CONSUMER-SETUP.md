@@ -533,9 +533,17 @@ the two questions separately.
 
 ```bash
 bash scripts/migrate-consumers.sh --owner <owner>
-# freaxnx01/flowhub              v2  inventory
-# freaxnx01/game-wipfelkratzer   v2  inventory
+# freaxnx01/flowhub              v2  inventory  perms:ok
+# freaxnx01/game-tank-toys       v2  inventory  perms:MISSING actions
 ```
+
+> **`perms:MISSING <scope>`** means the stub grants less than
+> `agent-implement.yml`'s jobs request. A reusable workflow can't be granted
+> more than its caller, so that repo fails **every** `ai-implement` dispatch at
+> `startup_failure` (zero jobs, no logs). Add the named scopes to the stub's
+> `permissions:` block — compare with the stub in §1. Most often this is
+> `actions: write`, which `@v2` needs for retry re-dispatch (#351) and which
+> stubs created before 2026-09-23 lack (#434).
 
 **Roll out a new line.** Dry run first — `--apply` is required to write
 anything:
