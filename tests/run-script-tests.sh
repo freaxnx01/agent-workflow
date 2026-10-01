@@ -1999,6 +1999,12 @@ assert_contains "$out" 'already on target  perms:MISSING actions' "  → also wh
 out="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$mig_tmp/log" GH_MOCK_STDOUT_MAP="$mig_tmp/map" \
        CONSUMERS='o/stale' bash "$MIGRATE" --to v3)"
 assert_contains "$out" 'would migrate → v3  perms:MISSING actions' "  → and in a dry-run migration"
+
+# A checker that cannot run must not read as "no gaps" (#434 review): an
+# unreadable reusable workflow would otherwise mark the whole fleet perms:ok.
+out="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$mig_tmp/log" GH_MOCK_STDOUT_MAP="$mig_tmp/map" \
+       REUSABLE="$mig_tmp/missing.yml" CONSUMERS='o/stale' bash "$MIGRATE" 2>/dev/null)"
+assert_contains "$out" 'o/stale  v2  inventory  perms:ERROR' "a checker failure reads perms:ERROR, not perms:ok"
 rm -rf "$mig_tmp"
 
 # Bad invocation is a usage error, not a silent pass.

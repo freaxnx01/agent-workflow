@@ -29,7 +29,7 @@ usage_error() { printf 'error: %s\n' "$1" >&2; exit 2; }
 
 # permission_entries <file> — `<context>\t<scope>\t<level>` per entry.
 # context is `top` or `job:<name>`; scope `@` marks a job, `-` marks a block,
-# `*` is read-all/write-all.
+# `*` is read-all/write-all, `^` carries the job's `uses:` value.
 permission_entries() {
   awk '
     function indent(s) { match(s, /^ */); return RLENGTH }
@@ -48,6 +48,10 @@ permission_entries() {
         ctx = "job:" substr(line, 1, length(line) - 1)
         printf "%s\t@\t\n", ctx
       }
+      if (injobs && ind == 4 && line ~ /^uses:/) {
+        val = line; sub(/^uses:[[:space:]]*/, "", val)
+        printf "%s\t^\t%s\n", ctx, val
+      }
       if (line ~ /^permissions:/ && (ind == 0 || (injobs && ind == 4))) {
         val = line; sub(/^permissions:[[:space:]]*/, "", val)
         printf "%s\t-\t\n", ctx
@@ -59,25 +63,30 @@ permission_entries() {
 
 rank() { case "$1" in write) printf 2 ;; read) printf 1 ;; *) printf 0 ;; esac }
 
-# effective_grants <file> — `<scope>\t<level>` the file's jobs run with, the
-# highest level per scope across jobs.
+# effective_grants <file> [calls] — `<scope>\t<level>` the file's jobs run with,
+# the highest level per scope across jobs. With <calls> (a workflow file name),
+# only jobs whose `uses:` names that file count: on the caller side, a scope
+# granted to some unrelated job is never passed on to the reusable workflow.
+# If no job names it, every job counts.
 effective_grants() {
-  local entries ctx scope level
+  local entries ctx scope level calls="${2:-}"
   entries="$(permission_entries "$1")"
   local -A has_block=() max=()
-  local -a jobs=()
+  local -a jobs=() callers=()
   while IFS=$'\t' read -r ctx scope level; do
     case "$scope" in
       @) jobs+=("$ctx") ;;
       -) has_block["$ctx"]=1 ;;
+      ^) [[ -n "$calls" && "${level%@*}" == *"/$calls" ]] && callers+=("$ctx") ;;
     esac
   done <<< "$entries"
+  ((${#callers[@]})) && jobs=("${callers[@]}")
   ((${#jobs[@]})) || jobs=(top)
   local job src
   for job in "${jobs[@]}"; do
     src="$job"; [[ -n "${has_block[$job]:-}" ]] || src=top
     while IFS=$'\t' read -r ctx scope level; do
-      [[ "$ctx" == "$src" && "$scope" != @ && "$scope" != - ]] || continue
+      [[ "$ctx" == "$src" && "$scope" != @ && "$scope" != - && "$scope" != ^ ]] || continue
       if (( $(rank "$level") > $(rank "${max[$scope]:-none}") )); then max["$scope"]="$level"; fi
     done <<< "$entries"
   done
@@ -98,7 +107,7 @@ main() {
   local scope level gaps=0 have
   while IFS=$'\t' read -r scope level; do
     [[ -n "$scope" ]] && grant["$scope"]="$level"
-  done < <(effective_grants "$caller")
+  done < <(effective_grants "$caller" "$(basename "$reusable")")
 
   while IFS=$'\t' read -r scope level; do
     [[ -n "$scope" ]] || continue

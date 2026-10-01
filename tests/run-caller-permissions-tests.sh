@@ -78,6 +78,14 @@ assert_gap 'actions: needs write, caller grants read' "read-all does not satisfy
 check "$FIX/reusable.yml" < <(printf 'permissions:\n  contents: read\njobs:\n  c:\n    permissions:\n      contents: write\n      issues: write\n      actions: write\n    uses: x\n')
 assert_clean "a caller's job-level block replaces its workflow-level one"
 
+# Only the job that calls the reusable workflow passes its permissions on;
+# a scope granted to some unrelated job in the caller does not count.
+check "$FIX/reusable.yml" < <(printf 'jobs:\n  lint:\n    permissions:\n      actions: write\n    runs-on: x\n  claude:\n    permissions:\n      contents: write\n      issues: write\n    uses: o/r/.github/workflows/reusable.yml@v2\n')
+assert_gap 'actions: needs write, caller grants none' "a scope granted only to an unrelated caller job does not count"
+
+check "$FIX/reusable.yml" < <(printf 'jobs:\n  lint:\n    runs-on: x\n  claude:\n    permissions:\n      contents: write\n      issues: write\n      actions: write\n    uses: o/r/.github/workflows/reusable.yml@v2\n')
+assert_clean "the calling job's own grants are what count"
+
 RC=0; bash "$CHECK" >/dev/null 2>&1 || RC=$?
 if [[ "$RC" -eq 2 ]]; then pass "missing arguments exit 2"; else fail "missing arguments exit 2" "rc=$RC"; fi
 
