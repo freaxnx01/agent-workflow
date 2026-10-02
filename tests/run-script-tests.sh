@@ -2180,6 +2180,10 @@ rc=$?
 set -e
 assert_equals "$rc" "2" "--fix-perms with --to is a usage error"
 
+assert_contains "$(cat "$ROOT/docs/CONSUMER-SETUP.md")" \
+  'migrate-consumers.sh --owner <owner> --fix-perms --apply' \
+  "CONSUMER-SETUP.md documents the --fix-perms rollout (#441)"
+
 # Bad invocation is a usage error, not a silent pass.
 set +e
 REWRITE_STDIN=1 bash "$MIGRATE" </dev/null >/dev/null 2>&1
