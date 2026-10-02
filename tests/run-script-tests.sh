@@ -1974,6 +1974,39 @@ assert_contains "$out" '  claude:'        "  → including indentation"
 out="$(printf 'name: unrelated\n' | rewrite v2)"
 assert_contains "$out" 'name: unrelated'  "a file with no pin passes through unchanged"
 
+section "migrate-consumers — inventory flags stubs that under-grant (#434)"
+
+mig_tmp="$(mktemp -d)"
+printf 'deadbeef\n' > "$mig_tmp/sha"
+stub_full=$'on:\n  issues:\n    types: [labeled]\npermissions:\n  contents: write\n  pull-requests: write\n  issues: write\n  actions: write\njobs:\n  claude:\n    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2\n'
+printf '%s' "$stub_full" | base64 -w0 > "$mig_tmp/ok.b64"
+# game-sky-fury's agent.yml before game-sky-fury#7: everything but actions.
+printf '%s' "$stub_full" | grep -v 'actions: write' | base64 -w0 > "$mig_tmp/stale.b64"
+# ORDER MATTERS: the mock returns the first match, and only the sha call
+# carries `.sha`.
+printf '.sha\t%s\nrepos/o/stale/contents\t%s\nrepos/o/ok/contents\t%s\n' \
+  "$mig_tmp/sha" "$mig_tmp/stale.b64" "$mig_tmp/ok.b64" > "$mig_tmp/map"
+
+out="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$mig_tmp/log" GH_MOCK_STDOUT_MAP="$mig_tmp/map" \
+       CONSUMERS=$'o/stale\no/ok' bash "$MIGRATE")"
+assert_contains "$out" 'o/stale  v2  inventory  perms:MISSING actions' "a stub without actions: write is flagged"
+assert_contains "$out" 'o/ok  v2  inventory  perms:ok'                 "a complete stub reads perms:ok"
+
+out="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$mig_tmp/log" GH_MOCK_STDOUT_MAP="$mig_tmp/map" \
+       CONSUMERS='o/stale' bash "$MIGRATE" --to v2)"
+assert_contains "$out" 'already on target  perms:MISSING actions' "  → also when already on the target ref"
+
+out="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$mig_tmp/log" GH_MOCK_STDOUT_MAP="$mig_tmp/map" \
+       CONSUMERS='o/stale' bash "$MIGRATE" --to v3)"
+assert_contains "$out" 'would migrate → v3  perms:MISSING actions' "  → and in a dry-run migration"
+
+# A checker that cannot run must not read as "no gaps" (#434 review): an
+# unreadable reusable workflow would otherwise mark the whole fleet perms:ok.
+out="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$mig_tmp/log" GH_MOCK_STDOUT_MAP="$mig_tmp/map" \
+       REUSABLE="$mig_tmp/missing.yml" CONSUMERS='o/stale' bash "$MIGRATE" 2>/dev/null)"
+assert_contains "$out" 'o/stale  v2  inventory  perms:ERROR' "a checker failure reads perms:ERROR, not perms:ok"
+rm -rf "$mig_tmp"
+
 # Bad invocation is a usage error, not a silent pass.
 set +e
 REWRITE_STDIN=1 bash "$MIGRATE" </dev/null >/dev/null 2>&1
@@ -2635,6 +2668,18 @@ assert_equals "$(printf '%s' "$out" | jq -r '.is_error')" "true" \
 assert_contains "$(printf '%s' "$out" | jq -r '.result')" 'OPENROUTER_API_KEY is not set' \
   "missing-key preflight → result carries the actionable message"
 
+# Transient catalog miss (#439): opencode emits the useful message FIRST and a
+# generic "Unexpected server error" LAST. Keeping only the last error event threw
+# away the one line the classifier can bucket, so the run became class=bug.
+# Fixture is verbatim from game-sky-fury run 36632007246.
+out="$(EXECUTION_FILE="$FIXTURES/opencode-model-not-found.json" MODEL=z-ai/glm-5.2 bash "$ADAPT_OC")"
+assert_equals "$(printf '%s' "$out" | jq -r '.is_error')"  "true" "model-not-found → is_error true"
+assert_equals "$(printf '%s' "$out" | jq -r '.num_turns')" "0"    "model-not-found → num_turns 0"
+assert_contains "$(printf '%s' "$out" | jq -r '.result')" 'Model not found: openrouter/z-ai/glm-5.2' \
+  "multi-error stream → result keeps the first error message"
+assert_contains "$(printf '%s' "$out" | jq -r '.result')" 'Unexpected server error' \
+  "multi-error stream → result keeps the last error message too"
+
 # Unparseable input → bug-bucket result
 TMP_BAD="$(mktemp)"
 printf 'this is not json {{ bad' > "$TMP_BAD"
@@ -2666,6 +2711,12 @@ assert_contains "$out" 'class=api_auth'   "opencode 403 / forbidden → class=ap
 # Missing OPENROUTER_API_KEY is an operator problem, not a retryable one (#164)
 out="$(adapter_to_classifier opencode-missing-key.json)"
 assert_contains "$out" 'class=api_auth' "missing OPENROUTER_API_KEY → api_auth (no retry)"
+
+# Transient opencode catalog miss (#439): 0 turns + "Model not found" is an
+# infrastructure blip, not a bug. Retrying it (and escalating to Claude on
+# attempt 2) is what the operator ended up doing by hand.
+out="$(adapter_to_classifier opencode-model-not-found.json)"
+assert_contains "$out" 'class=transient' "opencode 0-turn model-not-found → transient (retried)"
 
 # Error paths
 ec="$(run_capture_ec env bash "$ADAPT_OC")"
@@ -2716,6 +2767,18 @@ out="$(RENDER_ONLY=1 \
 assert_contains "$out" '0.0035'      "post-run-report includes opencode cost (\$0.0035)"
 assert_contains "$out" '1,200'       "post-run-report formats input_tokens with thousands separator"
 assert_contains "$out" 'success'     "post-run-report shows success outcome"
+
+# The model-not-found branch is guarded by num_turns == 0: a catalog miss can only
+# happen before the first step. The same text after real turns is something else
+# and must still reach the operator as a bug (#439).
+mnf_tmp="$(mktemp --suffix=.json)"
+jq -nc '{type:"result",subtype:"error_during_execution",is_error:true,duration_ms:0,num_turns:0,total_cost_usd:0,session_id:"s",result:"Model not found: openrouter/z-ai/glm-5.2. Did you mean: z-ai/glm-4.5?",usage:{input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0}}' > "$mnf_tmp"
+out="$(RESULT_FILE="$mnf_tmp" bash "$CLASSIFY_FAIL")"
+assert_contains "$out" 'class=transient' "model-not-found at 0 turns → transient"
+jq -c '.num_turns = 3' "$mnf_tmp" > "$mnf_tmp.3" && mv "$mnf_tmp.3" "$mnf_tmp"
+out="$(RESULT_FILE="$mnf_tmp" bash "$CLASSIFY_FAIL")"
+assert_contains "$out" 'class=bug' "model-not-found after real turns → still bug"
+rm -f "$mnf_tmp"
 
 ec="$(run_capture_ec env bash "$CLASSIFY_FAIL")"
 assert_equals "$ec" "2" "missing RESULT_FILE → exit 2"
@@ -3824,6 +3887,23 @@ assert_equals "$(printf '%s' "$callee_raw" | grep -c 'AGENT: opencode' || true)"
   "three steps run ensure-toolchain.sh with AGENT=opencode"
 assert_equals "$(printf '%s' "$callee_raw" | grep -c 'OPENCODE_DRY_RUN: ..{ inputs.dry-run' || true)" "3" \
   "each of them honours dry-run, so a dry run installs nothing"
+
+section "agent-implement.yml — a failed agent run fails the implement job (#439)"
+
+# The OpenCode step swallows opencode's exit code on purpose so the adapter,
+# classifier, retry and run report still run. Nothing turned the failure back into
+# a red job, so game-sky-fury run 36632007246 showed green with
+# "Outcome: failed: error_during_execution" in its report.
+WF439="$ROOT/.github/workflows/agent-implement.yml"
+impl439="$(awk '/^  implement:$/{f=1;next} f && /^  [a-z_]+:$/{exit} f' "$WF439")"
+last439="$(printf '%s\n' "$impl439" | grep -E '^      - name: ' | tail -1 | sed 's/^      - name: //')"
+assert_equals "$last439" "Fail the job when the agent run failed" \
+  "the implement job's LAST step fails it on a failed run (post-run steps run first)"
+step439="$(printf '%s\n' "$impl439" | awk '/^      - name: Fail the job when the agent run failed$/{f=1;print;next} f && /^      - name: /{exit} f' | grep -vE '^[[:space:]]*#')"
+assert_contains "$step439" 'always()'                                  "fail step runs after earlier failures too"
+assert_contains "$step439" '!inputs.stub-claude'                       "fail step skips stub runs (act suite asserts outputs)"
+assert_contains "$step439" "steps.outputs.outputs.outcome == 'failed'" "fail step keys off the run outcome"
+assert_contains "$step439" 'exit 1'                                    "fail step actually fails"
 
 # --- summary ----------------------------------------------------------------
 

@@ -43,7 +43,9 @@
 #   CONSUMERS       Newline-separated owner/name list, skipping discovery.
 #
 # Output:
-#   One line per repo: `<repo>  <current-ref>  <verdict>`.
+#   One line per repo: `<repo>  <current-ref>  <verdict>  perms:<ok|MISSING …>`.
+#   perms:MISSING names scopes agent-implement.yml's jobs request that the stub
+#   does not grant — that consumer fails every dispatch at startup_failure.
 #
 # Exit codes:
 #   0  success, including "nothing to do"
@@ -52,6 +54,10 @@ set -euo pipefail
 IFS=$'\n\t'
 
 STUB_PATH='.github/workflows/agent.yml'
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The workflow a stub's permissions are checked against. This checkout's copy:
+# run the script from an up-to-date main, which is what @v<latest> points at.
+REUSABLE="${REUSABLE:-$SCRIPT_DIR/../.github/workflows/agent-implement.yml}"
 TARGET_REF="${TARGET_REF:-}"
 APPLY=false
 USE_PR=false
@@ -97,6 +103,22 @@ rewrite_pin() {
 current_ref() {
   grep -oE 'agent-implement\.yml@[^[:space:]]+' \
     | head -1 | sed 's|.*@||' || printf ''
+}
+
+# perms_verdict — stub on stdin; prints `perms:ok`, `perms:MISSING <scopes>`,
+# or `perms:ERROR` when the checker could not run (its reason goes to stderr).
+# A stub that grants less than agent-implement.yml's jobs request fails every
+# dispatch at startup_failure with no logs (#434), so the inventory says so.
+# Keyed on the exit code, not on empty output: a checker that never ran must
+# not read as "no gaps" for the whole fleet.
+perms_verdict() {
+  local out rc=0
+  out="$(bash "$SCRIPT_DIR/check-caller-permissions.sh" - "$REUSABLE")" || rc=$?
+  case "$rc" in
+    0) printf 'perms:ok' ;;
+    1) printf 'perms:MISSING %s' "$(printf '%s\n' "$out" | sed 's/:.*//' | paste -sd, -)" ;;
+    *) printf 'perms:ERROR' ;;
+  esac
 }
 
 if [[ "${REWRITE_STDIN:-}" == "1" ]]; then
@@ -148,12 +170,13 @@ while IFS= read -r repo; do
   content="$(printf '%s' "$blob" | base64 -d)"
   cur="$(printf '%s' "$content" | current_ref)"
   cur="${cur:--}"
+  perms="$(printf '%s' "$content" | perms_verdict)"
 
   if [[ -z "$TARGET_REF" ]]; then
-    printf '%s  %s  inventory\n' "$repo" "$cur"; continue
+    printf '%s  %s  inventory  %s\n' "$repo" "$cur" "$perms"; continue
   fi
   if [[ "$cur" == "$TARGET_REF" ]]; then
-    printf '%s  %s  already on target\n' "$repo" "$cur"; skipped=$((skipped+1)); continue
+    printf '%s  %s  already on target  %s\n' "$repo" "$cur" "$perms"; skipped=$((skipped+1)); continue
   fi
   if [[ "$FORCE" != "true" && ! "$cur" =~ ^v[0-9]+ ]]; then
     printf '%s  %s  skipped (not a version pin; --force to override)\n' "$repo" "$cur"
@@ -165,7 +188,7 @@ while IFS= read -r repo; do
     printf '%s  %s  no change needed\n' "$repo" "$cur"; skipped=$((skipped+1)); continue
   fi
   if [[ "$APPLY" != "true" ]]; then
-    printf '%s  %s  would migrate → %s\n' "$repo" "$cur" "$TARGET_REF"
+    printf '%s  %s  would migrate → %s  %s\n' "$repo" "$cur" "$TARGET_REF" "$perms"
     changed=$((changed+1)); continue
   fi
 

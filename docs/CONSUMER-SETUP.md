@@ -402,6 +402,14 @@ Claude-path labels (`model:opus` / `model:sonnet` / `model:haiku` / `model:fable
 > is what opencode documents. Since #164 the pipeline preflights the secret and
 > fails with an explicit `OPENROUTER_API_KEY is not set` message instead.
 > Verify with `gh secret list -R <owner>/<repo>`.
+>
+> If the key *is* present (the run log shows `OPENROUTER_API_KEY present`) and
+> the run died at **0 turns**, opencode most likely failed to fetch its model
+> catalog at startup and fell back to a bundled snapshot that doesn't know
+> newer models. Since #439 the pipeline classifies that as `transient` and
+> retries it automatically; with `escalate-on-retry` the retry runs on Claude.
+> Only a failure that **recurs** on retry with an `agent:opencode` label points
+> to a genuinely wrong model id.
 
 - The same `ai-review-ai-merge` opt-in (§2) and chain semantics (§4 — below) apply regardless of which agent ran the implementation.
 
@@ -525,9 +533,17 @@ the two questions separately.
 
 ```bash
 bash scripts/migrate-consumers.sh --owner <owner>
-# freaxnx01/flowhub              v2  inventory
-# freaxnx01/game-wipfelkratzer   v2  inventory
+# freaxnx01/flowhub              v2  inventory  perms:ok
+# freaxnx01/game-tank-toys       v2  inventory  perms:MISSING actions
 ```
+
+> **`perms:MISSING <scope>`** means the stub grants less than
+> `agent-implement.yml`'s jobs request. A reusable workflow can't be granted
+> more than its caller, so that repo fails **every** `ai-implement` dispatch at
+> `startup_failure` (zero jobs, no logs). Add the named scopes to the stub's
+> `permissions:` block — compare with the stub in §1. Most often this is
+> `actions: write`, which `@v2` needs for retry re-dispatch (#351) and which
+> stubs created before 2026-09-23 lack (#434).
 
 **Roll out a new line.** Dry run first — `--apply` is required to write
 anything:

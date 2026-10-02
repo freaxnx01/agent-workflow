@@ -997,6 +997,25 @@ jobs:
           HAS_PLAN: ${{ steps.issue.outputs.has-plan }}
         run: bash .claude-pipeline/scripts/post-run-report.sh
 
+      - name: Fail the job when the agent run failed
+        # Last step on purpose (#439). The OpenCode step swallows opencode's exit
+        # code so the adapter, classifier, retry, labels and run report above can
+        # all run; without this the job ends green on a failed run and only the
+        # ai:failed label tells the truth. Job outputs are still published from a
+        # failed job, and the review jobs already require outcome == 'success'.
+        # Stub runs are tests: the act suite asserts their outputs from verify-*
+        # jobs that would be skipped behind a red call job (same carve-out as
+        # `Plan retry`'s DRY_RUN). A parked run has no result file, so outcome is
+        # empty and this is skipped.
+        if: ${{ always() && !inputs.stub-claude && steps.outputs.outputs.outcome == 'failed' }}
+        env:
+          FAILURE_CLASS: ${{ steps.classify_failure.outputs.class }}
+          RETRY_DECISION: ${{ steps.retry.outputs.decision }}
+        run: |
+          printf '::error title=Implement failed::agent run failed (class=%s, retry=%s); see the run report on the issue\n' \
+            "$FAILURE_CLASS" "${RETRY_DECISION:-none}"
+          exit 1
+
   ai_review_ai_merge:
     # ADR-002: agent-driven review on the freshly-opened draft PR, with
     # gates 1/5/6/7 enforced in scripts/check-merge-envelope.sh. Verdict

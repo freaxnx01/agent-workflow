@@ -324,6 +324,8 @@ grep -rn 'claude-pipeline\|agent-pipeline\|claude\.yml\|claude-implement' . --ex
 | Non-breaking rename sweep | freaxnx01/agent-workflow#205 |
 | Stub-name warning | freaxnx01/agent-workflow#206 |
 | v2 breaking renames (tracking) | freaxnx01/agent-workflow#207 |
+| Overview snapshot contains no issues (blocks the WebUI overview) | freaxnx01/bridge#324 |
+| Mobile-first cross-repo Overview page in the WebUI | freaxnx01/bridge#325 |
 | Execute ADR-F001 rename (+ the two cleanup items in its execution notes) | — |
 | Decide `build-ci`: check whether anything pulls its ghcr image (ADR-F002) | — |
 
@@ -347,9 +349,14 @@ section).
 - `create_issue` / `create_repo` return Go zero-value timestamps
 - Label creation is silent on typos
 - `cross_forge_status` TODO.md parser drops some multi-line items
+- `cross_forge_status` returns no issues (`Ranked` / `NeedsWeighting` stay
+  empty): the overview path resolves forge clients from env only and skips
+  failures silently — freaxnx01/bridge#324. Until fixed, use `list_issues`
+  per repo.
 - `forge` parameter is case-sensitive
-- `list_issues` returns **titles only** — no bodies, labels or dates, so
-  ranking work from a `list_issues` result alone is unreliable
+- `list_issues` returns titles, labels, milestone and dates — **not bodies**
+  (corrected 2026-10-01; an earlier revision said "titles only"). Enough to
+  filter; read the issue before judging scope or spotting a duplicate
 - `list_git_forges` reports a per-forge capability list that is **not** a
   complete tool inventory; do not use it to conclude a tool is missing
 - The MCP server has hung and dropped tools mid-session. If a call hangs,
