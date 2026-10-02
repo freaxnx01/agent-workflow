@@ -100,6 +100,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **commands:** `/integration` — per-repo or fleet-wide report of how a repo is wired
+  into agent-workflow and ai-instructions: pinned ref against the current release,
+  agent/model, flow, timeouts, and the repo-side state a run silently depends on
+  (secrets forwarded vs. set, the `ai-*` labels, Actions-can-create-PRs, auto-merge).
+  Instructions drift is judged by comparing git blob SHAs against upstream `main`,
+  because `ai-instructions` has no tags and the sync writes no provenance — so the
+  report says "drifted", never "N commits behind", and says a secret is "set, not
+  validated". Every read classifies its failure as absent / transient / fatal and
+  retries the transient ones; a read that still fails makes the repo `unreadable`,
+  graded with that one finding alone rather than with conclusions drawn from data
+  that was never read. So neither a rate-limited sweep nor a token without admin
+  scope can quietly report a wired repo as not-integrated or invent a missing
+  secret.
 - **migrate-consumers:** `--rename-flow` renames the deprecated flow inputs across a
   fleet — `pre-preview` → `ai-review-human-merge`, `auto-review` → `ai-review-ai-merge`.
   Both still work and both are removed in v3; a survey found 40 consumer repos still on
