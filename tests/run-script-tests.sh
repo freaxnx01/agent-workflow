@@ -1974,6 +1974,58 @@ assert_contains "$out" '  claude:'        "  → including indentation"
 out="$(printf 'name: unrelated\n' | rewrite v2)"
 assert_contains "$out" 'name: unrelated'  "a file with no pin passes through unchanged"
 
+section "migrate-consumers — rename the deprecated flow inputs"
+
+rename_flow() {  # stub on stdin
+  REWRITE_FLOW_STDIN=1 bash "$MIGRATE"
+}
+
+# The deprecated spellings still work but are removed in v3, and 40 consumer
+# repos were still on pre-preview when the fleet was surveyed.
+STUB_PP=$'    with:
+      issue-number: 1
+      pre-preview: true
+'
+out="$(printf '%s' "$STUB_PP" | rename_flow)"
+assert_contains "$out" 'ai-review-human-merge: true' "pre-preview → ai-review-human-merge"
+if [[ "$out" == *"pre-preview: true"* ]]; then
+  fail "the deprecated key is gone"
+else
+  pass "the deprecated key is gone"
+fi
+assert_contains "$out" 'issue-number: 1' "unrelated inputs are untouched"
+
+STUB_AR=$'      auto-review: true
+'
+out="$(printf '%s' "$STUB_AR" | rename_flow)"
+assert_contains "$out" 'ai-review-ai-merge: true' "auto-review → ai-review-ai-merge"
+
+# Indentation is structural in YAML: losing it moves the key out of `with:`.
+STUB_INDENT=$'        pre-preview: true
+'
+out="$(printf '%s' "$STUB_INDENT" | rename_flow)"
+assert_contains "$out" '        ai-review-human-merge: true' "indentation is preserved exactly"
+
+# Every one of the 40 stubs carries explanatory comments on these lines.
+STUB_COMMENT=$'      pre-preview: true  # promote to ready on approve
+'
+out="$(printf '%s' "$STUB_COMMENT" | rename_flow)"
+assert_contains "$out" '# promote to ready on approve' "a trailing comment survives"
+
+# A key named in prose is not a key. Rewriting comment bodies across 40 repos
+# is not this script's job and would be unreviewable noise.
+STUB_PROSE=$'      # find-pipeline-pr.sh gates every later pre-preview step
+      issue-number: 1
+'
+out="$(printf '%s' "$STUB_PROSE" | rename_flow)"
+assert_contains "$out" 'later pre-preview step' "a mention inside a comment is left alone"
+
+# Already migrated: nothing to do, and the run must not claim otherwise.
+STUB_DONE=$'      ai-review-human-merge: true
+'
+out="$(printf '%s' "$STUB_DONE" | rename_flow)"
+assert_equals "$out" "$(printf '%s' "$STUB_DONE")" "an already-migrated stub is returned byte-identical"
+
 section "migrate-consumers — inventory flags stubs that under-grant (#434)"
 
 mig_tmp="$(mktemp -d)"
