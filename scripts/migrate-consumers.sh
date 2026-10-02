@@ -280,6 +280,7 @@ done
 
 if [[ "$FIX_PERMS" == "true" ]]; then
   [[ -z "$TARGET_REF" ]] || usage_error "--fix-perms and --to are separate rollouts; run one at a time"
+  [[ "$RENAME_FLOW" != "true" ]] || usage_error "--fix-perms and --rename-flow are separate rollouts; run one at a time"
   USE_PR=true
   BRANCH="${BRANCH:-fix/agent-workflow-caller-permissions}"
 fi
