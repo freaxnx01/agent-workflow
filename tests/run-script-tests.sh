@@ -2202,6 +2202,9 @@ bash "$MIGRATE" --repo o/x --fix-perms --to v3 >/dev/null 2>&1
 rc=$?
 set -e
 assert_equals "$rc" "2" "--fix-perms with --to is a usage error"
+rc=0
+bash "$MIGRATE" --repo o/x --fix-perms --rename-flow >/dev/null 2>&1 || rc=$?
+assert_equals "$rc" "2" "--fix-perms with --rename-flow is a usage error (it would silently skip the rename)"
 
 assert_contains "$(cat "$ROOT/docs/CONSUMER-SETUP.md")" \
   'migrate-consumers.sh --owner <owner> --fix-perms --apply' \
