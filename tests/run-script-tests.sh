@@ -2172,6 +2172,29 @@ OUT="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$fp_tmp/log" GH_MOCK_STDOUT_MAP="$fp_tmp
        CONSUMERS='o/stale' bash "$MIGRATE" --fix-perms --apply 2>&1)" || RC=$?
 assert_contains "$OUT" 'o/stale  v2  PR FAILED' "a failed pr create is not reported as fixed"
 assert_equals "$RC" "1" "  → and the run exits 1"
+
+# A failed open-PR lookup is not "no PR open" (#448 review): on a re-run it
+# would bypass the only duplicate guard and write over an existing fix branch.
+printf 'pr list --repo o/stale\tHTTP 502: Bad Gateway\n' > "$fp_tmp/fail"
+: > "$fp_tmp/log"
+RC=0
+OUT="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$fp_tmp/log" GH_MOCK_STDOUT_MAP="$fp_tmp/map" GH_MOCK_FAIL_MAP="$fp_tmp/fail" \
+       GH_RETRY_SLEEP_CMD=true CONSUMERS='o/stale' bash "$MIGRATE" --fix-perms --apply 2>&1)" || RC=$?
+assert_contains "$OUT" 'o/stale  v2  CHECK FAILED' "a failed open-PR lookup is reported, not taken as 'none open'"
+assert_not_contains "$(cat "$fp_tmp/log")" '-X PUT' "  → and nothing is written"
+assert_equals "$RC" "1" "  → and the run exits 1"
+
+# 37 PRs in a tight loop trip GitHub's secondary rate limit: pr create backs off
+# and retries a transient failure instead of reporting PR FAILED.
+: > "$fp_tmp/log"; fp_ctr="$(mktemp)"
+RC=0
+OUT="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$fp_tmp/log" GH_MOCK_STDOUT_MAP="$fp_tmp/map" \
+       GH_MOCK_PR_CREATE_FAIL_TIMES=1 GH_MOCK_PR_CREATE_CTR="$fp_ctr" GH_MOCK_PR_CREATE_STDERR='secondary rate limit' \
+       GH_RETRY_SLEEP_CMD=true CONSUMERS='o/stale' bash "$MIGRATE" --fix-perms --apply 2>&1)" || RC=$?
+assert_contains "$OUT" 'o/stale  v2  fixed → PR' "a rate-limited pr create is retried and succeeds"
+assert_equals "$(grep -c '^pr create' "$fp_tmp/log")" "2" "  → pr create was called twice"
+assert_equals "$RC" "0" "  → and the run exits 0"
+rm -f "$fp_ctr"
 rm -rf "$fp_tmp"
 
 set +e
