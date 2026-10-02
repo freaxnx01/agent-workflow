@@ -545,6 +545,22 @@ bash scripts/migrate-consumers.sh --owner <owner>
 > `actions: write`, which `@v2` needs for retry re-dispatch (#351) and which
 > stubs created before 2026-09-23 lack (#434).
 
+**Fix a `perms:MISSING` fleet.** `--fix-perms` adds exactly the missing scopes
+to each stub's caller `permissions:` block — the calling job's own block if it
+has one, else the top-level one — and opens **one PR per repo** on
+`fix/agent-workflow-caller-permissions`. Dry run first:
+
+```bash
+bash scripts/migrate-consumers.sh --owner <owner> --fix-perms            # dry run
+bash scripts/migrate-consumers.sh --owner <owner> --fix-perms --apply    # one PR per repo
+bash scripts/migrate-consumers.sh --owner <owner>                        # after merging: expect perms:ok
+```
+
+`perms:ok` repos are skipped. `perms:ERROR`, and shapes it will not edit
+(flow-style `{ … }`, `read-all`/`write-all`, no block at all), are reported for
+a hand edit and make the run exit 1. A repo whose fix PR is already open is
+skipped, so a re-run is safe.
+
 **Roll out a new line.** Dry run first — `--apply` is required to write
 anything:
 
