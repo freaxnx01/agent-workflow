@@ -54,9 +54,18 @@ export AUTOPILOT_DISABLE_FLAG="$TMPDIR_T/disabled"
 printf 'max_per_run=2\nrepo=o/r:ci.yml\n' > "$TMPDIR_T/ap.conf"
 
 # gh responses: an eligible repo and three enrichable issues.
+#
+# ORDER MATTERS (#381): repo_eligible makes two run queries and both contain
+# `actions/workflows/`, and the mock returns the FIRST matching line — so the
+# event=pull_request key must precede it. The branches/<default>/protection key
+# must likewise precede the catch-all `repos/o/...` line, or the protection
+# request is served repo-meta.json, whose contexts length is 0, and every repo
+# is refused with "main has no required status checks".
 {
   printf 'contents/.github/workflows/agent.yml\t%s\n' "$FIX/agent-yml-good.yml"
+  printf 'event=pull_request\t%s\n' "$FIX/runs-one.json"
   printf 'actions/workflows/\t%s\n' "$FIX/runs-one.json"
+  printf 'branches/main/protection\t%s\n' "$FIX/protection-required.json"
   printf 'issue list\t%s\n' "$FIX/issues-mixed.json"
   printf 'repos/o/r\t%s\n' "$FIX/repo-meta.json"
 } > "$TMPDIR_T/gh.map"
@@ -172,7 +181,9 @@ section "a candidate query failure is distinct from an eligibility failure (R2)"
 # onto the same phrase; they are unrelated failures and must log distinctly.
 {
   printf 'contents/.github/workflows/agent.yml\t%s\n' "$FIX/agent-yml-good.yml"
+  printf 'event=pull_request\t%s\n' "$FIX/runs-one.json"
   printf 'actions/workflows/\t%s\n' "$FIX/runs-one.json"
+  printf 'branches/main/protection\t%s\n' "$FIX/protection-required.json"
   printf 'repos/o/r\t%s\n' "$FIX/repo-meta.json"
 } > "$TMPDIR_T/gh-candfail.map"
 printf 'issue list\n' > "$TMPDIR_T/gh-candfail-fail.map"
@@ -263,7 +274,9 @@ run_driver() {
 printf '{"labels":[]}\n' > "$TMPDIR_T/labels-clean.json"
 {
   printf 'contents/.github/workflows/agent.yml\t%s\n' "$FIX/agent-yml-good.yml"
+  printf 'event=pull_request\t%s\n' "$FIX/runs-one.json"
   printf 'actions/workflows/\t%s\n' "$FIX/runs-one.json"
+  printf 'branches/main/protection\t%s\n' "$FIX/protection-required.json"
   printf 'issue list\t%s\n' "$FIX/issues-mixed.json"
   printf 'issue view\t%s\n' "$TMPDIR_T/labels-clean.json"
   printf 'repos/o/r\t%s\n' "$FIX/repo-meta.json"
@@ -300,7 +313,9 @@ fi
 printf '{"labels":[{"name":"needs-enrichment"}]}\n' > "$TMPDIR_T/labels-not-enriched.json"
 {
   printf 'contents/.github/workflows/agent.yml\t%s\n' "$FIX/agent-yml-good.yml"
+  printf 'event=pull_request\t%s\n' "$FIX/runs-one.json"
   printf 'actions/workflows/\t%s\n' "$FIX/runs-one.json"
+  printf 'branches/main/protection\t%s\n' "$FIX/protection-required.json"
   printf 'issue list\t%s\n' "$FIX/issues-mixed.json"
   printf 'issue view\t%s\n' "$TMPDIR_T/labels-not-enriched.json"
   printf 'repos/o/r\t%s\n' "$FIX/repo-meta.json"
@@ -323,7 +338,9 @@ fi
 printf '{"labels":[{"name":"parked"}]}\n' > "$TMPDIR_T/labels-parked.json"
 {
   printf 'contents/.github/workflows/agent.yml\t%s\n' "$FIX/agent-yml-good.yml"
+  printf 'event=pull_request\t%s\n' "$FIX/runs-one.json"
   printf 'actions/workflows/\t%s\n' "$FIX/runs-one.json"
+  printf 'branches/main/protection\t%s\n' "$FIX/protection-required.json"
   printf 'issue list\t%s\n' "$FIX/issues-mixed.json"
   printf 'issue view\t%s\n' "$TMPDIR_T/labels-parked.json"
   printf 'repos/o/r\t%s\n' "$FIX/repo-meta.json"
@@ -364,7 +381,9 @@ esac
 printf '{"labels":[{"name":"needs-enrichment"},{"name":"needs-human"}]}\n' > "$TMPDIR_T/labels-human.json"
 {
   printf 'contents/.github/workflows/agent.yml\t%s\n' "$FIX/agent-yml-good.yml"
+  printf 'event=pull_request\t%s\n' "$FIX/runs-one.json"
   printf 'actions/workflows/\t%s\n' "$FIX/runs-one.json"
+  printf 'branches/main/protection\t%s\n' "$FIX/protection-required.json"
   printf 'issue list\t%s\n' "$FIX/issues-mixed.json"
   printf 'issue view\t%s\n' "$TMPDIR_T/labels-human.json"
   printf 'repos/o/r\t%s\n' "$FIX/repo-meta.json"
@@ -471,7 +490,9 @@ fi
 printf 'max_per_run=1\nrepo=o/missing:ci.yml\n' > "$TMPDIR_T/ap-missing.conf"
 {
   printf 'contents/.github/workflows/agent.yml\t%s\n' "$FIX/agent-yml-good.yml"
+  printf 'event=pull_request\t%s\n' "$FIX/runs-one.json"
   printf 'actions/workflows/\t%s\n' "$FIX/runs-one.json"
+  printf 'branches/main/protection\t%s\n' "$FIX/protection-required.json"
   printf 'issue list\t%s\n' "$FIX/issues-mixed.json"
   printf 'repos/o/missing\t%s\n' "$FIX/repo-meta.json"
 } > "$TMPDIR_T/gh-missing.map"

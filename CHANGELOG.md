@@ -451,6 +451,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **autopilot:** the test-gate eligibility condition now verifies the gate
+  gates. "Has completed a run on the default branch" was satisfied by a
+  `workflow_dispatch`-only workflow documented as "not part of the agent
+  pipeline", in a repo with no branch protection — the lane would have
+  auto-merged behind a gate that gated nothing. The gate must now also have run
+  for a pull request, and the default branch must require at least one status
+  check; an API failure refuses with its own reason rather than reading as
+  absence (#381, satisfying #263).
 - **ci:** `agent-implement.test.yml` runs again. The Layer-2 guard had ended in
   `startup_failure` on every invocation since 2026-09-24 — starting no jobs and
   asserting nothing while still appearing in the checks list — because #421 added

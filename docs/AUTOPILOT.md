@@ -43,9 +43,30 @@ Three gates, all required. Failing any one is logged with its reason:
    hard-fails on an undeclared one.
 2. **`ai-review-ai-merge: true`** in the consumer's
    `.github/workflows/agent.yml`.
-3. **The gate named in the allowlist has actually run.** That workflow
-   exists in the consumer repo, and it has at least one completed run on the
-   default branch. No auto-merge on an unrun gate (#263).
+3. **The named test gate demonstrably gates.** Three things must hold:
+
+   - the gate workflow has completed a run on the default branch;
+   - it has completed a run for a **pull request** — proof it runs on PRs at
+     all, not merely that a trigger is declared somewhere in its YAML;
+   - the default branch has protection requiring **at least one** status check.
+
+   No auto-merge on an unrun gate (#263), and none behind a gate that gates
+   nothing (#381).
+
+   **What this does not guarantee.** It does not verify that the named gate is
+   one of those required checks. `required_status_checks.contexts` holds
+   job/check names while the gate is named by its workflow filename, and mapping
+   one to the other means matching a recent run's job names — fragile on a
+   rename, on a multi-job workflow, and when no recent run exists. A repo could
+   therefore require check A while naming workflow B as its gate, and satisfy
+   this condition.
+
+   **A correctly-configured gate that has never seen a pull request is
+   refused.** That is deliberate: the lane requires demonstrated behaviour, not
+   declared intent. Open one pull request and the condition is satisfied for as
+   long as that run is visible — the check reads the Actions runs API, so a
+   repo whose gate last ran on a pull request beyond its Actions run-retention
+   window becomes ineligible again until the next one.
 
 And per issue: open, `needs-enrichment`, a non-empty body, and none of
 `parked`, `enrichment-ongoing`, `needs-human`, `ai-implement`.
@@ -87,7 +108,7 @@ script:
 |---|---|
 | `disabled: <path> present` | The kill switch is on; nothing was read |
 | `already running — exiting` | Another run (timer or shell) holds the lock |
-| `skipped (<reason>)` | The repo failed one of the `agent.yml` eligibility gates (missing file, `ai-review-ai-merge` not set, unreadable default branch, gate workflow never completed a run on it), or `repo_eligible` itself could not run the check (e.g. `skipped (eligibility check failed (could not read agent.yml))` — a `gh` outage reading `agent.yml`, not an absent gate) — reason names which |
+| `skipped (<reason>)` | The repo failed one of the `agent.yml` eligibility gates (missing file, `ai-review-ai-merge` not set, unreadable default branch, gate workflow never completed a run on it, gate never ran on a pull request, no branch protection — which this endpoint also reports when the token cannot read protection, so the reason names both — or no required status checks on the default branch), or `repo_eligible` itself could not run the check (e.g. `skipped (eligibility check failed (could not read agent.yml))` — a `gh` outage reading `agent.yml`, not an absent gate; likewise `(gate runs)`, `(gate pull-request runs)` and `(protection)`) — reason names which |
 | `no candidates` | The repo is eligible and the candidate query succeeded; genuinely nothing was enrichable |
 | `skipped (candidate query failed)` | The repo passed `repo_eligible`, but the candidate query (`gh issue list`) itself failed — distinct from `no candidates` (query succeeded, returned nothing) and distinct from the `skipped (<reason>)` row above (that one is `repo_eligible` failing to read `agent.yml`/its metadata, not `gh issue list` failing to list issues) |
 | `skipped (label ensure failed)` | The repo has candidates, but `ensure-issue-labels.sh` could not be run against it before the first dispatch of this run (#380) — the repo is skipped for this run rather than letting a later dispatch or escalation write fail against labels that were never created; no nested enrich session was spent |
