@@ -28,6 +28,10 @@
 #                        default branch. Required wherever that branch is
 #                        protected, which is the normal case at work.
 #   --branch <name>      Branch for --pr. Default 'chore/migrate-agent-workflow'.
+#   --rename-flow        Rename the deprecated flow inputs: pre-preview ->
+#                        ai-review-human-merge, auto-review -> ai-review-ai-merge.
+#                        Both still work and both are removed in v3. Combines
+#                        with --to; on its own it needs no target.
 #   --force              Also rewrite refs that are not version pins (`main`,
 #                        a SHA, a branch). Off by default: tracking something
 #                        other than a release line is a deliberate choice and
@@ -40,6 +44,9 @@
 #                   stdout, and exit. No network, no discovery — this exposes
 #                   the one piece that has to be exactly right. TARGET_REF and
 #                   optionally FORCE are read from the environment.
+#   REWRITE_FLOW_STDIN  When '1', read a stub on stdin, write it back with the
+#                   deprecated flow inputs renamed, and exit. Same no-network
+#                   seam as REWRITE_STDIN.
 #   CONSUMERS       Newline-separated owner/name list, skipping discovery.
 #
 # Output:
@@ -59,6 +66,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # run the script from an up-to-date main, which is what @v<latest> points at.
 REUSABLE="${REUSABLE:-$SCRIPT_DIR/../.github/workflows/agent-implement.yml}"
 TARGET_REF="${TARGET_REF:-}"
+RENAME_FLOW=false
 APPLY=false
 USE_PR=false
 BRANCH='chore/migrate-agent-workflow'
@@ -105,6 +113,32 @@ current_ref() {
     | head -1 | sed 's|.*@||' || printf ''
 }
 
+# rewrite_flow — stub on stdin, rewritten stub on stdout.
+#
+# Renames the deprecated flow inputs to their replacements. Both still work
+# and both are removed in v3, so this is preparation, not a fix:
+#
+#   pre-preview: -> ai-review-human-merge:
+#   auto-review: -> ai-review-ai-merge:
+#
+# Anchored to the start of the line so a key is rewritten and a *mention* is
+# not: every one of these stubs explains the flow in comments above the key,
+# and rewriting prose across 40 repos would be unreviewable noise for no
+# behavioural gain. Only the key token is substituted, so indentation (which
+# is structural in YAML -- losing it moves the key out of `with:`) and any
+# trailing comment survive untouched.
+rewrite_flow() {
+  awk '
+    {
+      line = $0
+      if (line ~ /^[[:space:]]*pre-preview:[[:space:]]*/)
+        sub(/pre-preview:/, "ai-review-human-merge:", line)
+      else if (line ~ /^[[:space:]]*auto-review:[[:space:]]*/)
+        sub(/auto-review:/, "ai-review-ai-merge:", line)
+      print line
+    }'
+}
+
 # perms_verdict — stub on stdin; prints `perms:ok`, `perms:MISSING <scopes>`,
 # or `perms:ERROR` when the checker could not run (its reason goes to stderr).
 # A stub that grants less than agent-implement.yml's jobs request fails every
@@ -121,6 +155,11 @@ perms_verdict() {
   esac
 }
 
+if [[ "${REWRITE_FLOW_STDIN:-}" == "1" ]]; then
+  rewrite_flow
+  exit 0
+fi
+
 if [[ "${REWRITE_STDIN:-}" == "1" ]]; then
   [[ -n "$TARGET_REF" ]] || usage_error "TARGET_REF must be set for REWRITE_STDIN"
   rewrite_pin "$TARGET_REF" "$FORCE"
@@ -135,6 +174,7 @@ while [[ $# -gt 0 ]]; do
     --apply)  APPLY=true; shift ;;
     --pr)     USE_PR=true; shift ;;
     --branch) BRANCH="${2:?}"; USE_PR=true; shift 2 ;;
+    --rename-flow) RENAME_FLOW=true; shift ;;
     --force)  FORCE=true; shift ;;
     --path)   STUB_PATH="${2:?}"; shift 2 ;;
     -h|--help) sed -n '2,50p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -172,27 +212,52 @@ while IFS= read -r repo; do
   cur="${cur:--}"
   perms="$(printf '%s' "$content" | perms_verdict)"
 
-  if [[ -z "$TARGET_REF" ]]; then
+  if [[ -z "$TARGET_REF" && "$RENAME_FLOW" != "true" ]]; then
     printf '%s  %s  inventory  %s\n' "$repo" "$cur" "$perms"; continue
   fi
-  if [[ "$cur" == "$TARGET_REF" ]]; then
+  if [[ -n "$TARGET_REF" && "$cur" == "$TARGET_REF" && "$RENAME_FLOW" != "true" ]]; then
     printf '%s  %s  already on target  %s\n' "$repo" "$cur" "$perms"; skipped=$((skipped+1)); continue
   fi
-  if [[ "$FORCE" != "true" && ! "$cur" =~ ^v[0-9]+ ]]; then
-    printf '%s  %s  skipped (not a version pin; --force to override)\n' "$repo" "$cur"
-    skipped=$((skipped+1)); continue
+
+  new="$content"
+  if [[ -n "$TARGET_REF" && "$cur" != "$TARGET_REF" ]]; then
+    if [[ "$FORCE" != "true" && ! "$cur" =~ ^v[0-9]+ ]]; then
+      printf '%s  %s  skipped (not a version pin; --force to override)\n' "$repo" "$cur"
+      skipped=$((skipped+1)); continue
+    fi
+    new="$(printf '%s' "$new" | rewrite_pin "$TARGET_REF" "$FORCE")"
+  fi
+  if [[ "$RENAME_FLOW" == "true" ]]; then
+    new="$(printf '%s' "$new" | rewrite_flow)"
   fi
 
-  new="$(printf '%s' "$content" | rewrite_pin "$TARGET_REF" "$FORCE")"
   if [[ "$new" == "$content" ]]; then
-    printf '%s  %s  no change needed\n' "$repo" "$cur"; skipped=$((skipped+1)); continue
+    printf '%s  %s  no change needed  %s\n' "$repo" "$cur" "$perms"; skipped=$((skipped+1)); continue
   fi
+
+  # The pin-only wording is load-bearing: it is what the existing dry-run
+  # assertion reads, and a report format is an interface like any other.
+  if [[ -n "$TARGET_REF" && "$RENAME_FLOW" == "true" ]]; then
+    summary="→ ${TARGET_REF} (deprecated flow inputs renamed)"
+    title="ci(agent-workflow): pin ${TARGET_REF}, rename deprecated flow inputs"
+  elif [[ -n "$TARGET_REF" ]]; then
+    summary="→ ${TARGET_REF}"
+    title="ci(agent-workflow): pin ${TARGET_REF}"
+  else
+    summary="(deprecated flow inputs renamed)"
+    title="ci(agent-workflow): rename deprecated flow inputs"
+  fi
+
   if [[ "$APPLY" != "true" ]]; then
-    printf '%s  %s  would migrate → %s  %s\n' "$repo" "$cur" "$TARGET_REF" "$perms"
+    printf '%s  %s  would migrate %s  %s\n' "$repo" "$cur" "$summary" "$perms"
     changed=$((changed+1)); continue
   fi
 
-  msg="ci(agent-workflow): pin ${TARGET_REF}"$'\n\n'"Was ${cur}. The moving tag only follows releases in its own major line, so a superseded line stops receiving fixes silently."
+  if [[ -n "$TARGET_REF" ]]; then
+    msg="${title}"$'\n\n'"Was ${cur}. The moving tag only follows releases in its own major line, so a superseded line stops receiving fixes silently."
+  else
+    msg="${title}"$'\n\n'"pre-preview and auto-review still work but are removed in v3; this renames the keys to ai-review-human-merge and ai-review-ai-merge. Behaviour is unchanged."
+  fi
   args=(-X PUT "repos/${repo}/contents/${STUB_PATH}"
         -f "message=${msg}"
         -f "content=$(printf '%s' "$new" | base64 -w0)"
@@ -207,9 +272,9 @@ while IFS= read -r repo; do
   if gh api "${args[@]}" >/dev/null 2>&1; then
     if [[ "$USE_PR" == "true" ]]; then
       gh pr create --repo "$repo" --head "$BRANCH" \
-        --title "ci(agent-workflow): pin ${TARGET_REF}" --body "$msg" >/dev/null 2>&1 || true
+        --title "$title" --body "$msg" >/dev/null 2>&1 || true
     fi
-    printf '%s  %s  migrated → %s\n' "$repo" "$cur" "$TARGET_REF"; changed=$((changed+1))
+    printf '%s  %s  migrated %s\n' "$repo" "$cur" "$summary"; changed=$((changed+1))
   else
     printf '%s  %s  WRITE FAILED\n' "$repo" "$cur"; failed=$((failed+1))
   fi

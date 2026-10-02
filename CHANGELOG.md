@@ -100,6 +100,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **migrate-consumers:** `--rename-flow` renames the deprecated flow inputs across a
+  fleet — `pre-preview` → `ai-review-human-merge`, `auto-review` → `ai-review-ai-merge`.
+  Both still work and both are removed in v3; a survey found 40 consumer repos still on
+  the old spelling. Anchored to the key, so indentation and trailing comments survive
+  and a mention inside a comment is left alone.
 - **runners:** `ai:runner-blocked` — the review never started because the
   runner's toolchain is unmet, as distinct from `ai:review-blocked`, where the
   reviewer ran and refused to promote the PR. Previously a toolchain failure
