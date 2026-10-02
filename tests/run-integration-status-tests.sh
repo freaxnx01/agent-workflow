@@ -276,8 +276,78 @@ assert_eq "$(printf '%s' 'ci' | drop_api_error)" "ci" \
 section "progress never pollutes the data stream"
 
 # --json is a pipe into jq; a progress line on stdout would break it.
-assert_eq "$("$SCRIPT" --from "$FIXTURE" --json 2>/dev/null | jq -r 'length')" "6" \
+assert_eq "$("$SCRIPT" --from "$FIXTURE" --json 2>/dev/null | jq -r 'length')" "8" \
   "--json emits parseable JSON and nothing else"
+
+section "an unforwarded secret is graded by what it actually costs"
+
+# 36 of 75 real repos tripped this, almost all of them for OPENROUTER_API_KEY
+# on a Claude repo. Calling that "broken" buries the ones that genuinely are.
+assert_eq "$(verdict_of freaxnx01/claude-repo)" "degraded" \
+  "an unforwarded OpenRouter key on a claude repo is degraded, not broken"
+assert_finding freaxnx01/claude-repo openrouter-not-forwarded \
+  "it still gets its own finding"
+assert_no_finding freaxnx01/claude-repo secret-not-forwarded \
+  "it is not lumped in with the critical secrets"
+
+# On a repo that declares opencode, the same gap means the configured agent
+# cannot run at all and the run silently becomes a Claude run.
+assert_eq "$(verdict_of freaxnx01/opencode-repo)" "broken" \
+  "the same gap on an opencode repo is broken"
+assert_finding freaxnx01/opencode-repo openrouter-not-forwarded \
+  "the opencode repo gets the finding too"
+
+# The App secrets still break the run outright.
+assert_finding freaxnx01/bridge secret-not-forwarded \
+  "unforwarded PIPELINE_APP_* is still broken"
+
+section "merging parallel collection output"
+
+merge_dir="$(mktemp -d)"
+printf '%s' '{"repo":"o/a"}' > "$merge_dir/0001.json"
+printf '%s' '{"repo":"o/b"}' > "$merge_dir/0002.json"
+: > "$merge_dir/0003.json"
+assert_eq "$(merge_records "$merge_dir" | jq -r 'map(.repo) | join(",")')" "o/a,o/b" \
+  "records merge in input order and an empty shard is skipped"
+assert_eq "$(merge_records "$(mktemp -d)" | jq -r 'length')" "0" \
+  "an empty collection merges to an empty array"
+rm -rf "$merge_dir"
+
+section "an unreadable repo is never reported as not-integrated"
+
+# Running 82 repos 8-at-a-time tripped GitHub's secondary rate limit, gh_json
+# swallowed the failure, and 18 repos that the serial run had reported in full
+# came back as "not integrated" — a silent false negative, and exactly the
+# absent-vs-unreadable conflation this tool exists to flag.
+unreadable='[{"repo":"o/unreadable","unreadable":true,"workflow":null,"latest_release":"v3.0.0",
+  "secrets_set":[],"labels":[],
+  "settings":{"actions_can_create_prs":false,"allow_auto_merge":false,"allow_squash_merge":false},
+  "instructions":{"stack":null,"files":{},"blobs":{}}}]'
+printf '%s' "$unreadable" > "$ROOT/tests/fixtures/integration/unreadable.json"
+UNREADABLE_FIXTURE="$ROOT/tests/fixtures/integration/unreadable.json"
+
+assert_eq "$("$SCRIPT" --from "$UNREADABLE_FIXTURE" --json | jq -r '.[0].verdict')" "unreadable" \
+  "a repo whose probe failed is graded unreadable"
+assert_eq "$("$SCRIPT" --from "$UNREADABLE_FIXTURE" --json | jq -r '.[0].findings[0].code')" \
+  "probe-unreadable" "it carries a finding naming the cause"
+
+unreadable_out="$("$SCRIPT" --from "$UNREADABLE_FIXTURE")"
+assert_contains "$unreadable_out" "o/unreadable" "an unreadable repo is listed, not collapsed"
+assert_not_contains "$unreadable_out" "not integrated" \
+  "an unreadable repo is not counted as not-integrated"
+
+section "transient failures are classified, not swallowed"
+
+# The signatures come from gh-retry.sh so there is one definition of
+# "transient" in the repo rather than a second list drifting here.
+assert_eq "$(api_failure_kind 'HTTP 404: Not Found (https://api.github.com/...)')" "absent" \
+  "a 404 is absence"
+assert_eq "$(api_failure_kind 'You have exceeded a secondary rate limit')" "transient" \
+  "a secondary rate limit is transient"
+assert_eq "$(api_failure_kind 'HTTP 500: Internal Server Error')" "transient" \
+  "a 5xx is transient"
+assert_eq "$(api_failure_kind 'HTTP 403: Bad credentials')" "fatal" \
+  "an auth failure is fatal, not retried forever"
 
 printf '\n%s──────────%s\n' "$C_DIM" "$C_OFF"
 printf 'passed: %d   failed: %d\n' "$PASS" "$FAIL"

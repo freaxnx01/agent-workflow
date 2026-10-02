@@ -12,19 +12,53 @@
       "timeout_minutes": 60,
       "claude_timeout_minutes": 55,
       "runner_labels": "[\"ubuntu-latest\"]",
-      "permissions": ["contents", "pull-requests", "issues", "actions"],
-      "secrets_forwarded": ["CLAUDE_CODE_OAUTH_TOKEN", "OPENROUTER_API_KEY", "PIPELINE_APP_ID", "PIPELINE_APP_PRIVATE_KEY"]
+      "permissions": [
+        "contents",
+        "pull-requests",
+        "issues",
+        "actions"
+      ],
+      "secrets_forwarded": [
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "OPENROUTER_API_KEY",
+        "PIPELINE_APP_ID",
+        "PIPELINE_APP_PRIVATE_KEY"
+      ]
     },
     "latest_release": "v2.1.0",
-    "secrets_set": ["CLAUDE_CODE_OAUTH_TOKEN", "OPENROUTER_API_KEY", "PIPELINE_APP_ID", "PIPELINE_APP_PRIVATE_KEY"],
-    "labels": ["ai-implement", "ai-review-human-merge"],
-    "settings": {"actions_can_create_prs": true, "allow_auto_merge": true, "allow_squash_merge": true},
+    "secrets_set": [
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "OPENROUTER_API_KEY",
+      "PIPELINE_APP_ID",
+      "PIPELINE_APP_PRIVATE_KEY"
+    ],
+    "labels": [
+      "ai-implement",
+      "ai-review-human-merge"
+    ],
+    "settings": {
+      "actions_can_create_prs": true,
+      "allow_auto_merge": true,
+      "allow_squash_merge": true
+    },
     "instructions": {
       "stack": "ci",
-      "files": {"CLAUDE.md": true, ".ai/base-instructions.md": true, ".ai/stacks/ci.md": true, ".github/copilot-instructions.md": true, "SKILL.md": true},
+      "files": {
+        "CLAUDE.md": true,
+        ".ai/base-instructions.md": true,
+        ".ai/stacks/ci.md": true,
+        ".github/copilot-instructions.md": true,
+        "SKILL.md": true
+      },
       "blobs": {
-        ".ai/base-instructions.md": {"local": "a3f21c9", "upstream": "a3f21c9"},
-        ".ai/stacks/ci.md": {"local": "7bd04e1", "upstream": "7bd04e1"}
+        ".ai/base-instructions.md": {
+          "local": "a3f21c9",
+          "upstream": "a3f21c9"
+        },
+        ".ai/stacks/ci.md": {
+          "local": "7bd04e1",
+          "upstream": "7bd04e1"
+        }
       }
     }
   },
@@ -41,19 +75,48 @@
       "timeout_minutes": 60,
       "claude_timeout_minutes": 55,
       "runner_labels": "[\"ubuntu-latest\"]",
-      "permissions": ["contents", "pull-requests", "issues", "actions"],
-      "secrets_forwarded": ["CLAUDE_CODE_OAUTH_TOKEN"]
+      "permissions": [
+        "contents",
+        "pull-requests",
+        "issues",
+        "actions"
+      ],
+      "secrets_forwarded": [
+        "CLAUDE_CODE_OAUTH_TOKEN"
+      ]
     },
     "latest_release": "v3.0.0",
-    "secrets_set": ["CLAUDE_CODE_OAUTH_TOKEN", "PIPELINE_APP_ID", "PIPELINE_APP_PRIVATE_KEY"],
-    "labels": ["ai-implement"],
-    "settings": {"actions_can_create_prs": true, "allow_auto_merge": false, "allow_squash_merge": true},
+    "secrets_set": [
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "PIPELINE_APP_ID",
+      "PIPELINE_APP_PRIVATE_KEY"
+    ],
+    "labels": [
+      "ai-implement"
+    ],
+    "settings": {
+      "actions_can_create_prs": true,
+      "allow_auto_merge": false,
+      "allow_squash_merge": true
+    },
     "instructions": {
       "stack": "dotnet",
-      "files": {"CLAUDE.md": true, ".ai/base-instructions.md": true, ".ai/stacks/dotnet.md": true, ".github/copilot-instructions.md": true, "SKILL.md": true},
+      "files": {
+        "CLAUDE.md": true,
+        ".ai/base-instructions.md": true,
+        ".ai/stacks/dotnet.md": true,
+        ".github/copilot-instructions.md": true,
+        "SKILL.md": true
+      },
       "blobs": {
-        ".ai/base-instructions.md": {"local": "5e1a008", "upstream": "a3f21c9"},
-        ".ai/stacks/dotnet.md": {"local": "c40b912", "upstream": "c40b912"}
+        ".ai/base-instructions.md": {
+          "local": "5e1a008",
+          "upstream": "a3f21c9"
+        },
+        ".ai/stacks/dotnet.md": {
+          "local": "c40b912",
+          "upstream": "c40b912"
+        }
       }
     }
   },
@@ -70,19 +133,46 @@
       "timeout_minutes": 30,
       "claude_timeout_minutes": null,
       "runner_labels": "[\"ubuntu-latest\"]",
-      "permissions": ["contents", "pull-requests", "issues"],
-      "secrets_forwarded": ["CLAUDE_CODE_OAUTH_TOKEN"]
+      "permissions": [
+        "contents",
+        "pull-requests",
+        "issues"
+      ],
+      "secrets_forwarded": [
+        "CLAUDE_CODE_OAUTH_TOKEN"
+      ]
     },
     "latest_release": "v3.0.0",
-    "secrets_set": ["CLAUDE_CODE_OAUTH_TOKEN"],
-    "labels": ["ai-implement", "ai-pre-preview"],
-    "settings": {"actions_can_create_prs": true, "allow_auto_merge": false, "allow_squash_merge": true},
+    "secrets_set": [
+      "CLAUDE_CODE_OAUTH_TOKEN"
+    ],
+    "labels": [
+      "ai-implement",
+      "ai-pre-preview"
+    ],
+    "settings": {
+      "actions_can_create_prs": true,
+      "allow_auto_merge": false,
+      "allow_squash_merge": true
+    },
     "instructions": {
       "stack": "flutter",
-      "files": {"CLAUDE.md": true, ".ai/base-instructions.md": true, ".ai/stacks/flutter.md": true, ".github/copilot-instructions.md": false, "SKILL.md": false},
+      "files": {
+        "CLAUDE.md": true,
+        ".ai/base-instructions.md": true,
+        ".ai/stacks/flutter.md": true,
+        ".github/copilot-instructions.md": false,
+        "SKILL.md": false
+      },
       "blobs": {
-        ".ai/base-instructions.md": {"local": "1f90ab2", "upstream": "a3f21c9"},
-        ".ai/stacks/flutter.md": {"local": "9aa7e30", "upstream": "9aa7e30"}
+        ".ai/base-instructions.md": {
+          "local": "1f90ab2",
+          "upstream": "a3f21c9"
+        },
+        ".ai/stacks/flutter.md": {
+          "local": "9aa7e30",
+          "upstream": "9aa7e30"
+        }
       }
     }
   },
@@ -99,16 +189,37 @@
       "timeout_minutes": 60,
       "claude_timeout_minutes": 55,
       "runner_labels": "[\"ubuntu-latest\"]",
-      "permissions": ["contents", "pull-requests", "issues", "actions"],
-      "secrets_forwarded": ["CLAUDE_CODE_OAUTH_TOKEN"]
+      "permissions": [
+        "contents",
+        "pull-requests",
+        "issues",
+        "actions"
+      ],
+      "secrets_forwarded": [
+        "CLAUDE_CODE_OAUTH_TOKEN"
+      ]
     },
     "latest_release": "v3.0.0",
-    "secrets_set": ["CLAUDE_CODE_OAUTH_TOKEN"],
-    "labels": ["ai-implement", "ai-review-ai-merge"],
-    "settings": {"actions_can_create_prs": true, "allow_auto_merge": false, "allow_squash_merge": true},
+    "secrets_set": [
+      "CLAUDE_CODE_OAUTH_TOKEN"
+    ],
+    "labels": [
+      "ai-implement",
+      "ai-review-ai-merge"
+    ],
+    "settings": {
+      "actions_can_create_prs": true,
+      "allow_auto_merge": false,
+      "allow_squash_merge": true
+    },
     "instructions": {
       "stack": null,
-      "files": {"CLAUDE.md": false, ".ai/base-instructions.md": false, ".github/copilot-instructions.md": false, "SKILL.md": false},
+      "files": {
+        "CLAUDE.md": false,
+        ".ai/base-instructions.md": false,
+        ".github/copilot-instructions.md": false,
+        "SKILL.md": false
+      },
       "blobs": {}
     }
   },
@@ -118,10 +229,19 @@
     "latest_release": "v3.0.0",
     "secrets_set": [],
     "labels": [],
-    "settings": {"actions_can_create_prs": false, "allow_auto_merge": false, "allow_squash_merge": true},
+    "settings": {
+      "actions_can_create_prs": false,
+      "allow_auto_merge": false,
+      "allow_squash_merge": true
+    },
     "instructions": {
       "stack": null,
-      "files": {"CLAUDE.md": false, ".ai/base-instructions.md": false, ".github/copilot-instructions.md": false, "SKILL.md": false},
+      "files": {
+        "CLAUDE.md": false,
+        ".ai/base-instructions.md": false,
+        ".github/copilot-instructions.md": false,
+        "SKILL.md": false
+      },
       "blobs": {}
     }
   },
@@ -131,13 +251,145 @@
     "latest_release": "v3.0.0",
     "secrets_set": [],
     "labels": [],
-    "settings": {"actions_can_create_prs": false, "allow_auto_merge": false, "allow_squash_merge": true},
+    "settings": {
+      "actions_can_create_prs": false,
+      "allow_auto_merge": false,
+      "allow_squash_merge": true
+    },
     "instructions": {
       "stack": "ci",
-      "files": {"CLAUDE.md": true, ".ai/base-instructions.md": true, ".ai/stacks/ci.md": true, ".github/copilot-instructions.md": true, "SKILL.md": true},
+      "files": {
+        "CLAUDE.md": true,
+        ".ai/base-instructions.md": true,
+        ".ai/stacks/ci.md": true,
+        ".github/copilot-instructions.md": true,
+        "SKILL.md": true
+      },
       "blobs": {
-        ".ai/base-instructions.md": {"local": "a3f21c9", "upstream": "a3f21c9"},
-        ".ai/stacks/ci.md": {"local": "7bd04e1", "upstream": "7bd04e1"}
+        ".ai/base-instructions.md": {
+          "local": "a3f21c9",
+          "upstream": "a3f21c9"
+        },
+        ".ai/stacks/ci.md": {
+          "local": "7bd04e1",
+          "upstream": "7bd04e1"
+        }
+      }
+    }
+  },
+  {
+    "repo": "freaxnx01/claude-repo",
+    "workflow": {
+      "file": "agent.yml",
+      "ref": "v3",
+      "agent": "claude",
+      "model": "claude-sonnet-5",
+      "flow": "ai-review-human-merge",
+      "self_fix": true,
+      "self_fix_max_iterations": 2,
+      "timeout_minutes": 60,
+      "claude_timeout_minutes": 55,
+      "runner_labels": "[\"ubuntu-latest\"]",
+      "permissions": [
+        "contents",
+        "pull-requests",
+        "issues",
+        "actions"
+      ],
+      "secrets_forwarded": [
+        "CLAUDE_CODE_OAUTH_TOKEN"
+      ]
+    },
+    "latest_release": "v3.0.0",
+    "secrets_set": [
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "OPENROUTER_API_KEY"
+    ],
+    "labels": [
+      "ai-implement",
+      "ai-review-human-merge"
+    ],
+    "settings": {
+      "actions_can_create_prs": true,
+      "allow_auto_merge": true,
+      "allow_squash_merge": true
+    },
+    "instructions": {
+      "stack": "ci",
+      "files": {
+        "CLAUDE.md": true,
+        ".ai/base-instructions.md": true,
+        ".ai/stacks/ci.md": true,
+        ".github/copilot-instructions.md": true,
+        "SKILL.md": true
+      },
+      "blobs": {
+        ".ai/base-instructions.md": {
+          "local": "a3f21c9",
+          "upstream": "a3f21c9"
+        },
+        ".ai/stacks/ci.md": {
+          "local": "7bd04e1",
+          "upstream": "7bd04e1"
+        }
+      }
+    }
+  },
+  {
+    "repo": "freaxnx01/opencode-repo",
+    "workflow": {
+      "file": "agent.yml",
+      "ref": "v3",
+      "agent": "opencode",
+      "model": "glm-5.2",
+      "flow": "ai-review-human-merge",
+      "self_fix": true,
+      "self_fix_max_iterations": 2,
+      "timeout_minutes": 60,
+      "claude_timeout_minutes": 55,
+      "runner_labels": "[\"ubuntu-latest\"]",
+      "permissions": [
+        "contents",
+        "pull-requests",
+        "issues",
+        "actions"
+      ],
+      "secrets_forwarded": [
+        "CLAUDE_CODE_OAUTH_TOKEN"
+      ]
+    },
+    "latest_release": "v3.0.0",
+    "secrets_set": [
+      "CLAUDE_CODE_OAUTH_TOKEN",
+      "OPENROUTER_API_KEY"
+    ],
+    "labels": [
+      "ai-implement",
+      "ai-review-human-merge"
+    ],
+    "settings": {
+      "actions_can_create_prs": true,
+      "allow_auto_merge": true,
+      "allow_squash_merge": true
+    },
+    "instructions": {
+      "stack": "ci",
+      "files": {
+        "CLAUDE.md": true,
+        ".ai/base-instructions.md": true,
+        ".ai/stacks/ci.md": true,
+        ".github/copilot-instructions.md": true,
+        "SKILL.md": true
+      },
+      "blobs": {
+        ".ai/base-instructions.md": {
+          "local": "a3f21c9",
+          "upstream": "a3f21c9"
+        },
+        ".ai/stacks/ci.md": {
+          "local": "7bd04e1",
+          "upstream": "7bd04e1"
+        }
       }
     }
   }

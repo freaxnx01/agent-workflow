@@ -79,17 +79,25 @@ OUTPUT_JSON=0
 FROM_FILE=''
 UPSTREAM='freaxnx01/ai-instructions'
 PIPELINE='freaxnx01/agent-workflow'
+COLLECT_JOBS="${COLLECT_JOBS:-4}"
 REPOS=()
 
 # Secrets the pipeline reads. A secret set on the repo but missing from the
 # stub's `secrets:` block is inert, which is the single most common silent
 # misconfiguration — hence checking the pair rather than either alone.
-PIPELINE_SECRETS=(
+#
+# These three break the run or the App outright when they are not forwarded.
+CRITICAL_SECRETS=(
   CLAUDE_CODE_OAUTH_TOKEN
-  OPENROUTER_API_KEY
   PIPELINE_APP_ID
   PIPELINE_APP_PRIVATE_KEY
 )
+
+# OPENROUTER_API_KEY is the one conditional case, and it dominates the fleet:
+# on a `agent: claude` repo an unforwarded key costs nothing until somebody
+# applies a per-issue `agent:opencode` label, at which point the run silently
+# becomes a Claude run. Grading that the same as a missing auth token buried
+# the repos that are genuinely broken, so it is graded by what it costs.
 
 # A reusable workflow cannot be granted more than its caller grants it.
 REQUIRED_PERMISSIONS=(contents pull-requests issues actions)
@@ -138,11 +146,55 @@ drop_api_error() {
   printf '%s' "$body"
 }
 
-gh_json() { gh api "$@" 2>/dev/null | drop_api_error || printf '%s' ''; }
+# One definition of "transient" in this repo: gh-retry.sh already encodes the
+# secondary-rate-limit and 5xx signatures, so this sources it rather than
+# growing a second list that drifts.
+# shellcheck source=gh-retry.sh
+source "$(dirname "${BASH_SOURCE[0]}")/gh-retry.sh"
 
+api_failure_kind() {
+  local text="$1"
+  if grep -qiE 'HTTP 404|Not Found' <<< "$text"; then printf 'absent\n'; return 0; fi
+  if gh_retryable "$text"; then printf 'transient\n'; return 0; fi
+  printf 'fatal\n'
+}
+
+# Echoes the payload. Return: 0 found, 1 genuinely absent, 2 unreadable.
+#
+# Reading a failure as absence is the bug this guards against: at 8-way
+# concurrency GitHub's secondary rate limit turned 18 wired repos into
+# "not integrated" with no error anywhere.
+gh_json() {
+  local attempt=1 max="${GH_RETRY_MAX:-3}" body err ec kind
+  err="$(mktemp)"
+  # shellcheck disable=SC2064  # expand err now, on function return
+  trap "rm -f '$err'" RETURN
+  while :; do
+    ec=0
+    body="$(gh api "$@" 2>"$err")" || ec=$?
+    if (( ec == 0 )); then
+      printf '%s' "$(drop_api_error <<< "$body")"
+      return 0
+    fi
+    kind="$(api_failure_kind "$(cat "$err")")"
+    case "$kind" in
+      absent) return 1 ;;
+      fatal)  return 2 ;;
+      transient)
+        if (( attempt >= max )); then return 2; fi
+        sleep "$(( 2 ** attempt ))"
+        attempt=$((attempt + 1))
+        ;;
+    esac
+  done
+}
+
+# Echoes the blob SHA. Return mirrors gh_json: 0 found, 1 absent, 2 unreadable.
 blob_sha() {
-  local repo="$1" path="$2"
-  gh_json "repos/$repo/contents/$path" --jq '.sha // empty'
+  local repo="$1" path="$2" out ec=0
+  out="$(gh_json "repos/$repo/contents/$path" --jq '.sha // empty')" || ec=$?
+  printf '%s' "$out"
+  return "$ec"
 }
 
 resolve_repos() {
@@ -163,13 +215,20 @@ resolve_repos() {
 # Phase 1. One cheap probe per repo, so a sweep over an owner's whole account
 # does not pay for deep checks on repos that were never wired up.
 probe_repo() {
-  local repo="$1" agent_yml claude_yml base_sha
-  agent_yml="$(blob_sha "$repo" '.github/workflows/agent.yml')"
-  claude_yml=''
-  [[ -z "$agent_yml" ]] && claude_yml="$(blob_sha "$repo" '.github/workflows/claude.yml')"
-  base_sha="$(blob_sha "$repo" '.ai/base-instructions.md')"
+  local repo="$1" agent_yml claude_yml='' base_sha ec unreadable=false
+  agent_yml="$(blob_sha "$repo" '.github/workflows/agent.yml')" && ec=0 || ec=$?
+  (( ec == 2 )) && unreadable=true
+  if [[ -z "$agent_yml" ]]; then
+    claude_yml="$(blob_sha "$repo" '.github/workflows/claude.yml')" && ec=0 || ec=$?
+    (( ec == 2 )) && unreadable=true
+  fi
+  base_sha="$(blob_sha "$repo" '.ai/base-instructions.md')" && ec=0 || ec=$?
+  (( ec == 2 )) && unreadable=true
   jq -nc --arg repo "$repo" --arg a "$agent_yml" --arg c "$claude_yml" --arg b "$base_sha" \
-    '{repo: $repo, workflow_file: (if $a != "" then "agent.yml" elif $c != "" then "claude.yml" else null end), base_sha: $b}'
+    --argjson unreadable "$unreadable" \
+    '{repo: $repo, unreadable: $unreadable,
+      workflow_file: (if $a != "" then "agent.yml" elif $c != "" then "claude.yml" else null end),
+      base_sha: $b}'
 }
 
 workflow_text() {
@@ -336,29 +395,64 @@ collect_repo() {
 # pipe and the operator still sees the thing is alive.
 progress() { printf '%s\n' "$*" >&2; }
 
+collect_one() {
+  local repo="$1" release="$2" probe
+  probe="$(probe_repo "$repo")"
+  # Phase 1 shortcut: neither half wired, so skip the ~8 deep calls.
+  if [[ "$(jq -r '.workflow_file // ""' <<< "$probe")" == "" \
+     && "$(jq -r '.base_sha // ""' <<< "$probe")" == "" ]]; then
+    jq -nc --arg repo "$repo" --arg release "$release" \
+      --argjson unreadable "$(jq -r '.unreadable // false' <<< "$probe")" '
+      {repo: $repo, unreadable: $unreadable, workflow: null, latest_release: $release,
+       secrets_set: [], labels: [],
+       settings: {actions_can_create_prs: false, allow_auto_merge: false, allow_squash_merge: false},
+       instructions: {stack: null, files: {}, blobs: {}}}'
+    return 0
+  fi
+  collect_repo "$repo" "$probe" "$release"
+}
+
+# Shards are named by input position, so the merge is deterministic however
+# the jobs finish. An empty shard (a repo whose collection produced nothing)
+# is skipped rather than becoming a null record.
+merge_records() {
+  # jq -s already yields [] for empty input; the `|| true` is only so a
+  # no-match glob does not trip pipefail.
+  { cat "$1"/*.json 2>/dev/null || true; } | jq -sc '.'
+}
+
 collect() {
-  local release repos=() repo probe records=() i=0 total
+  local release repos=() repo total i=0 running=0 dir
   release="$(latest_release)"
   mapfile -t repos < <(resolve_repos)
   total="${#repos[@]}"
-  (( total > 1 )) && progress "scanning $total repos…"
+  dir="$(mktemp -d)"
+  # shellcheck disable=SC2064  # expand dir now, on function return
+  trap "rm -rf '$dir'" RETURN
+
+  # Serially this was ~10 gh calls per repo and 9 minutes over 82 repos, with
+  # nothing rendered until the end. The calls are independent and read-only,
+  # so they fan out; COLLECT_JOBS caps the fan-out well under the API's
+  # concurrency tolerance.
+  if (( total > 1 )); then
+    progress "scanning $total repos, $COLLECT_JOBS at a time…"
+  fi
+
   for repo in "${repos[@]}"; do
     i=$((i + 1))
-    (( total > 1 )) && progress "  [$i/$total] $repo"
-    probe="$(probe_repo "$repo")"
-    # Phase 1 shortcut: neither half wired, so skip the ~8 deep calls.
-    if [[ "$(jq -r '.workflow_file // ""' <<< "$probe")" == "" \
-       && "$(jq -r '.base_sha // ""' <<< "$probe")" == "" ]]; then
-      records+=("$(jq -nc --arg repo "$repo" --arg release "$release" '
-        {repo: $repo, workflow: null, latest_release: $release,
-         secrets_set: [], labels: [],
-         settings: {actions_can_create_prs: false, allow_auto_merge: false, allow_squash_merge: false},
-         instructions: {stack: null, files: {}, blobs: {}}}')")
-      continue
+    {
+      collect_one "$repo" "$release" > "$dir/$(printf '%05d' "$i").json"
+      if (( total > 1 )); then progress "  ✓ $repo"; fi
+    } &
+    running=$((running + 1))
+    if (( running >= COLLECT_JOBS )); then
+      wait -n 2>/dev/null || true
+      running=$((running - 1))
     fi
-    records+=("$(collect_repo "$repo" "$probe" "$release")")
   done
-  printf '%s\n' "${records[@]+"${records[@]}"}" | jq -sc .
+  wait
+
+  merge_records "$dir"
 }
 
 # --- grading ----------------------------------------------------------------
@@ -378,13 +472,20 @@ def grade_workflow(r):
     else
       [
         # --- broken: the run will not start, or will not do what it says ---
-        ( [ $w.secrets_forwarded // [] ] as $fwd
-          | (r.secrets_set // []) - ($w.secrets_forwarded // [])
-          | map(select(. as $s | $pipeline_secrets | index($s)))
+        ( ((r.secrets_set // []) - ($w.secrets_forwarded // []))
+          | map(select(. as $s | $critical_secrets | index($s)))
           | if length > 0
             then finding("secret-not-forwarded"; "broken";
                  "set on the repo but not forwarded in secrets:: " + join(", "))
             else empty end ),
+
+        ( if (((r.secrets_set // []) - ($w.secrets_forwarded // [])) | index("OPENROUTER_API_KEY"))
+          then finding("openrouter-not-forwarded";
+               (if $w.agent == "opencode" then "broken" else "degraded" end);
+               (if $w.agent == "opencode"
+                then "agent: opencode, but OPENROUTER_API_KEY is set on the repo and not forwarded — the run falls back to Claude silently"
+                else "OPENROUTER_API_KEY is set on the repo but not forwarded; a per-issue agent:opencode label would silently run Claude" end))
+          else empty end ),
 
         ( if (r.secrets_set // []) | index("CLAUDE_CODE_OAUTH_TOKEN") then empty
           else finding("auth-secret-missing"; "broken";
@@ -469,12 +570,17 @@ def grade_instructions(r):
 
 map(
   . as $r
-  | (grade_workflow($r) + (if $r.workflow == null and (($r.instructions.files // {} | to_entries | map(.value) | any) == false)
+  | ((if ($r.unreadable // false)
+      then [ finding("probe-unreadable"; "broken";
+             "one or more API reads failed after retries — this repo was not graded, it was not read") ]
+      else [] end)
+     + grade_workflow($r) + (if $r.workflow == null and (($r.instructions.files // {} | to_entries | map(.value) | any) == false)
       then [] else grade_instructions($r) end)) as $findings
   | $r + {
       findings: $findings,
       verdict: (
-        if $r.workflow == null then
+        if ($r.unreadable // false) then "unreadable"
+        elif $r.workflow == null then
           (if ($r.instructions.files // {} | to_entries | map(.value) | any) then "partial" else "not-integrated" end)
         elif ($findings | map(select(.severity == "broken")) | length) > 0 then "broken"
         elif ($findings | length) > 0 then "degraded"
@@ -488,14 +594,14 @@ map(
 # pipeline cannot leave the audit silently checking the old set.
 grade() {
   jq \
-    --argjson pipeline_secrets "$(to_json_array "${PIPELINE_SECRETS[@]}")" \
+    --argjson critical_secrets "$(to_json_array "${CRITICAL_SECRETS[@]}")" \
     --argjson required_permissions "$(to_json_array "${REQUIRED_PERMISSIONS[@]}")" \
     "$GRADE_JQ"
 }
 
 # --- rendering --------------------------------------------------------------
 
-VERDICT_ORDER='{"broken":0,"degraded":1,"partial":2,"healthy":3,"not-integrated":4}'
+VERDICT_ORDER='{"unreadable":0,"broken":1,"degraded":2,"partial":3,"healthy":4,"not-integrated":5}'
 
 render() {
   local graded="$1"

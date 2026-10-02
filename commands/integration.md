@@ -42,17 +42,25 @@ overlay is in use, and whether `.ai/base-instructions.md` and the stack overlay 
 upstream.
 
 Each repo gets one verdict: **healthy**, **degraded** (runs, but not as intended),
-**broken** (will fail on dispatch), **partial** (one half only), or **not-integrated**.
-Broken repos sort first, because those are the rows worth acting on.
+**broken** (will fail on dispatch), **partial** (one half only), **not-integrated**, or
+**unreadable** (an API read failed after retries, so the repo was *not read* rather
+than graded). Unreadable sorts first, then broken — an ungraded repo is worse news
+than a graded bad one.
 
 ## The findings that justify the API calls
 
-Four failure modes are silent — the run looks fine and does the wrong thing, or never
+Five failure modes are silent — the run looks fine and does the wrong thing, or never
 starts and says nothing useful:
 
-- **`secret-not-forwarded`** — a secret is set on the repo but the stub's `secrets:`
-  block never passes it through, so the App stays inert with no error anywhere
-  (`docs/PIPELINE-APP-SETUP.md` step 7).
+- **`secret-not-forwarded`** — a critical secret (`CLAUDE_CODE_OAUTH_TOKEN`,
+  `PIPELINE_APP_ID`, `PIPELINE_APP_PRIVATE_KEY`) is set on the repo but the stub's
+  `secrets:` block never passes it through, so the App stays inert with no error
+  anywhere (`docs/PIPELINE-APP-SETUP.md` step 7).
+
+- **`openrouter-not-forwarded`** — the same gap for `OPENROUTER_API_KEY`, graded by
+  what it actually costs: **broken** on a repo that declares `agent: opencode`, and
+  **degraded** on a Claude repo, where it only bites once somebody applies a
+  per-issue `agent:opencode` label and the run silently stays on Claude.
 
 - **`flow-label-missing`** — `gh issue edit --add-label` is atomic across its flags.
   One absent label and **neither** lands, so the run never starts and the error names
@@ -83,9 +91,19 @@ distinction, the fix is upstream — have the sync write a provenance stamp.
 ## Cost
 
 `--all` runs two phases: one cheap existence probe per repo, then the deep checks only
-on repos that have something wired. Across ~80 repos expect a few hundred API calls
-against a 5000/hour limit. If you are iterating on the report itself, collect once
-with `--json` and re-render with `--from` — that costs nothing.
+on repos that have something wired, four repos at a time. Measured over 82 repos:
+**~3 minutes**, a few hundred API calls against a 5000/hour limit. Progress goes to
+stderr, so `--json` stays a clean pipe.
+
+`COLLECT_JOBS` raises or lowers the fan-out. Be careful raising it: at 8 the sweep
+finished in 1 minute but tripped GitHub's **secondary** rate limit, and 18 wired
+repos came back as "not integrated". That class of failure is now caught rather than
+silently absorbed — a read that fails after retries makes the repo **`unreadable`**,
+listed at the top of the report and never counted as absent — but the right fix is
+not to provoke it.
+
+If you are iterating on the report itself, collect once with `--json` and re-render
+with `--from` — that costs nothing.
 
 ## Acting on it
 
