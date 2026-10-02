@@ -80,6 +80,9 @@ FROM_FILE=''
 UPSTREAM='freaxnx01/ai-instructions'
 PIPELINE='freaxnx01/agent-workflow'
 COLLECT_JOBS="${COLLECT_JOBS:-4}"
+# `wait -n` needs bash 4.3. Probed once rather than per batch, and the absence
+# is handled rather than swallowed by a `|| true`.
+if (help wait 2>/dev/null | grep -q -- '-n'); then HAVE_WAIT_N=1; else HAVE_WAIT_N=0; fi
 REPOS=()
 
 # Secrets the pipeline reads. A secret set on the repo but missing from the
@@ -119,10 +122,19 @@ parse_args() {
       --from)     [[ -n "${2:-}" ]] || die "--from needs a file"; FROM_FILE="$2"; shift 2 ;;
       --upstream) [[ -n "${2:-}" ]] || die "--upstream needs owner/name"; UPSTREAM="$2"; shift 2 ;;
       --pipeline) [[ -n "${2:-}" ]] || die "--pipeline needs owner/name"; PIPELINE="$2"; shift 2 ;;
-      -h|--help)  sed -n '2,70p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+      -h|--help)  sed -n '2,76p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
       *)          die "unknown option: $1" ;;
     esac
   done
+}
+
+validate_args() {
+  if [[ -n "$OWNER" ]] && (( ! SCAN_ALL )); then
+    die "--owner only applies with --all"
+  fi
+  if [[ -n "$FROM_FILE" ]] && (( SCAN_ALL )); then
+    die "--all and --from are mutually exclusive (--from renders an existing dump)"
+  fi
 }
 
 require_deps() {
@@ -182,7 +194,7 @@ gh_json() {
       fatal)  return 2 ;;
       transient)
         if (( attempt >= max )); then return 2; fi
-        sleep "$(( 2 ** attempt ))"
+        "${GH_RETRY_SLEEP_CMD:-sleep}" "$(( ${GH_RETRY_BASE_SLEEP:-2} * attempt ))"
         attempt=$((attempt + 1))
         ;;
     esac
@@ -232,9 +244,10 @@ probe_repo() {
 }
 
 workflow_text() {
-  local repo="$1" file="$2"
-  gh_json "repos/$repo/contents/.github/workflows/$file" --jq '.content // empty' \
-    | tr -d '\n' | base64 -d 2>/dev/null || printf '%s' ''
+  local repo="$1" file="$2" b64 ec=0
+  b64="$(gh_json "repos/$repo/contents/.github/workflows/$file" --jq '.content // empty')" || ec=$?
+  printf '%s' "$b64" | tr -d '\n' | base64 -d 2>/dev/null || true
+  return "$ec"
 }
 
 # The stub's values are plain scalars, so grep reads them without a YAML
@@ -258,7 +271,7 @@ yaml_scalar() {
 
 yaml_flag_true() {
   local text="$1" key="$2"
-  printf '%s\n' "$text" | grep -qE "^[[:space:]]*${key}:[[:space:]]*true([[:space:]]|#|$)"
+  printf '%s\n' "$text" | grep -qE "^[[:space:]]*${key}:[[:space:]]*['\"]?true['\"]?([[:space:]]|#|$)"
 }
 
 detect_flow() {
@@ -275,7 +288,7 @@ detect_ref() {
   [[ -n "$uses" ]] && { printf 'local\n'; return; }
   printf '%s\n' "$text" \
     | grep -oE 'uses:[[:space:]]*[^[:space:]]+/\.github/workflows/agent-implement\.yml@[^[:space:]]+' \
-    | head -1 | sed 's/.*@//'
+    | head -1 | sed -e 's/.*@//' -e 's/["'"'"']*$//'
 }
 
 detect_permissions() {
@@ -289,46 +302,82 @@ detect_permissions() {
 }
 
 detect_forwarded_secrets() {
+  # `secrets: inherit` passes everything through without naming anything, so
+  # it matches no ${{ secrets.X }} and used to read as "forwards nothing" —
+  # three false broken findings on every repo using the documented pattern.
+  if printf '%s\n' "$1" | grep -qE '^[[:space:]]*secrets:[[:space:]]*inherit[[:space:]]*(#|$)'; then
+    printf '["*"]'
+    return 0
+  fi
   printf '%s\n' "$1" | grep -oE '\$\{\{[[:space:]]*secrets\.[A-Z_]+' \
     | sed 's/.*secrets\.//' | sort -u | jq -R . | jq -sc 'map(select(. != ""))'
 }
 
+# Each reader echoes a usable value AND returns gh_json's status, so the
+# caller can tell "this repo has no secrets" from "I could not read them".
+# Folding rc=2 into an empty default is what made a 403 render as four
+# fabricated findings and a `broken` verdict.
 repo_secrets() {
-  gh_json "repos/$1/actions/secrets" --jq '[.secrets[].name]' || printf '[]'
+  local out ec=0
+  out="$(gh_json "repos/$1/actions/secrets" --jq '[.secrets[].name]')" || ec=$?
+  printf '%s' "${out:-[]}"
+  return "$ec"
 }
 
 repo_labels() {
-  gh_json "repos/$1/labels?per_page=100" --jq '[.[].name]' || printf '[]'
+  local out ec=0
+  out="$(gh_json "repos/$1/labels?per_page=100" --jq '[.[].name]')" || ec=$?
+  printf '%s' "${out:-[]}"
+  return "$ec"
 }
 
 repo_settings() {
-  local repo="$1" meta perms
-  meta="$(gh_json "repos/$repo" --jq '{allow_auto_merge, allow_squash_merge}')"
-  [[ -z "$meta" ]] && meta='{}'
+  local repo="$1" meta perms ec=0 e=0
+  meta="$(gh_json "repos/$repo" --jq '{allow_auto_merge, allow_squash_merge}')" || e=$?
+  (( e > ec )) && ec=$e
+  e=0
   perms="$(gh_json "repos/$repo/actions/permissions/workflow" \
-    --jq '.can_approve_pull_request_reviews // false')"
-  [[ -z "$perms" ]] && perms='false'
-  jq -nc --argjson m "$meta" --argjson p "$perms" \
+    --jq '.can_approve_pull_request_reviews // false')" || e=$?
+  (( e > ec )) && ec=$e
+  jq -nc --argjson m "${meta:-{\}}" --argjson p "${perms:-false}" \
     '{allow_auto_merge: ($m.allow_auto_merge // false),
       allow_squash_merge: ($m.allow_squash_merge // false),
       actions_can_create_prs: $p}'
+  return "$ec"
 }
 
 instructions_of() {
   local repo="$1" stack base_local base_up stack_path='' stack_local='' stack_up=''
-  stack="$(gh_json "repos/$repo/contents/.ai/stacks" --jq '[.[].name][0] // empty' \
-    | sed 's/\.md$//')"
-  base_local="$(blob_sha "$repo" '.ai/base-instructions.md')"
-  base_up="$(blob_sha "$UPSTREAM" '.ai/base-instructions.md')"
+  local ec=0 e=0
+  # Not a pipeline: a pipeline's exit status is sed's, so gh_json's would be
+  # silently discarded.
+  e=0; stack="$(gh_json "repos/$repo/contents/.ai/stacks" --jq '[.[].name][0] // empty')" || e=$?
+  (( e == 2 )) && ec=2
+  stack="${stack%.md}"
+  e=0; base_local="$(blob_sha "$repo" '.ai/base-instructions.md')" || e=$?
+  (( e == 2 )) && ec=2
+  e=0; base_up="$(blob_sha "$UPSTREAM" '.ai/base-instructions.md')" || e=$?
+  (( e == 2 )) && ec=2
   if [[ -n "$stack" ]]; then
     stack_path=".ai/stacks/$stack.md"
-    stack_local="$(blob_sha "$repo" "$stack_path")"
-    stack_up="$(blob_sha "$UPSTREAM" "$stack_path")"
+    e=0; stack_local="$(blob_sha "$repo" "$stack_path")" || e=$?
+    (( e == 2 )) && ec=2
+    e=0; stack_up="$(blob_sha "$UPSTREAM" "$stack_path")" || e=$?
+    (( e == 2 )) && ec=2
   fi
+  # Every one of these is guarded. blob_sha returns 1 for a file that is
+  # simply absent — which most repos are, for SKILL.md and
+  # copilot-instructions.md — and an unguarded assignment under `set -e`
+  # kills the whole collection job for that repo. That produced an empty
+  # shard, and 30 of 82 repos came back "unreadable" on the first fleet run
+  # after the status contract was introduced.
   local claude copilot skill
-  claude="$(blob_sha "$repo" 'CLAUDE.md')"
-  copilot="$(blob_sha "$repo" '.github/copilot-instructions.md')"
-  skill="$(blob_sha "$repo" 'SKILL.md')"
+  e=0; claude="$(blob_sha "$repo" 'CLAUDE.md')" || e=$?
+  (( e == 2 )) && ec=2
+  e=0; copilot="$(blob_sha "$repo" '.github/copilot-instructions.md')" || e=$?
+  (( e == 2 )) && ec=2
+  e=0; skill="$(blob_sha "$repo" 'SKILL.md')" || e=$?
+  (( e == 2 )) && ec=2
   jq -nc \
     --arg stack "$stack" --arg sp "$stack_path" \
     --arg bl "$base_local" --arg bu "$base_up" \
@@ -345,6 +394,7 @@ instructions_of() {
       blobs: ((if $bl == "" then {} else {".ai/base-instructions.md": {local: $bl, upstream: $bu}} end)
             + (if $sp == "" or $sl == "" then {} else {($sp): {local: $sl, upstream: $su}} end))
     }'
+  return "$ec"
 }
 
 latest_release() {
@@ -352,11 +402,11 @@ latest_release() {
 }
 
 collect_repo() {
-  local repo="$1" probe="$2" release="$3" wf_file text
+  local repo="$1" probe="$2" release="$3" wf_file text wf_ec=0
   wf_file="$(jq -r '.workflow_file // empty' <<< "$probe")"
   local workflow='null'
   if [[ -n "$wf_file" ]]; then
-    text="$(workflow_text "$repo" "$wf_file")"
+    text="$(workflow_text "$repo" "$wf_file")" || wf_ec=$?
     workflow="$(jq -nc \
       --arg file "$wf_file" \
       --arg ref "$(detect_ref "$text")" \
@@ -367,7 +417,7 @@ collect_repo() {
       --arg tm "$(yaml_scalar "$text" 'timeout-minutes')" \
       --arg ctm "$(yaml_scalar "$text" 'claude-timeout-minutes')" \
       --arg rl "$(yaml_scalar "$text" 'runner-labels')" \
-      --argjson selffix "$(yaml_flag_true "$text" 'self-fix' && echo true || echo false)" \
+      --argjson selffix "$(yaml_flag_true "$text" 'self-fix' && printf true || printf false)" \
       --argjson perms "$(detect_permissions "$text")" \
       --argjson fwd "$(detect_forwarded_secrets "$text")" '
       {file: $file, ref: $ref, agent: $agent, model: $model, flow: $flow,
@@ -377,15 +427,27 @@ collect_repo() {
        claude_timeout_minutes: (if $ctm == "" then null else ($ctm | tonumber?) end),
        runner_labels: $rl, permissions: $perms, secrets_forwarded: $fwd}')"
   fi
+  # Each read reports separately whether it succeeded; one unreadable read
+  # makes the whole record unreadable, because a verdict computed from data
+  # that was never read is worse than no verdict.
+  local unreadable e=0 secrets labels settings instructions
+  unreadable="$(jq -r '.unreadable // false' <<< "$probe")"
+  (( wf_ec == 2 )) && unreadable=true
+  e=0; secrets="$(repo_secrets "$repo")" || e=$?;         (( e == 2 )) && unreadable=true
+  e=0; labels="$(repo_labels "$repo")" || e=$?;           (( e == 2 )) && unreadable=true
+  e=0; settings="$(repo_settings "$repo")" || e=$?;       (( e == 2 )) && unreadable=true
+  e=0; instructions="$(instructions_of "$repo")" || e=$?; (( e == 2 )) && unreadable=true
+
   jq -nc \
     --arg repo "$repo" \
     --arg release "$release" \
+    --argjson unreadable "$unreadable" \
     --argjson workflow "$workflow" \
-    --argjson secrets "$(repo_secrets "$repo")" \
-    --argjson labels "$(repo_labels "$repo")" \
-    --argjson settings "$(repo_settings "$repo")" \
-    --argjson instructions "$(instructions_of "$repo")" '
-    {repo: $repo, workflow: $workflow, latest_release: $release,
+    --argjson secrets "${secrets:-[]}" \
+    --argjson labels "${labels:-[]}" \
+    --argjson settings "${settings:-{\}}" \
+    --argjson instructions "${instructions:-{\}}" '
+    {repo: $repo, unreadable: $unreadable, workflow: $workflow, latest_release: $release,
      secrets_set: $secrets, labels: $labels, settings: $settings,
      instructions: $instructions}'
 }
@@ -421,6 +483,28 @@ merge_records() {
   { cat "$1"/*.json 2>/dev/null || true; } | jq -sc '.'
 }
 
+# Every requested repo must appear exactly once. A shard that is empty or not
+# valid JSON means its job died; that repo becomes an unreadable record rather
+# than silently disappearing from the report.
+reconcile_shards() {
+  local dir="$1"; shift
+  local repos=("$@") i=0 repo shard out=()
+  for repo in "${repos[@]}"; do
+    i=$((i + 1))
+    shard="$dir/$(printf '%05d' "$i").json"
+    if [[ -s "$shard" ]] && jq -e . "$shard" >/dev/null 2>&1; then
+      out+=("$(cat "$shard")")
+    else
+      out+=("$(jq -nc --arg repo "$repo" '
+        {repo: $repo, unreadable: true, workflow: null, latest_release: "",
+         secrets_set: [], labels: [],
+         settings: {actions_can_create_prs: false, allow_auto_merge: false, allow_squash_merge: false},
+         instructions: {stack: null, files: {}, blobs: {}}}')")
+    fi
+  done
+  printf '%s\n' "${out[@]+"${out[@]}"}" | jq -sc .
+}
+
 collect() {
   local release repos=() repo total i=0 running=0 dir
   release="$(latest_release)"
@@ -446,13 +530,21 @@ collect() {
     } &
     running=$((running + 1))
     if (( running >= COLLECT_JOBS )); then
-      wait -n 2>/dev/null || true
-      running=$((running - 1))
+      if (( HAVE_WAIT_N )); then
+        wait -n 2>/dev/null || true
+        running=$((running - 1))
+      else
+        # Without `wait -n` the only way to bound the fan-out is to drain the
+        # whole batch. Slower, but silently degrading to no throttling at all
+        # over ~80 repos is what trips the secondary rate limit.
+        wait
+        running=0
+      fi
     fi
   done
   wait
 
-  merge_records "$dir"
+  reconcile_shards "$dir" "${repos[@]}"
 }
 
 # --- grading ----------------------------------------------------------------
@@ -472,14 +564,16 @@ def grade_workflow(r):
     else
       [
         # --- broken: the run will not start, or will not do what it says ---
-        ( ((r.secrets_set // []) - ($w.secrets_forwarded // []))
+        ( (if (($w.secrets_forwarded // []) | index("*")) then []
+           else (r.secrets_set // []) - ($w.secrets_forwarded // []) end)
           | map(select(. as $s | $critical_secrets | index($s)))
           | if length > 0
             then finding("secret-not-forwarded"; "broken";
                  "set on the repo but not forwarded in secrets:: " + join(", "))
             else empty end ),
 
-        ( if (((r.secrets_set // []) - ($w.secrets_forwarded // [])) | index("OPENROUTER_API_KEY"))
+        ( if ((($w.secrets_forwarded // []) | index("*")) | not)
+             and (((r.secrets_set // []) - ($w.secrets_forwarded // [])) | index("OPENROUTER_API_KEY"))
           then finding("openrouter-not-forwarded";
                (if $w.agent == "opencode" then "broken" else "degraded" end);
                (if $w.agent == "opencode"
@@ -519,6 +613,11 @@ def grade_workflow(r):
         ( if ($w.flow == "ai-review-ai-merge") and ((r.settings.allow_auto_merge // false) | not)
           then finding("ai-merge-without-auto-merge"; "broken";
                "flow is ai-review-ai-merge but allow-auto-merge is off")
+          else empty end ),
+
+        ( if ($w.flow == "ai-review-ai-merge") and ((r.settings.allow_squash_merge // false) | not)
+          then finding("ai-merge-without-squash"; "broken";
+               "flow is ai-review-ai-merge but allow-squash-merge is off — the pipeline squash-merges")
           else empty end ),
 
         # --- degraded: it runs, but not as intended ---
@@ -570,12 +669,16 @@ def grade_instructions(r):
 
 map(
   . as $r
-  | ((if ($r.unreadable // false)
-      then [ finding("probe-unreadable"; "broken";
-             "one or more API reads failed after retries — this repo was not graded, it was not read") ]
-      else [] end)
-     + grade_workflow($r) + (if $r.workflow == null and (($r.instructions.files // {} | to_entries | map(.value) | any) == false)
-      then [] else grade_instructions($r) end)) as $findings
+  # An unreadable repo gets exactly one finding. Grading the rest would mean
+  # reporting conclusions drawn from data that was never read — which is how a
+  # 403 on actions/secrets produced four confident, fabricated findings.
+  | (if ($r.unreadable // false)
+     then [ finding("probe-unreadable"; "broken";
+            "one or more API reads failed after retries — this repo was not graded, it was not read") ]
+     else grade_workflow($r)
+          + (if $r.workflow == null and (($r.instructions.files // {} | to_entries | map(.value) | any) == false)
+             then [] else grade_instructions($r) end)
+     end) as $findings
   | $r + {
       findings: $findings,
       verdict: (
@@ -611,12 +714,11 @@ render() {
 
   printf '# agent-workflow + ai-instructions integration\n\n'
 
-  if [[ "$(jq 'length' <<< "$shown")" -eq 0 ]]; then
-    printf 'No repo has either half wired up.\n\n'
-  fi
-
   local i count
   count="$(jq 'length' <<< "$shown")"
+  if (( count == 0 )); then
+    printf 'No repo has either half wired up.\n\n'
+  fi
   for (( i = 0; i < count; i++ )); do
     render_repo "$(jq -c ".[$i]" <<< "$shown")"
   done
@@ -683,6 +785,7 @@ EOF
 
 main() {
   parse_args "$@"
+  validate_args
   require_deps
 
   local records graded

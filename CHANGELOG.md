@@ -107,9 +107,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Instructions drift is judged by comparing git blob SHAs against upstream `main`,
   because `ai-instructions` has no tags and the sync writes no provenance — so the
   report says "drifted", never "N commits behind", and says a secret is "set, not
-  validated". A read that fails after retries makes a repo `unreadable` rather than
-  absent, so a rate-limited sweep cannot quietly report a wired repo as
-  not-integrated.
+  validated". Every read classifies its failure as absent / transient / fatal and
+  retries the transient ones; a read that still fails makes the repo `unreadable`,
+  graded with that one finding alone rather than with conclusions drawn from data
+  that was never read. So neither a rate-limited sweep nor a token without admin
+  scope can quietly report a wired repo as not-integrated or invent a missing
+  secret.
 - **runners:** `ai:runner-blocked` — the review never started because the
   runner's toolchain is unmet, as distinct from `ai:review-blocked`, where the
   reviewer ran and refused to promote the PR. Previously a toolchain failure

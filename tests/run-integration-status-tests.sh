@@ -156,7 +156,7 @@ all_out="$("$SCRIPT" --from "$FIXTURE")"
 
 assert_contains "$all_out" "freaxnx01/bridge" "an integrated repo gets a row"
 assert_contains "$all_out" "claude-sonnet-5" "the model is shown"
-assert_contains "$all_out" "ci" "the stack is shown"
+assert_contains "$all_out" "stack ci" "the stack is shown"
 
 # Two-phase grouping: repos with neither half collapse to a count, so a sweep
 # over 82 repos is not 69 rows of nothing.
@@ -221,11 +221,6 @@ section "upstream path absent is not drift (#381 discipline)"
 # that to a real local SHA would report "drifted", which sends the operator to
 # re-sync against a file that is not there. Absent and different are not the
 # same answer.
-absent_up='[{"repo":"o/r","workflow":null,"latest_release":"v3.0.0","secrets_set":[],"labels":[],
-  "settings":{"actions_can_create_prs":false,"allow_auto_merge":false,"allow_squash_merge":true},
-  "instructions":{"stack":"exotic","files":{"CLAUDE.md":true,".ai/base-instructions.md":true},
-  "blobs":{".ai/stacks/exotic.md":{"local":"abc1234","upstream":""}}}}]'
-printf '%s' "$absent_up" > "$ROOT/tests/fixtures/integration/upstream-absent.json"
 up_json="$("$SCRIPT" --from "$ROOT/tests/fixtures/integration/upstream-absent.json" --json)"
 up_codes="$(jq -r '.[0].findings[].code' <<< "$up_json")"
 if grep -qx 'instructions-upstream-absent' <<< "$up_codes"; then
@@ -319,11 +314,6 @@ section "an unreadable repo is never reported as not-integrated"
 # swallowed the failure, and 18 repos that the serial run had reported in full
 # came back as "not integrated" — a silent false negative, and exactly the
 # absent-vs-unreadable conflation this tool exists to flag.
-unreadable='[{"repo":"o/unreadable","unreadable":true,"workflow":null,"latest_release":"v3.0.0",
-  "secrets_set":[],"labels":[],
-  "settings":{"actions_can_create_prs":false,"allow_auto_merge":false,"allow_squash_merge":false},
-  "instructions":{"stack":null,"files":{},"blobs":{}}}]'
-printf '%s' "$unreadable" > "$ROOT/tests/fixtures/integration/unreadable.json"
 UNREADABLE_FIXTURE="$ROOT/tests/fixtures/integration/unreadable.json"
 
 assert_eq "$("$SCRIPT" --from "$UNREADABLE_FIXTURE" --json | jq -r '.[0].verdict')" "unreadable" \
@@ -348,6 +338,137 @@ assert_eq "$(api_failure_kind 'HTTP 500: Internal Server Error')" "transient" \
   "a 5xx is transient"
 assert_eq "$(api_failure_kind 'HTTP 403: Bad credentials')" "fatal" \
   "an auth failure is fatal, not retried forever"
+
+section "the collector itself must not grade a failed read as absence"
+
+# The earlier unreadable test hand-fed {"unreadable":true} to the grader and so
+# proved nothing about the collector. These drive collect_one through the gh
+# mock, which is where the bug actually was: the flag was set by the phase-1
+# probe and then dropped by phase 2.
+COLLECT_TMP="$(mktemp -d)"
+export GH_MOCK_LOG="$COLLECT_TMP/gh.log"
+MOCKS="$ROOT/tests/mocks"
+printf 'contents/.github/workflows/agent.yml\t%s\n' "$ROOT/tests/fixtures/autopilot/agent-yml-good.yml" \
+  > "$COLLECT_TMP/stdout.map"
+
+collect_with_failure() {  # <fail-substring> <stderr text>
+  local map="$COLLECT_TMP/fail.map"
+  printf '%s\t%s\n' "$1" "$2" > "$map"
+  PATH="$MOCKS:$PATH" GH_MOCK_STDOUT_MAP="$COLLECT_TMP/stdout.map" GH_MOCK_FAIL_MAP="$map" \
+    GH_RETRY_MAX=1 collect_one o/r v3.0.0
+}
+
+# A token without admin on actions/secrets 403s. Before the fix this graded
+# `broken` with four fabricated findings: auth-secret-missing,
+# implement-label-missing, permissions-incomplete, actions-cannot-create-prs.
+rec="$(collect_with_failure 'actions/secrets' 'HTTP 403: Resource not accessible by integration')"
+assert_eq "$(jq -r '.unreadable' <<< "$rec")" "true" \
+  "a 403 on a phase-2 read marks the record unreadable"
+graded_one="$(printf '%s' "[$rec]" | grade)"
+assert_eq "$(jq -r '.[0].verdict' <<< "$graded_one")" "unreadable" \
+  "  → and the verdict is unreadable, not broken"
+fabricated="$(jq -r '.[0].findings[].code' <<< "$graded_one" | grep -cE 'auth-secret-missing|implement-label-missing|permissions-incomplete|actions-cannot-create-prs' || true)"
+assert_eq "$fabricated" "0" "  → no findings are fabricated from unread data"
+
+# Same for the other deep reads.
+for target in labels 'actions/permissions/workflow'; do
+  rec="$(collect_with_failure "$target" 'HTTP 500: Internal Server Error')"
+  assert_eq "$(jq -r '.unreadable' <<< "$rec")" "true" \
+    "a failed read of $target marks the record unreadable"
+done
+
+# An absent optional file must not kill the collection job. blob_sha returns 1
+# for "not there", and an unguarded assignment under `set -e` takes the whole
+# job down: 30 of 82 repos came back unreadable on the first fleet run after
+# the status contract landed, purely because they have no SKILL.md.
+printf 'SKILL.md\tHTTP 404: Not Found\n' > "$COLLECT_TMP/absent.map"
+rec="$(PATH="$MOCKS:$PATH" GH_MOCK_STDOUT_MAP="$COLLECT_TMP/stdout.map" \
+       GH_MOCK_FAIL_MAP="$COLLECT_TMP/absent.map" GH_RETRY_MAX=1 collect_one o/r v3.0.0)"
+assert_eq "$(jq -r '.unreadable' <<< "$rec")" "false" \
+  "an absent optional file is not unreadable"
+assert_eq "$(jq -r '.instructions.files["SKILL.md"]' <<< "$rec")" "false" \
+  "  → it is reported as simply not present"
+assert_eq "$(jq -r '.repo' <<< "$rec")" "o/r" \
+  "  → and the record is complete rather than an empty shard"
+
+# A genuine 404 is still absence, not a failure: most repos have no agent.yml.
+printf 'nothing-matches-this\n' > "$COLLECT_TMP/fail.map"
+rec="$(PATH="$MOCKS:$PATH" GH_MOCK_STDOUT_MAP="$COLLECT_TMP/stdout.map" \
+       GH_MOCK_FAIL_MAP="$COLLECT_TMP/fail.map" GH_RETRY_MAX=1 collect_one o/r v3.0.0)"
+assert_eq "$(jq -r '.unreadable' <<< "$rec")" "false" \
+  "a clean read is not marked unreadable"
+
+section "remaining instances of the quote and forwarding classes"
+
+# Same bug as the fixed runner-labels one: a quoted uses: yields v2" which
+# fails the version test, so major-drift is silently skipped.
+quoted_uses='    uses: "freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2"'
+assert_eq "$(detect_ref "$quoted_uses")" "v2" "a quoted uses: ref is not captured with its quote"
+assert_eq "$(detect_ref '    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2')" \
+  "v2" "an unquoted uses: ref still works"
+
+# `secrets: inherit` forwards everything, but matches no ${{ secrets.X }}, so
+# every critical secret read as not-forwarded and the repo graded broken.
+inherit_stub=$'    secrets: inherit\n    with:\n      issue-number: 1\n'
+assert_eq "$(detect_forwarded_secrets "$inherit_stub" | jq -r '.[0]')" "*" \
+  "secrets: inherit is reported as forwarding everything"
+inherit_rec='[{"repo":"o/r","workflow":{"file":"agent.yml","ref":"v3","agent":"claude","model":"m",
+  "flow":"ai-review-human-merge","self_fix":true,"self_fix_max_iterations":2,"timeout_minutes":60,
+  "claude_timeout_minutes":55,"runner_labels":"[]",
+  "permissions":["contents","pull-requests","issues","actions"],"secrets_forwarded":["*"]},
+  "latest_release":"v3.0.0","secrets_set":["CLAUDE_CODE_OAUTH_TOKEN","PIPELINE_APP_ID"],
+  "labels":["ai-implement","ai-review-human-merge"],
+  "settings":{"actions_can_create_prs":true,"allow_auto_merge":true,"allow_squash_merge":true},
+  "instructions":{"stack":null,"files":{"CLAUDE.md":true},"blobs":{}}}]'
+codes="$(printf '%s' "$inherit_rec" | grade | jq -r '.[0].findings[].code')"
+if grep -qx 'secret-not-forwarded' <<< "$codes"; then
+  fail "secrets: inherit does not produce a false secret-not-forwarded" "findings: $(tr '\n' ' ' <<< "$codes")"
+else
+  pass "secrets: inherit does not produce a false secret-not-forwarded"
+fi
+
+section "a lost shard is not a lost repo"
+
+# A background job that dies leaves an empty shard; merge_records skipped it
+# and the repo vanished from the report with no indication.
+shard_dir="$(mktemp -d)"
+printf '%s' '{"repo":"o/a"}' > "$shard_dir/00001.json"
+: > "$shard_dir/00002.json"
+printf '%s' 'not json at all' > "$shard_dir/00003.json"
+merged="$(reconcile_shards "$shard_dir" "o/a" "o/b" "o/c")"
+assert_eq "$(jq -r 'length' <<< "$merged")" "3" "every requested repo appears in the merge"
+assert_eq "$(jq -r '.[] | select(.repo=="o/b") | .unreadable' <<< "$merged")" "true" \
+  "an empty shard becomes an unreadable record, not a missing one"
+assert_eq "$(jq -r '.[] | select(.repo=="o/c") | .unreadable' <<< "$merged")" "true" \
+  "an unparseable shard becomes an unreadable record"
+rm -rf "$shard_dir" "$COLLECT_TMP"
+
+section "transient failures are actually retried"
+
+# Honouring gh-retry.sh's seams is what makes this testable at all: with a
+# hardcoded backoff the test would sleep 6 seconds, which is why the retry
+# path previously had no coverage.
+RETRY_TMP="$(mktemp -d)"
+export GH_MOCK_LOG="$RETRY_TMP/gh.log"
+printf 'secondary-rate-limited\tYou have exceeded a secondary rate limit\n' > "$RETRY_TMP/fail.map"
+: > "$GH_MOCK_LOG"
+rc=0
+PATH="$ROOT/tests/mocks:$PATH" GH_MOCK_FAIL_MAP="$RETRY_TMP/fail.map" \
+  GH_RETRY_MAX=3 GH_RETRY_SLEEP_CMD=true \
+  gh_json "repos/o/secondary-rate-limited" >/dev/null || rc=$?
+assert_eq "$rc" "2" "a transient failure that never clears ends as unreadable, not absent"
+assert_eq "$(grep -c 'secondary-rate-limited' "$GH_MOCK_LOG")" "3" \
+  "  → and it was retried up to GH_RETRY_MAX before giving up"
+
+: > "$GH_MOCK_LOG"
+rc=0
+printf 'gone\tHTTP 404: Not Found\n' > "$RETRY_TMP/fail404.map"
+PATH="$ROOT/tests/mocks:$PATH" GH_MOCK_FAIL_MAP="$RETRY_TMP/fail404.map" \
+  GH_RETRY_MAX=3 GH_RETRY_SLEEP_CMD=true \
+  gh_json "repos/o/gone" >/dev/null || rc=$?
+assert_eq "$rc" "1" "a 404 is absence"
+assert_eq "$(grep -c 'o/gone' "$GH_MOCK_LOG")" "1" "  → and is not retried"
+rm -rf "$RETRY_TMP"
 
 printf '\n%s──────────%s\n' "$C_DIM" "$C_OFF"
 printf 'passed: %d   failed: %d\n' "$PASS" "$FAIL"

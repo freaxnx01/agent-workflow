@@ -97,10 +97,14 @@ stderr, so `--json` stays a clean pipe.
 
 `COLLECT_JOBS` raises or lowers the fan-out. Be careful raising it: at 8 the sweep
 finished in 1 minute but tripped GitHub's **secondary** rate limit, and 18 wired
-repos came back as "not integrated". That class of failure is now caught rather than
-silently absorbed — a read that fails after retries makes the repo **`unreadable`**,
-listed at the top of the report and never counted as absent — but the right fix is
-not to provoke it.
+repos came back as "not integrated". Every read now classifies its failure as
+absent / transient / fatal, retries the transient ones, and makes the repo
+**`unreadable`** if it still fails — listed at the top of the report, never counted
+as absent, and graded with that one finding alone rather than with conclusions drawn
+from data that was never read. The right fix is still not to provoke it.
+
+The same applies to a read that needs permissions the token lacks: a 403 on
+`actions/secrets` makes the repo unreadable rather than inventing a missing secret.
 
 If you are iterating on the report itself, collect once with `--json` and re-render
 with `--from` — that costs nothing.
