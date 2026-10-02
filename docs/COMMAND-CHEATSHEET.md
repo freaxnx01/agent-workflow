@@ -115,6 +115,26 @@ agent, model and enrichment state. Nothing extra is tracked — it is reconstruc
 from the `ai-implement` label events and the `## ai-implement run` comments the
 pipeline already posts.
 
+### `/integration` — is the wiring sound?
+
+```bash
+/integration                 # current repo
+/integration --all           # every non-archived repo under the owner
+/integration --repo owner/name
+/integration --show-all      # also list repos with neither half wired
+```
+
+A third measurement point, on a different axis from the two above: not "can I fill
+the queue" or "did the dispatches pay", but **will a dispatch work at all**. Reports
+the pinned ref against the current release, agent/model, flow and timeouts, plus the
+repo-side state that fails silently — a secret set but not forwarded, a flow label
+that does not exist (so `gh issue edit` fails atomically and neither label lands), an
+incomplete `permissions:` block, `agent: opencode` with no OpenRouter key. Also
+compares `.ai/` blob SHAs against `ai-instructions` upstream.
+
+Read-only. The fixes live in `/agent-workflow-init`, `ensure-issue-labels.sh` and the
+`sync-ai-instructions` skill.
+
 ---
 
 ## What "ship rate" means

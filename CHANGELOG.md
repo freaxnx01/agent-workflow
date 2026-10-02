@@ -100,6 +100,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **commands:** `/integration` — per-repo or fleet-wide report of how a repo is wired
+  into agent-workflow and ai-instructions: pinned ref against the current release,
+  agent/model, flow, timeouts, and the repo-side state a run silently depends on
+  (secrets forwarded vs. set, the `ai-*` labels, Actions-can-create-PRs, auto-merge).
+  Instructions drift is judged by comparing git blob SHAs against upstream `main`,
+  because `ai-instructions` has no tags and the sync writes no provenance — so the
+  report says "drifted", never "N commits behind", and says a secret is "set, not
+  validated".
 - **runners:** `ai:runner-blocked` — the review never started because the
   runner's toolchain is unmet, as distinct from `ai:review-blocked`, where the
   reviewer ran and refused to promote the PR. Previously a toolchain failure
