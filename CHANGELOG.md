@@ -113,6 +113,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that was never read. So neither a rate-limited sweep nor a token without admin
   scope can quietly report a wired repo as not-integrated or invent a missing
   secret.
+- **migrate-consumers:** `--rename-flow` renames the deprecated flow inputs across a
+  fleet — `pre-preview` → `ai-review-human-merge`, `auto-review` → `ai-review-ai-merge`.
+  Both still work and both are removed in v3; a survey found 40 consumer repos still on
+  the old spelling. Anchored to the key, so indentation and trailing comments survive
+  and a mention inside a comment is left alone.
 - **runners:** `ai:runner-blocked` — the review never started because the
   runner's toolchain is unmet, as distinct from `ai:review-blocked`, where the
   reviewer ran and refused to promote the PR. Previously a toolchain failure
@@ -459,6 +464,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **autopilot:** the test-gate eligibility condition now verifies the gate
+  gates. "Has completed a run on the default branch" was satisfied by a
+  `workflow_dispatch`-only workflow documented as "not part of the agent
+  pipeline", in a repo with no branch protection — the lane would have
+  auto-merged behind a gate that gated nothing. The gate must now also have run
+  for a pull request, and the default branch must require at least one status
+  check; an API failure refuses with its own reason rather than reading as
+  absence (#381, satisfying #263).
 - **ci:** `agent-implement.test.yml` runs again. The Layer-2 guard had ended in
   `startup_failure` on every invocation since 2026-09-24 — starting no jobs and
   asserting nothing while still appearing in the checks list — because #421 added
