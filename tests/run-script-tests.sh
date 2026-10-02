@@ -2113,6 +2113,73 @@ rc=$?
 set -e
 assert_equals "$rc" "2" "FIX_PERMS_STDIN without GRANTS exits 2"
 
+section "migrate-consumers — --fix-perms rollout, one PR per repo (#441)"
+
+fp_tmp="$(mktemp -d)"
+printf 'deadbeef\n' > "$fp_tmp/sha"
+printf '%s' "$FP_STALE" | base64 -w0 > "$fp_tmp/stale.b64"
+printf '%s' "$FP_FIXED" | base64 -w0 > "$fp_tmp/ok.b64"
+printf 'permissions: read-all\njobs:\n  c:\n    uses: o/r/.github/workflows/agent-implement.yml@v2\n' \
+  | base64 -w0 > "$fp_tmp/odd.b64"
+printf 'https://github.com/o/open/pull/9\n' > "$fp_tmp/open-pr"
+# ORDER MATTERS: the mock returns the first match, and only the sha call
+# carries `.sha`. `o/open` is the stale stub with a fix PR already open.
+printf '.sha\t%s\nrepos/o/stale/contents\t%s\nrepos/o/open/contents\t%s\nrepos/o/ok/contents\t%s\nrepos/o/odd/contents\t%s\npr list --repo o/open\t%s\n' \
+  "$fp_tmp/sha" "$fp_tmp/stale.b64" "$fp_tmp/stale.b64" "$fp_tmp/ok.b64" "$fp_tmp/odd.b64" "$fp_tmp/open-pr" > "$fp_tmp/map"
+
+fp_run() {  # <consumers> [args...] ; sets OUT, RC; gh calls land in $fp_tmp/log
+  local consumers="$1"; shift
+  : > "$fp_tmp/log"
+  RC=0
+  OUT="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$fp_tmp/log" GH_MOCK_STDOUT_MAP="$fp_tmp/map" \
+         CONSUMERS="$consumers" bash "$MIGRATE" --fix-perms "$@" 2>&1)" || RC=$?
+}
+
+fp_run $'o/stale\no/ok'
+assert_contains "$OUT" 'o/stale  v2  would fix → actions  perms:MISSING actions' "dry run names the scopes it would add"
+assert_contains "$OUT" 'o/ok  v2  perms ok' "  → a perms:ok repo is skipped"
+assert_not_contains "$(cat "$fp_tmp/log")" '-X PUT' "  → and nothing is written without --apply"
+assert_equals "$RC" "0" "  → dry run exits 0"
+
+fp_run $'o/stale\no/ok' --apply
+log="$(cat "$fp_tmp/log")"
+assert_contains "$log" '-X PUT repos/o/stale/contents/.github/workflows/agent.yml' "--apply writes the stale stub"
+assert_contains "$log" 'branch=fix/agent-workflow-caller-permissions' "  → on a fix branch, never the default branch"
+assert_contains "$log" 'pr create --repo o/stale --head fix/agent-workflow-caller-permissions' "  → and opens one PR for it"
+assert_not_contains "$log" 'repos/o/ok/contents/.github/workflows/agent.yml -f' "  → the perms:ok repo is not written"
+written="$(grep -o 'content=[A-Za-z0-9+/=]*' "$fp_tmp/log" | head -1 | sed 's/^content=//' | base64 -d)"
+assert_equals "$written" "$FP_FIXED" "  → the written stub is exactly the rewriter's output"
+assert_contains "$OUT" 'o/stale  v2  fixed → PR' "  → and says so"
+
+fp_run 'o/open' --apply
+assert_contains "$OUT" 'o/open  v2  PR already open https://github.com/o/open/pull/9' "an open fix PR is not duplicated on a re-run"
+assert_not_contains "$(cat "$fp_tmp/log")" '-X PUT' "  → nothing is written for it"
+
+fp_run 'o/odd' --apply
+assert_contains "$OUT" 'o/odd  v2  cannot edit:' "an uneditable shape is reported"
+assert_not_contains "$(cat "$fp_tmp/log")" '-X PUT' "  → and never written"
+assert_equals "$RC" "1" "  → and the run exits 1"
+
+RC=0
+OUT="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$fp_tmp/log" GH_MOCK_STDOUT_MAP="$fp_tmp/map" \
+       REUSABLE="$fp_tmp/missing.yml" CONSUMERS='o/stale' bash "$MIGRATE" --fix-perms --apply 2>/dev/null)" || RC=$?
+assert_contains "$OUT" 'o/stale  v2  perms:ERROR  not edited' "perms:ERROR is reported, never edited"
+assert_equals "$RC" "1" "  → and the run exits 1"
+
+printf 'pr create\n' > "$fp_tmp/fail"
+RC=0
+OUT="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$fp_tmp/log" GH_MOCK_STDOUT_MAP="$fp_tmp/map" GH_MOCK_FAIL_MAP="$fp_tmp/fail" \
+       CONSUMERS='o/stale' bash "$MIGRATE" --fix-perms --apply 2>&1)" || RC=$?
+assert_contains "$OUT" 'o/stale  v2  PR FAILED' "a failed pr create is not reported as fixed"
+assert_equals "$RC" "1" "  → and the run exits 1"
+rm -rf "$fp_tmp"
+
+set +e
+bash "$MIGRATE" --repo o/x --fix-perms --to v3 >/dev/null 2>&1
+rc=$?
+set -e
+assert_equals "$rc" "2" "--fix-perms with --to is a usage error"
+
 # Bad invocation is a usage error, not a silent pass.
 set +e
 REWRITE_STDIN=1 bash "$MIGRATE" </dev/null >/dev/null 2>&1

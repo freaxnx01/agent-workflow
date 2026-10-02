@@ -16,6 +16,9 @@
 #                        do I stand", needs no target, and is safe to run any
 #                        time.
 #   migrate (--to <ref>) Rewrite the pins. Dry-run unless --apply.
+#   fix-perms            Add the scopes a perms:MISSING stub lacks to its
+#     (--fix-perms)      caller `permissions:` block, one PR per repo (#441).
+#                        Dry-run unless --apply; always via a PR.
 #
 # Required environment variables: none.
 #
@@ -38,6 +41,9 @@
 #                        clobbering it silently would be the same class of
 #                        mistake this script exists to undo.
 #   --path <path>        Stub path. Default '.github/workflows/agent.yml'.
+#   --fix-perms          fix-perms mode (see above). Not combinable with --to:
+#                        a pin bump and a permissions fix are separate PRs.
+#                        Branch defaults to 'fix/agent-workflow-caller-permissions'.
 #
 # Seams (tests):
 #   REWRITE_STDIN   When '1', read a stub on stdin, write the rewritten stub on
@@ -60,8 +66,15 @@
 #
 # Exit codes:
 #   0  success, including "nothing to do"
+#   1  --fix-perms only: at least one repo could not be fixed (perms:ERROR,
+#      uneditable shape, write or PR failure) — the operator must look
 #   2  bad arguments
 #   3  FIX_PERMS_STDIN only: the stub's shape cannot be edited safely
+#
+# Rolling out a permissions fix (#441) — an operator step, never run by CI:
+#   bash scripts/migrate-consumers.sh --owner freaxnx01 --fix-perms           # dry run
+#   bash scripts/migrate-consumers.sh --owner freaxnx01 --fix-perms --apply
+#   bash scripts/migrate-consumers.sh --owner freaxnx01                       # expect perms:ok
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -74,7 +87,8 @@ TARGET_REF="${TARGET_REF:-}"
 RENAME_FLOW=false
 APPLY=false
 USE_PR=false
-BRANCH='chore/migrate-agent-workflow'
+BRANCH=''
+FIX_PERMS=false
 FORCE="${FORCE:-false}"
 OWNER=''
 REPOS=''
@@ -256,10 +270,18 @@ while [[ $# -gt 0 ]]; do
     --rename-flow) RENAME_FLOW=true; shift ;;
     --force)  FORCE=true; shift ;;
     --path)   STUB_PATH="${2:?}"; shift 2 ;;
-    -h|--help) sed -n '2,50p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --fix-perms) FIX_PERMS=true; shift ;;
+    -h|--help) sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     *)        usage_error "unknown argument: $1" ;;
   esac
 done
+
+if [[ "$FIX_PERMS" == "true" ]]; then
+  [[ -z "$TARGET_REF" ]] || usage_error "--fix-perms and --to are separate rollouts; run one at a time"
+  USE_PR=true
+  BRANCH="${BRANCH:-fix/agent-workflow-caller-permissions}"
+fi
+BRANCH="${BRANCH:-chore/migrate-agent-workflow}"
 
 command -v gh >/dev/null || usage_error "gh is required"
 
@@ -278,6 +300,71 @@ if [[ -z "$REPOS" ]]; then
 fi
 [[ -n "${REPOS//[[:space:]]/}" ]] || { printf 'no consumers found\n'; exit 0; }
 
+# missing_grants — stub on stdin; prints the checker's gaps as the
+# `scope=level,...` list rewrite_perms takes.
+missing_grants() {
+  bash "$SCRIPT_DIR/check-caller-permissions.sh" - "$REUSABLE" \
+    | sed -E 's/^([^:]+): needs ([a-z]+),.*/\1=\2/' | paste -sd, - || true
+}
+
+# put_stub <repo> <sha> <content> <message> — write the stub; with --pr, on
+# $BRANCH (created from the default branch's head if it does not exist yet).
+put_stub() {
+  local repo="$1" sha="$2" content="$3" msg="$4" base_sha
+  local -a args=(-X PUT "repos/${repo}/contents/${STUB_PATH}"
+        -f "message=${msg}"
+        -f "content=$(printf '%s' "$content" | base64 -w0)"
+        -f "sha=${sha}")
+  if [[ "$USE_PR" == "true" ]]; then
+    base_sha="$(gh api "repos/${repo}" --jq '.default_branch' \
+                | xargs -I{} gh api "repos/${repo}/git/ref/heads/{}" --jq '.object.sha')"
+    gh api -X POST "repos/${repo}/git/refs" -f "ref=refs/heads/${BRANCH}" \
+           -f "sha=${base_sha}" >/dev/null 2>&1 || true
+    args+=(-f "branch=${BRANCH}")
+  fi
+  gh api "${args[@]}" >/dev/null 2>&1
+}
+
+# fix_perms_repo <repo> <cur> <perms> <sha> <content> — the --fix-perms verdict
+# and, with --apply, the PR for one repo. Updates the changed/skipped/failed
+# counters.
+fix_perms_repo() {
+  local repo="$1" cur="$2" perms="$3" sha="$4" content="$5"
+  local grants scopes new rc=0 open msg title url
+  case "$perms" in
+    perms:ok)    printf '%s  %s  perms ok\n' "$repo" "$cur"; skipped=$((skipped+1)); return ;;
+    perms:ERROR) printf '%s  %s  perms:ERROR  not edited\n' "$repo" "$cur"; failed=$((failed+1)); return ;;
+  esac
+  scopes="${perms#perms:MISSING }"
+  grants="$(printf '%s' "$content" | missing_grants)"
+  new="$(printf '%s' "$content" | rewrite_perms "$grants" "$(basename "$REUSABLE")")" || rc=$?
+  if (( rc != 0 )); then
+    printf '%s  %s  cannot edit: %s\n' "$repo" "$cur" "$new"; failed=$((failed+1)); return
+  fi
+  # Belt and braces: the rewrite must satisfy the very checker that flagged it.
+  if [[ "$(printf '%s\n' "$new" | perms_verdict)" != "perms:ok" ]]; then
+    printf '%s  %s  cannot edit: rewrite did not close the gap\n' "$repo" "$cur"; failed=$((failed+1)); return
+  fi
+  open="$(gh pr list --repo "$repo" --head "$BRANCH" --state open --json url \
+            --jq '.[0].url // empty' 2>/dev/null || printf '')"
+  if [[ -n "$open" ]]; then
+    printf '%s  %s  PR already open %s\n' "$repo" "$cur" "$open"; skipped=$((skipped+1)); return
+  fi
+  if [[ "$APPLY" != "true" ]]; then
+    printf '%s  %s  would fix → %s  %s\n' "$repo" "$cur" "$scopes" "$perms"; changed=$((changed+1)); return
+  fi
+  title="fix(ci): grant ${grants//=/: } to the agent-workflow caller"
+  title="${title//,/, }"
+  msg="${title}"$'\n\n'"agent-implement.yml requests it, and a reusable workflow can't be granted more than its caller: every ai-implement dispatch ended in startup_failure with no logs. See https://github.com/freaxnx01/agent-workflow/issues/434."
+  if ! put_stub "$repo" "$sha" "$new"$'\n' "$msg"; then
+    printf '%s  %s  WRITE FAILED\n' "$repo" "$cur"; failed=$((failed+1)); return
+  fi
+  if ! url="$(gh pr create --repo "$repo" --head "$BRANCH" --title "$title" --body "$msg" 2>/dev/null)"; then
+    printf '%s  %s  PR FAILED (branch %s written)\n' "$repo" "$cur" "$BRANCH"; failed=$((failed+1)); return
+  fi
+  printf '%s  %s  fixed → PR %s\n' "$repo" "$cur" "$url"; changed=$((changed+1))
+}
+
 changed=0; skipped=0; failed=0
 while IFS= read -r repo; do
   [[ -z "$repo" ]] && continue
@@ -290,6 +377,10 @@ while IFS= read -r repo; do
   cur="$(printf '%s' "$content" | current_ref)"
   cur="${cur:--}"
   perms="$(printf '%s' "$content" | perms_verdict)"
+
+  if [[ "$FIX_PERMS" == "true" ]]; then
+    fix_perms_repo "$repo" "$cur" "$perms" "$sha" "$content"; continue
+  fi
 
   if [[ -z "$TARGET_REF" && "$RENAME_FLOW" != "true" ]]; then
     printf '%s  %s  inventory  %s\n' "$repo" "$cur" "$perms"; continue
@@ -337,18 +428,7 @@ while IFS= read -r repo; do
   else
     msg="${title}"$'\n\n'"pre-preview and auto-review still work but are removed in v3; this renames the keys to ai-review-human-merge and ai-review-ai-merge. Behaviour is unchanged."
   fi
-  args=(-X PUT "repos/${repo}/contents/${STUB_PATH}"
-        -f "message=${msg}"
-        -f "content=$(printf '%s' "$new" | base64 -w0)"
-        -f "sha=${sha}")
-  if [[ "$USE_PR" == "true" ]]; then
-    base_sha="$(gh api "repos/${repo}" --jq '.default_branch' \
-                | xargs -I{} gh api "repos/${repo}/git/ref/heads/{}" --jq '.object.sha')"
-    gh api -X POST "repos/${repo}/git/refs" -f "ref=refs/heads/${BRANCH}" \
-           -f "sha=${base_sha}" >/dev/null 2>&1 || true
-    args+=(-f "branch=${BRANCH}")
-  fi
-  if gh api "${args[@]}" >/dev/null 2>&1; then
+  if put_stub "$repo" "$sha" "$new" "$msg"; then
     if [[ "$USE_PR" == "true" ]]; then
       gh pr create --repo "$repo" --head "$BRANCH" \
         --title "$title" --body "$msg" >/dev/null 2>&1 || true
@@ -360,3 +440,4 @@ while IFS= read -r repo; do
 done <<< "$REPOS"
 
 printf '\n%d changed, %d skipped, %d failed\n' "$changed" "$skipped" "$failed"
+if [[ "$FIX_PERMS" == "true" ]] && (( failed > 0 )); then exit 1; fi
