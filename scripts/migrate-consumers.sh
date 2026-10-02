@@ -80,6 +80,8 @@ IFS=$'\n\t'
 
 STUB_PATH='.github/workflows/agent.yml'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/gh-retry.sh disable=SC1091
+source "$SCRIPT_DIR/lib/gh-retry.sh"
 # The workflow a stub's permissions are checked against. This checkout's copy:
 # run the script from an up-to-date main, which is what @v<latest> points at.
 REUSABLE="${REUSABLE:-$SCRIPT_DIR/../.github/workflows/agent-implement.yml}"
@@ -330,7 +332,7 @@ put_stub() {
 # counters.
 fix_perms_repo() {
   local repo="$1" cur="$2" perms="$3" sha="$4" content="$5"
-  local grants scopes new rc=0 open msg title url
+  local grants scopes new rc=0 lrc=0 open msg title url
   case "$perms" in
     perms:ok)    printf '%s  %s  perms ok\n' "$repo" "$cur"; skipped=$((skipped+1)); return ;;
     perms:ERROR) printf '%s  %s  perms:ERROR  not edited\n' "$repo" "$cur"; failed=$((failed+1)); return ;;
@@ -345,8 +347,13 @@ fix_perms_repo() {
   if [[ "$(printf '%s\n' "$new" | perms_verdict)" != "perms:ok" ]]; then
     printf '%s  %s  cannot edit: rewrite did not close the gap\n' "$repo" "$cur"; failed=$((failed+1)); return
   fi
-  open="$(gh pr list --repo "$repo" --head "$BRANCH" --state open --json url \
-            --jq '.[0].url // empty' 2>/dev/null || printf '')"
+  # A failed lookup is not "none open": it would bypass the only duplicate
+  # guard on a re-run, so it fails the repo instead.
+  open="$(with_backoff gh pr list --repo "$repo" --head "$BRANCH" --state open --json url \
+            --jq '.[0].url // empty' 2>/dev/null)" || lrc=$?
+  if (( lrc != 0 )); then
+    printf '%s  %s  CHECK FAILED (could not list open PRs)\n' "$repo" "$cur"; failed=$((failed+1)); return
+  fi
   if [[ -n "$open" ]]; then
     printf '%s  %s  PR already open %s\n' "$repo" "$cur" "$open"; skipped=$((skipped+1)); return
   fi
@@ -359,7 +366,8 @@ fix_perms_repo() {
   if ! put_stub "$repo" "$sha" "$new"$'\n' "$msg"; then
     printf '%s  %s  WRITE FAILED\n' "$repo" "$cur"; failed=$((failed+1)); return
   fi
-  if ! url="$(gh pr create --repo "$repo" --head "$BRANCH" --title "$title" --body "$msg" 2>/dev/null)"; then
+  # Up to 37 PRs in a tight loop: back off on GitHub's secondary rate limit.
+  if ! url="$(with_backoff gh pr create --repo "$repo" --head "$BRANCH" --title "$title" --body "$msg" 2>/dev/null)"; then
     printf '%s  %s  PR FAILED (branch %s written)\n' "$repo" "$cur" "$BRANCH"; failed=$((failed+1)); return
   fi
   printf '%s  %s  fixed → PR %s\n' "$repo" "$cur" "$url"; changed=$((changed+1))
