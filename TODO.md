@@ -1,5 +1,58 @@
 # TODO
 
+## Session 2026-10-01/02 (consumer permissions + model-not-found retry) — 3 issues shipped, rollout and #449 open
+
+Shipped: #439 (PR #443), #434 (PR #442), #441 (PR #448). Specs in PR #440 / #447.
+Found while dogfooding from `game-sky-fury`. Only what the issues do **not**
+record is below.
+
+- [ ] **Run the `--fix-perms` rollout — operator step, deliberately not
+      automated (#441 A12).** 37 `freaxnx01/game-*` consumers on `@v2` lack
+      `actions: write` (list in #441's body), so every `ai-implement` there
+      ends in `startup_failure`. From an up-to-date `main`:
+      `bash scripts/migrate-consumers.sh --owner freaxnx01 --fix-perms` (dry
+      run, expect 37 × `would fix → actions`), then the same with `--apply`
+      (one PR per repo), merge them, then
+      `bash scripts/migrate-consumers.sh --owner freaxnx01` → all `perms:ok`.
+      game-sky-fury itself was fixed by hand (game-sky-fury#7).
+
+- [ ] **#449 needs enrichment — check it against #365 first.** Both review-job
+      cancellations (#442 run 36919529933, #448 run 36976975197) happened
+      **~10 min 15 s after the job started**, inside the self-fix loop, after
+      the verdict was posted — matching `ai_review_human_merge`'s
+      `timeout-minutes: 10`, not a competing run (the label-event sibling
+      run had already completed as `skipped`). #365 describes a different
+      cancel route for the same job; fix both or close one as a duplicate.
+
+- [ ] **Low review findings left on purpose** (not in any issue):
+      - #442 / `check-caller-permissions.sh`: parser assumes 2/4-space job
+        indentation and block-style `permissions:`; 4-space or flow-style
+        (`{…}`) callers read as `perms:MISSING` (false alarm, not a false
+        pass). `perms` column absent on the `skipped` and `no change needed`
+        lines. Stub-coverage test asserts `>= 1` per pattern, not an exact
+        count, so an indented stub fence goes unchecked.
+      - #448 / `rewrite_perms`: an entry with no value (`contents:`) is mangled
+        by the in-place raise (the re-check stops the write, but the message
+        says "rewrite did not close the gap"). Extracting `put_stub` turned a
+        failed default-branch lookup in migrate mode from a run abort into a
+        per-repo `WRITE FAILED`. The trailing-newline assertion is vacuous
+        (`$(…)` strips newlines before the compare).
+
+- [ ] **Pre-existing in migrate mode (`--to` / `--rename-flow`):**
+      `gh pr create … || true` (`scripts/migrate-consumers.sh` ~L442) prints
+      `migrated` even when the PR was never opened, and the written stub loses
+      its trailing newline. `--fix-perms` does both correctly; migrate mode
+      could reuse its PR path.
+
+- [ ] **Documented chain stub still pins `chain-dispatch.yml@v1`**
+      (`docs/CONSUMER-SETUP.md` ~L444) while everything else is on `@v2`.
+
+- [ ] **#434 was closed at dispatch time, not by its PR** — 2026-10-01
+      20:10 UTC, actor `freaxnx01`, ~14 min before PR #442 existed. Most likely
+      the pipeline acting on the owner's token (`PIPELINE_APP_ID` empty).
+      Harmless here, but an issue that closes on dispatch looks done while its
+      PR is still under review.
+
 ## Session 2026-09-18 (quality gate + turn budget) — 3 issues shipped, 3 open, #355 blocked on you
 
 Shipped: #353+#354 (one quality-gate definition, PR #360) and #359 (turn budget
