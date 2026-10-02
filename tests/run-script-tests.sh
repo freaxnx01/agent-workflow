@@ -2059,6 +2059,60 @@ out="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$mig_tmp/log" GH_MOCK_STDOUT_MAP="$mig_t
 assert_contains "$out" 'o/stale  v2  inventory  perms:ERROR' "a checker failure reads perms:ERROR, not perms:ok"
 rm -rf "$mig_tmp"
 
+section "migrate-consumers — --fix-perms rewriter adds missing scopes (#441)"
+
+fix_perms() {  # <grants> ; stub on stdin. Sets OUT and RC; stderr into ERR.
+  local errf; errf="$(mktemp)"
+  RC=0
+  OUT="$(FIX_PERMS_STDIN=1 GRANTS="$1" bash "$MIGRATE" 2>"$errf")" || RC=$?
+  ERR="$(cat "$errf")"; rm -f "$errf"
+}
+
+# game-sky-fury's agent.yml before game-sky-fury#7, aligned comments and all:
+# the shape 37 consumers are in.
+FP_STALE=$'name: Claude\non:\n  issues:\n    types: [labeled]\n\npermissions:            # a reusable workflow can\'t be granted more than its\n  contents: write       # caller; the repo\'s default GITHUB_TOKEN is read-only,\n  pull-requests: write  # so omitting this fails the run at startup_failure.\n  issues: write\n\njobs:\n  claude:\n    if: github.event.label.name == \'ai-implement\'\n    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2\n    with:\n      pipeline-ref: v2'
+FP_FIXED=$'name: Claude\non:\n  issues:\n    types: [labeled]\n\npermissions:            # a reusable workflow can\'t be granted more than its\n  contents: write       # caller; the repo\'s default GITHUB_TOKEN is read-only,\n  pull-requests: write  # so omitting this fails the run at startup_failure.\n  issues: write\n  actions: write\n\njobs:\n  claude:\n    if: github.event.label.name == \'ai-implement\'\n    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2\n    with:\n      pipeline-ref: v2'
+
+fix_perms 'actions=write' < <(printf '%s' "$FP_STALE")
+assert_equals "$RC" "0" "top-level block: rewriter exits 0"
+assert_equals "$OUT" "$FP_FIXED" "  → appends actions: write after the last entry, comments and order intact"
+
+fix_perms 'actions=write' < <(printf '%s' "$FP_FIXED")
+assert_equals "$OUT" "$FP_FIXED" "an already-fixed stub is a no-op (idempotent)"
+
+# The calling job's own block REPLACES the top-level one (#434 semantics), so
+# that is the block to extend — the top-level one must stay as it was.
+FP_JOB=$'permissions:\n  contents: read\njobs:\n  claude:\n    permissions:\n      contents: write\n      # retry needs this job\'s block, not the top one\n      issues: write\n    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2\n'
+fix_perms 'actions=write' < <(printf '%s' "$FP_JOB")
+assert_contains "$OUT" $'      issues: write\n      actions: write\n    uses:' "job-level block on the calling job is the one extended"
+assert_contains "$OUT" $'permissions:\n  contents: read\njobs:' "  → the top-level block is untouched"
+
+# An unrelated job's block is not the caller's: the calling job inherits top-level.
+FP_OTHER=$'permissions:\n  contents: write\njobs:\n  lint:\n    permissions:\n      contents: read\n    runs-on: x\n  claude:\n    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2\n'
+fix_perms 'actions=write' < <(printf '%s' "$FP_OTHER")
+assert_contains "$OUT" $'permissions:\n  contents: write\n  actions: write\njobs:' "an unrelated job's block is ignored; top-level is extended"
+assert_contains "$OUT" $'      contents: read\n    runs-on: x' "  → the unrelated job's block is untouched"
+
+# A scope granted too low is raised in place, trailing comment kept.
+fix_perms 'contents=write' < <(printf 'permissions:\n  contents: read   # keep me\njobs:\n  c:\n    uses: o/r/.github/workflows/agent-implement.yml@v2\n')
+assert_contains "$OUT" '  contents: write   # keep me' "read → write is raised in place, comment kept"
+
+# Shapes it cannot edit safely: refuse loudly, never guess.
+for shape in 'permissions: { contents: write }' 'permissions: read-all' 'name: no-block'; do
+  fix_perms 'actions=write' < <(printf '%s\njobs:\n  c:\n    uses: o/r/.github/workflows/agent-implement.yml@v2\n' "$shape")
+  assert_equals "$RC" "3" "refuses '$shape' with exit 3"
+  assert_contains "$ERR" 'cannot edit' "  → and says why on stderr"
+done
+
+fix_perms 'actions=write' < <(printf 'permissions:\n  contents: write\njobs:\n  c:\n    uses: o/r/.github/workflows/other.yml@v2\n')
+assert_equals "$RC" "3" "refuses a stub with no job calling agent-implement.yml"
+
+set +e
+FIX_PERMS_STDIN=1 bash "$MIGRATE" </dev/null >/dev/null 2>&1
+rc=$?
+set -e
+assert_equals "$rc" "2" "FIX_PERMS_STDIN without GRANTS exits 2"
+
 # Bad invocation is a usage error, not a silent pass.
 set +e
 REWRITE_STDIN=1 bash "$MIGRATE" </dev/null >/dev/null 2>&1

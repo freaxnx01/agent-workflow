@@ -47,6 +47,10 @@
 #   REWRITE_FLOW_STDIN  When '1', read a stub on stdin, write it back with the
 #                   deprecated flow inputs renamed, and exit. Same no-network
 #                   seam as REWRITE_STDIN.
+#   FIX_PERMS_STDIN When '1', read a stub on stdin and write it back with the
+#                   GRANTS added (comma-separated `scope=level`, e.g.
+#                   `actions=write`). Exits 3, reason on stderr, on a shape it
+#                   cannot edit safely. No network.
 #   CONSUMERS       Newline-separated owner/name list, skipping discovery.
 #
 # Output:
@@ -57,6 +61,7 @@
 # Exit codes:
 #   0  success, including "nothing to do"
 #   2  bad arguments
+#   3  FIX_PERMS_STDIN only: the stub's shape cannot be edited safely
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -157,6 +162,80 @@ perms_verdict() {
 
 if [[ "${REWRITE_FLOW_STDIN:-}" == "1" ]]; then
   rewrite_flow
+  exit 0
+fi
+
+# rewrite_perms <grants> <calls> — stub on stdin; prints it with each
+# `scope=level` in <grants> (comma-separated) granted. <calls> is the reusable
+# workflow's file name. The block edited is the one GitHub uses for the calling
+# job (#434): the job's own `permissions:` if it has one, else the top-level
+# block. A missing scope is appended after the block's last entry at the
+# entries' indent; a lower grant is raised in place, trailing comment kept.
+# Anything else in the file is printed byte-for-byte.
+# On a shape it cannot edit safely (flow style, read-all/write-all, no block,
+# no calling job) prints the reason and exits 3 — never a guess.
+rewrite_perms() {
+  awk -v grants="$1" -v calls="/$2@" '
+    function indent(s) { match(s, /^ */); return RLENGTH }
+    function strip(s) { sub(/[[:space:]]+#.*$/, "", s); sub(/^ +/, "", s); return s }
+    function rank(l) { return l == "write" ? 2 : (l == "read" ? 1 : 0) }
+    function refuse(why) { print why; bad = 1; exit 3 }
+    { L[++n] = $0 }
+    END {
+      if (bad) exit 3
+      for (i = 1; i <= n; i++) {
+        if (L[i] ~ /^[[:space:]]*(#|$)/) continue
+        ind = indent(L[i]); t = strip(L[i])
+        if (ind == 0) { injobs = (t == "jobs:"); job = "" }
+        if (ind == 0 && t ~ /^permissions:/) top = i
+        if (injobs && ind == 2 && t ~ /^[A-Za-z0-9_-]+:$/) job = substr(t, 1, length(t) - 1)
+        if (injobs && ind == 4 && job != "" && t ~ /^permissions:/) own[job] = i
+        if (injobs && ind == 4 && job != "" && t ~ /^uses:/ && index(t, calls)) caller = job
+      }
+      if (caller == "") refuse("no job calls " substr(calls, 2, length(calls) - 2))
+      hdr = (caller in own) ? own[caller] : top
+      if (!hdr) refuse("no permissions: block for job " caller " to extend")
+      val = strip(L[hdr]); sub(/^permissions:[[:space:]]*/, "", val)
+      if (val ~ /^\{/) refuse("flow-style permissions: " val)
+      if (val != "") refuse("permissions: " val " (expanding it would change every other scope)")
+
+      hind = indent(L[hdr]); last = hdr; eind = -1
+      for (i = hdr + 1; i <= n; i++) {
+        if (L[i] ~ /^[[:space:]]*(#|$)/) continue
+        ind = indent(L[i])
+        if (ind <= hind) break
+        if (eind < 0) eind = ind
+        if (ind != eind) continue
+        key = strip(L[i]); sub(/:.*/, "", key); at[key] = i; last = i
+      }
+      if (eind < 0) eind = hind + 2
+      pad = ""; for (k = 0; k < eind; k++) pad = pad " "
+
+      m = split(grants, g, ",")
+      for (k = 1; k <= m; k++) {
+        split(g[k], kv, "="); key = kv[1]; lvl = kv[2]
+        if (key == "") continue
+        if (key in at) {
+          i = at[key]; cur = strip(L[i]); sub(/^[^:]*:[[:space:]]*/, "", cur)
+          if (rank(cur) >= rank(lvl)) continue
+          match(L[i], /:[[:space:]]*[^[:space:]#]+/)
+          head = substr(L[i], 1, RSTART - 1); seg = substr(L[i], RSTART, RLENGTH); tail = substr(L[i], RSTART + RLENGTH)
+          match(seg, /^:[[:space:]]*/)
+          L[i] = head substr(seg, 1, RLENGTH) lvl tail
+        } else {
+          add = add pad key ": " lvl "\n"
+        }
+      }
+      for (i = 1; i <= n; i++) { print L[i]; if (i == last && add != "") printf "%s", add }
+    }'
+}
+
+if [[ "${FIX_PERMS_STDIN:-}" == "1" ]]; then
+  [[ -n "${GRANTS:-}" ]] || usage_error "GRANTS must be set for FIX_PERMS_STDIN"
+  rc=0
+  out="$(rewrite_perms "$GRANTS" "$(basename "$REUSABLE")")" || rc=$?
+  if (( rc != 0 )); then printf 'error: cannot edit: %s\n' "$out" >&2; exit 3; fi
+  printf '%s\n' "$out"
   exit 0
 fi
 
