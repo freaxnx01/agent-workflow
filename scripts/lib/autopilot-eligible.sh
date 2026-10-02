@@ -129,6 +129,13 @@ repo_eligible() {
   if ! pr_runs_json="$(gh api \
         "repos/$repo/actions/workflows/$gate/runs?event=pull_request&status=completed&per_page=1" \
         2>"$pr_runs_err")"; then
+    # Same absent-vs-unreadable split as the two neighbouring calls. The query
+    # above already proved the workflow exists, so a 404 here means it was
+    # deleted in between — rare, but it is a missing gate, not a failed check.
+    if grep -qiE 'HTTP 404|Not Found' "$pr_runs_err"; then
+      printf 'test gate %s not found\n' "$gate"
+      return 1
+    fi
     printf 'eligibility check failed (gate pull-request runs)\n'
     return 1
   fi
@@ -151,7 +158,8 @@ repo_eligible() {
   if ! prot_json="$(gh api "repos/$repo/branches/$default_branch/protection" \
         2>"$prot_err")"; then
     if grep -qiE 'HTTP 404|Not Found' "$prot_err"; then
-      printf 'no branch protection on %s\n' "$default_branch"
+      printf 'no branch protection on %s (or the token cannot read it)\n' \
+        "$default_branch"
       return 1
     fi
     printf 'eligibility check failed (protection)\n'

@@ -63,8 +63,10 @@ Three gates, all required. Failing any one is logged with its reason:
 
    **A correctly-configured gate that has never seen a pull request is
    refused.** That is deliberate: the lane requires demonstrated behaviour, not
-   declared intent. Open one pull request and the condition is satisfied
-   thereafter.
+   declared intent. Open one pull request and the condition is satisfied for as
+   long as that run is visible — the check reads the Actions runs API, so a
+   repo whose gate last ran on a pull request beyond its Actions run-retention
+   window becomes ineligible again until the next one.
 
 And per issue: open, `needs-enrichment`, a non-empty body, and none of
 `parked`, `enrichment-ongoing`, `needs-human`, `ai-implement`.
@@ -106,7 +108,7 @@ script:
 |---|---|
 | `disabled: <path> present` | The kill switch is on; nothing was read |
 | `already running — exiting` | Another run (timer or shell) holds the lock |
-| `skipped (<reason>)` | The repo failed one of the `agent.yml` eligibility gates (missing file, `ai-review-ai-merge` not set, unreadable default branch, gate workflow never completed a run on it, gate never ran on a pull request, no branch protection or no required status checks on the default branch), or `repo_eligible` itself could not run the check (e.g. `skipped (eligibility check failed (could not read agent.yml))` — a `gh` outage reading `agent.yml`, not an absent gate; likewise `(gate runs)`, `(gate pull-request runs)` and `(protection)`) — reason names which |
+| `skipped (<reason>)` | The repo failed one of the `agent.yml` eligibility gates (missing file, `ai-review-ai-merge` not set, unreadable default branch, gate workflow never completed a run on it, gate never ran on a pull request, no branch protection — which this endpoint also reports when the token cannot read protection, so the reason names both — or no required status checks on the default branch), or `repo_eligible` itself could not run the check (e.g. `skipped (eligibility check failed (could not read agent.yml))` — a `gh` outage reading `agent.yml`, not an absent gate; likewise `(gate runs)`, `(gate pull-request runs)` and `(protection)`) — reason names which |
 | `no candidates` | The repo is eligible and the candidate query succeeded; genuinely nothing was enrichable |
 | `skipped (candidate query failed)` | The repo passed `repo_eligible`, but the candidate query (`gh issue list`) itself failed — distinct from `no candidates` (query succeeded, returned nothing) and distinct from the `skipped (<reason>)` row above (that one is `repo_eligible` failing to read `agent.yml`/its metadata, not `gh issue list` failing to list issues) |
 | `skipped (label ensure failed)` | The repo has candidates, but `ensure-issue-labels.sh` could not be run against it before the first dispatch of this run (#380) — the repo is skipped for this run rather than letting a later dispatch or escalation write fail against labels that were never created; no nested enrich session was spent |

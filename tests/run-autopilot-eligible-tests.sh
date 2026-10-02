@@ -255,6 +255,37 @@ case "$reason" in
   *) pass "a runs outage is not reported as 'gate not found'" ;;
 esac
 
+section "pull-request runs query absent vs unreadable (#381)"
+
+# The third gh call deserves the same absent-vs-unreadable pair as the other
+# two. The fail-map key matches only this query: the branch-runs URL carries
+# no `event=` parameter.
+printf 'event=pull_request\n' > "$TMPDIR_T/prrunsdown.fail"
+rc=0
+reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/prot404.map" \
+          GH_MOCK_FAIL_MAP="$TMPDIR_T/prrunsdown.fail" repo_eligible o/r ci.yml)" || rc=$?
+assert_eq "pull-request runs outage returns 1" "1" "$rc"
+case "$reason" in
+  *"check failed (gate pull-request runs)"*) pass "a pull-request runs outage reads as a failed check" ;;
+  *) fail "a pull-request runs outage reads as a failed check" "reason was: $reason" ;;
+esac
+case "$reason" in
+  *"never run on a pull request"*)
+    fail "an outage is not reported as 'never ran on a pull request'" "reason was: $reason" ;;
+  *) pass "an outage is not reported as 'never ran on a pull request'" ;;
+esac
+
+# A genuine 404 means the gate was deleted between the two run queries.
+printf 'event=pull_request\tHTTP 404: Not Found\n' > "$TMPDIR_T/prruns404.fail"
+rc=0
+reason="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/prot404.map" \
+          GH_MOCK_FAIL_MAP="$TMPDIR_T/prruns404.fail" repo_eligible o/r ci.yml)" || rc=$?
+assert_eq "pull-request runs 404 returns 1" "1" "$rc"
+case "$reason" in
+  *"not found"*) pass "404 on the pull-request query reads as a missing gate" ;;
+  *) fail "404 on the pull-request query reads as a missing gate" "reason was: $reason" ;;
+esac
+
 printf '\n%s──────────%s\n' "$C_DIM" "$C_OFF"
 printf 'passed: %d   failed: %d\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then
