@@ -65,7 +65,7 @@ out="$(grade "$T/body-430.md" "$T/changed-430.txt")"
 assert_eq "#430 shape is partial" "partial" "$(field "$out" coverage)"
 assert_eq "#430 shape names tasks 2 and 3" "2,3" "$(field "$out" missing-tasks)"
 assert_eq "partial has no reason" "" "$(field "$out" reason)"
-assert_eq "output is exactly three lines" "3" "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+assert_eq "output is exactly four lines" "4" "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
 
 section "every task landed"
 
@@ -179,6 +179,69 @@ printf 'scripts/b.sh\n' > "$T/changed-format-partial.txt"
 out="$(grade "$T/body-format.md" "$T/changed-format-partial.txt")"
 assert_eq "the fenced Task 9 is not counted" "2" "$(field "$out" missing-tasks)"
 
+section "per-task grading (#457 review)"
+
+cat > "$T/body-mixed.md" <<'EOF'
+## Implementation Plan (revised)
+
+### Task 1: Code
+
+**Files:**
+- Modify: `scripts/a.sh` — see `gates` for context
+
+### Task 2: Rename
+
+**Files:**
+- Rename: `scripts/old.sh` → `scripts/new.sh`
+
+### Task 3: Final sweep
+
+**Files:** none created; fixes only if the sweep finds something.
+
+### Task 4: Think
+
+Consider the options.
+EOF
+
+printf 'scripts/a.sh\nscripts/new.sh\nscripts/old.sh\n' > "$T/changed-mixed-landed.txt"
+out="$(grade "$T/body-mixed.md" "$T/changed-mixed-landed.txt")"
+assert_eq "a heading with a suffix still opens the plan" "unverifiable" "$(field "$out" coverage)"
+assert_eq "only the task with no Files block is unparsed" "4" "$(field "$out" unparsed-tasks)"
+assert_eq "the unparsed task is the reason" "task-without-files:4" "$(field "$out" reason)"
+
+printf 'scripts/new.sh\ngates\n' > "$T/changed-mixed-missing.txt"
+out="$(grade "$T/body-mixed.md" "$T/changed-mixed-missing.txt")"
+assert_eq "a missing task still grades partial next to an unparsed one" "partial" "$(field "$out" coverage)"
+assert_eq "a prose token is not a planned file" "1" "$(field "$out" missing-tasks)"
+assert_eq "partial still reports the unparsed task" "4" "$(field "$out" unparsed-tasks)"
+
+cat > "$T/body-none.md" <<'EOF'
+## Implementation Plan
+
+### Task 1: Code
+
+**Files:**
+- Modify: `scripts/a.sh`
+
+### Task 2: Final sweep
+
+**Files:** none
+EOF
+out="$(grade "$T/body-none.md" "$T/changed-shared.txt")"
+assert_eq "an explicit Files: none task is skipped, not unverifiable" "complete" "$(field "$out" coverage)"
+
+printf '## Implementation Plan\n\n### Task 1: Sweep\n\n**Files:** none\n' > "$T/body-only-none.md"
+out="$(grade "$T/body-only-none.md" "$T/changed-shared.txt")"
+assert_eq "a plan of only Files: none tasks is unverifiable" "unverifiable" "$(field "$out" coverage)"
+assert_eq "it says there was nothing to grade" "no-gradable-tasks" "$(field "$out" reason)"
+
+section "the repo's realistic enriched body (tests/fixtures/issue-body-large-plan.md)"
+
+out="$(grade "$ROOT/tests/fixtures/issue-body-large-plan.md" "$T/changed-none.txt")"
+assert_eq "the large plan parses every task" "" "$(field "$out" unparsed-tasks)"
+assert_eq "the large plan with nothing changed is partial" "partial" "$(field "$out" coverage)"
+assert_eq "its Files: none sweep task is not counted missing" "1,2,3,4,5,6,7" "$(field "$out" missing-tasks)"
+
 section "usage"
 
 rc=0; ISSUE_BODY_FILE='' CHANGED_FILES_FILE="$T/changed-all.txt" bash "$CHECK" >/dev/null 2>&1 || rc=$?
@@ -222,12 +285,33 @@ out="$(GH_MOCK_STDOUT_MAP="$T/step.map" GH_MOCK_FAIL_MAP="$T/step-fail-body.map"
   REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=7 bash "$STEP"; cat "$T/out3")"
 assert_eq "a failed body fetch is unverifiable, never complete" "unverifiable" "$(field "$out" coverage)"
 
-rc=0; REPO=o/r ISSUE_NUMBER=42 PR_NUMBER='' bash "$STEP" >/dev/null 2>&1 || rc=$?
-assert_eq "missing PR_NUMBER exits 2" "2" "$rc"
+# #457 review: verify-or-recover-pr.sh can report pr-present=true with an
+# empty pr-number; that must grade, not fail the implement job.
+rc=0
+GH_MOCK_STDOUT_MAP="$T/step.map" GITHUB_OUTPUT="$T/out4" \
+  REPO=o/r ISSUE_NUMBER=42 PR_NUMBER='' bash "$STEP" >/dev/null 2>&1 || rc=$?
+assert_eq "an empty PR_NUMBER exits 0" "0" "$rc"
+out="$(cat "$T/out4")"
+assert_eq "an empty PR_NUMBER is unverifiable" "unverifiable" "$(field "$out" coverage)"
+assert_eq "an empty PR_NUMBER says why" "no-pr-number" "$(field "$out" reason)"
+
+printf 'pulls/7/files\tHTTP 403: Resource not accessible by integration\n' > "$T/step-fail-403.map"
+err="$(GH_MOCK_STDOUT_MAP="$T/step.map" GH_MOCK_FAIL_MAP="$T/step-fail-403.map" GITHUB_OUTPUT="$T/out5" \
+  REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=7 bash "$STEP" 2>&1 >/dev/null)"
+case "$err" in
+  *"HTTP 403: Resource not accessible by integration"*) pass "a failed fetch logs gh's own error" ;;
+  *) fail "a failed fetch logs gh's own error" "stderr was: $err" ;;
+esac
 
 section "workflow wiring"
 
 WF="$ROOT/.github/workflows/agent-implement.yml"
+coverage_step="$(awk '/- name: Check plan coverage/{on=1;print;next} on&&/^      - name: /{exit} on' "$WF")"
+if printf '%s\n' "$coverage_step" | grep -q 'continue-on-error: true'; then
+  pass "the coverage step can never fail the implement job"
+else
+  fail "the coverage step can never fail the implement job"
+fi
 if grep -q 'run: bash .claude-pipeline/scripts/plan-coverage-step.sh' "$WF"; then
   pass "the implement job runs the coverage step"
 else

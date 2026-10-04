@@ -149,3 +149,33 @@ Layer-1, fixture-driven:
   signal it can key on; the fix stays there.
 - Re-checking coverage after the review job's self-fix pushes.
 - Commit-message evidence per task.
+
+## Amendment — 2026-10-04, after the PR #473 review
+
+The pipeline's review of PR #473 found two real flaws in this spec, plus
+smaller gaps. Operator-approved changes:
+
+- **The coverage step can no longer fail the implement job.**
+  `verify-or-recover-pr.sh` can report `pr-present=true` with an empty
+  `pr-number` (its `exists` branches); the step now grades that as
+  `unverifiable` / `no-pr-number` and exits 0, and carries
+  `continue-on-error: true` as a backstop.
+- **Grading is per task, so one unreadable task cannot silence the rest.**
+  A task is GRADED (names a path), SKIPPED (`**Files:** none …` — a sweep or
+  verification task), or UNPARSED (neither). Any GRADED task not landed →
+  `partial`, even next to UNPARSED tasks; otherwise any UNPARSED task →
+  `unverifiable` / `task-without-files:<N,...>`; a plan of only SKIPPED tasks
+  → `unverifiable` / `no-gradable-tasks`. Output gains a fourth line,
+  `unparsed-tasks=`.
+- **Parser:** `Rename:` is a file verb (both paths count); only path-shaped
+  tokens (containing `/` or ending in `.ext`) are planned files, so prose in
+  backticks is ignored; one heading matcher (`## Implementation Plan` as a
+  prefix) for both presence and parsing.
+- **Diagnostics:** a failed fetch prints `gh`'s own stderr to the step log, so
+  a permanent failure (missing scope, 404) is distinguishable from a blip.
+- **Realistic fixture:** `tests/fixtures/issue-body-large-plan.md` is graded in
+  the tests (8 tasks, one `Files: none`, two `Rename:` lines).
+
+**Kept as decided (question 3):** a plan-less issue is `unverifiable` and is
+not AI-merged. The review called this a regression; it is the explicit
+trade-off chosen in enrichment — fail closed only where nobody reads the PR.

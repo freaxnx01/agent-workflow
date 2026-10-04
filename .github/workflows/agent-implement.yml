@@ -968,9 +968,11 @@ jobs:
         # #457: grades the PR against the issue's Implementation Plan. A run
         # can end cleanly with whole plan tasks missing (#430); `partial` is
         # reported as ai:partial and, like `unverifiable`, keeps the PR out of
-        # the AI-merge job. The script exits 0 on every grade, a failed fetch
-        # included, so this step never fails the job.
+        # the AI-merge job. The script exits 0 on every grade (a failed fetch
+        # and a missing PR number included), and continue-on-error makes
+        # "never fails the implement job" hold even if it does not.
         id: plan_coverage
+        continue-on-error: true
         if: always() && !inputs.dry-run && steps.verify_pr.outputs.pr-present == 'true'
         env:
           REPO: ${{ github.repository }}
