@@ -437,21 +437,21 @@ investigated and filed.
       fully specifies transient-vs-substantive retry handling but nothing calls it;
       the hourly systemd ticks (23:00–06:00) re-run the full dispatch path, guarded
       only by the "already dispatched" eligibility check. Self-contained and ready
-      to enrich now. https://github.com/freaxnx01/bridge/issues/253
+      to enrich now. <https://github.com/freaxnx01/bridge/issues/253>
 - [x] **Daytime-dispatch schedule decided (2026-09-03): extend the timer to
       07:00–18:00.** Recorded on the issue, which pulls the schedule change into
       #254's scope. Sequencing constraint: the timer extension must ship *with* the
       budget rung, never ahead of it — a daytime timer without the guard is bounded
       only by the existing caps, i.e. the exact failure mode #254 prevents.
       `docs/systemd/bridge-dispatch.timer` is unchanged so far, deliberately.
-      https://github.com/freaxnx01/bridge/issues/254#issuecomment-5529972799
+      <https://github.com/freaxnx01/bridge/issues/254#issuecomment-5529972799>
 - [ ] Enrich **bridge#254** — `feat(dispatch): reserve subscription headroom with a
       daytime usage-budget rung` (only after the decision above). Night 18:00–07:00:
       rung off. Day 07:00–18:00: refuse dispatch once combined trailing-5h usage
       (HITL + pipeline) hits 80% of the window, leaving 20% for the operator.
-      API key for CI is ruled out (cost). https://github.com/freaxnx01/bridge/issues/254
+      API key for CI is ruled out (cost). <https://github.com/freaxnx01/bridge/issues/254>
 - [ ] Confirm empirically that subscription limits are account-scoped, i.e. that a
       local `/usage` reading already includes Action-run consumption. Recorded as an
       inference, not a documented fact, in
-      https://github.com/freaxnx01/bridge/issues/254#issuecomment-5500108394 — it is
+      <https://github.com/freaxnx01/bridge/issues/254#issuecomment-5500108394> — it is
       the calibration reference for `window_budget_usd`, so it matters.
