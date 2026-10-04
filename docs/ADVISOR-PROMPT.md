@@ -138,15 +138,19 @@ scripts/advisor-merge-docs.sh <pr>
 
 It arms `gh pr merge --squash --auto` **only** for a PR that is open, not from
 a fork, targets the default branch, and changes nothing outside
-`docs/superpowers/`. The merge is pinned with `--match-head-commit` to the head
-it checked, so a commit pushed after arming cannot ride in, and `--auto` leaves
-the merge to the repo's own required checks. Anything else is refused (exit 1)
+`docs/superpowers/` — a rename's old path included, since moving a script into
+`docs/superpowers/` deletes code. It re-reads the head after reading the files
+and refuses if it moved, then pins the merge with `--match-head-commit` to that
+head, so a commit pushed after arming cannot ride in; `--auto` leaves the merge
+to the repo's own required checks. Anything else is refused (exit 1)
 and stays the operator's.
 
 The deny-list is unchanged: a `gh pr merge` typed directly is still blocked.
 The script works because deny rules match the command text Claude writes, not
 what a script runs — the guard lives in the script's checks, and is covered by
-`tests/run-advisor-tests.sh`. Any PR that touches code, workflows, commands or
+`tests/run-advisor-tests.sh`. The same text-matching means a session could
+edit the script before running it; like the rest of the deny-list, this is a
+seatbelt, not a sandbox. Any PR that touches code, workflows, commands or
 any other doc is still handed to the operator as one
 `gh pr merge <n> --squash --auto` line.
 

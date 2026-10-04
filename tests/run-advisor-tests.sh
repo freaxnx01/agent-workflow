@@ -140,11 +140,17 @@ printf '[{"filename":"docs/superpowers/specs/x-design.md"},{"filename":"docs/sup
 printf '[{"filename":"docs/superpowers/plans/x.md"},{"filename":"scripts/autopilot.sh"}]\n' > "$T/files-mixed.json"
 printf '[{"filename":"docs/superpowers-evil/x.md"}]\n' > "$T/files-lookalike.json"
 printf '[]\n' > "$T/files-none.json"
+# A rename lists only the NEW path in `filename`; the old one is in
+# previous_filename. Moving code into docs/superpowers/ deletes the code.
+printf '[{"filename":"docs/superpowers/x.md","previous_filename":"scripts/autopilot.sh","status":"renamed"}]\n' > "$T/files-rename-out.json"
+printf '{"head":{"sha":"abc1234"}}\n' > "$T/head-same.json"
+printf '{"head":{"sha":"fff9999"}}\n' > "$T/head-moved.json"
 
 # map <pr-fixture> <files-fixture> → a GH_MOCK_STDOUT_MAP file. pulls/7/files
 # must precede the bare repos/o/r key: the mock serves the first match.
 map() {
-  printf 'pr view\t%s\npulls/7/files\t%s\nrepos/o/r\t%s\n' "$T/$1" "$T/$2" "$T/repo.json" > "$T/map"
+  printf 'pr view\t%s\npulls/7/files\t%s\nrepos/o/r/pulls/7\t%s\nrepos/o/r\t%s\n' \
+    "$T/$1" "$T/$2" "$T/${HEAD_FIXTURE:-head-same.json}" "$T/repo.json" > "$T/map"
   printf '%s' "$T/map"
 }
 run_merge() {
@@ -178,6 +184,8 @@ check_refused "a PR with no changed files is refused"            pr-open.json   
 check_refused "a PR that is not open is refused"                 pr-merged.json    files-docs.json
 check_refused "a cross-repository (fork) PR is refused"          pr-fork.json      files-docs.json
 check_refused "a PR not targeting the default branch is refused" pr-other-base.json files-docs.json
+check_refused "a rename moving a non-docs file into docs/superpowers/ is refused" pr-open.json files-rename-out.json
+HEAD_FIXTURE=head-moved.json check_refused "a head that moved while the files were read is refused" pr-open.json files-docs.json
 
 : > "$GH_MOCK_LOG"
 printf 'pulls/7/files\n' > "$T/fail.map"
