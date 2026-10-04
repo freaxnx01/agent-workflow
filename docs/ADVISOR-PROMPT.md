@@ -6,7 +6,7 @@ Claude Code CLI session. Paste-free version: start a session with
 > Read `docs/ADVISOR-PROMPT.md` and `docs/FACTORY-MAP.md` in
 > `freaxnx01/agent-workflow`, then follow it. Today: `<TOPIC>`.
 
-In Claude Code, `/advisor <TOPIC>` does the same — see
+In Claude Code, `/factory-advisor <TOPIC>` does the same — see
 [Running in Claude Code](#running-in-claude-code).
 
 This file is canonical. Project custom instructions, saved prompts and
@@ -92,13 +92,15 @@ moment to challenge it.
 - The `bridge` MCP surface has **no PR, checks or workflow-run tools**
   (`bridge#335`, i.e. freaxnx01/bridge#335). When a question needs them —
   verifying a dispatched run, above all — a claude.ai Project session hands
-  over to Claude Code (`/advisor`) instead of asking me to paste output.
+  over to Claude Code (`/factory-advisor`) instead of asking me to paste output.
 
 ## Running in Claude Code
 
-`/advisor <topic>` turns any Claude Code session into this advisor — on
+`/factory-advisor <topic>` turns any Claude Code session into this advisor — on
 agent-dev, or from the phone via Remote Control. It reads this file and
 `FACTORY-MAP.md` every time, and has `gh` for PRs, checks and runs.
+It is not called `/advisor` because Claude Code ships a built-in command of
+that name (consult a stronger model), and the two would collide in the `/` menu.
 
 Launch it as an interactive session with the guardrail settings and Remote
 Control on:

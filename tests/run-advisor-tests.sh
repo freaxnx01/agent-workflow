@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# run-advisor-tests.sh — Layer-1 contract tests for /advisor (#459).
+# run-advisor-tests.sh — Layer-1 contract tests for /factory-advisor (#459).
 #
-# /advisor is a prompt plus a settings file, so there is no runtime to drive.
+# /factory-advisor is a prompt plus a settings file, so there is no runtime to drive.
 # What can drift is the contract: the command must read the canonical docs and
 # ask for a topic, the deny-list must hold the rules that make "the advisor
 # never merges" enforced rather than promised, ADVISOR-PROMPT.md must carry the
@@ -15,7 +15,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-COMMAND="$ROOT/commands/advisor.md"
+COMMAND="$ROOT/commands/factory-advisor.md"
 SETTINGS="$ROOT/setup/advisor-settings.json"
 PROMPT="$ROOT/docs/ADVISOR-PROMPT.md"
 
@@ -57,7 +57,14 @@ assert_contains() {
   if [[ -f "$2" ]] && grep -qF -- "$3" "$2"; then pass "$1"; else fail "$1" "no '$3' in ${2#"$ROOT"/}"; fi
 }
 
-section "commands/advisor.md"
+section "commands/factory-advisor.md"
+# Claude Code ships a built-in /advisor; a user command of the same name shows
+# up twice in the / menu with no way to tell which one runs.
+if [[ -e "$ROOT/commands/advisor.md" ]]; then
+  fail "no commands/advisor.md (clashes with the built-in /advisor)"
+else
+  pass "no commands/advisor.md (clashes with the built-in /advisor)"
+fi
 if [[ -f "$COMMAND" ]] && [[ "$(head -n1 "$COMMAND")" == "---" ]] \
    && sed -n '2,/^---$/p' "$COMMAND" | grep -q '^description: '; then
   pass "has description front-matter"
@@ -70,7 +77,14 @@ assert_contains "reads FACTORY-MAP.md" "$COMMAND" "docs/FACTORY-MAP.md"
 assert_contains "takes the topic from \$ARGUMENTS" "$COMMAND" '$ARGUMENTS'
 assert_contains "asks for a topic when given none" "$COMMAND" "ask for one"
 assert_contains "names the auto-lane-v1 agenda" "$COMMAND" "--milestone auto-lane-v1"
-assert_contains "verifies runs by triggeringActor" "$COMMAND" "triggeringActor"
+assert_contains "reads run actors from the REST API" "$COMMAND" "triggering_actor"
+# `gh run view --json` has no actor fields ("Unknown JSON field: actor") —
+# found by the first real advisor run against #430.
+if grep -qE '^gh run view .*--json[^|]*actor' "$COMMAND"; then
+  fail "does not ask gh run view for actor fields" "gh run view --json has no actor/triggeringActor"
+else
+  pass "does not ask gh run view for actor fields"
+fi
 assert_contains "points at the guardrail settings" "$COMMAND" "setup/advisor-settings.json"
 
 section "setup/advisor-settings.json"
@@ -100,11 +114,12 @@ assert_contains "failure mode: numbering gaps" "$PROMPT" "numbering gap"
 assert_contains "failure mode: write without read-back" "$PROMPT" "Write without read-back"
 assert_contains "bridge MCP limits (bridge#335)" "$PROMPT" "bridge#335"
 assert_contains "Claude Code launch with the deny-list" "$PROMPT" "setup/advisor-settings.json"
+assert_contains "names the command /factory-advisor" "$PROMPT" "/factory-advisor"
 
 section "listings"
-assert_contains "commands/README.md lists /advisor" "$ROOT/commands/README.md" "/advisor"
-assert_contains "COMMAND-CHEATSHEET.md lists /advisor" "$ROOT/docs/COMMAND-CHEATSHEET.md" "/advisor"
-assert_contains "README.md command block lists /advisor" "$ROOT/README.md" "/advisor"
+assert_contains "commands/README.md lists /factory-advisor" "$ROOT/commands/README.md" "/factory-advisor"
+assert_contains "COMMAND-CHEATSHEET.md lists /factory-advisor" "$ROOT/docs/COMMAND-CHEATSHEET.md" "/factory-advisor"
+assert_contains "README.md command block lists /factory-advisor" "$ROOT/README.md" "/factory-advisor"
 
 # --- summary ---------------------------------------------------------------
 
