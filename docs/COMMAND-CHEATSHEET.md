@@ -37,7 +37,7 @@ allowlist a repo cannot opt itself into, and its default is a dry run — see
 
 ### The advisor
 
-`/advisor <topic>` turns a Claude Code session into the Software Factory
+`/factory-advisor <topic>` turns a Claude Code session into the Software Factory
 advisor — a second opinion on what to build next and whether a dispatch really
 shipped. It reads [`ADVISOR-PROMPT.md`](ADVISOR-PROMPT.md) and
 [`FACTORY-MAP.md`](FACTORY-MAP.md) every time, and verifies a run from the PR,

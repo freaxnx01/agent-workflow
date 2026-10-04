@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# run-advisor-tests.sh — Layer-1 contract tests for /advisor (#459).
+# run-advisor-tests.sh — Layer-1 contract tests for /factory-advisor (#459).
 #
-# /advisor is a prompt plus a settings file, so there is no runtime to drive.
+# /factory-advisor is a prompt plus a settings file, so there is no runtime to drive.
 # What can drift is the contract: the command must read the canonical docs and
 # ask for a topic, the deny-list must hold the rules that make "the advisor
 # never merges" enforced rather than promised, ADVISOR-PROMPT.md must carry the
@@ -15,7 +15,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-COMMAND="$ROOT/commands/advisor.md"
+COMMAND="$ROOT/commands/factory-advisor.md"
 SETTINGS="$ROOT/setup/advisor-settings.json"
 PROMPT="$ROOT/docs/ADVISOR-PROMPT.md"
 
@@ -57,7 +57,14 @@ assert_contains() {
   if [[ -f "$2" ]] && grep -qF -- "$3" "$2"; then pass "$1"; else fail "$1" "no '$3' in ${2#"$ROOT"/}"; fi
 }
 
-section "commands/advisor.md"
+section "commands/factory-advisor.md"
+# Claude Code ships a built-in /advisor; a user command of the same name shows
+# up twice in the / menu with no way to tell which one runs.
+if [[ -e "$ROOT/commands/advisor.md" ]]; then
+  fail "no commands/advisor.md (clashes with the built-in /advisor)"
+else
+  pass "no commands/advisor.md (clashes with the built-in /advisor)"
+fi
 if [[ -f "$COMMAND" ]] && [[ "$(head -n1 "$COMMAND")" == "---" ]] \
    && sed -n '2,/^---$/p' "$COMMAND" | grep -q '^description: '; then
   pass "has description front-matter"
@@ -100,11 +107,12 @@ assert_contains "failure mode: numbering gaps" "$PROMPT" "numbering gap"
 assert_contains "failure mode: write without read-back" "$PROMPT" "Write without read-back"
 assert_contains "bridge MCP limits (bridge#335)" "$PROMPT" "bridge#335"
 assert_contains "Claude Code launch with the deny-list" "$PROMPT" "setup/advisor-settings.json"
+assert_contains "names the command /factory-advisor" "$PROMPT" "/factory-advisor"
 
 section "listings"
-assert_contains "commands/README.md lists /advisor" "$ROOT/commands/README.md" "/advisor"
-assert_contains "COMMAND-CHEATSHEET.md lists /advisor" "$ROOT/docs/COMMAND-CHEATSHEET.md" "/advisor"
-assert_contains "README.md command block lists /advisor" "$ROOT/README.md" "/advisor"
+assert_contains "commands/README.md lists /factory-advisor" "$ROOT/commands/README.md" "/factory-advisor"
+assert_contains "COMMAND-CHEATSHEET.md lists /factory-advisor" "$ROOT/docs/COMMAND-CHEATSHEET.md" "/factory-advisor"
+assert_contains "README.md command block lists /factory-advisor" "$ROOT/README.md" "/factory-advisor"
 
 # --- summary ---------------------------------------------------------------
 
