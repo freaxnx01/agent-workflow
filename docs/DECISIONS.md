@@ -1072,6 +1072,11 @@ sentence rather than needing the comment that used to explain it.
 **Status:** Accepted
 **Tracking:** none — direct change, no issue
 
+> **Amended 2026-10-04:** "midday UTC" below no longer holds. GitHub keeps only the
+> date of a milestone's `due_on` and stores any time as `T00:00:00Z` — a midday write
+> to `agent-workflow` milestone #5 read back as midnight. `/new` and `/milestone`
+> now send `T00:00:00Z`, so the read-back matches the request.
+
 ### Context
 
 `/new` set a milestone only when the notes named one, and otherwise neither set

@@ -59,11 +59,12 @@ gh issue view <number> --json number,title,url,labels,milestone
 **1 — My notes name a milestone.** Pass it as `-m "<name>"`. If it doesn't exist
 yet, **ask** me before creating it (and ask for a due date); never create one
 silently. If I give no due date, omit `-f due_on=…` entirely — never pass an empty
-value. `gh milestone` doesn't exist, so create it with `gh api`, normalizing the due
-date to **midday UTC** so a viewer's timezone can't roll it back a day:
+value. `gh milestone` doesn't exist, so create it with `gh api`, sending the due
+date at **midnight UTC** — GitHub keeps only the date and stores any time as
+`T00:00:00Z` (verified 2026-10-04), so that is the form the read-back returns:
 
 ```bash
-gh api "repos/$repo/milestones" -f title="<name>" -f due_on="<YYYY-MM-DD>T12:00:00Z"
+gh api "repos/$repo/milestones" -f title="<name>" -f due_on="<YYYY-MM-DD>T00:00:00Z"
 ```
 
 If my notes name no milestone, read the open ones — **sorted locally**, see *The
@@ -86,7 +87,7 @@ due_day=$(( last_day < 30 ? last_day : 30 ))
 
 gh api "repos/$repo/milestones" \
   -f title="general-$month-$year" \
-  -f due_on="$year-$(date +%m)-${due_day}T12:00:00Z"
+  -f due_on="$year-$(date +%m)-${due_day}T00:00:00Z"
 ```
 
 - **Confirm before creating** — show me the name and the due date and wait for a
@@ -227,8 +228,8 @@ tea milestones create --login git-home \
 ```
 
 `--deadline` takes a bare `YYYY-MM-DD` — `tea` parses loose date strings itself, so
-there is no midday-UTC normalization to do here. That asymmetry with the GitHub
-side is deliberate, not an omission.
+there is no time component to add here. The GitHub side appends `T00:00:00Z` only
+because its API wants a full timestamp.
 
 **3 — Exactly one open milestone.** Assign it silently, and let the read-back
 report it.
