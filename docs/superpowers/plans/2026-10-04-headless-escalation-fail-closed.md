@@ -400,4 +400,147 @@ git commit -m "fix(enrich): headless mode creates needs-human and never waits
 Refs #458"
 ```
 
-The PR body says `Closes #458` and quotes both RED/GREEN runs.
+
+---
+
+### Task 3: Do not escalate over a held lock (amendment after the PR #471 review)
+
+See the spec's "Amendment" section. Tasks 1 and 2 are already on the PR branch;
+this task narrows them.
+
+**Files:**
+- Modify: `scripts/autopilot.sh` (the `needs-enrichment` arm `0)` in `process_issue`)
+- Modify: `commands/enrich.md` (`### Never wait`, step 2)
+- Modify: `docs/AUTOPILOT.md` (log table; "When something is wedged" first bullet)
+- Test: `tests/run-autopilot-driver-tests.sh` (new case after the two `#458` cases), `tests/run-enrich-headless-doc-tests.sh` (one assertion)
+
+**Interfaces:**
+- Consumes: `issue_label_state <repo> <n> <label>` (0 present / 1 absent / 2 unreadable), `escalate_issue <repo> <n> <reason>` (Task 1), `log_issue`.
+- Produces: new log line `skipped (enrichment-ongoing still set — may be another session's lock)`.
+
+- [ ] **Step 1: Write the failing tests**
+
+In `tests/run-autopilot-driver-tests.sh`, directly after the
+"a failed escalation of an incomplete enrich dispatches nothing (#458)" check, add:
+
+```bash
+# --- #458 amendment: the session stood down because ANOTHER session holds the
+#     lock (Step 1.5 / lost race at 2.5). Same labels as an incomplete enrich,
+#     plus enrichment-ongoing. The driver must not touch someone else's lock. ---
+printf '{"labels":[{"name":"needs-enrichment"},{"name":"enrichment-ongoing"}]}\n' > "$TMPDIR_T/labels-held-lock.json"
+sed "s#labels-not-enriched.json#labels-held-lock.json#" "$TMPDIR_T/gh-not-enriched.map" > "$TMPDIR_T/gh-held-lock.map"
+out="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/gh-held-lock.map" run_driver)"
+case "$out" in
+  *"o/r#41 skipped (enrichment-ongoing still set — may be another session's lock)"*)
+    pass "an incomplete enrich with the lock still set is skipped, not escalated (#458)" ;;
+  *) fail "an incomplete enrich with the lock still set is skipped, not escalated (#458)" "output was: $out" ;;
+esac
+if grep -q 'issue edit' "$GH_MOCK_LOG"; then
+  fail "a held lock is never released by the driver (#458)" "$(grep 'issue edit' "$GH_MOCK_LOG")"
+else
+  pass "a held lock is never released by the driver (#458)"
+fi
+```
+
+In `tests/run-enrich-headless-doc-tests.sh`, before the summary `printf`, add:
+
+```bash
+if printf '%s\n' "$section" | grep -qi 'only if this run acquired'; then
+  pass "never-wait releases the lock only if this run acquired it"
+else
+  fail "never-wait releases the lock only if this run acquired it"
+fi
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `bash tests/run-autopilot-driver-tests.sh; bash tests/run-enrich-headless-doc-tests.sh`
+Expected: FAIL — the held-lock case currently logs `failed (enrich did not complete)` and makes one `issue edit`; the doc test finds no "only if this run acquired".
+
+- [ ] **Step 3: Write minimal implementation**
+
+In `scripts/autopilot.sh`, replace the `needs-enrichment` arm `0)` with:
+
+```bash
+    0) # The session returned without enriching OR escalating. Escalate —
+       # unless enrichment-ongoing is still set: a session that stood down
+       # because ANOTHER session holds the lock (/enrich Step 1.5, or a lost
+       # race at 2.5) leaves exactly this state, and the driver cannot tell
+       # that lock from its own session's leftover. Releasing it would unlock
+       # an issue someone is actively enriching (#458, PR #471 review).
+       local lock_state=0
+       issue_label_state "$repo" "$n" enrichment-ongoing || lock_state=$?
+       case "$lock_state" in
+         1) escalate_issue "$repo" "$n" "failed (enrich did not complete)" ;;
+         0) log_issue "$repo" "$n" \
+              "skipped (enrichment-ongoing still set — may be another session's lock)" ;;
+         *) log_issue "$repo" "$n" "skipped (could not read labels — not dispatching)" ;;
+       esac
+       return 0 ;;
+```
+
+In `commands/enrich.md`, replace never-wait step 2 with:
+
+```markdown
+2. Release the lock **only if this run acquired it in Step 2.5**:
+   `gh issue edit $ISSUE --remove-label enrichment-ongoing`. If that fails,
+   say so. A run that stops before Step 2.5 releases nothing — any lock on
+   the issue then belongs to another session.
+```
+
+and in the paragraph after the list, replace the sentence that begins "A run that stops this way" and ends "escalates exactly that state to `needs-human` (#458)." with:
+
+```markdown
+A run that stops this way
+leaves `needs-enrichment` on, `needs-human` off and no lock of its own, and
+`scripts/autopilot.sh` escalates exactly that state to `needs-human` (#458).
+If `enrichment-ongoing` is still set, the driver assumes it may be another
+session's and leaves the issue alone.
+```
+
+In `docs/AUTOPILOT.md`, in the log table, directly after the
+`failed (enrich did not complete)` row, add:
+
+```markdown
+| `skipped (enrichment-ongoing still set — may be another session's lock)` | The session neither enriched nor escalated, but the lock is still on the issue — most likely another `/enrich` session holds it (this one stood down at Step 1.5 or lost the Step 2.5 race). Nothing written; if no session is actually running, see "When something is wedged" |
+```
+
+and replace the whole first "When something is wedged" bullet (the one starting
+`- **An issue is stuck with \`enrichment-ongoing\` and no run in flight.**`, up to
+and including its `--remove-label enrichment-ongoing` line) with:
+
+```markdown
+- **An issue is stuck with `enrichment-ongoing` and no run in flight.** A lock
+  is left behind by any of: an `ESCALATION FAILED` log line; a
+  `skipped (enrichment-ongoing still set …)` line with no session actually
+  running; a dispatch-failure escalation (`failed (dispatch labels not
+  applied) …` adds `needs-human` only); `/enrich` Step 6 failing on the lock
+  release after it already removed `needs-enrichment`; or the run being
+  killed (e.g. the unit's `TimeoutStartSec`). Nothing releases it
+  automatically: `/enrich`'s staleness check only offers to take over a stale
+  lock interactively, which headless mode forbids, and the lane skips any
+  issue still carrying `enrichment-ongoing` regardless of its age. Remove the
+  label by hand:
+  `gh issue edit <n> --repo <owner/repo> --remove-label enrichment-ongoing`.
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `bash tests/run-all.sh`
+Expected: every runner passes, including the earlier `#458` cases (their fixture has no `enrichment-ongoing`, so they still escalate).
+
+- [ ] **Step 5: Lint and commit**
+
+Run: `shellcheck -x -e SC1091 scripts/autopilot.sh tests/run-autopilot-driver-tests.sh tests/run-enrich-headless-doc-tests.sh && npx --no-install markdownlint-cli2 commands/enrich.md docs/AUTOPILOT.md`
+Expected: no shellcheck output, `0 issues`.
+
+```bash
+git add scripts/autopilot.sh commands/enrich.md docs/AUTOPILOT.md tests/run-autopilot-driver-tests.sh tests/run-enrich-headless-doc-tests.sh
+git commit -m "fix(autopilot): never escalate over an enrichment lock that may be another session's
+
+Refs #458"
+git push
+```
+
+The PR body says `Closes #458` and quotes the RED/GREEN runs of every task.
+
