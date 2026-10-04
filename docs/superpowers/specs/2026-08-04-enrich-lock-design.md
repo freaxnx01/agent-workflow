@@ -78,11 +78,11 @@ before readiness assessment):
   now.
   - No matching comment found (label applied manually, or the comment is
     missing) → treat as unknown age, same handling as stale below.
-  - Age < 4 hours → **hard stop**. Tell the user the issue is already being
+  - Age < 24 hours → **hard stop**. Tell the user the issue is already being
     enriched (show the age) and end the command. No readiness assessment,
     no brainstorming.
-  - Age ≥ 4 hours → **stale**. Tell the user the lock looks abandoned (show
-    age and the 4h threshold) and ask whether to take over.
+  - Age ≥ 24 hours → **stale**. Tell the user the lock looks abandoned (show
+    age and the 24h threshold) and ask whether to take over.
     - No → stop.
     - Yes → continue to Step 2, and when Step 2.5 re-acquires the lock, note
       the takeover in the new comment (see below).
@@ -169,7 +169,7 @@ Step 6 only covers the success path, but Step 2.5 is followed by two steps
 that can legitimately stop the command: the brainstorming approval gate in
 Step 3 (the user declines) and Step 5's "verify the push succeeded" stop.
 Aborting there without releasing would leave a lock nobody is holding for the
-full 4h staleness window. So the release is not Step-6-specific: **any
+full 24h staleness window. So the release is not Step-6-specific: **any
 user-initiated abort after Step 2.5 removes `enrichment-ongoing` before the
 command ends**, using the same commands Step 6 uses. Only a hard crash (which
 staleness expiry already covers) leaves the lock behind.
@@ -186,20 +186,27 @@ comment) simply persists. Either:
   lock, but since no *other* session is racing, this is a self-collision.
   This design does not special-case "is it me" (the forge API doesn't cheaply
   tell us that) — the resuming person just answers "yes, take over" once the
-  lock crosses the 4h staleness threshold, or waits it out. This is an
+  lock crosses the 24h staleness threshold, or waits it out. This is an
   accepted rough edge, not solved here.
-- A different session hits the stale-lock path after 4 hours and takes over.
+- A different session hits the stale-lock path after 24 hours and takes over.
 
 No explicit crash-cleanup step is needed — staleness expiry is the entire
 recovery mechanism.
 
 ### Threshold
 
-4 hours. Enrichment (brainstorm + plan) is normally a single sitting, but 4h
-leaves room for a paused human back-and-forth (interruptions, thinking time)
-without false-flagging an active session as stale. It's a plain constant in
-the command doc — easy to retune later if it proves too tight or too loose
-in practice.
+24 hours, shared with `/enrich-phased`'s lock (`docs/superpowers/specs/2026-08-04-enrich-phased-lock-design.md`).
+The lock comment doesn't record which command acquired it, so `/enrich` and
+`/enrich-phased` must agree on a single threshold for either one to correctly
+judge a lock the other command holds — a value here that only made sense for
+`/enrich`'s own single-sitting use would cause `/enrich`'s Step 1.5 to treat
+an `/enrich-phased` run's ordinary overnight pause between `/clear` boundaries
+as abandoned and offer it up for takeover, defeating the lock in exactly the
+scenario cross-command detection exists to cover. 24 hours absorbs that normal
+pause while still recovering a genuinely abandoned single-sitting `/enrich`
+run within a day. It's a plain constant in the command doc — easy to retune
+later if it proves too tight or too loose in practice, but retune both
+commands together.
 
 ## Testing / verification
 
@@ -210,7 +217,7 @@ Verification is a manual dry run against a scratch issue:
    fresh lock comment on a test issue, then run `/enrich <issue>` — confirm
    it hard-stops at Step 1.5 without starting brainstorming.
 2. Manually backdate the lock comment (edit its text to an older timestamp,
-   past 4h) and re-run — confirm the stale/takeover prompt fires, and that
+   past 24h) and re-run — confirm the stale/takeover prompt fires, and that
    answering yes proceeds while answering no stops.
 3. Run `/enrich` end-to-end on an unlocked issue — confirm the lock label
    and comment appear before brainstorming starts (Step 2.5), and that both
@@ -225,10 +232,14 @@ Verification is a manual dry run against a scratch issue:
 
 ## Follow-ups (out of scope here)
 
-- Apply the same lock mechanism to `/enrich-phased`. **Known gap until then:**
-  `/enrich-phased` neither acquires nor releases `enrichment-ongoing`, so a
-  lock left by `/enrich` is invisible to it (it will happily enrich a locked
-  issue), and it can never release one. Staleness expiry is the only backstop.
+- ~~Apply the same lock mechanism to `/enrich-phased`.~~ **Done** — see
+  `docs/superpowers/specs/2026-08-04-enrich-phased-lock-design.md` (issue
+  #237). `/enrich-phased` now detects, acquires and releases the same
+  `enrichment-ongoing` lock. Both commands share the same 24h staleness
+  threshold (`/enrich`'s own threshold was raised from 4h to match — see
+  *Threshold* above): the lock comment doesn't record which command acquired
+  it, so a lock set by either command is now correctly respected by the
+  other in both directions, not just detected.
 - Consider whether the "same person resuming" self-collision case is worth
   special-casing later (e.g. embedding a session/host identifier in the lock
   comment) if it proves annoying in practice.

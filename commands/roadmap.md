@@ -83,8 +83,8 @@ and stop. No fuzzy matching, no silent creation:
 
 ```bash
 repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
-gh api "repos/$repo/milestones?state=open&sort=due_on&direction=asc&per_page=100" \
-  --jq '.[] | [.title, (.due_on // "-")] | @tsv'
+gh api "repos/$repo/milestones?state=open&per_page=100" \
+  --jq 'sort_by(.due_on // "9999") | .[] | [.title, (.due_on // "-")] | @tsv'
 ```
 
 If step 1 read-back does not show the milestone, stop and do not remove the label.
@@ -93,12 +93,29 @@ After both read-backs confirm, offer `/route <n>` (read and follow
 
 ### defer
 
-`defer <n> "<reason>"` appends a roadmap reason comment and keeps labels unchanged:
+`defer <n> "<reason>"` appends a roadmap reason comment, **strips the milestone**,
+and otherwise keeps labels unchanged:
 
 ```bash
 gh issue comment <n> --body "roadmap: <reason>"
 gh issue view <n> --json comments --jq '.comments | last | .body | split("\n")[0]'
+
+# roadmap work is by definition not scheduled — drop any milestone it carries
+gh issue edit <n> --remove-milestone
+gh issue view <n> --json number,milestone --jq '[.number, (.milestone.title // "-")] | @tsv'
 ```
+
+**Why the strip.** A roadmap issue is *planned for future work, not yet scheduled
+to a milestone*, so carrying one contradicts the label — and `/milestone triage`
+filters `roadmap` out of the un-milestoned gap, so it can never surface the
+contradiction. `/roadmap promote` is the exact inverse: it assigns a milestone,
+then removes the label.
+
+Report the milestone from the read-back. Removal on an issue that has no milestone
+is a **no-op that exits 0** (verified 2026-09-09), so run it unconditionally rather
+than reading the milestone first. **Coverage is partial by construction:** it only
+fires when `/roadmap defer` runs — labelling an issue `roadmap` by hand in the web
+UI leaves its milestone in place.
 
 If no reason argument was provided, ask for one and stop. Never edit the issue body
 and never edit a previous comment.
@@ -221,6 +238,38 @@ reasons=[c.get("body","") for c in comments if c.get("body","").startswith("road
 print(reasons[-1].split("\n")[0] if reasons else "—")'
 ```
 
+Deferring also **strips the milestone** — roadmap work is by definition not
+scheduled:
+
+```bash
+# read the current milestone — `remove` takes the name, not an id
+tea api --login git-home "repos/$repo/issues/<n>" | python3 -c '
+import sys, json
+m = json.load(sys.stdin).get("milestone") or {}
+print(m.get("title") or "")'
+
+# then, only if that printed a name:
+tea milestones issues remove --login git-home "<name>" <n>
+```
+
+**Why the strip.** A roadmap issue is *planned for future work, not yet scheduled
+to a milestone*, so carrying one contradicts the label — and `/milestone triage`
+filters `roadmap` out of the un-milestoned gap, so it can never surface the
+contradiction. `/roadmap promote` is the exact inverse: it assigns a milestone,
+then removes the label.
+
+Report the milestone from the read-back. Removal on an issue that has no milestone
+is a **no-op that exits 0** (verified 2026-09-09), so run it unconditionally rather
+than reading the milestone first. **Coverage is partial by construction:** it only
+fires when `/roadmap defer` runs — labelling an issue `roadmap` by hand in the web
+UI leaves its milestone in place.
+
+`tea milestones issues remove` mirrors the `add` form used by `/milestone assign`
+and carries the same epistemic caveat as every other `tea` flag here — taken from
+tea's source, not a live run. If it misbehaves, the fallback is
+`tea api --login git-home -X PATCH "repos/$repo/issues/<n>"` with `{"milestone":0}`;
+fix it and update this command.
+
 If no reason argument was provided, ask for one and stop. Never edit the issue body
 and never edit a previous comment.
 
@@ -238,7 +287,65 @@ $ARGUMENTS
 If you hit a blocker (repo not resolvable, `tea` flags differ, or read-back doesn't
 match the write), find a fix and update this command for the future.
 
+## Azure DevOps
+
+Roadmap **work items** — the same shape as `/parked`, keyed on the `roadmap` tag.
+
+```bash
+source "$HOME/.claude/scripts/lib/detect-forge.sh"
+source "$HOME/.claude/scripts/lib/azdo.sh"
+resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
+```
+
+### Tags on this forge
+
+**The tags here are plain `roadmap` and `parked`.** Azure DevOps rejects
+emoji in tag names (`TF401407`), so the GitHub and Forgejo spelling cannot exist
+here. See **ADR-016**; this is a per-forge difference, not a typo to "fix".
+
+**Write tags with `azdo_set_tags`, never with `--fields`.**
+`az boards work-item update --fields "System.Tags=..."` **appends** — successive
+calls accumulate — and an empty value is a silent **no-op**, so removing a tag is
+impossible through it. `azdo_set_tags` does a json-patch `replace`, which both
+shrinks and clears.
+
+Tags come back separated by a **semicolon *and* a space**, not a bare `;`.
+Splitting on `;` alone leaves leading whitespace on every tag after the first.
+
+### list
+
+```bash
+rc=0; ids=$(azdo_wiql "SELECT [System.Id] FROM WorkItems
+WHERE [System.TeamProject] = @project
+  AND [System.AreaPath] UNDER '$AZDO_PROJECT\\$AZDO_REPO'
+  AND [System.State] NOT IN ($(azdo_closed_states))
+  AND [System.Tags] CONTAINS 'roadmap'
+ORDER BY [System.CreatedDate] DESC" | tr '\n' ',' | sed 's/,$//') || rc=$?
+```
+
+### promote `<n>` to `<milestone>`
+
+Drop the `roadmap` tag with `azdo_set_tags` — reading the current tags and
+writing back the remainder, as `/parked`'s unpark does — then set the iteration:
+
+```bash
+az boards work-item update --id "<n>" --org "$(azdo_org_url)" \
+  --fields "System.IterationPath=$AZDO_PROJECT\\<iteration>" \
+  --output tsv --only-show-errors --query 'fields."System.IterationPath"'
+```
+
+`System.IterationPath` **replaces** rather than appends — unlike `System.Tags`,
+it holds a single value — so `--fields` is correct for it. Resolve `<milestone>`
+against `azdo_iterations` first; if it matches nothing, say which exist rather
+than creating one implicitly.
+
+### defer `<n>` "<reason>"
+
+Add `roadmap` to the existing tags via `azdo_set_tags`, and post the reason with
+`--discussion`.
+
 ## Unknown host
 
-Report the detected host and that no authed GitHub or Forgejo login matched
-it; point at `gh auth login` / `tea login add`. Don't guess a forge.
+Report the detected host and that it matched no authed GitHub or Forgejo login
+and none of the Azure DevOps host forms; point at `gh auth login` /
+`tea login add` / `az devops login`. Don't guess a forge.

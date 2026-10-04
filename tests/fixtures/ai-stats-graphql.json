@@ -1,0 +1,105 @@
+{
+  "data": {
+    "repository": {
+      "issues": {
+        "pageInfo": { "hasNextPage": false, "endCursor": null },
+        "nodes": [
+          {
+            "number": 201,
+            "title": "shipped by an agent PR — GitHub forms no closing reference",
+            "state": "CLOSED",
+            "timelineItems": { "nodes": [
+              { "createdAt": "2026-09-01T10:00:00Z", "label": { "name": "ai-implement" } }
+            ] },
+            "closedEvents": { "nodes": [
+              { "closer": { "__typename": "PullRequest", "number": 901, "merged": true } }
+            ] },
+            "closedByPullRequestsReferences": { "nodes": [] },
+            "comments": { "nodes": [
+              { "createdAt": "2026-09-01T10:08:00Z",
+                "body": "## ai-implement run\n\n**Outcome:** :white_check_mark: success\n**Duration:** 5m · **Turns:** 20 / cap 120 · **Cost:** $1.10\n**Model:** claude-sonnet-5 · **Agent:** claude · **Plan:** enriched\n" }
+            ] }
+          },
+          {
+            "number": 202,
+            "title": "both sources name the same PR — must count once",
+            "state": "CLOSED",
+            "timelineItems": { "nodes": [
+              { "createdAt": "2026-09-01T10:00:00Z", "label": { "name": "ai-implement" } }
+            ] },
+            "closedEvents": { "nodes": [
+              { "closer": { "__typename": "PullRequest", "number": 902, "merged": true } }
+            ] },
+            "closedByPullRequestsReferences": { "nodes": [ { "number": 902, "merged": true } ] },
+            "comments": { "nodes": [
+              { "createdAt": "2026-09-01T10:08:00Z",
+                "body": "## ai-implement run\n\n**Outcome:** :white_check_mark: success\n**Duration:** 5m · **Turns:** 20 / cap 120 · **Cost:** $1.10\n**Model:** claude-sonnet-5 · **Agent:** claude · **Plan:** enriched\n" }
+            ] }
+          },
+          {
+            "number": 203,
+            "title": "closed by hand — no closer, no reference, not shipped",
+            "state": "CLOSED",
+            "timelineItems": { "nodes": [
+              { "createdAt": "2026-09-01T10:00:00Z", "label": { "name": "ai-implement" } }
+            ] },
+            "closedEvents": { "nodes": [ { "closer": null } ] },
+            "closedByPullRequestsReferences": { "nodes": [] },
+            "comments": { "nodes": [
+              { "createdAt": "2026-09-01T10:08:00Z",
+                "body": "## ai-implement run\n\n**Outcome:** :x: failed: task_failure\n**Duration:** 5m · **Turns:** 40 / cap 120 · **Cost:** $2.50\n**Model:** claude-opus-5 · **Agent:** claude · **Plan:** enriched\n" }
+            ] }
+          },
+          {
+            "number": 204,
+            "title": "closed by a commit, not a PR — not shipped",
+            "state": "CLOSED",
+            "timelineItems": { "nodes": [
+              { "createdAt": "2026-09-01T10:00:00Z", "label": { "name": "ai-implement" } }
+            ] },
+            "closedEvents": { "nodes": [ { "closer": { "__typename": "Commit" } } ] },
+            "closedByPullRequestsReferences": { "nodes": [] },
+            "comments": { "nodes": [] }
+          },
+          {
+            "number": 205,
+            "title": "an unmerged PR closed it — not shipped, from either source",
+            "state": "CLOSED",
+            "timelineItems": { "nodes": [
+              { "createdAt": "2026-09-01T10:00:00Z", "label": { "name": "ai-implement" } }
+            ] },
+            "closedEvents": { "nodes": [
+              { "closer": { "__typename": "PullRequest", "number": 905, "merged": false } }
+            ] },
+            "closedByPullRequestsReferences": { "nodes": [ { "number": 905, "merged": false } ] },
+            "comments": { "nodes": [] }
+          },
+          {
+            "number": 206,
+            "title": "reference only, no ClosedEvent — the human-authored-PR case",
+            "state": "CLOSED",
+            "timelineItems": { "nodes": [
+              { "createdAt": "2026-09-01T10:00:00Z", "label": { "name": "ai-implement" } }
+            ] },
+            "closedEvents": { "nodes": [] },
+            "closedByPullRequestsReferences": { "nodes": [ { "number": 906, "merged": true } ] },
+            "comments": { "nodes": [] }
+          },
+          {
+            "number": 207,
+            "title": "never dispatched — must not appear as a record at all",
+            "state": "CLOSED",
+            "timelineItems": { "nodes": [
+              { "createdAt": "2026-09-01T10:00:00Z", "label": { "name": "bug" } }
+            ] },
+            "closedEvents": { "nodes": [
+              { "closer": { "__typename": "PullRequest", "number": 907, "merged": true } }
+            ] },
+            "closedByPullRequestsReferences": { "nodes": [] },
+            "comments": { "nodes": [] }
+          }
+        ]
+      }
+    }
+  }
+}

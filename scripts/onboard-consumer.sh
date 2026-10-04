@@ -9,7 +9,7 @@
 #                     OPENROUTER_API_KEY) as a repo OR org secret. The value is
 #                     read from a command or stdin and never echoed.
 #   3. Labels       — run ensure-issue-labels.sh against the target repo.
-#   4. Repo settings— enable "Actions can create PRs"; for --auto-review also
+#   4. Repo settings— enable "Actions can create PRs"; for --ai-review-ai-merge also
 #                     enable allow-auto-merge + allow-squash-merge.
 #   5. Consumer stub— commit .github/workflows/agent.yml (and chain-dispatch.yml
 #                     with --chain) — via the GitHub API, no local clone
@@ -47,24 +47,31 @@
 #
 # Pipeline wiring:
 #       --ref <ref>             Pipeline ref to pin in `uses:` / `pipeline-ref:`.
+#                               Default: the newest released major line,
+#                               resolved at run time (see below). Pass this
+#                               only for a deliberate pin — a self-test, or
+#                               tracking `main`.
 #                               Default 'v1'.
 #       --agent claude|opencode Default agent for the stub. Default 'claude'.
 #       --model <model>         default-model input. Default 'claude-sonnet-5'.
 #       --runner-labels '<json>' JSON array of runner labels.
 #                               Default '["ubuntu-latest"]'.
-#       --auto-review           Wire auto-review: true and enable the repo
-#                               settings auto-merge needs (ADR-002 gate 7).
-#                               Mutually exclusive with --pre-preview at
-#                               the per-issue label level (pre-preview
-#                               wins if an issue carries both).
-#       --pre-preview           Wire pre-preview: true (ADR-004) — after the
-#                               pipeline opens a draft PR, an agent reviews
-#                               it (review-model input, default
-#                               claude-opus-5, independent of the
-#                               implementation model) and promotes draft
-#                               to ready on approve. No auto-merge, ever —
-#                               a human still merges. Per-issue opt-in via
-#                               the ai-pre-preview label (not applied here).
+#       --ai-review-ai-merge    Wire ai-review-ai-merge: true and enable the
+#                               repo settings auto-merge needs (ADR-002
+#                               gate 7). The AI reviews the PR and merges it
+#                               on approve+green. Per-issue opt-in via the
+#                               ai-review-ai-merge label (not applied here).
+#                               Loses to --ai-review-human-merge at the
+#                               per-issue level when an issue enables both.
+#       --ai-review-human-merge Wire ai-review-human-merge: true (ADR-004,
+#                               named by ADR-009) — after the pipeline opens
+#                               a draft PR, the AI reviews it (review-model
+#                               input, default claude-opus-5, independent of
+#                               the implementation model) and promotes draft
+#                               to ready on approve. No auto-merge, ever — a
+#                               HUMAN merges. Per-issue opt-in via the
+#                               ai-review-human-merge label (not applied
+#                               here).
 #       --chain                 Also commit chain-dispatch.yml (ADR-003).
 #       --no-stub               Skip the stub commit entirely; do secret +
 #                               labels + settings only.
@@ -104,12 +111,12 @@ SECRET_SCOPE='repo'
 ORG=''
 SECRET_VISIBILITY='selected'
 SECRET_REPOS=''
-REF='v1'
+REF=''
 AGENT='claude'
 MODEL='claude-sonnet-5'
 RUNNER_LABELS='["ubuntu-latest"]'
-AUTO_REVIEW=false
-PRE_PREVIEW=false
+AI_MERGE=false
+HUMAN_MERGE=false
 CHAIN=false
 NO_STUB=false
 DIRECT_TO_MAIN=true
@@ -159,8 +166,8 @@ while [[ $# -gt 0 ]]; do
     --agent)              AGENT="${2:?}"; shift 2 ;;
     --model)              MODEL="${2:?}"; shift 2 ;;
     --runner-labels)      RUNNER_LABELS="${2:?}"; shift 2 ;;
-    --auto-review)        AUTO_REVIEW=true; shift ;;
-    --pre-preview)        PRE_PREVIEW=true; shift ;;
+    --ai-review-ai-merge)    AI_MERGE=true; shift ;;
+    --ai-review-human-merge) HUMAN_MERGE=true; shift ;;
     --chain)              CHAIN=true; shift ;;
     --no-stub)            NO_STUB=true; shift ;;
     --no-settings)        NO_SETTINGS=true; shift ;;
@@ -175,6 +182,35 @@ done
 # ---- validation (fail fast) ------------------------------------------------
 require_cmd gh
 require_cmd jq
+
+# Resolve the ref to pin, rather than baking a major into this script. A
+# hardcoded default is exactly what froze `v1`: it was correct the day it was
+# written and silently wrong from the day v2 shipped, and every repo onboarded
+# in between inherited a pin that would never receive another fix. Nobody
+# noticed for six weeks, across 70 repos.
+#
+# Only a real vX.Y.Z release counts — a bare moving tag is the pointer, not
+# evidence that a line exists — and pre-releases never win, so cutting a
+# v3.0.0-rc.1 does not start pinning new repos to an unreleased line.
+resolve_newest_major() {
+  gh api "repos/${PIPELINE_REPO}/git/matching-refs/tags/v" \
+      --jq '.[].ref | sub("^refs/tags/"; "")' 2>/dev/null \
+    | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+    | sort -V | tail -1 | sed -E 's/^(v[0-9]+)\..*/\1/'
+}
+
+if [[ -z "$REF" ]]; then
+  REF="$(resolve_newest_major)"
+  # Fail rather than guess. A wrong pin produces green runs on stale code,
+  # which is the failure mode this whole mechanism exists to prevent — far
+  # worse than refusing to onboard until someone says what to pin.
+  if [[ -z "$REF" ]]; then
+    printf 'error: could not resolve the newest major tag from %s\n' "$PIPELINE_REPO" >&2
+    printf '       Pass --ref <vN> explicitly (e.g. --ref v2).\n' >&2
+    exit 2
+  fi
+  printf 'pinning %s (newest released major line in %s)\n' "$REF" "$PIPELINE_REPO"
+fi
 
 [[ -n "$REPO" ]]            || usage_error "--repo is required"
 [[ "$REPO" == */* ]]       || usage_error "--repo must be owner/repo (got: $REPO)"
@@ -274,7 +310,7 @@ else
   run gh api -X PUT "repos/$REPO/actions/permissions/workflow" \
     -F can_approve_pull_request_reviews=true >/dev/null
 
-  if [[ "$AUTO_REVIEW" == true ]]; then
+  if [[ "$AI_MERGE" == true ]]; then
     info "Enabling allow-auto-merge + allow-squash-merge (ADR-002 gate 7)"
     run gh api -X PATCH "repos/$REPO" \
       -F allow_auto_merge=true -F allow_squash_merge=true >/dev/null
@@ -295,9 +331,14 @@ build_agent_yml() {
   with_block+=$'\n      runner-labels: '"'$RUNNER_LABELS'"
   with_block+=$'\n      default-model: '"$MODEL"
   with_block+=$'\n      pipeline-ref: '"$REF"
-  [[ "$AGENT" == opencode ]] && with_block+=$'\n      agent: opencode'
-  [[ "$AUTO_REVIEW" == true ]] && with_block+=$'\n      auto-review: true'
-  [[ "$PRE_PREVIEW" == true ]] && with_block+=$'\n      pre-preview: true'
+  # Always emit this, never only for opencode. agent-implement.yml's own `agent`
+  # input defaults to `opencode`, so a stub that omits the line silently runs the
+  # opposite of this script's documented default (claude) -- and a repo can then
+  # appear to run Claude purely because no OPENROUTER_API_KEY is present, flipping
+  # the moment that secret is added for any reason.
+  with_block+=$'\n      agent: '"$AGENT"
+  [[ "$AI_MERGE" == true ]] && with_block+=$'\n      ai-review-ai-merge: true'
+  [[ "$HUMAN_MERGE" == true ]] && with_block+=$'\n      ai-review-human-merge: true'
 
   cat <<YAML
 name: Claude
@@ -309,6 +350,8 @@ permissions:            # a reusable workflow can't be granted more than its
   contents: write       # caller; the repo's default GITHUB_TOKEN is read-only,
   pull-requests: write  # so omitting this fails the run at startup_failure.
   issues: write
+  actions: write        # retry-dispatch.sh re-dispatches THIS workflow; without
+                        # it every retry 403s and transient failures go hard
 
 jobs:
   claude:

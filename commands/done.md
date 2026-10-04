@@ -55,7 +55,43 @@ for i in rows:
 
 Compact table: number, title, when closed (relative), labels. Concise.
 
+## Azure DevOps
+
+Recently **completed** work items.
+
+```bash
+source "$HOME/.claude/scripts/lib/detect-forge.sh"
+source "$HOME/.claude/scripts/lib/azdo.sh"
+resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
+```
+
+Closed is `State IN (closed states)` — the inverse of every other query here — and
+the state list is **derived**, never written out, because it is template-specific:
+a Basic project has `Done`, an Agile-derived one does not.
+
+```bash
+rc=0; ids=$(azdo_wiql "SELECT [System.Id] FROM WorkItems
+WHERE [System.TeamProject] = @project
+  AND [System.AreaPath] UNDER '$AZDO_PROJECT\\$AZDO_REPO'
+  AND [System.State] IN ($(azdo_closed_states))
+  AND [System.ChangedDate] >= @today - 30
+ORDER BY [System.ChangedDate] DESC" | tr '\n' ',' | sed 's/,$//') || rc=$?
+```
+
+Capture `azdo_wiql`'s status; never call it bare. Sourcing `azdo.sh` applies
+`set -e`, and the function returns **2** when the Area Path does not exist
+(`TF51011`) — a different answer from "nothing matched", which must not be
+reported as one.
+
+`@today - 30` is valid WIQL and is the recency window; adjust the number rather
+than filtering in the shell. There is no "closed at" field to sort on —
+`System.ChangedDate` is the closest, and it moves on any edit, so treat the
+ordering as approximate and say so if it matters.
+
+Resolve fields with `azdo_fields "$ids"` and show id, title, state and iteration.
+
 ## Unknown host
 
-Report the detected host and that no authed GitHub or Forgejo login matched
-it; point at `gh auth login` / `tea login add`. Don't guess a forge.
+Report the detected host and that it matched no authed GitHub or Forgejo login
+and none of the Azure DevOps host forms; point at `gh auth login` /
+`tea login add` / `az devops login`. Don't guess a forge.

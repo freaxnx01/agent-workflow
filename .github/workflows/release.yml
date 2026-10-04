@@ -41,3 +41,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: gh release create "$TAG" --title "$TAG" --notes-file RELEASE_NOTES.md --verify-tag
+
+  update-moving-tag:
+    name: Move the major tag
+    needs: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write   # force-update refs/tags/v<major>
+    steps:
+      - name: Checkout (full tag history for ordering)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Decide and apply
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          APPLY: 'true'
+        shell: bash
+        run: bash scripts/update-moving-tag.sh | tee -a "$GITHUB_STEP_SUMMARY"

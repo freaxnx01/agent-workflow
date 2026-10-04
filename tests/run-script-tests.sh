@@ -12,6 +12,15 @@ set -euo pipefail
 IFS=$'\n\t'
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Layer-1 tests are hermetic by contract: no network, no GitHub, no Docker. That
+# has to include the *ambient* environment — on a GitHub Actions runner
+# GITHUB_REPOSITORY is always set, and scripts under test fall back to it
+# (`REPO="${REPO:-${GITHUB_REPOSITORY:-}}"`), so six "missing REPO -> exit 2"
+# assertions passed locally and failed the moment the suite first ran in CI
+# (#354). Clearing them here fixes the whole class rather than one call site;
+# a test that wants one sets it per-invocation.
+unset GITHUB_REPOSITORY GITHUB_OUTPUT GITHUB_ACTIONS GITHUB_TOKEN
 SCRIPT="$ROOT/scripts/post-run-report.sh"
 FIXTURES="$ROOT/tests/fixtures"
 MOCKS="$ROOT/tests/mocks"
@@ -117,6 +126,10 @@ out="$(render_only result-max-turns.json)"
 assert_contains "$out" 'LABELS: ai:failed'              "max-turns → ai:failed"
 assert_contains "$out" 'failed: error_max_turns'        "max-turns → distinct subtype"
 assert_contains "$out" '10m 12s'                        "max-turns → minutes+seconds duration"
+
+out="$(render_only result-max-turns-unflagged.json)"
+assert_contains "$out" 'failed: error_max_turns'        "max-turns w/ is_error:false → subtype still surfaced"
+assert_contains "$out" 'LABELS: ai:failed'              "max-turns w/ is_error:false → ai:failed"
 
 out="$(render_only result-low-cache-hit.json)"
 assert_contains "$out" '(27% hit rate)'                 "low-cache-hit → 27% computed"
@@ -264,6 +277,17 @@ assert_contains "$out" 'chosen: claude-haiku-4-5 (label model:haiku)' "label mod
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='model:sonnet' bash "$CLASSIFY")"
 assert_contains "$out" 'chosen: claude-sonnet-5 (label model:sonnet)' "label model:sonnet → sonnet"
 
+# Override: model:fable — the design/aesthetics model on the Claude path
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='model:fable' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: claude-fable-5-1 (label model:fable)' "label model:fable → fable"
+
+# model:fable is Claude-only: with AGENT=opencode it must warn and fall through
+# to the default rather than being handed to an OpenRouter provider.
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
+       ISSUE_LABELS='model:fable' \
+       ISSUE_BODY='filler' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'incompatible with AGENT=opencode' "model:fable rejected on opencode"
+
 # Override: model:mistral-large with AGENT=opencode → opencode model ID
 out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
        ISSUE_LABELS='ai-implement
@@ -309,10 +333,61 @@ out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
 assert_contains "$out" 'chosen: qwen/qwen3-coder-30b-a3b-instruct (label model:qwen3-coder)' \
   "label model:qwen3-coder + agent=opencode → qwen3-coder"
 
-out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
-       ISSUE_LABELS='model:gpt-oss-120b' bash "$CLASSIFY")"
-assert_contains "$out" 'chosen: openai/gpt-oss-120b (label model:gpt-oss-120b)' \
-  "label model:gpt-oss-120b + agent=opencode → gpt-oss-120b"
+# A retry escalates the AGENT to claude, but DEFAULT_MODEL still holds the
+# repo's cheap OpenRouter default. Handing that id to Claude is fatal, so the
+# Claude path substitutes ESCALATE_MODEL.
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=claude DEFAULT_MODEL=z-ai/glm-5.2 \
+       ISSUE_BODY='add an endpoint' ISSUE_LABELS='ai-implement' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-sonnet-5' \
+  "agent=claude + OpenRouter default → substitutes the Claude escalation model"
+assert_not_contains "$out" 'chosen: z-ai/glm-5.2' \
+  "agent=claude never runs on an OpenRouter model id"
+
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=claude DEFAULT_MODEL=z-ai/glm-5.2 \
+       ESCALATE_MODEL=claude-opus-5 ISSUE_BODY='add an endpoint' \
+       ISSUE_LABELS='ai-implement' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-opus-5' "ESCALATE_MODEL is configurable"
+
+# The mirror case: flipping the default agent to opencode leaves any consumer
+# that pinned only `default-model: claude-sonnet-5` pointing opencode at a
+# Claude id, which OpenRouter cannot resolve.
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode DEFAULT_MODEL=claude-sonnet-5 \
+       ISSUE_BODY='add an endpoint' ISSUE_LABELS='ai-implement' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: z-ai/glm-5.2' \
+  "agent=opencode + Claude default → substitutes the OpenRouter default"
+assert_not_contains "$out" 'chosen: claude-sonnet-5' \
+  "agent=opencode never runs on a Claude model id"
+
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode DEFAULT_MODEL=claude-sonnet-5 \
+       OPENROUTER_FALLBACK_MODEL=z-ai/glm-4.7-flash \
+       ISSUE_BODY='add an endpoint' ISSUE_LABELS='ai-implement' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: z-ai/glm-4.7-flash' "the OpenRouter fallback is configurable"
+
+# A Claude default on the Claude path is left exactly as it was.
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=claude DEFAULT_MODEL=claude-haiku-4-5 \
+       ISSUE_BODY='add an endpoint' ISSUE_LABELS='ai-implement' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-haiku-4-5' "a Claude default is untouched"
+
+# glm-5.2 is the best-measured OpenRouter model on the fleet (15 of 18 runs
+# shipped at $4.25 total) and is the new default; it needs a label too.
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode ISSUE_LABELS='model:glm' bash "$CLASSIFY")"
+assert_contains "$out" 'chosen: z-ai/glm-5.2 (label model:glm)' \
+  "label model:glm + agent=opencode → glm-5.2"
+
+# gpt-oss-120b is retired: 2 successful runs out of 10 across the fleet, the
+# worst rate of any model with a meaningful sample. The label is kept as a
+# recognised name so it warns instead of silently falling through as a typo.
+# ISSUE_BODY is pinned so the fall-through reaches the heuristic without the
+# script shelling out to `gh issue view` for the body.
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode DEFAULT_MODEL=z-ai/glm-4.7-flash \
+       ISSUE_BODY='add an endpoint' \
+       ISSUE_LABELS='model:gpt-oss-120b' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'retired' \
+  "label model:gpt-oss-120b → warns that the model is retired"
+assert_not_contains "$out" 'chosen: openai/gpt-oss-120b' \
+  "label model:gpt-oss-120b → never selects the retired model"
+assert_contains "$out" 'chosen: z-ai/glm-4.7-flash' \
+  "label model:gpt-oss-120b → falls back to DEFAULT_MODEL"
 
 out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=opencode \
        ISSUE_LABELS='model:glm-flash' bash "$CLASSIFY")"
@@ -416,9 +491,122 @@ out="$(ISSUE_NUMBER=1 REPO=o/r \
        ISSUE_BODY='Refactor the auth middleware' bash "$CLASSIFY")"
 assert_contains "$out" 'claude-haiku-4-5 (label model:haiku)' "override label beats heuristic"
 
+# --- cost-guarded models (#350) -------------------------------------------
+#
+# The guard is about who chose the model, not which model it is. An explicit
+# label is a per-issue decision and stands; a repo-level knob and an automatic
+# retry are not.
+
+# The deliberate route is untouched — this is #330's contract.
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='model:fable' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-fable-5-1 (label model:fable)' \
+  "an explicit model:fable label still selects Fable"
+assert_not_contains "$out" 'not available on this route' \
+  "a deliberate label is not second-guessed"
+
+# default-model is every issue in the repo, not a decision about this one.
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=claude DEFAULT_MODEL=claude-fable-5-1 \
+       ISSUE_BODY='add an endpoint' ISSUE_LABELS='ai-implement' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-sonnet-5' \
+  "a Fable default-model is substituted, not run"
+assert_not_contains "$out" 'chosen: claude-fable-5-1' \
+  "a Fable default-model never reaches the chosen model"
+assert_contains "$out" 'not available on this route' \
+  "the substitution tells the operator why"
+
+# Same for the escalation knob, including the both-set case.
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=claude DEFAULT_MODEL=claude-fable-5-1 \
+       ESCALATE_MODEL=claude-fable-6 ISSUE_BODY='add an endpoint' \
+       ISSUE_LABELS='ai-implement' bash "$CLASSIFY" 2>&1)"
+assert_not_contains "$out" 'chosen: claude-fable' \
+  "a Fable escalate-model cannot smuggle it back in"
+
+# A retry is the pipeline spending again on its own, so the label stops holding.
+out="$(ISSUE_NUMBER=1 REPO=o/r ATTEMPT=2 ISSUE_LABELS='model:fable' \
+       ISSUE_BODY='add an endpoint' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-sonnet-5' \
+  "a retry of a model:fable run does not spend Fable twice"
+assert_contains "$out" 'not repeated on attempt 2' \
+  "the report says why the retry changed model"
+
+# ... and the retry guard is narrow: it must not rewrite other labels.
+out="$(ISSUE_NUMBER=1 REPO=o/r ATTEMPT=2 ISSUE_LABELS='model:opus' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-opus-5 (label model:opus)' \
+  "a retry leaves an unguarded label alone"
+
+# Attempt 1 is the default when the workflow does not pass ATTEMPT.
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='model:fable' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-fable-5-1' "a missing ATTEMPT means attempt 1"
+
+# The heuristic escalation targets stay reachable — the guard must not broaden
+# into the models the pipeline actually runs on.
+out="$(ISSUE_NUMBER=1 REPO=o/r AGENT=claude \
+       ISSUE_BODY='Refactor the auth middleware' ISSUE_LABELS='ai-implement' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-opus-5' "the opus escalation target is unaffected"
+
+# An unrecognised model label warns instead of silently resolving to the
+# default — the failure shape #330 removed for model:fable, now for typos too.
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS=$'ai-implement\nmodel:opsu' \
+       ISSUE_BODY='add an endpoint' bash "$CLASSIFY" 2>&1)"
+assert_contains "$out" 'chosen: claude-sonnet-5' "a typo'd model label falls through to the default"
+assert_contains "$out" 'model:opsu' "a typo'd model label is named in the warning"
+assert_contains "$out" 'not a recognised model label' "a typo'd model label warns"
+
+section "agent-cmd wrappers — review/self-fix models are cost-guarded (#350)"
+
+# The wrappers are the chokepoint: nothing reaches `claude --model` without
+# passing through one of them, whichever env var supplied the model. A stub
+# `claude` on PATH records the argv each wrapper would have run.
+CMD_STUB_DIR="$(mktemp -d)"
+cat > "$CMD_STUB_DIR/claude" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$CLAUDE_ARGV_LOG"
+printf '{"type":"result","subtype":"success","is_error":false}\n'
+STUB
+chmod +x "$CMD_STUB_DIR/claude"
+
+# wrapper_argv <wrapper-path> <model> — argv the stubbed `claude` received
+wrapper_argv() {
+  local wrapper="$1" model="$2" prompt log
+  prompt="$(mktemp)"; log="$(mktemp)"
+  printf 'review this\n' > "$prompt"
+  PATH="$CMD_STUB_DIR:$PATH" CLAUDE_ARGV_LOG="$log" MODEL="$model" \
+    RUNNER_TEMP="$CMD_STUB_DIR" bash "$wrapper" "$prompt" "$(mktemp)" >/dev/null 2>&1 || true
+  cat "$log"
+}
+
+for wrapper in agent-cmd-claude.sh agent-cmd-claude-fix.sh; do
+  argv="$(wrapper_argv "$ROOT/scripts/lib/$wrapper" claude-fable-5-1)"
+  assert_not_contains "$argv" 'fable'           "$wrapper never passes --model fable"
+  assert_contains     "$argv" 'claude-sonnet-5' "$wrapper substitutes the fallback model"
+
+  argv="$(wrapper_argv "$ROOT/scripts/lib/$wrapper" claude-opus-5)"
+  assert_contains "$argv" '--model claude-opus-5' "$wrapper passes an allowed model through"
+
+  argv="$(wrapper_argv "$ROOT/scripts/lib/$wrapper" '')"
+  assert_not_contains "$argv" '--model' "$wrapper omits --model when MODEL is empty"
+done
+
+rm -rf "$CMD_STUB_DIR"
+
 section "classify-turns — explicit override labels + task-count heuristic"
 
 CLASSIFY_TURNS="$ROOT/scripts/classify-turns.sh"
+
+# plan_body <heading-prefix> <task-count> — a synthetic issue body with N tasks
+plan_body() {
+  local prefix="$1" n="$2" i
+  printf '## Implementation Plan\n\n'
+  for (( i = 1; i <= n; i++ )); do
+    printf '%s Task %d — something\n\nSome prose.\n\n' "$prefix" "$i"
+  done
+}
+
+# turns_for <heading-prefix> <task-count>
+turns_for() {
+  ISSUE_LABELS='ai-implement' ISSUE_NUMBER=1 REPO=o/r \
+    ISSUE_BODY="$(plan_body "$1" "$2")" bash "$CLASSIFY_TURNS" 2>/dev/null
+}
 
 # Override: turns:80 label
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement
@@ -429,63 +617,210 @@ assert_contains "$out" 'chosen: 80 (label turns:80)' "label turns:80 → 80"
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='turns:120' bash "$CLASSIFY_TURNS")"
 assert_contains "$out" 'chosen: 120 (label turns:120)' "label turns:120 → 120"
 
-# Heuristic: 6+ "### Task N" headings under "## Implementation Plan" → 160
-body6="## Implementation Plan
-### Task 1: a
-### Task 2: b
-### Task 3: c
-### Task 4: d
-### Task 5: e
-### Task 6: f"
-out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' ISSUE_BODY="$body6" bash "$CLASSIFY_TURNS")"
-assert_contains "$out" 'chosen: 160 (heuristic: 6 plan tasks)' "6 tasks → 160"
+# h3 baseline — the heading level that already worked
+assert_contains "$(turns_for '###' 6)" 'chosen: 160' "h3: 6 tasks → 160"
+assert_contains "$(turns_for '###' 4)" 'chosen: 120' "h3: 4 tasks → 120"
+assert_contains "$(turns_for '###' 2)" 'chosen: 80'  "h3: 2 tasks → 80"
+assert_contains "$(turns_for '###' 1)" 'chosen: 50'  "h3: 1 task → default"
 
-# Heuristic: 4-5 tasks → 120
-body4="## Implementation Plan
-### Task 1: a
-### Task 2: b
-### Task 3: c
-### Task 4: d"
-out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' ISSUE_BODY="$body4" bash "$CLASSIFY_TURNS")"
-assert_contains "$out" 'chosen: 120 (heuristic: 4 plan tasks)' "4 tasks → 120"
+# h2 (#359) — writing-plans' natural output. Must size identically to h3: a
+# fully enriched plan silently landed on task_count=0 before this fix, sizing
+# at the 50-turn default regardless of how many tasks it actually had (#354
+# died at 51/50 turns on a 6-task h2 plan that should have earned 160).
+assert_contains "$(turns_for '##' 6)" 'chosen: 160' "h2: 6 tasks → 160"
+assert_contains "$(turns_for '##' 4)" 'chosen: 120' "h2: 4 tasks → 120"
+assert_contains "$(turns_for '##' 2)" 'chosen: 80'  "h2: 2 tasks → 80"
 
-# Heuristic: 2-3 tasks → 80
-body2="## Implementation Plan
-### Task 1: a
-### Task 2: b"
-out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' ISSUE_BODY="$body2" bash "$CLASSIFY_TURNS")"
-assert_contains "$out" 'chosen: 80 (heuristic: 2 plan tasks)' "2 tasks → 80"
+# Mixed levels double-count. Not a shape a generated plan takes, and
+# over-sizing costs a little compute where under-sizing loses the whole run —
+# so this pins the behaviour rather than guarding against it.
+mixed="$(printf '## Implementation Plan\n\n## Task 1 — x\n\n### Task 1 — x\n\n')"
+out="$(ISSUE_LABELS='ai-implement' ISSUE_NUMBER=1 REPO=o/r ISSUE_BODY="$mixed" \
+       bash "$CLASSIFY_TURNS" 2>/dev/null)"
+assert_contains "$out" 'chosen: 80' "mixed h2+h3 counts twice (documented, not guarded)"
 
-# Regression: an "## Implementation Plan" section whose task headings are
-# NOT "### Task N" (e.g. "## Task N", a different heading level, or plain
-# prose) must fall through to DEFAULT_MAX_TURNS, not crash. grep -c exits 1
-# on zero matches; under set -euo pipefail an unguarded `grep -c` inside a
-# command substitution kills the whole script before it prints anything —
-# this is exactly what happened on issue #193's Phase 1 dispatch
-# (2026-08-04): the body used "## Task N" (H2) instead of "### Task N" (H3),
-# classify-turns.sh silently exited 1, and the whole implement job aborted
-# before ever running the implementer.
-body_wrong_heading="## Implementation Plan
-## Task 1: a
-## Task 2: b"
-ec="$(run_capture_ec env ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' ISSUE_BODY="$body_wrong_heading" bash "$CLASSIFY_TURNS")"
-assert_equals "$ec" "0" "Implementation Plan present but zero '### Task N' matches → exit 0, no crash"
-out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' ISSUE_BODY="$body_wrong_heading" bash "$CLASSIFY_TURNS")"
-assert_contains "$out" 'chosen: 50 (heuristic: 0 plan task(s), default budget enough)' \
-  "zero task-heading matches → falls through to DEFAULT_MAX_TURNS, not a crash"
+# A plan section with no countable tasks at all is almost always a
+# heading-level bug (#359), not a genuinely task-free plan. It still takes
+# the default budget, but it must not do so silently — silence here is
+# exactly what let #354 burn a run at the default cap.
+nostasks="$(printf '## Implementation Plan\n\nProse only, no numbered tasks.\n')"
+ec="$(run_capture_ec env ISSUE_LABELS='ai-implement' ISSUE_NUMBER=1 REPO=o/r \
+       ISSUE_BODY="$nostasks" bash "$CLASSIFY_TURNS")"
+assert_equals "$ec" "0" "zero-task plan → exit 0, no crash"
+out="$(ISSUE_LABELS='ai-implement' ISSUE_NUMBER=1 REPO=o/r ISSUE_BODY="$nostasks" \
+       bash "$CLASSIFY_TURNS" 2>&1)"
+assert_contains "$out" 'chosen: 50'   "zero-task plan still takes the default"
+assert_contains "$out" 'no countable' "zero-task plan warns"
+assert_contains "$out" '::warning::'  "zero-task plan emits an Actions annotation"
 
-# No "## Implementation Plan" section at all → default
+# ...and a plan that does size must NOT warn.
+out="$(ISSUE_LABELS='ai-implement' ISSUE_NUMBER=1 REPO=o/r \
+       ISSUE_BODY="$(plan_body '###' 4)" bash "$CLASSIFY_TURNS" 2>&1)"
+assert_not_contains "$out" '::warning::' "a sized plan warns about nothing"
+
+# DEFAULT_MAX_TURNS env override still applies on the plan-present-but-zero-tasks
+# branch (a plan section exists, so its size is known to be small).
+out="$(ISSUE_LABELS='ai-implement' ISSUE_NUMBER=1 REPO=o/r ISSUE_BODY="$nostasks" \
+       DEFAULT_MAX_TURNS=30 bash "$CLASSIFY_TURNS" 2>/dev/null)"
+assert_contains "$out" 'chosen: 30 (heuristic: 0 plan task(s), default budget enough)' \
+  "DEFAULT_MAX_TURNS env override applied"
+
+# No "## Implementation Plan" section at all → UNPLANNED_MAX_TURNS, NOT the floor.
+# An un-enriched issue does not mean "small"; it means the agent has to do the
+# discovery an enriched plan would have handed it, which costs turns rather than
+# saving them. #260 and #262 were both dispatched un-enriched, both landed on the
+# old 50-turn default, and both burned 50/50 turns without opening a PR ($4.62
+# for nothing). Size the unknown up, not down.
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' ISSUE_BODY='Add a hello.md file' bash "$CLASSIFY_TURNS")"
-assert_contains "$out" 'chosen: 50 (heuristic: no Implementation Plan section found)' "no plan section → default"
+assert_contains "$out" 'chosen: 120 (heuristic: no Implementation Plan section found, budgeting for discovery)' \
+  "no plan section → unplanned budget, not the default floor"
 
-# DEFAULT_MAX_TURNS env override applied on the no-plan-section default branch
+# UNPLANNED_MAX_TURNS env override applied on the no-plan-section branch
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' ISSUE_BODY='Add a hello.md file' \
-       DEFAULT_MAX_TURNS=30 bash "$CLASSIFY_TURNS")"
-assert_contains "$out" 'chosen: 30 (heuristic: no Implementation Plan section found)' "DEFAULT_MAX_TURNS env override applied"
+       UNPLANNED_MAX_TURNS=160 bash "$CLASSIFY_TURNS")"
+assert_contains "$out" 'chosen: 160 (heuristic: no Implementation Plan section found, budgeting for discovery)' \
+  "UNPLANNED_MAX_TURNS env override applied"
+
+# An explicit turns:* label still wins over the unplanned budget (stage 1 beats
+# stage 2) -- an operator who deliberately sizes an un-enriched one-liner down
+# must not be overridden by the discovery budget.
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS=$'ai-implement\nturns:50' ISSUE_BODY='Add a hello.md file' bash "$CLASSIFY_TURNS")"
+assert_contains "$out" 'chosen: 50 (label turns:50)' "turns:50 label beats the unplanned budget"
+
+# Regression (#280): a LARGE body must classify by its plan, EVERY time.
+# `printf "$ISSUE_BODY" | grep -q` lets grep exit on the first match while
+# printf is still writing; printf then dies of SIGPIPE (silently on some
+# hosts, "write error: Broken pipe" on others) and pipefail turns a
+# successful match into a false condition -- silently downgrading a
+# 160-turn plan to the 50-turn default. Lost ~42% of the time on the real
+# 57KB body from #280, which is what this fixture is. One run proves
+# nothing; assert over repeated runs.
+big_body="$(cat "$FIXTURES/issue-body-large-plan.md")"
+turns_stable=true
+turns_got=''
+for _i in $(seq 1 25); do
+  turns_got="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' ISSUE_BODY="$big_body" bash "$CLASSIFY_TURNS")"
+  if [[ "$turns_got" != *'chosen: 160 (heuristic: 8 plan tasks)'* ]]; then
+    turns_stable=false
+    break
+  fi
+done
+if [[ "$turns_stable" == true ]]; then
+  pass "57KB enriched body → 160 on all 25 runs (no SIGPIPE race)"
+else
+  fail "57KB enriched body → 160 on all 25 runs (no SIGPIPE race)" "got: $turns_got"
+fi
 
 # Missing ISSUE_NUMBER → exit 2
 ec="$(run_capture_ec env REPO=o/r bash "$CLASSIFY_TURNS")"
 assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
+
+section "update-moving-tag — forward-only moves, semver ordering, prerelease refusal"
+
+MOVING_TAG="$ROOT/scripts/update-moving-tag.sh"
+
+# Missing RELEASE_TAG → exit 2
+ec="$(run_capture_ec env ALL_TAGS='v1.0.0' bash "$MOVING_TAG")"
+assert_equals "$ec" "2" "missing RELEASE_TAG → exit 2"
+
+# Newest in its line → move
+out="$(RELEASE_TAG=v1.12.0 ALL_TAGS=$'v1.11.1\nv1.12.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v1 → v1.12.0' "newest in line → move"
+
+# NOT newest → skip, and exit 0 (a hotfix release must not fail the workflow)
+out="$(RELEASE_TAG=v1.11.2 ALL_TAGS=$'v1.11.1\nv1.11.2\nv1.13.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: skip' "older than an existing release → skip"
+assert_contains "$out" 'v1.13.0' "skip reason names the newer tag"
+ec="$(run_capture_ec env RELEASE_TAG=v1.11.2 ALL_TAGS=$'v1.11.1\nv1.13.0' bash "$MOVING_TAG")"
+assert_equals "$ec" "0" "skip is not an error"
+
+# Semver ordering, not lexical: v1.10.0 > v1.9.0
+out="$(RELEASE_TAG=v1.10.0 ALL_TAGS=$'v1.9.0\nv1.10.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v1 → v1.10.0' "v1.10.0 beats v1.9.0 (semver, not lexical)"
+out="$(RELEASE_TAG=v1.9.0 ALL_TAGS=$'v1.9.0\nv1.10.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: skip' "v1.9.0 loses to v1.10.0 (semver, not lexical)"
+
+# Major derived from the tag, never hardcoded
+out="$(RELEASE_TAG=v2.0.0 ALL_TAGS=$'v1.13.0\nv2.0.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v2 → v2.0.0' "major derived from the pushed tag"
+
+# A v2 release must not consider v1 tags when picking the newest
+out="$(RELEASE_TAG=v2.0.0 ALL_TAGS=$'v1.99.99\nv2.0.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v2 → v2.0.0' "v1.99.99 does not block a v2 release"
+
+# Pre-release tags are refused outright
+for pre in v1.14.0-rc.1 v1.14.0-alpha.2 v1.14.0-beta.10; do
+  ec="$(run_capture_ec env RELEASE_TAG="$pre" ALL_TAGS="$pre" bash "$MOVING_TAG")"
+  assert_equals "$ec" "2" "pre-release $pre → exit 2"
+done
+
+# Pre-release tags in ALL_TAGS never win the "newest" comparison
+out="$(RELEASE_TAG=v1.13.0 ALL_TAGS=$'v1.13.0\nv1.14.0-rc.1' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v1 → v1.13.0' "a newer -rc does not block the release tag"
+
+# Idempotent: the tag is already the newest and already what vX points at
+out="$(RELEASE_TAG=v1.13.0 ALL_TAGS=$'v1.11.1\nv1.13.0' bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v1 → v1.13.0' "re-running for the same tag is a no-op move"
+
+# Malformed input
+ec="$(run_capture_ec env RELEASE_TAG=1.13.0 ALL_TAGS='1.13.0' bash "$MOVING_TAG")"
+assert_equals "$ec" "2" "tag without a leading v → exit 2"
+ec="$(run_capture_ec env RELEASE_TAG=v1.13 ALL_TAGS='v1.13' bash "$MOVING_TAG")"
+assert_equals "$ec" "2" "two-component tag → exit 2"
+
+# --- APPLY path: the only mutating code (git tag -f / git push) -------------
+#
+# Every case above runs with APPLY unset, so none of it exercises the APPLY
+# guard, the ^{} dereference, or the refspec. Build a throwaway git fixture
+# (a bare "origin" + a working clone) and drive the real `git tag -l` /
+# `git push` paths -- no ALL_TAGS override here, on purpose.
+
+make_moving_tag_repo() {
+  local bare work
+  bare="$(mktemp -d)"
+  git init --bare --quiet "$bare"
+  work="$(mktemp -d)"
+  git -C "$work" init --quiet -b main
+  git -C "$work" config user.email test@example.com
+  git -C "$work" config user.name test
+  printf 'one\n' > "$work/file.txt"
+  git -C "$work" add file.txt
+  git -C "$work" commit --quiet -m "commit 1"
+  git -C "$work" tag v1.12.0
+  printf 'two\n' > "$work/file.txt"
+  git -C "$work" add file.txt
+  git -C "$work" commit --quiet -m "commit 2"
+  # Annotated, deliberately: proves the ^{} dereference in the script, not
+  # just the lightweight-tag case, ends up on a commit.
+  git -C "$work" tag -a v1.13.0 -m "release v1.13.0"
+  git -C "$work" remote add origin "$bare"
+  git -C "$work" push --quiet origin main --tags
+  printf '%s' "$work"
+}
+
+MT_REPO="$(make_moving_tag_repo)"
+
+# Dry run (APPLY unset/false, the default): the verdict is still "move", but
+# nothing on disk or upstream may change.
+out="$(cd "$MT_REPO" && RELEASE_TAG=v1.13.0 bash "$MOVING_TAG")"
+assert_contains "$out" 'chosen: move v1 → v1.13.0' "APPLY unset → verdict still computed"
+assert_equals "$(git -C "$MT_REPO" tag -l v1)" "" "dry run creates no local v1 tag"
+assert_equals "$(git -C "$MT_REPO" ls-remote origin 'refs/tags/v1')" "" "dry run pushes nothing to origin"
+
+# APPLY=true: v1 must be force-created locally, pushed to origin, and -- the
+# actual point of ^{} -- resolve to a commit object, not the annotated tag
+# object v1.13.0 itself.
+ec="$(run_capture_ec env -C "$MT_REPO" RELEASE_TAG=v1.13.0 APPLY=true bash "$MOVING_TAG")"
+assert_equals "$ec" "0" "APPLY=true move → exit 0"
+assert_equals "$(git -C "$MT_REPO" tag -l v1)" "v1" "APPLY=true creates local v1 tag"
+assert_equals "$(git -C "$MT_REPO" cat-file -t v1)" "commit" \
+  "v1 resolves to a commit, not the annotated tag object (^{} dereference)"
+assert_equals "$(git -C "$MT_REPO" rev-parse v1)" "$(git -C "$MT_REPO" rev-parse v1.13.0^{})" \
+  "v1 points at the same commit as v1.13.0"
+remote_v1="$(git -C "$MT_REPO" ls-remote origin 'refs/tags/v1' | cut -f1)"
+assert_equals "$remote_v1" "$(git -C "$MT_REPO" rev-parse v1)" "APPLY=true pushes v1 to origin"
+
+rm -rf "$MT_REPO"
 
 section "classify-agent — label override + input fallback (ADR-001)"
 
@@ -495,8 +830,9 @@ CLASSIFY_AGENT="$ROOT/scripts/classify-agent.sh"
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='agent:claude' bash "$CLASSIFY_AGENT")"
 assert_contains "$out" 'chosen: claude (label agent:claude)'     "label agent:claude → claude"
 
-# Override: agent:opencode label
-out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='agent:opencode' bash "$CLASSIFY_AGENT")"
+# Override: agent:opencode label. HAS_OPENROUTER_KEY is pinned because the
+# credential guard below sends opencode to claude when no key is available.
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='agent:opencode' HAS_OPENROUTER_KEY=true bash "$CLASSIFY_AGENT")"
 assert_contains "$out" 'chosen: opencode (label agent:opencode)' "label agent:opencode → opencode"
 
 # Default input (no label, no DEFAULT_AGENT) → claude
@@ -504,12 +840,54 @@ out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' bash "$CLASSIFY_AGENT
 assert_contains "$out" 'chosen: claude (workflow input default (claude))' "no label, no DEFAULT_AGENT → claude"
 
 # Input fallback: DEFAULT_AGENT=opencode
-out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' DEFAULT_AGENT=opencode bash "$CLASSIFY_AGENT")"
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' DEFAULT_AGENT=opencode HAS_OPENROUTER_KEY=true bash "$CLASSIFY_AGENT")"
 assert_contains "$out" 'chosen: opencode (workflow input default (opencode))' "no label, DEFAULT_AGENT=opencode → opencode"
 
 # Label beats input
 out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='agent:claude' DEFAULT_AGENT=opencode bash "$CLASSIFY_AGENT")"
 assert_contains "$out" 'chosen: claude (label agent:claude)'     "label agent:claude beats DEFAULT_AGENT=opencode"
+
+# --- retry escalation -------------------------------------------------------
+#
+# Attempt 1 runs the cheap default; if it fails, attempt 2 escalates to Claude.
+# Across the fleet the cheap OpenRouter models carry ordinary work at a better
+# rate than Claude for a fraction of the cost, but when one of them cannot do a
+# job, spending a second cheap run on it is the losing move.
+
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' DEFAULT_AGENT=opencode \
+       HAS_OPENROUTER_KEY=true ATTEMPT=2 bash "$CLASSIFY_AGENT")"
+assert_contains "$out" 'chosen: claude'   "attempt 2 escalates to claude"
+assert_contains "$out" 'escalation'       "escalation is named as the reason"
+
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' DEFAULT_AGENT=opencode \
+       HAS_OPENROUTER_KEY=true ATTEMPT=1 bash "$CLASSIFY_AGENT")"
+assert_contains "$out" 'chosen: opencode' "attempt 1 stays on the cheap default"
+
+# An explicit label still wins over escalation — the operator asked for it.
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='agent:opencode' DEFAULT_AGENT=opencode \
+       HAS_OPENROUTER_KEY=true ATTEMPT=3 bash "$CLASSIFY_AGENT")"
+assert_contains "$out" 'chosen: opencode (label agent:opencode)' "label beats retry escalation"
+
+# Escalation can be turned off.
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' DEFAULT_AGENT=opencode \
+       HAS_OPENROUTER_KEY=true ATTEMPT=2 ESCALATE_ON_RETRY=false bash "$CLASSIFY_AGENT")"
+assert_contains "$out" 'chosen: opencode' "ESCALATE_ON_RETRY=false keeps the default agent"
+
+# --- credential-aware fallback ----------------------------------------------
+#
+# opencode needs an OpenRouter credential. With the default agent flipped to
+# opencode, a consumer repo that only holds a Claude token would otherwise fail
+# every single run on a missing secret.
+
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' DEFAULT_AGENT=opencode \
+       HAS_OPENROUTER_KEY=false bash "$CLASSIFY_AGENT")"
+assert_contains "$out" 'chosen: claude'      "no OpenRouter key → falls back to claude"
+assert_contains "$out" 'OPENROUTER_API_KEY'  "the fallback names the missing secret"
+
+# The fallback also applies to an explicit label — a label cannot conjure a secret.
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='agent:opencode' \
+       HAS_OPENROUTER_KEY=false bash "$CLASSIFY_AGENT")"
+assert_contains "$out" 'chosen: claude'      "label agent:opencode without a key → claude"
 
 # Invalid DEFAULT_AGENT → exit 2
 ec="$(run_capture_ec env ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-implement' DEFAULT_AGENT=mistral bash "$CLASSIFY_AGENT")"
@@ -568,76 +946,132 @@ assert_equals "$ec" "2" "missing OUTPUT_FILE → exit 2"
 
 rm -f "$OC_AUTH_OUT"
 
-section "check-auto-review-gate — input + label combinations"
+section "check-ai-merge-gate — input + label combinations"
 
-GATE="$ROOT/scripts/check-auto-review-gate.sh"
+AGATE="$ROOT/scripts/check-ai-merge-gate.sh"
 
 # Both off → disabled
-out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AUTO_REVIEW=false ISSUE_LABELS='ai-implement' bash "$GATE")"
-assert_contains "$out" 'enabled=false (workflow input auto-review=false)' "input=false, no label → disabled"
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AI_REVIEW_AI_MERGE=false ISSUE_LABELS='ai-implement' bash "$AGATE")"
+assert_contains "$out" 'enabled=false (workflow input ai-review-ai-merge=false)' "input=false, no label → disabled"
 
 # Label only → still disabled (input gate not satisfied)
-out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AUTO_REVIEW=false ISSUE_LABELS=$'ai-implement\nai-auto-review' bash "$GATE")"
-assert_contains "$out" 'enabled=false (workflow input auto-review=false)' "input=false, label set → disabled (input wins)"
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AI_REVIEW_AI_MERGE=false ISSUE_LABELS=$'ai-implement\nai-review-ai-merge' bash "$AGATE")"
+assert_contains "$out" 'enabled=false (workflow input ai-review-ai-merge=false)' "input=false, label set → disabled (input wins)"
 
 # Input only → disabled (label gate not satisfied)
-out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AUTO_REVIEW=true ISSUE_LABELS='ai-implement' bash "$GATE")"
-assert_contains "$out" 'enabled=false (input=true but label ai-auto-review missing)' "input=true, no label → disabled"
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AI_REVIEW_AI_MERGE=true ISSUE_LABELS='ai-implement' bash "$AGATE")"
+assert_contains "$out" 'enabled=false (input=true but label ai-review-ai-merge missing)' "input=true, no label → disabled"
 
-# Both on → enabled
-out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AUTO_REVIEW=true ISSUE_LABELS=$'ai-implement\nai-auto-review' bash "$GATE")"
-assert_contains "$out" 'enabled=true (input=true AND label ai-auto-review present)' "input=true, label set → enabled"
+# Both new → enabled, no deprecation warning
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AI_REVIEW_AI_MERGE=true ISSUE_LABELS=$'ai-implement\nai-review-ai-merge' bash "$AGATE")"
+assert_contains "$out" 'enabled=true (input=true AND label ai-review-ai-merge present)' "new input + new label → enabled"
+assert_not_contains "$out" '::warning::' "new input + new label → no deprecation warning"
 
-# Default INPUT_AUTO_REVIEW (unset) → disabled
-out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-auto-review' bash "$GATE")"
-assert_contains "$out" 'enabled=false (workflow input auto-review=false)' "unset INPUT_AUTO_REVIEW defaults to false"
+# Deprecated input + deprecated label → enabled, two warnings
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AUTO_REVIEW=true ISSUE_LABELS=$'ai-implement\nai-auto-review' bash "$AGATE")"
+assert_contains "$out" 'enabled=true (input=true AND label ai-auto-review present)' "deprecated input + deprecated label → enabled"
+assert_contains "$out" "::warning::workflow input 'auto-review' is deprecated; rename it to 'ai-review-ai-merge' (removed in v3)" "deprecated input → warning"
+assert_contains "$out" "::warning::issue label 'ai-auto-review' is deprecated; relabel it to 'ai-review-ai-merge' (removed in v3)" "deprecated label → warning"
 
-# Invalid INPUT_AUTO_REVIEW → exit 2
-ec="$(run_capture_ec env ISSUE_NUMBER=1 REPO=o/r INPUT_AUTO_REVIEW=yes ISSUE_LABELS='' bash "$GATE")"
+# New input + deprecated label → enabled, label warning only
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AI_REVIEW_AI_MERGE=true ISSUE_LABELS=$'ai-implement\nai-auto-review' bash "$AGATE")"
+assert_contains "$out" 'enabled=true (input=true AND label ai-auto-review present)' "new input + deprecated label → enabled"
+assert_not_contains "$out" "workflow input 'auto-review' is deprecated" "new input + deprecated label → no input warning"
+assert_contains "$out" "::warning::issue label 'ai-auto-review' is deprecated" "new input + deprecated label → label warning"
+
+# Deprecated input + new label → enabled, input warning only
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AUTO_REVIEW=true ISSUE_LABELS=$'ai-implement\nai-review-ai-merge' bash "$AGATE")"
+assert_contains "$out" 'enabled=true (input=true AND label ai-review-ai-merge present)' "deprecated input + new label → enabled"
+assert_contains "$out" "::warning::workflow input 'auto-review' is deprecated" "deprecated input + new label → input warning"
+assert_not_contains "$out" "issue label 'ai-auto-review' is deprecated" "deprecated input + new label → no label warning"
+
+# Both labels present → new label wins the reason text, no label warning
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AI_REVIEW_AI_MERGE=true ISSUE_LABELS=$'ai-review-ai-merge\nai-auto-review' bash "$AGATE")"
+assert_contains "$out" 'enabled=true (input=true AND label ai-review-ai-merge present)' "both labels → new label wins"
+assert_not_contains "$out" "issue label 'ai-auto-review' is deprecated" "both labels → no label warning"
+
+# Both inputs unset → disabled
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-review-ai-merge' bash "$AGATE")"
+assert_contains "$out" 'enabled=false (workflow input ai-review-ai-merge=false)' "unset inputs default to false"
+
+# Invalid new input → exit 2
+ec="$(run_capture_ec env ISSUE_NUMBER=1 REPO=o/r INPUT_AI_REVIEW_AI_MERGE=yes ISSUE_LABELS='' bash "$AGATE")"
+assert_equals "$ec" "2" "invalid INPUT_AI_REVIEW_AI_MERGE → exit 2"
+
+# Invalid deprecated input → exit 2
+ec="$(run_capture_ec env ISSUE_NUMBER=1 REPO=o/r INPUT_AUTO_REVIEW=yes ISSUE_LABELS='' bash "$AGATE")"
 assert_equals "$ec" "2" "invalid INPUT_AUTO_REVIEW → exit 2"
 
 # Missing ISSUE_NUMBER → exit 2
-ec="$(run_capture_ec env REPO=o/r INPUT_AUTO_REVIEW=true bash "$GATE")"
+ec="$(run_capture_ec env REPO=o/r INPUT_AI_REVIEW_AI_MERGE=true bash "$AGATE")"
 assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 
 # Missing REPO → exit 2
-ec="$(run_capture_ec env ISSUE_NUMBER=1 INPUT_AUTO_REVIEW=true bash "$GATE")"
+ec="$(run_capture_ec env ISSUE_NUMBER=1 INPUT_AI_REVIEW_AI_MERGE=true bash "$AGATE")"
 assert_equals "$ec" "2" "missing REPO → exit 2"
 
-section "check-preview-gate — input + label combinations"
+section "check-human-merge-gate — input + label combinations"
 
-PGATE="$ROOT/scripts/check-preview-gate.sh"
+HGATE="$ROOT/scripts/check-human-merge-gate.sh"
 
 # Both off → disabled
-out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_PRE_PREVIEW=false ISSUE_LABELS='ai-implement' bash "$PGATE")"
-assert_contains "$out" 'enabled=false (workflow input pre-preview=false)' "input=false, no label → disabled"
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AI_REVIEW_HUMAN_MERGE=false ISSUE_LABELS='ai-implement' bash "$HGATE")"
+assert_contains "$out" 'enabled=false (workflow input ai-review-human-merge=false)' "input=false, no label → disabled"
 
 # Label only → still disabled (input gate not satisfied)
-out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_PRE_PREVIEW=false ISSUE_LABELS=$'ai-implement\nai-pre-preview' bash "$PGATE")"
-assert_contains "$out" 'enabled=false (workflow input pre-preview=false)' "input=false, label set → disabled (input wins)"
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AI_REVIEW_HUMAN_MERGE=false ISSUE_LABELS=$'ai-implement\nai-review-human-merge' bash "$HGATE")"
+assert_contains "$out" 'enabled=false (workflow input ai-review-human-merge=false)' "input=false, label set → disabled (input wins)"
 
 # Input only → disabled (label gate not satisfied)
-out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_PRE_PREVIEW=true ISSUE_LABELS='ai-implement' bash "$PGATE")"
-assert_contains "$out" 'enabled=false (input=true but label ai-pre-preview missing)' "input=true, no label → disabled"
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AI_REVIEW_HUMAN_MERGE=true ISSUE_LABELS='ai-implement' bash "$HGATE")"
+assert_contains "$out" 'enabled=false (input=true but label ai-review-human-merge missing)' "input=true, no label → disabled"
 
-# Both on → enabled
-out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_PRE_PREVIEW=true ISSUE_LABELS=$'ai-implement\nai-pre-preview' bash "$PGATE")"
-assert_contains "$out" 'enabled=true (input=true AND label ai-pre-preview present)' "input=true, label set → enabled"
+# Both new → enabled, no deprecation warning
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AI_REVIEW_HUMAN_MERGE=true ISSUE_LABELS=$'ai-implement\nai-review-human-merge' bash "$HGATE")"
+assert_contains "$out" 'enabled=true (input=true AND label ai-review-human-merge present)' "new input + new label → enabled"
+assert_not_contains "$out" '::warning::' "new input + new label → no deprecation warning"
 
-# Default INPUT_PRE_PREVIEW (unset) → disabled
-out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-pre-preview' bash "$PGATE")"
-assert_contains "$out" 'enabled=false (workflow input pre-preview=false)' "unset INPUT_PRE_PREVIEW defaults to false"
+# Deprecated input + deprecated label → enabled, two warnings
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_PRE_PREVIEW=true ISSUE_LABELS=$'ai-implement\nai-pre-preview' bash "$HGATE")"
+assert_contains "$out" 'enabled=true (input=true AND label ai-pre-preview present)' "deprecated input + deprecated label → enabled"
+assert_contains "$out" "::warning::workflow input 'pre-preview' is deprecated; rename it to 'ai-review-human-merge' (removed in v3)" "deprecated input → warning"
+assert_contains "$out" "::warning::issue label 'ai-pre-preview' is deprecated; relabel it to 'ai-review-human-merge' (removed in v3)" "deprecated label → warning"
 
-# Invalid INPUT_PRE_PREVIEW → exit 2
-ec="$(run_capture_ec env ISSUE_NUMBER=1 REPO=o/r INPUT_PRE_PREVIEW=yes ISSUE_LABELS='' bash "$PGATE")"
+# New input + deprecated label → enabled, label warning only
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AI_REVIEW_HUMAN_MERGE=true ISSUE_LABELS=$'ai-implement\nai-pre-preview' bash "$HGATE")"
+assert_contains "$out" 'enabled=true (input=true AND label ai-pre-preview present)' "new input + deprecated label → enabled"
+assert_not_contains "$out" "workflow input 'pre-preview' is deprecated" "new input + deprecated label → no input warning"
+assert_contains "$out" "::warning::issue label 'ai-pre-preview' is deprecated" "new input + deprecated label → label warning"
+
+# Deprecated input + new label → enabled, input warning only
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_PRE_PREVIEW=true ISSUE_LABELS=$'ai-implement\nai-review-human-merge' bash "$HGATE")"
+assert_contains "$out" 'enabled=true (input=true AND label ai-review-human-merge present)' "deprecated input + new label → enabled"
+assert_contains "$out" "::warning::workflow input 'pre-preview' is deprecated" "deprecated input + new label → input warning"
+assert_not_contains "$out" "issue label 'ai-pre-preview' is deprecated" "deprecated input + new label → no label warning"
+
+# Both labels present → new label wins the reason text, no label warning
+out="$(ISSUE_NUMBER=1 REPO=o/r INPUT_AI_REVIEW_HUMAN_MERGE=true ISSUE_LABELS=$'ai-review-human-merge\nai-pre-preview' bash "$HGATE")"
+assert_contains "$out" 'enabled=true (input=true AND label ai-review-human-merge present)' "both labels → new label wins"
+assert_not_contains "$out" "issue label 'ai-pre-preview' is deprecated" "both labels → no label warning"
+
+# Both inputs unset → disabled
+out="$(ISSUE_NUMBER=1 REPO=o/r ISSUE_LABELS='ai-review-human-merge' bash "$HGATE")"
+assert_contains "$out" 'enabled=false (workflow input ai-review-human-merge=false)' "unset inputs default to false"
+
+# Invalid new input → exit 2
+ec="$(run_capture_ec env ISSUE_NUMBER=1 REPO=o/r INPUT_AI_REVIEW_HUMAN_MERGE=yes ISSUE_LABELS='' bash "$HGATE")"
+assert_equals "$ec" "2" "invalid INPUT_AI_REVIEW_HUMAN_MERGE → exit 2"
+
+# Invalid deprecated input → exit 2
+ec="$(run_capture_ec env ISSUE_NUMBER=1 REPO=o/r INPUT_PRE_PREVIEW=yes ISSUE_LABELS='' bash "$HGATE")"
 assert_equals "$ec" "2" "invalid INPUT_PRE_PREVIEW → exit 2"
 
 # Missing ISSUE_NUMBER → exit 2
-ec="$(run_capture_ec env REPO=o/r INPUT_PRE_PREVIEW=true bash "$PGATE")"
+ec="$(run_capture_ec env REPO=o/r INPUT_AI_REVIEW_HUMAN_MERGE=true bash "$HGATE")"
 assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
 
 # Missing REPO → exit 2
-ec="$(run_capture_ec env ISSUE_NUMBER=1 INPUT_PRE_PREVIEW=true bash "$PGATE")"
+ec="$(run_capture_ec env ISSUE_NUMBER=1 INPUT_AI_REVIEW_HUMAN_MERGE=true bash "$HGATE")"
 assert_equals "$ec" "2" "missing REPO → exit 2"
 
 section "review-prompt — ADR-002 §2.4 auto-block rules present in template"
@@ -1060,21 +1494,21 @@ VERDICT=request_changes \
 calls="$(cat "$LOG")"; rm -f "$LOG"
 assert_contains "$calls" 'agent review verdict: request_changes (gate 4)' "non-approve verdict → names gate 4"
 
-# MODE=pre-preview → comment prefix is "Pre-review held", not "Auto-merge held"
+# MODE=human-merge → comment prefix is "Review held", not "Auto-merge held"
 LOG="$(mktemp)"
 PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
 REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=100 FOUND=true \
-VERDICT=block MODE=pre-preview \
+VERDICT=block MODE=human-merge \
   bash "$POST_BLOCK" >/dev/null
 calls="$(cat "$LOG")"; rm -f "$LOG"
-assert_contains     "$calls" 'pr comment 100 --repo o/r --body Pre-review held: agent review verdict: block (gate 4)' "MODE=pre-preview → 'Pre-review held' PR comment"
-assert_not_contains "$calls" 'Auto-merge held'                                                                        "MODE=pre-preview → no 'Auto-merge held' wording"
+assert_contains     "$calls" 'pr comment 100 --repo o/r --body Review held: agent review verdict: block (gate 4)' "MODE=human-merge → 'Review held' PR comment"
+assert_not_contains "$calls" 'Auto-merge held'                                                                    "MODE=human-merge → no 'Auto-merge held' wording"
 
 # SELF_FIX_ITERATIONS > 0 → distinct "self-fix exhausted" wording
 LOG="$(mktemp)"
 PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
 REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=100 FOUND=true \
-VERDICT=request_changes MODE=pre-preview \
+VERDICT=request_changes MODE=human-merge \
 SELF_FIX_ITERATIONS=2 SELF_FIX_MAX=2 \
   bash "$POST_BLOCK" >/dev/null
 calls="$(cat "$LOG")"; rm -f "$LOG"
@@ -1085,7 +1519,7 @@ assert_not_contains "$calls" 'agent review verdict: request_changes (gate 4)'   
 LOG="$(mktemp)"
 PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
 REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=100 FOUND=true \
-VERDICT=block MODE=pre-preview \
+VERDICT=block MODE=human-merge \
   bash "$POST_BLOCK" >/dev/null
 calls="$(cat "$LOG")"; rm -f "$LOG"
 assert_contains "$calls" 'agent review verdict: block (gate 4)' "SELF_FIX_ITERATIONS unset → plain wording unchanged"
@@ -1101,6 +1535,31 @@ FAILED_GATES=6 \
 calls="$(cat "$LOG")"; rm -f "$LOG"
 assert_contains "$calls" 'merge-envelope failed: path envelope' "envelope-fail reason surfaced"
 assert_contains "$calls" 'failed gates: 6'                      "failed-gate IDs in comment"
+
+# MODE=human-merge → "Review held" prefix on the PR comment
+LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
+REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=100 FOUND=true VERDICT=block MODE=human-merge \
+  bash "$POST_BLOCK" >/dev/null
+calls="$(cat "$LOG")"; rm -f "$LOG"
+assert_contains "$calls" 'pr comment 100 --repo o/r --body Review held:' "MODE=human-merge → 'Review held' prefix"
+assert_not_contains "$calls" 'Pre-review held' "MODE=human-merge → no stale 'Pre-review held'"
+
+# MODE=ai-merge (explicit) → auto-merge wording
+LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
+REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=100 FOUND=true VERDICT=block MODE=ai-merge \
+  bash "$POST_BLOCK" >/dev/null
+calls="$(cat "$LOG")"; rm -f "$LOG"
+assert_contains "$calls" 'pr comment 100 --repo o/r --body Auto-merge held:' "MODE=ai-merge → 'Auto-merge held' prefix"
+
+# Unset MODE → same as ai-merge (default unchanged for callers mid-migration)
+LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
+REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=100 FOUND=true VERDICT=block \
+  bash "$POST_BLOCK" >/dev/null
+calls="$(cat "$LOG")"; rm -f "$LOG"
+assert_contains "$calls" 'pr comment 100 --repo o/r --body Auto-merge held:' "unset MODE defaults to ai-merge wording"
 
 # Error path
 ec="$(run_capture_ec env REPO=o/r bash "$POST_BLOCK")"
@@ -1459,6 +1918,371 @@ assert_equals "$ec" "2" "MAX_ITERATIONS=abc (non-numeric) → exit 2"
 ec="$(run_capture_ec env PR_NUMBER=1 REPO=o/r HEAD_SHA=x HEAD_REF=y INITIAL_VERDICT=request_changes MAX_ITERATIONS=2 bash "$SELF_FIX_LOOP")"
 assert_equals "$ec" "2" "missing CONCERNS_FILE (no STUB_VERDICT_SEQUENCE) → exit 2"
 
+section "migrate-consumers — rewrite a consumer's pin to a new major line"
+
+MIGRATE="$ROOT/scripts/migrate-consumers.sh"
+
+rewrite() {  # <target> [force] ; stub on stdin
+  REWRITE_STDIN=1 TARGET_REF="$1" FORCE="${2:-false}" bash "$MIGRATE"
+}
+
+STUB_MOVING=$'jobs:\n  claude:\n    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1\n    with:\n      pipeline-ref: v1\n'
+
+out="$(printf '%s' "$STUB_MOVING" | rewrite v2)"
+assert_contains "$out" 'agent-implement.yml@v2' "moving tag @v1 → @v2"
+assert_contains "$out" 'pipeline-ref: v2'       "  → pipeline-ref follows"
+
+# THE regression. A substring swap of @v1 → @v2 turns a full-version pin into
+# @v2.13.0, a ref that does not exist. That is what happened to the one repo
+# pinned this way during the real v1→v2 migration.
+STUB_FULL=$'    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1.13.0\n      pipeline-ref: v1.13.0\n'
+out="$(printf '%s' "$STUB_FULL" | rewrite v2)"
+assert_contains "$out" 'agent-implement.yml@v2' "full-version pin migrates to the moving tag"
+assert_contains "$out" 'pipeline-ref: v2'       "  → pipeline-ref too"
+if [[ "$out" == *"v2.13.0"* ]]; then
+  fail "full-version pin must not become v2.13.0 (the ref does not exist)"
+else
+  pass "full-version pin does not produce a non-existent ref"
+fi
+
+# Idempotent: running it twice must not corrupt an already-migrated stub.
+once="$(printf '%s' "$STUB_MOVING" | rewrite v2)"
+twice="$(printf '%s' "$once" | rewrite v2)"
+assert_equals "$twice" "$once" "rewriting an already-migrated stub is a no-op"
+
+# A deliberate non-version pin is left alone unless forced — clobbering it
+# silently would be the same class of mistake this script exists to undo.
+STUB_MAIN=$'    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@main\n      pipeline-ref: main\n'
+out="$(printf '%s' "$STUB_MAIN" | rewrite v2)"
+assert_contains "$out" '@main'            "a main pin is preserved by default"
+assert_contains "$out" 'pipeline-ref: main' "  → pipeline-ref preserved too"
+
+out="$(printf '%s' "$STUB_MAIN" | rewrite v2 true)"
+assert_contains "$out" '@v2'              "--force does rewrite a main pin"
+
+# A SHA pin is a non-version pin too.
+STUB_SHA=$'    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@0cf6554c\n'
+out="$(printf '%s' "$STUB_SHA" | rewrite v2)"
+assert_contains "$out" '@0cf6554c'        "a SHA pin is preserved by default"
+
+# Everything else in the file must survive untouched.
+out="$(printf '%s' "$STUB_MOVING" | rewrite v2)"
+assert_contains "$out" 'jobs:'            "unrelated lines are preserved"
+assert_contains "$out" '  claude:'        "  → including indentation"
+
+# Nothing to rewrite is not an error.
+out="$(printf 'name: unrelated\n' | rewrite v2)"
+assert_contains "$out" 'name: unrelated'  "a file with no pin passes through unchanged"
+
+section "migrate-consumers — rename the deprecated flow inputs"
+
+rename_flow() {  # stub on stdin
+  REWRITE_FLOW_STDIN=1 bash "$MIGRATE"
+}
+
+# The deprecated spellings still work but are removed in v3, and 40 consumer
+# repos were still on pre-preview when the fleet was surveyed.
+STUB_PP=$'    with:
+      issue-number: 1
+      pre-preview: true
+'
+out="$(printf '%s' "$STUB_PP" | rename_flow)"
+assert_contains "$out" 'ai-review-human-merge: true' "pre-preview → ai-review-human-merge"
+if [[ "$out" == *"pre-preview: true"* ]]; then
+  fail "the deprecated key is gone"
+else
+  pass "the deprecated key is gone"
+fi
+assert_contains "$out" 'issue-number: 1' "unrelated inputs are untouched"
+
+STUB_AR=$'      auto-review: true
+'
+out="$(printf '%s' "$STUB_AR" | rename_flow)"
+assert_contains "$out" 'ai-review-ai-merge: true' "auto-review → ai-review-ai-merge"
+
+# Indentation is structural in YAML: losing it moves the key out of `with:`.
+STUB_INDENT=$'        pre-preview: true
+'
+out="$(printf '%s' "$STUB_INDENT" | rename_flow)"
+assert_contains "$out" '        ai-review-human-merge: true' "indentation is preserved exactly"
+
+# Every one of the 40 stubs carries explanatory comments on these lines.
+STUB_COMMENT=$'      pre-preview: true  # promote to ready on approve
+'
+out="$(printf '%s' "$STUB_COMMENT" | rename_flow)"
+assert_contains "$out" '# promote to ready on approve' "a trailing comment survives"
+
+# A key named in prose is not a key. Rewriting comment bodies across 40 repos
+# is not this script's job and would be unreviewable noise.
+STUB_PROSE=$'      # find-pipeline-pr.sh gates every later pre-preview step
+      issue-number: 1
+'
+out="$(printf '%s' "$STUB_PROSE" | rename_flow)"
+assert_contains "$out" 'later pre-preview step' "a mention inside a comment is left alone"
+
+# Already migrated: nothing to do, and the run must not claim otherwise.
+STUB_DONE=$'      ai-review-human-merge: true
+'
+out="$(printf '%s' "$STUB_DONE" | rename_flow)"
+assert_equals "$out" "$(printf '%s' "$STUB_DONE")" "an already-migrated stub is returned byte-identical"
+
+section "migrate-consumers — inventory flags stubs that under-grant (#434)"
+
+mig_tmp="$(mktemp -d)"
+printf 'deadbeef\n' > "$mig_tmp/sha"
+stub_full=$'on:\n  issues:\n    types: [labeled]\npermissions:\n  contents: write\n  pull-requests: write\n  issues: write\n  actions: write\njobs:\n  claude:\n    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2\n'
+printf '%s' "$stub_full" | base64 -w0 > "$mig_tmp/ok.b64"
+# game-sky-fury's agent.yml before game-sky-fury#7: everything but actions.
+printf '%s' "$stub_full" | grep -v 'actions: write' | base64 -w0 > "$mig_tmp/stale.b64"
+# ORDER MATTERS: the mock returns the first match, and only the sha call
+# carries `.sha`.
+printf '.sha\t%s\nrepos/o/stale/contents\t%s\nrepos/o/ok/contents\t%s\n' \
+  "$mig_tmp/sha" "$mig_tmp/stale.b64" "$mig_tmp/ok.b64" > "$mig_tmp/map"
+
+out="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$mig_tmp/log" GH_MOCK_STDOUT_MAP="$mig_tmp/map" \
+       CONSUMERS=$'o/stale\no/ok' bash "$MIGRATE")"
+assert_contains "$out" 'o/stale  v2  inventory  perms:MISSING actions' "a stub without actions: write is flagged"
+assert_contains "$out" 'o/ok  v2  inventory  perms:ok'                 "a complete stub reads perms:ok"
+
+out="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$mig_tmp/log" GH_MOCK_STDOUT_MAP="$mig_tmp/map" \
+       CONSUMERS='o/stale' bash "$MIGRATE" --to v2)"
+assert_contains "$out" 'already on target  perms:MISSING actions' "  → also when already on the target ref"
+
+out="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$mig_tmp/log" GH_MOCK_STDOUT_MAP="$mig_tmp/map" \
+       CONSUMERS='o/stale' bash "$MIGRATE" --to v3)"
+assert_contains "$out" 'would migrate → v3  perms:MISSING actions' "  → and in a dry-run migration"
+
+# A checker that cannot run must not read as "no gaps" (#434 review): an
+# unreadable reusable workflow would otherwise mark the whole fleet perms:ok.
+out="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$mig_tmp/log" GH_MOCK_STDOUT_MAP="$mig_tmp/map" \
+       REUSABLE="$mig_tmp/missing.yml" CONSUMERS='o/stale' bash "$MIGRATE" 2>/dev/null)"
+assert_contains "$out" 'o/stale  v2  inventory  perms:ERROR' "a checker failure reads perms:ERROR, not perms:ok"
+rm -rf "$mig_tmp"
+
+section "migrate-consumers — --fix-perms rewriter adds missing scopes (#441)"
+
+fix_perms() {  # <grants> ; stub on stdin. Sets OUT and RC; stderr into ERR.
+  local errf; errf="$(mktemp)"
+  RC=0
+  OUT="$(FIX_PERMS_STDIN=1 GRANTS="$1" bash "$MIGRATE" 2>"$errf")" || RC=$?
+  ERR="$(cat "$errf")"; rm -f "$errf"
+}
+
+# game-sky-fury's agent.yml before game-sky-fury#7, aligned comments and all:
+# the shape 37 consumers are in.
+FP_STALE=$'name: Claude\non:\n  issues:\n    types: [labeled]\n\npermissions:            # a reusable workflow can\'t be granted more than its\n  contents: write       # caller; the repo\'s default GITHUB_TOKEN is read-only,\n  pull-requests: write  # so omitting this fails the run at startup_failure.\n  issues: write\n\njobs:\n  claude:\n    if: github.event.label.name == \'ai-implement\'\n    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2\n    with:\n      pipeline-ref: v2'
+FP_FIXED=$'name: Claude\non:\n  issues:\n    types: [labeled]\n\npermissions:            # a reusable workflow can\'t be granted more than its\n  contents: write       # caller; the repo\'s default GITHUB_TOKEN is read-only,\n  pull-requests: write  # so omitting this fails the run at startup_failure.\n  issues: write\n  actions: write\n\njobs:\n  claude:\n    if: github.event.label.name == \'ai-implement\'\n    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2\n    with:\n      pipeline-ref: v2'
+
+fix_perms 'actions=write' < <(printf '%s' "$FP_STALE")
+assert_equals "$RC" "0" "top-level block: rewriter exits 0"
+assert_equals "$OUT" "$FP_FIXED" "  → appends actions: write after the last entry, comments and order intact"
+
+fix_perms 'actions=write' < <(printf '%s' "$FP_FIXED")
+assert_equals "$OUT" "$FP_FIXED" "an already-fixed stub is a no-op (idempotent)"
+
+# The calling job's own block REPLACES the top-level one (#434 semantics), so
+# that is the block to extend — the top-level one must stay as it was.
+FP_JOB=$'permissions:\n  contents: read\njobs:\n  claude:\n    permissions:\n      contents: write\n      # retry needs this job\'s block, not the top one\n      issues: write\n    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2\n'
+fix_perms 'actions=write' < <(printf '%s' "$FP_JOB")
+assert_contains "$OUT" $'      issues: write\n      actions: write\n    uses:' "job-level block on the calling job is the one extended"
+assert_contains "$OUT" $'permissions:\n  contents: read\njobs:' "  → the top-level block is untouched"
+
+# An unrelated job's block is not the caller's: the calling job inherits top-level.
+FP_OTHER=$'permissions:\n  contents: write\njobs:\n  lint:\n    permissions:\n      contents: read\n    runs-on: x\n  claude:\n    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2\n'
+fix_perms 'actions=write' < <(printf '%s' "$FP_OTHER")
+assert_contains "$OUT" $'permissions:\n  contents: write\n  actions: write\njobs:' "an unrelated job's block is ignored; top-level is extended"
+assert_contains "$OUT" $'      contents: read\n    runs-on: x' "  → the unrelated job's block is untouched"
+
+# A scope granted too low is raised in place, trailing comment kept.
+fix_perms 'contents=write' < <(printf 'permissions:\n  contents: read   # keep me\njobs:\n  c:\n    uses: o/r/.github/workflows/agent-implement.yml@v2\n')
+assert_contains "$OUT" '  contents: write   # keep me' "read → write is raised in place, comment kept"
+
+# Shapes it cannot edit safely: refuse loudly, never guess.
+for shape in 'permissions: { contents: write }' 'permissions: read-all' 'name: no-block'; do
+  fix_perms 'actions=write' < <(printf '%s\njobs:\n  c:\n    uses: o/r/.github/workflows/agent-implement.yml@v2\n' "$shape")
+  assert_equals "$RC" "3" "refuses '$shape' with exit 3"
+  assert_contains "$ERR" 'cannot edit' "  → and says why on stderr"
+done
+
+fix_perms 'actions=write' < <(printf 'permissions:\n  contents: write\njobs:\n  c:\n    uses: o/r/.github/workflows/other.yml@v2\n')
+assert_equals "$RC" "3" "refuses a stub with no job calling agent-implement.yml"
+
+set +e
+FIX_PERMS_STDIN=1 bash "$MIGRATE" </dev/null >/dev/null 2>&1
+rc=$?
+set -e
+assert_equals "$rc" "2" "FIX_PERMS_STDIN without GRANTS exits 2"
+
+section "migrate-consumers — --fix-perms rollout, one PR per repo (#441)"
+
+fp_tmp="$(mktemp -d)"
+printf 'deadbeef\n' > "$fp_tmp/sha"
+printf '%s' "$FP_STALE" | base64 -w0 > "$fp_tmp/stale.b64"
+printf '%s' "$FP_FIXED" | base64 -w0 > "$fp_tmp/ok.b64"
+printf 'permissions: read-all\njobs:\n  c:\n    uses: o/r/.github/workflows/agent-implement.yml@v2\n' \
+  | base64 -w0 > "$fp_tmp/odd.b64"
+printf 'https://github.com/o/open/pull/9\n' > "$fp_tmp/open-pr"
+# ORDER MATTERS: the mock returns the first match, and only the sha call
+# carries `.sha`. `o/open` is the stale stub with a fix PR already open.
+printf '.sha\t%s\nrepos/o/stale/contents\t%s\nrepos/o/open/contents\t%s\nrepos/o/ok/contents\t%s\nrepos/o/odd/contents\t%s\npr list --repo o/open\t%s\n' \
+  "$fp_tmp/sha" "$fp_tmp/stale.b64" "$fp_tmp/stale.b64" "$fp_tmp/ok.b64" "$fp_tmp/odd.b64" "$fp_tmp/open-pr" > "$fp_tmp/map"
+
+fp_run() {  # <consumers> [args...] ; sets OUT, RC; gh calls land in $fp_tmp/log
+  local consumers="$1"; shift
+  : > "$fp_tmp/log"
+  RC=0
+  OUT="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$fp_tmp/log" GH_MOCK_STDOUT_MAP="$fp_tmp/map" \
+         CONSUMERS="$consumers" bash "$MIGRATE" --fix-perms "$@" 2>&1)" || RC=$?
+}
+
+fp_run $'o/stale\no/ok'
+assert_contains "$OUT" 'o/stale  v2  would fix → actions  perms:MISSING actions' "dry run names the scopes it would add"
+assert_contains "$OUT" 'o/ok  v2  perms ok' "  → a perms:ok repo is skipped"
+assert_not_contains "$(cat "$fp_tmp/log")" '-X PUT' "  → and nothing is written without --apply"
+assert_equals "$RC" "0" "  → dry run exits 0"
+
+fp_run $'o/stale\no/ok' --apply
+log="$(cat "$fp_tmp/log")"
+assert_contains "$log" '-X PUT repos/o/stale/contents/.github/workflows/agent.yml' "--apply writes the stale stub"
+assert_contains "$log" 'branch=fix/agent-workflow-caller-permissions' "  → on a fix branch, never the default branch"
+assert_contains "$log" 'pr create --repo o/stale --head fix/agent-workflow-caller-permissions' "  → and opens one PR for it"
+assert_not_contains "$log" 'repos/o/ok/contents/.github/workflows/agent.yml -f' "  → the perms:ok repo is not written"
+written="$(grep -o 'content=[A-Za-z0-9+/=]*' "$fp_tmp/log" | head -1 | sed 's/^content=//' | base64 -d)"
+assert_equals "$written" "$FP_FIXED" "  → the written stub is exactly the rewriter's output"
+assert_contains "$OUT" 'o/stale  v2  fixed → PR' "  → and says so"
+
+fp_run 'o/open' --apply
+assert_contains "$OUT" 'o/open  v2  PR already open https://github.com/o/open/pull/9' "an open fix PR is not duplicated on a re-run"
+assert_not_contains "$(cat "$fp_tmp/log")" '-X PUT' "  → nothing is written for it"
+
+fp_run 'o/odd' --apply
+assert_contains "$OUT" 'o/odd  v2  cannot edit:' "an uneditable shape is reported"
+assert_not_contains "$(cat "$fp_tmp/log")" '-X PUT' "  → and never written"
+assert_equals "$RC" "1" "  → and the run exits 1"
+
+RC=0
+OUT="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$fp_tmp/log" GH_MOCK_STDOUT_MAP="$fp_tmp/map" \
+       REUSABLE="$fp_tmp/missing.yml" CONSUMERS='o/stale' bash "$MIGRATE" --fix-perms --apply 2>/dev/null)" || RC=$?
+assert_contains "$OUT" 'o/stale  v2  perms:ERROR  not edited' "perms:ERROR is reported, never edited"
+assert_equals "$RC" "1" "  → and the run exits 1"
+
+printf 'pr create\n' > "$fp_tmp/fail"
+RC=0
+OUT="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$fp_tmp/log" GH_MOCK_STDOUT_MAP="$fp_tmp/map" GH_MOCK_FAIL_MAP="$fp_tmp/fail" \
+       CONSUMERS='o/stale' bash "$MIGRATE" --fix-perms --apply 2>&1)" || RC=$?
+assert_contains "$OUT" 'o/stale  v2  PR FAILED' "a failed pr create is not reported as fixed"
+assert_equals "$RC" "1" "  → and the run exits 1"
+
+# A failed open-PR lookup is not "no PR open" (#448 review): on a re-run it
+# would bypass the only duplicate guard and write over an existing fix branch.
+printf 'pr list --repo o/stale\tHTTP 502: Bad Gateway\n' > "$fp_tmp/fail"
+: > "$fp_tmp/log"
+RC=0
+OUT="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$fp_tmp/log" GH_MOCK_STDOUT_MAP="$fp_tmp/map" GH_MOCK_FAIL_MAP="$fp_tmp/fail" \
+       GH_RETRY_SLEEP_CMD=true CONSUMERS='o/stale' bash "$MIGRATE" --fix-perms --apply 2>&1)" || RC=$?
+assert_contains "$OUT" 'o/stale  v2  CHECK FAILED' "a failed open-PR lookup is reported, not taken as 'none open'"
+assert_not_contains "$(cat "$fp_tmp/log")" '-X PUT' "  → and nothing is written"
+assert_equals "$RC" "1" "  → and the run exits 1"
+
+# 37 PRs in a tight loop trip GitHub's secondary rate limit: pr create backs off
+# and retries a transient failure instead of reporting PR FAILED.
+: > "$fp_tmp/log"; fp_ctr="$(mktemp)"
+RC=0
+OUT="$(PATH="$MOCKS:$PATH" GH_MOCK_LOG="$fp_tmp/log" GH_MOCK_STDOUT_MAP="$fp_tmp/map" \
+       GH_MOCK_PR_CREATE_FAIL_TIMES=1 GH_MOCK_PR_CREATE_CTR="$fp_ctr" GH_MOCK_PR_CREATE_STDERR='secondary rate limit' \
+       GH_RETRY_SLEEP_CMD=true CONSUMERS='o/stale' bash "$MIGRATE" --fix-perms --apply 2>&1)" || RC=$?
+assert_contains "$OUT" 'o/stale  v2  fixed → PR' "a rate-limited pr create is retried and succeeds"
+assert_equals "$(grep -c '^pr create' "$fp_tmp/log")" "2" "  → pr create was called twice"
+assert_equals "$RC" "0" "  → and the run exits 0"
+rm -f "$fp_ctr"
+rm -rf "$fp_tmp"
+
+set +e
+bash "$MIGRATE" --repo o/x --fix-perms --to v3 >/dev/null 2>&1
+rc=$?
+set -e
+assert_equals "$rc" "2" "--fix-perms with --to is a usage error"
+rc=0
+bash "$MIGRATE" --repo o/x --fix-perms --rename-flow >/dev/null 2>&1 || rc=$?
+assert_equals "$rc" "2" "--fix-perms with --rename-flow is a usage error (it would silently skip the rename)"
+
+assert_contains "$(cat "$ROOT/docs/CONSUMER-SETUP.md")" \
+  'migrate-consumers.sh --owner <owner> --fix-perms --apply' \
+  "CONSUMER-SETUP.md documents the --fix-perms rollout (#441)"
+
+# Bad invocation is a usage error, not a silent pass.
+set +e
+REWRITE_STDIN=1 bash "$MIGRATE" </dev/null >/dev/null 2>&1
+rc=$?
+set -e
+assert_equals "$rc" "2" "REWRITE_STDIN without TARGET_REF exits 2"
+
+set +e
+bash "$MIGRATE" >/dev/null 2>&1
+rc=$?
+set -e
+assert_equals "$rc" "2" "no --owner and no --repo exits 2"
+
+section "check-major-drift — warn when the pinned major line is stale"
+
+DRIFT="$ROOT/scripts/check-major-drift.sh"
+DRIFT_TAGS=$'v1.0.0\nv1.11.1\nv1.13.0\nv2.0.0\nv2.0.5\nv2.0.0-rc.1\nv2\nv1'
+
+drift_run() { env "$@" bash "$DRIFT" 2>&1; }
+
+# The case this exists for: pinned to a major line that has been superseded.
+out="$(drift_run PIPELINE_REF=v1 ALL_TAGS="$DRIFT_TAGS")"
+assert_contains "$out" 'drift: behind'   "older major line → behind"
+assert_contains "$out" '::warning'       "  → emits an annotation, not just a log line"
+assert_contains "$out" '@v2'             "  → names the target to migrate to"
+
+# Current line: no warning at all, or the annotation becomes noise everyone
+# learns to ignore — which is how the original drift stayed invisible.
+out="$(drift_run PIPELINE_REF=v2 ALL_TAGS="$DRIFT_TAGS")"
+assert_contains "$out" 'drift: current'  "newest major line → current"
+if [[ "$out" == *"::warning"* ]]; then
+  fail "current major line must not warn"
+else
+  pass "current major line does not warn"
+fi
+
+# A full version pin still resolves to its major line.
+out="$(drift_run PIPELINE_REF=v1.13.0 ALL_TAGS="$DRIFT_TAGS")"
+assert_contains "$out" 'drift: behind'   "full version pin v1.13.0 → behind"
+
+out="$(drift_run PIPELINE_REF=v2.0.5 ALL_TAGS="$DRIFT_TAGS")"
+assert_contains "$out" 'drift: current'  "full version pin v2.0.5 → current"
+
+# Pinned ahead of any release (a v3 branch cut before v3.0.0 shipped): report,
+# don't warn — there is nothing to migrate to yet.
+out="$(drift_run PIPELINE_REF=v3 ALL_TAGS="$DRIFT_TAGS")"
+assert_contains "$out" 'drift: ahead'    "unreleased major → ahead"
+
+# Non-version pins are a deliberate choice to track something else.
+for ref in main develop 0cf6554c feature/x; do
+  out="$(drift_run PIPELINE_REF="$ref" ALL_TAGS="$DRIFT_TAGS")"
+  assert_contains "$out" 'drift: skip'   "non-version pin '$ref' → skip"
+done
+
+# A bare moving tag is not evidence a major line exists — only a real release is.
+out="$(drift_run PIPELINE_REF=v2 ALL_TAGS=$'v1\nv2\nv3')"
+assert_contains "$out" 'drift: unknown'  "moving tags alone → unknown, not a bogus verdict"
+
+# Pre-release tags must never win the newest-major pick.
+out="$(drift_run PIPELINE_REF=v2 ALL_TAGS=$'v2.0.5\nv3.0.0-rc.1')"
+assert_contains "$out" 'drift: current'  "a v3 pre-release does not make v2 stale"
+
+# Advisory: drift must not fail the consumer's run.
+drift_run PIPELINE_REF=v1 ALL_TAGS="$DRIFT_TAGS" >/dev/null
+assert_equals "$?" "0" "drift exits 0 — advisory, never fails the run"
+
+# Missing required env is a real error.
+set +e
+env -u PIPELINE_REF bash "$DRIFT" >/dev/null 2>&1
+rc=$?
+set -e
+assert_equals "$rc" "2" "missing PIPELINE_REF exits 2"
+
 section "find-pipeline-pr — discover the draft PR opened for an issue"
 
 FIND_PR="$ROOT/scripts/find-pipeline-pr.sh"
@@ -1473,7 +2297,7 @@ find_pr_run() {
 
 # One draft PR closing the issue → found
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
-        PIPELINE_PRS_JSON='[{"number":17,"isDraft":true,"headRefOid":"deadbeef","headRefName":"feat/fix-thing","author":{"login":"github-actions[bot]"}}]')"
+        PIPELINE_PRS_JSON='[{"number":17,"isDraft":true,"headRefOid":"deadbeef","headRefName":"feat/fix-thing","author":{"login":"github-actions[bot]"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
 assert_contains "$out" 'found=true'         "single draft PR → found=true"
 assert_contains "$out" 'pr-number=17'       "emits pr-number"
 assert_contains "$out" 'head-sha=deadbeef'  "emits head-sha"
@@ -1481,51 +2305,207 @@ assert_contains "$out" 'head-ref=feat/fix-thing' "emits head-ref (branch name)"
 
 # Multiple drafts (e.g. stale + fresh) → highest-numbered wins
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
-        PIPELINE_PRS_JSON='[{"number":17,"isDraft":true,"headRefOid":"old","author":{"login":"github-actions[bot]"}},{"number":99,"isDraft":true,"headRefOid":"new","author":{"login":"github-actions[bot]"}}]')"
+        PIPELINE_PRS_JSON='[{"number":17,"isDraft":true,"headRefOid":"old","author":{"login":"github-actions[bot]"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]},{"number":99,"isDraft":true,"headRefOid":"new","author":{"login":"github-actions[bot]"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
 assert_contains "$out" 'pr-number=99'       "picks highest-numbered draft"
 assert_contains "$out" 'head-sha=new'       "head-sha matches selected PR"
 
 # Higher-numbered draft by a non-allowlisted author is REJECTED → falls
 # back to the legitimate lower-numbered pipeline-authored draft.
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
-        PIPELINE_PRS_JSON='[{"number":100,"isDraft":true,"headRefOid":"pipeline","author":{"login":"github-actions[bot]"}},{"number":101,"isDraft":true,"headRefOid":"attacker","author":{"login":"some-human"}}]')"
+        PIPELINE_PRS_JSON='[{"number":100,"isDraft":true,"headRefOid":"pipeline","author":{"login":"github-actions[bot]"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]},{"number":101,"isDraft":true,"headRefOid":"attacker","author":{"login":"some-human"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
 assert_contains "$out" 'pr-number=100'      "ignores non-allowlisted author even when higher-numbered"
 assert_contains "$out" 'head-sha=pipeline'  "selects pipeline head-sha, not attacker's"
 
 # Custom allowlist accepts a GitHub App
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
         AUTHOR_ALLOWLIST=$'github-actions[bot]\nmy-pipeline-app[bot]' \
-        PIPELINE_PRS_JSON='[{"number":50,"isDraft":true,"headRefOid":"app-pr","author":{"login":"my-pipeline-app[bot]"}}]')"
+        PIPELINE_PRS_JSON='[{"number":50,"isDraft":true,"headRefOid":"app-pr","author":{"login":"my-pipeline-app[bot]"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
 assert_contains "$out" 'pr-number=50'       "custom AUTHOR_ALLOWLIST accepts the bot"
 
 # #54: `gh pr list --json author` reports the Actions bot as `app/github-actions`,
 # not the REST `github-actions[bot]` the default allowlist uses. Normalization
 # must match them so a GITHUB_TOKEN-authored PR is found.
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
-        PIPELINE_PRS_JSON='[{"number":7,"isDraft":true,"headRefOid":"ghtok","author":{"login":"app/github-actions"}}]')"
+        PIPELINE_PRS_JSON='[{"number":7,"isDraft":true,"headRefOid":"ghtok","author":{"login":"app/github-actions"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
 assert_contains "$out" 'found=true'         "gh author 'app/github-actions' matches default allowlist"
 assert_contains "$out" 'pr-number=7'        "  → selects the GITHUB_TOKEN-authored PR"
 
 # Normalization is symmetric: gh's `app/<name>` matches an allowlist `<name>[bot]`.
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
         AUTHOR_ALLOWLIST='my-app[bot]' \
-        PIPELINE_PRS_JSON='[{"number":8,"isDraft":true,"headRefOid":"appsha","author":{"login":"app/my-app"}}]')"
+        PIPELINE_PRS_JSON='[{"number":8,"isDraft":true,"headRefOid":"appsha","author":{"login":"app/my-app"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
 assert_contains "$out" 'pr-number=8'        "allowlist 'my-app[bot]' matches gh author 'app/my-app'"
 
 # A genuine non-bot human author is still rejected (no over-matching).
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
-        PIPELINE_PRS_JSON='[{"number":9,"isDraft":true,"headRefOid":"h","author":{"login":"some-human"}}]')"
+        PIPELINE_PRS_JSON='[{"number":9,"isDraft":true,"headRefOid":"h","author":{"login":"some-human"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
 assert_contains "$out" 'found=false'        "non-allowlisted human still rejected after normalization"
 
 # Only a non-draft PR exists (somehow promoted already) → not found
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
-        PIPELINE_PRS_JSON='[{"number":17,"isDraft":false,"headRefOid":"x","author":{"login":"github-actions[bot]"}}]')"
+        PIPELINE_PRS_JSON='[{"number":17,"isDraft":false,"headRefOid":"x","author":{"login":"github-actions[bot]"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
 assert_contains "$out" 'found=false'        "only non-draft → found=false"
 assert_contains "$out" 'pr-number='         "no pr-number when not found"
 
 # Empty result → not found
 out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r PIPELINE_PRS_JSON='[]')"
 assert_contains "$out" 'found=false'        "empty list → found=false"
+
+# --- false-positive rejection (#343) -----------------------------------
+
+# GitHub's search tokenises `closes #11` and matches any body containing the
+# bare number, so the result set can hold a PR that closes something else
+# entirely. PR #28 in game-wipfelkratzer matched issue 11 on the phrase
+# "chairs at cells 5 and 11" — a cell index. Accepting it suppressed
+# verify-or-recover-pr.sh's salvage and the run's work was lost.
+out="$(find_pr_run env ISSUE_NUMBER=11 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":28,"isDraft":true,"headRefOid":"wrong","author":{"login":"github-actions[bot]"},"body":"- **After, tall** (floors: 10, chairs at cells 5 and 11 next to the stair opening)","closingIssuesReferences":[{"number":13,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
+assert_contains "$out" 'found=false'  "bare number in body, linked to another issue → rejected (#343)"
+assert_contains "$out" 'pr-number='   "  → no pr-number, so salvage can run"
+
+# The linkage is authoritative: a body that never names the issue is still a
+# match when GitHub linked it.
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":30,"isDraft":true,"headRefOid":"linked","author":{"login":"github-actions[bot]"},"body":"no mention at all","closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
+assert_contains "$out" 'pr-number=30' "closingIssuesReferences alone is enough"
+
+# The body fallback covers the window before GitHub computes the link — the
+# false negative #249's retry loop exists to avoid. It is also the ONLY signal
+# on a real pipeline run: GitHub forms no closing reference for a PR authored
+# by the github-actions app (#303), so every pipeline PR arrives here with an
+# empty closingIssuesReferences and is matched on its body alone.
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":31,"isDraft":true,"headRefOid":"kw","author":{"login":"github-actions[bot]"},"body":"Implements the thing.\n\nCloses #42","closingIssuesReferences":[]}]')"
+assert_contains "$out" 'pr-number=31' "body keyword alone is enough when the link is not computed yet"
+
+# Every keyword GitHub honours, one fixture each.
+for kw in "Close" "Closes" "Closed" "fixes" "Fixed" "resolve" "Resolves" "RESOLVED"; do
+  out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+          PIPELINE_PRS_JSON="[{\"number\":32,\"isDraft\":true,\"headRefOid\":\"kw\",\"author\":{\"login\":\"github-actions[bot]\"},\"body\":\"$kw #42\",\"closingIssuesReferences\":[]}]")"
+  assert_contains "$out" 'pr-number=32' "keyword '$kw' is accepted"
+done
+
+# A mention without a closing keyword is not a claim on the issue.
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":33,"isDraft":true,"headRefOid":"mention","author":{"login":"github-actions[bot]"},"body":"Related to #42, see the discussion there.","closingIssuesReferences":[]}]')"
+assert_contains "$out" 'found=false' "a bare mention without a closing keyword is rejected"
+
+# Prefix collision: #420 must not satisfy issue 42.
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":34,"isDraft":true,"headRefOid":"prefix","author":{"login":"github-actions[bot]"},"body":"Closes #420","closingIssuesReferences":[]}]')"
+assert_contains "$out" 'found=false' "Closes #420 does not satisfy issue 42"
+
+# Linked, but to a different issue in the same repo.
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":35,"isDraft":true,"headRefOid":"other","author":{"login":"github-actions[bot]"},"body":"x","closingIssuesReferences":[{"number":43,"repository":{"name":"r","owner":{"login":"o"}}}]}]')"
+assert_contains "$out" 'found=false' "a link to a different issue is rejected"
+
+# Linked to the same number, but in a different repository.
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":36,"isDraft":true,"headRefOid":"xrepo","author":{"login":"github-actions[bot]"},"body":"x","closingIssuesReferences":[{"number":42,"repository":{"name":"other","owner":{"login":"o"}}}]}]')"
+assert_contains "$out" 'found=false' "a link to the same number in another repo is rejected"
+
+# Several valid candidates → the highest-numbered still wins, unchanged.
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":40,"isDraft":true,"headRefOid":"lo","author":{"login":"github-actions[bot]"},"body":"Closes #42","closingIssuesReferences":[]},{"number":41,"isDraft":true,"headRefOid":"hi","author":{"login":"github-actions[bot]"},"body":"Closes #42","closingIssuesReferences":[]}]')"
+assert_contains "$out" 'pr-number=41' "highest-numbered valid candidate still wins"
+
+# --- retry-on-empty-result (search-index lag, #249) --------------------
+
+# Fake `gh pr list` shim: returns "[]" on its first N invocations (tracked
+# via a counter file, same idiom as gh-retry.sh's `make_flaky`), then the
+# real PR JSON on the next. Used to drive find-pipeline-pr.sh's retry loop.
+make_flaky_pr_list() {
+  local script="$1" empty_times="$2" real_json="$3" ctr="$4"
+  cat > "$script" <<EOF
+#!/usr/bin/env bash
+n=\$(cat "$ctr" 2>/dev/null || printf 0)
+n=\$((n + 1)); printf '%s' "\$n" > "$ctr"
+if (( n <= $empty_times )); then printf '[]\n'; exit 0; fi
+printf '%s\n' '$real_json'
+EOF
+  chmod +x "$script"
+}
+
+# Empty on attempt 1, PR found on attempt 2 → found=true, exactly 2 invocations.
+shim1="$(mktemp)"; ctr1="$(mktemp)"; : > "$ctr1"
+make_flaky_pr_list "$shim1" 1 \
+  '[{"number":17,"isDraft":true,"headRefOid":"deadbeef","headRefName":"feat/x","author":{"login":"github-actions[bot]"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]' \
+  "$ctr1"
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON_SEQUENCE_CMD="$shim1" \
+        FIND_PR_RETRY_SLEEP_CMD=: FIND_PR_RETRY_MAX=3)"
+assert_contains "$out" 'found=true'   "retries once on empty, finds PR on attempt 2"
+assert_contains "$out" 'pr-number=17' "  → pr-number from the successful attempt"
+assert_equals "$(cat "$ctr1")" "2"    "  → exactly 2 invocations (1 empty + 1 success)"
+
+# Empty for all FIND_PR_RETRY_MAX attempts → found=false, exactly MAX invocations.
+shim2="$(mktemp)"; ctr2="$(mktemp)"; : > "$ctr2"
+make_flaky_pr_list "$shim2" 99 '[]' "$ctr2"
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON_SEQUENCE_CMD="$shim2" \
+        FIND_PR_RETRY_SLEEP_CMD=: FIND_PR_RETRY_MAX=3)"
+assert_contains "$out" 'found=false' "gives up after FIND_PR_RETRY_MAX empty attempts"
+assert_equals "$(cat "$ctr2")" "3"   "  → exactly FIND_PR_RETRY_MAX (3) invocations, not infinite"
+
+# PIPELINE_PRS_JSON (existing seam) still short-circuits with zero retries —
+# regression guard that the retry loop doesn't touch the deterministic-JSON
+# path every other existing test in this section relies on.
+shim3="$(mktemp)"; ctr3="$(mktemp)"; printf 0 > "$ctr3"
+make_flaky_pr_list "$shim3" 99 '[]' "$ctr3"
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON='[{"number":5,"isDraft":true,"headRefOid":"x","author":{"login":"github-actions[bot]"},"closingIssuesReferences":[{"number":42,"repository":{"name":"r","owner":{"login":"o"}}}]}]' \
+        PIPELINE_PRS_JSON_SEQUENCE_CMD="$shim3" \
+        FIND_PR_RETRY_SLEEP_CMD=: FIND_PR_RETRY_MAX=3)"
+assert_contains "$out" 'pr-number=5'      "PIPELINE_PRS_JSON takes priority over the sequence shim"
+assert_equals "$(cat "$ctr3")" "0"        "  → shim never invoked when PIPELINE_PRS_JSON is set"
+
+# A non-integer FIND_PR_RETRY_MAX ("3.5") must fall back to the documented
+# default (3) rather than looping forever ((( )) throws on the left side of
+# && without tripping set -e, so `break` would otherwise never be reached).
+shim4="$(mktemp)"; ctr4="$(mktemp)"; : > "$ctr4"
+make_flaky_pr_list "$shim4" 99 '[]' "$ctr4"
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON_SEQUENCE_CMD="$shim4" \
+        FIND_PR_RETRY_SLEEP_CMD=: FIND_PR_RETRY_MAX=3.5)"
+assert_contains "$out" 'found=false' "non-integer FIND_PR_RETRY_MAX (3.5) falls back to default, no infinite loop"
+assert_equals "$(cat "$ctr4")" "3"   "  → exactly 3 (default) invocations"
+
+# A non-numeric FIND_PR_RETRY_MAX ("abc") must also fall back to the default
+# and degrade gracefully to found=false, not crash under set -u.
+shim5="$(mktemp)"; ctr5="$(mktemp)"; : > "$ctr5"
+make_flaky_pr_list "$shim5" 99 '[]' "$ctr5"
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON_SEQUENCE_CMD="$shim5" \
+        FIND_PR_RETRY_SLEEP_CMD=: FIND_PR_RETRY_MAX=abc)"
+assert_contains "$out" 'found=false' "non-numeric FIND_PR_RETRY_MAX (abc) falls back to default, no crash"
+assert_equals "$(cat "$ctr5")" "3"   "  → exactly 3 (default) invocations"
+
+# A SEQUENCE_CMD that prints garbage before failing must not corrupt the
+# fallback JSON (garbage-output[] is invalid and used to crash jq/the script).
+garbage_shim="$(mktemp)"
+cat > "$garbage_shim" <<'EOF'
+#!/usr/bin/env bash
+printf 'garbage-output'
+exit 1
+EOF
+chmod +x "$garbage_shim"
+out="$(find_pr_run env ISSUE_NUMBER=42 REPO=o/r \
+        PIPELINE_PRS_JSON_SEQUENCE_CMD="$garbage_shim" \
+        FIND_PR_RETRY_SLEEP_CMD=: FIND_PR_RETRY_MAX=1)"
+assert_contains "$out" 'found=false' "SEQUENCE_CMD garbage-then-fail stdout discarded, found=false not a crash"
+
+# A result set of nothing but false positives must exhaust the retries and
+# report found=false — that is what lets salvage run (#343).
+shim_fp="$(mktemp)"; ctr_fp="$(mktemp)"; : > "$ctr_fp"
+make_flaky_pr_list "$shim_fp" 0 \
+  '[{"number":28,"isDraft":true,"headRefOid":"wrong","author":{"login":"github-actions[bot]"},"body":"cells 5 and 11","closingIssuesReferences":[{"number":13,"repository":{"name":"r","owner":{"login":"o"}}}]}]' \
+  "$ctr_fp"
+out="$(find_pr_run env ISSUE_NUMBER=11 REPO=o/r \
+        PIPELINE_PRS_JSON_SEQUENCE_CMD="$shim_fp" \
+        FIND_PR_RETRY_SLEEP_CMD=: FIND_PR_RETRY_MAX=3)"
+assert_contains "$out" 'found=false'   "an all-false-positive result set exhausts the retries"
+assert_equals "$(cat "$ctr_fp")" "3"   "  → retried FIND_PR_RETRY_MAX times, then gave up"
 
 # Error paths
 ec="$(run_capture_ec env REPO=o/r bash "$FIND_PR")"
@@ -1891,6 +2871,18 @@ assert_equals "$(printf '%s' "$out" | jq -r '.is_error')" "true" \
 assert_contains "$(printf '%s' "$out" | jq -r '.result')" 'OPENROUTER_API_KEY is not set' \
   "missing-key preflight → result carries the actionable message"
 
+# Transient catalog miss (#439): opencode emits the useful message FIRST and a
+# generic "Unexpected server error" LAST. Keeping only the last error event threw
+# away the one line the classifier can bucket, so the run became class=bug.
+# Fixture is verbatim from game-sky-fury run 36632007246.
+out="$(EXECUTION_FILE="$FIXTURES/opencode-model-not-found.json" MODEL=z-ai/glm-5.2 bash "$ADAPT_OC")"
+assert_equals "$(printf '%s' "$out" | jq -r '.is_error')"  "true" "model-not-found → is_error true"
+assert_equals "$(printf '%s' "$out" | jq -r '.num_turns')" "0"    "model-not-found → num_turns 0"
+assert_contains "$(printf '%s' "$out" | jq -r '.result')" 'Model not found: openrouter/z-ai/glm-5.2' \
+  "multi-error stream → result keeps the first error message"
+assert_contains "$(printf '%s' "$out" | jq -r '.result')" 'Unexpected server error' \
+  "multi-error stream → result keeps the last error message too"
+
 # Unparseable input → bug-bucket result
 TMP_BAD="$(mktemp)"
 printf 'this is not json {{ bad' > "$TMP_BAD"
@@ -1923,6 +2915,12 @@ assert_contains "$out" 'class=api_auth'   "opencode 403 / forbidden → class=ap
 out="$(adapter_to_classifier opencode-missing-key.json)"
 assert_contains "$out" 'class=api_auth' "missing OPENROUTER_API_KEY → api_auth (no retry)"
 
+# Transient opencode catalog miss (#439): 0 turns + "Model not found" is an
+# infrastructure blip, not a bug. Retrying it (and escalating to Claude on
+# attempt 2) is what the operator ended up doing by hand.
+out="$(adapter_to_classifier opencode-model-not-found.json)"
+assert_contains "$out" 'class=transient' "opencode 0-turn model-not-found → transient (retried)"
+
 # Error paths
 ec="$(run_capture_ec env bash "$ADAPT_OC")"
 assert_equals "$ec" "2" "adapter: missing EXECUTION_FILE → exit 2"
@@ -1941,6 +2939,13 @@ assert_contains "$out" 'class=rate_limit'   "rate-limit fixture → rate_limit"
 
 out="$(RESULT_FILE="$FIXTURES/result-max-turns.json"          bash "$CLASSIFY_FAIL")"
 assert_contains "$out" 'class=task_failure' "max-turns fixture → task_failure"
+
+# The Claude CLI reports a turn-budget exhaustion as `error_max_turns` with
+# `"is_error": false` — the shape post-run-report.sh already keys off (its
+# `error_*` subtype check). classify-failure.sh must agree, or the run is
+# bucketed as a success and no retry is ever offered for max-turns.
+out="$(RESULT_FILE="$FIXTURES/result-max-turns-unflagged.json" bash "$CLASSIFY_FAIL")"
+assert_contains "$out" 'class=task_failure' "max-turns with is_error=false → task_failure"
 
 out="$(RESULT_FILE="$FIXTURES/result-api-auth.json"           bash "$CLASSIFY_FAIL")"
 assert_contains "$out" 'class=api_auth'     "api-auth fixture → api_auth"
@@ -1966,11 +2971,121 @@ assert_contains "$out" '0.0035'      "post-run-report includes opencode cost (\$
 assert_contains "$out" '1,200'       "post-run-report formats input_tokens with thousands separator"
 assert_contains "$out" 'success'     "post-run-report shows success outcome"
 
+# The model-not-found branch is guarded by num_turns == 0: a catalog miss can only
+# happen before the first step. The same text after real turns is something else
+# and must still reach the operator as a bug (#439).
+mnf_tmp="$(mktemp --suffix=.json)"
+jq -nc '{type:"result",subtype:"error_during_execution",is_error:true,duration_ms:0,num_turns:0,total_cost_usd:0,session_id:"s",result:"Model not found: openrouter/z-ai/glm-5.2. Did you mean: z-ai/glm-4.5?",usage:{input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0}}' > "$mnf_tmp"
+out="$(RESULT_FILE="$mnf_tmp" bash "$CLASSIFY_FAIL")"
+assert_contains "$out" 'class=transient' "model-not-found at 0 turns → transient"
+jq -c '.num_turns = 3' "$mnf_tmp" > "$mnf_tmp.3" && mv "$mnf_tmp.3" "$mnf_tmp"
+out="$(RESULT_FILE="$mnf_tmp" bash "$CLASSIFY_FAIL")"
+assert_contains "$out" 'class=bug' "model-not-found after real turns → still bug"
+rm -f "$mnf_tmp"
+
 ec="$(run_capture_ec env bash "$CLASSIFY_FAIL")"
 assert_equals "$ec" "2" "missing RESULT_FILE → exit 2"
 
 ec="$(run_capture_ec env RESULT_FILE=/no/such/file bash "$CLASSIFY_FAIL")"
 assert_equals "$ec" "64" "unreadable RESULT_FILE → exit 64"
+
+section "gh:implement — label application cannot deadlock the dispatch (#301)"
+
+# `gh issue edit` is atomic across `--add-label` flags: if ANY named label does not
+# exist in the repo, the whole call fails and NEITHER label is applied. Combining the
+# trigger label with the review-flow label therefore turns a missing review label into
+# "no run is ever triggered".
+#
+# That is a bootstrap deadlock, not a cosmetic bug: `ai-review-human-merge` is created
+# by ensure-issue-labels.sh, which the pipeline runs INSIDE the implement job
+# (agent-implement.yml, "Ensure issue labels"). So on a consumer onboarded before
+# ADR-009 the label only comes into existence once a run has already started — and the
+# run cannot start, because applying the label is what fails. Observed on
+# anim-bossinfo-ch/BI-ArchiveUploader: "failed to update 1 issue", both labels
+# unapplied, no run, no diagnostic naming the label.
+IMPLEMENT_MD="$ROOT/commands/gh/implement.md"
+
+# Only the ```bash fences are instructions. The doc deliberately shows the combined
+# form inside a ```text fence to demonstrate the failure, so scope the guard to bash
+# blocks rather than the whole file.
+implement_bash="$(awk '/^```bash$/{f=1;next} /^```$/{f=0} f' "$IMPLEMENT_MD")"
+
+assert_equals "$(printf '%s' "$implement_bash" | grep -c 'add-label ai-implement --add-label' || true)" "0" \
+  "gh:implement never combines --add-label flags in one runnable gh issue edit"
+
+assert_equals "$(grep -c 'assume it already exists' "$IMPLEMENT_MD" || true)" "0" \
+  "gh:implement does not tell the operator to assume a label exists"
+section "agent-implement.yml — no install into a shared npm prefix (#302)"
+
+# `npm install -g` resolves to `npm config get prefix`, which on a typical runner is
+# /usr/local — shared across every job and every run on a PERSISTENT self-hosted
+# runner. If that prefix was ever written as root, a later `npm install -g` as the
+# runner user cannot rename the existing package directory and dies with
+# `EACCES / syscall rename` before the reviewer ever starts.
+#
+# Observed on anim-bossinfo-ch/BI-ArchiveUploader: the implement job succeeded and the
+# review job failed in the SAME run, on the same host, as the same user — because the
+# implement job delegates to anthropics/claude-code-base-action (which installs the CLI
+# itself) while the review/self-fix jobs shelled out to `npm install -g`. Not
+# intermittent: it fails 100% of the time once the prefix is root-owned.
+WF="$ROOT/.github/workflows/agent-implement.yml"
+
+# Strip YAML comments before asserting: the steps deliberately *explain* why
+# `npm install -g` is wrong, so matching the whole file would flag the explanation.
+# The guard is about what the job executes, not what it documents.
+wf_exec="$(grep -vE '^[[:space:]]*#' "$WF")"
+
+assert_equals "$(printf '%s' "$wf_exec" | grep -c 'npm install -g' || true)" "0" \
+  "agent-implement.yml never installs into the shared global npm prefix"
+
+# The job-local-prefix mitigation is gone: npm is off the AGENT=claude path
+# entirely. Both jobs now call the native installer, the same mechanism
+# claude-code-base-action uses in the implement job — one dependency, one
+# mechanism (#302). The assertion is inverted deliberately: it guards that npm
+# does not come BACK, not that the old mitigation is still present.
+assert_equals "$(printf '%s' "$wf_exec" | grep -c 'npm install' || true)" "0" \
+  "no npm install of any shape survives on the AGENT=claude path"
+
+assert_equals "$(printf '%s' "$wf_exec" | grep -c 'install-claude-cli.sh' || true)" "2" \
+  "both CLI installs go through the checksum-pinned native installer"
+
+assert_equals "$(printf '%s' "$wf_exec" | grep -c 'post-runner-block.sh' || true)" "2" \
+  "each install has a failure path that surfaces a toolchain block (#384)"
+
+section "check-issue-link — warn when the PR will not auto-close its issue (#303)"
+
+# GitHub does not form a closing-issue reference for a PR authored by the
+# github-actions app, so `Closes #N` in a pipeline PR body is inert: merging does not
+# close the issue and /ai-stats reads it as never shipped. Both were silent. CLOSING_REFS
+# drives the script without a network call, the same way ISSUE_LABELS does for
+# check-human-merge-gate.sh.
+LINK_CHK="$ROOT/scripts/check-issue-link.sh"
+
+out="$(ISSUE_NUMBER=307 PR_NUMBER=384 REPO=o/r CLOSING_REFS='307' bash "$LINK_CHK")"
+assert_contains "$out" 'linked=true'   "reference present -> linked=true"
+
+out="$(ISSUE_NUMBER=307 PR_NUMBER=384 REPO=o/r CLOSING_REFS='' bash "$LINK_CHK")"
+assert_contains "$out" 'linked=false'  "no references -> linked=false"
+assert_contains "$out" '::warning::'   "no references -> emits a warning annotation"
+assert_contains "$out" 'will NOT close the issue' "warning names the merge consequence"
+assert_contains "$out" 'never shipped' "warning names the ai-stats consequence"
+assert_contains "$out" 'PIPELINE_APP_ID' "warning names the remedy"
+
+# A PR that closes a DIFFERENT issue must not count as linked for this one.
+out="$(ISSUE_NUMBER=307 PR_NUMBER=384 REPO=o/r CLOSING_REFS='308 309' bash "$LINK_CHK")"
+assert_contains "$out" 'linked=false'  "references to other issues only -> linked=false"
+
+# Linked case stays quiet — a warning on every run would train people to ignore it.
+out="$(ISSUE_NUMBER=307 PR_NUMBER=384 REPO=o/r CLOSING_REFS='306 307' bash "$LINK_CHK")"
+assert_contains "$out" 'linked=true'   "reference among several -> linked=true"
+assert_equals "$(printf '%s' "$out" | grep -c '::warning::' || true)" "0" \
+  "linked -> no warning annotation"
+
+ec="$(run_capture_ec env REPO=o/r bash "$LINK_CHK")"
+assert_equals "$ec" "2" "missing ISSUE_NUMBER/PR_NUMBER -> exit 2"
+
+ec="$(run_capture_ec env ISSUE_NUMBER=1 PR_NUMBER=2 GITHUB_REPOSITORY= bash "$LINK_CHK")"
+assert_equals "$ec" "3" "missing REPO -> exit 3"
 
 section "retry-dispatch — policy decisions (DRY_RUN, no real dispatch)"
 
@@ -1996,6 +3111,41 @@ out="$(CLASS=transient ATTEMPT=2 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 bash "$RETRY
 assert_contains "$out" 'delay-seconds=20' "transient attempt=2 → 20s backoff"
 out="$(CLASS=transient ATTEMPT=3 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 bash "$RETRY")"
 assert_contains "$out" 'decision=stop'  "transient attempt=cap → stop"
+
+# --- real dispatch path: the 403 that made every retry silently fail ---------
+# retry-dispatch.sh calls `gh workflow run`, which needs `actions: write` on the
+# CALLING workflow. A consumer that omits it gets a bare "Resource not
+# accessible by integration" naming neither the permission nor the workflow, so
+# the retry the classifier just decided on never happens and a transient failure
+# becomes a hard one. Assert the diagnosis, not just the failure.
+rd_dir="$(mktemp -d)"
+printf 'workflow run\tHTTP 403: Resource not accessible by integration\n' > "$rd_dir/failmap"
+set +e
+out="$(CLASS=transient ATTEMPT=1 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=0 \
+  DELAY_OVERRIDE_SEC=0 CONSUMER_WORKFLOW=agent.yml \
+  GH_MOCK_LOG="$rd_dir/gh.log" GH_MOCK_FAIL_MAP="$rd_dir/failmap" \
+  PATH="$MOCKS:$PATH" bash "$RETRY" 2>&1)"
+rc=$?
+set -e
+assert_equals "1" "$rc" "403 re-dispatch exits non-zero"
+assert_contains "$out" 'actions: write'            "403 names the missing permission"
+assert_contains "$out" 'agent.yml'                 "403 names the workflow that needs it"
+assert_contains "$out" 'CONSUMER-SETUP'            "403 points at the fix"
+assert_contains "$(cat "$rd_dir/gh.log")" 'workflow run agent.yml' "it did attempt the dispatch"
+
+# A non-403 dispatch failure still fails, but must NOT claim a permission problem.
+printf 'workflow run\tHTTP 502: Bad Gateway\n' > "$rd_dir/failmap"
+: > "$rd_dir/gh.log"
+set +e
+out="$(CLASS=transient ATTEMPT=1 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=0 \
+  DELAY_OVERRIDE_SEC=0 CONSUMER_WORKFLOW=agent.yml \
+  GH_MOCK_LOG="$rd_dir/gh.log" GH_MOCK_FAIL_MAP="$rd_dir/failmap" \
+  PATH="$MOCKS:$PATH" bash "$RETRY" 2>&1)"
+rc=$?
+set -e
+assert_equals "1" "$rc" "non-403 dispatch failure still exits non-zero"
+assert_not_contains "$out" 'actions: write' "a 502 is not blamed on permissions"
+rm -rf "$rd_dir"
 
 # task_failure: only retry once (default MAX_RETRIES_TASK=1)
 out="$(CLASS=task_failure ATTEMPT=1 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 bash "$RETRY")"
@@ -2042,17 +3192,30 @@ assert_contains "$log" 'label create ctx:high --repo owner/repo'   "creates ctx:
 assert_contains "$log" 'label create agent:claude --repo owner/repo'   "creates agent:claude"
 assert_contains "$log" 'label create agent:opencode --repo owner/repo' "creates agent:opencode"
 
-# Gate labels (auto-review epic #3, chaining epic #4)
-assert_contains "$log" 'label create ai-auto-review --repo owner/repo'  "creates ai-auto-review"
-assert_contains "$log" 'label create ai-pre-preview --repo owner/repo'  "creates ai-pre-preview"
+# Gate labels (review flows ADR-002/ADR-004, named by ADR-009; chaining epic #4)
+assert_contains "$log" 'label create ai-review-ai-merge --repo owner/repo'    "creates ai-review-ai-merge"
+assert_contains "$log" 'label create ai-review-human-merge --repo owner/repo' "creates ai-review-human-merge"
 assert_contains "$log" 'label create ai-chain --repo owner/repo'        "creates ai-chain"
 assert_contains "$log" 'label create ai:chain-paused --repo owner/repo' "creates ai:chain-paused"
+assert_not_contains "$log" 'label create ai-auto-review'  "does not create deprecated ai-auto-review"
+assert_not_contains "$log" 'label create ai-pre-preview'  "does not create deprecated ai-pre-preview"
 
 # Outcome label (auto-review epic #3 — ADR-002 §2)
 assert_contains "$log" 'label create ai:review-blocked --repo owner/repo' "creates ai:review-blocked"
 
-# Coordination label (read/written by /enrich's concurrency lock)
+# Coordination labels (read/written by /enrich's concurrency lock; needs-human
+# written by the unattended /autopilot escalation lane)
 assert_contains "$log" 'label create enrichment-ongoing --repo owner/repo' "creates enrichment-ongoing"
+assert_contains "$log" 'label create needs-human --repo owner/repo' "creates needs-human"
+
+# Turn-budget override labels (read by classify-turns.sh stage 1). Without
+# these the documented override is unusable in a fresh repo: `gh issue edit
+# --add-label turns:160` fails outright on a label that does not exist, so
+# the only way to reach a bigger budget is the heuristic. Found on #280.
+assert_contains "$log" 'label create turns:50 --repo owner/repo'  "creates turns:50"
+assert_contains "$log" 'label create turns:80 --repo owner/repo'  "creates turns:80"
+assert_contains "$log" 'label create turns:120 --repo owner/repo' "creates turns:120"
+assert_contains "$log" 'label create turns:160 --repo owner/repo' "creates turns:160"
 
 ec="$(run_capture_ec env bash "$ROOT/scripts/ensure-issue-labels.sh")"
 assert_equals "$ec" "2" "missing REPO → exit 2"
@@ -2202,7 +3365,7 @@ assert_not_contains "$out" 'pr create'     "IS_ERROR=true → never calls gh pr 
 
 # PR already exists → pr-present=true, no recovery.
 out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false \
-        PIPELINE_PRS_JSON='[{"number":17,"isDraft":true,"headRefOid":"x","author":{"login":"github-actions[bot]"}}]')"
+        PIPELINE_PRS_JSON='[{"number":17,"isDraft":true,"headRefOid":"x","author":{"login":"github-actions[bot]"},"body":"Closes #42"}]')"
 assert_contains "$out" 'pr-present=true'    "existing PR → pr-present=true"
 assert_contains "$out" 'recovered=false'    "existing PR → no recovery"
 assert_not_contains "$out" 'pr create'      "existing PR → never calls gh pr create"
@@ -2215,14 +3378,18 @@ assert_contains "$out" 'pr-present=true'    "no PR + branch → pr-present after
 assert_contains "$out" 'pr create'          "recovery calls gh pr create"
 assert_contains "$out" 'Closes #42'         "recovery PR body closes the issue"
 
-# No PR + no usable branch → pr-present=false, no recovery attempt.
+# No PR + no usable branch + nothing left uncommitted → pr-present=false, no
+# recovery attempt. WORKTREE_DIRTY is pinned here rather than left to the real
+# checkout's state: with work left behind, the salvage path below takes over.
 out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
-        PIPELINE_PRS_JSON='[]' BRANCH=main BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true)"
+        PIPELINE_PRS_JSON='[]' BRANCH=main BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        WORKTREE_DIRTY=false)"
 assert_contains "$out" 'pr-present=false'   "branch == default → not recoverable"
 assert_not_contains "$out" 'pr create'      "default branch → never calls gh pr create"
 
 out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
-        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=false BRANCH_AHEAD=true)"
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=false BRANCH_AHEAD=true \
+        WORKTREE_DIRTY=false)"
 assert_contains "$out" 'pr-present=false'   "branch not pushed → pr-present=false"
 
 # No PR + branch, but gh pr create fails transiently then succeeds → recovered.
@@ -2258,6 +3425,277 @@ assert_contains "$out" 'recovered=false'   "  → not counted as recovered (it p
 # Missing required env → exit 2.
 ec="$(run_capture_ec env REPO=o/r IS_ERROR=false bash "$VERIFY")"
 assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
+
+# Whether the issue carried an "## Implementation Plan" is stamped on the run
+# report, so /ai-stats can answer whether enrichment actually predicts shipping.
+out="$(RESULT_FILE="$FIXTURES/result-success-cheap.json" ISSUE_NUMBER=42 \
+        WORKFLOW_RUN_URL=https://example.test/run/1 RENDER_ONLY=1 \
+        MODEL=claude-sonnet-5 AGENT=claude HAS_PLAN=true \
+        bash "$ROOT/scripts/post-run-report.sh")"
+assert_contains "$out" '**Plan:** enriched' "HAS_PLAN=true → reported as enriched"
+
+out="$(RESULT_FILE="$FIXTURES/result-success-cheap.json" ISSUE_NUMBER=42 \
+        WORKFLOW_RUN_URL=https://example.test/run/1 RENDER_ONLY=1 \
+        MODEL=claude-sonnet-5 AGENT=claude HAS_PLAN=false \
+        bash "$ROOT/scripts/post-run-report.sh")"
+assert_contains "$out" '**Plan:** none' "HAS_PLAN=false → reported as none"
+
+out="$(RESULT_FILE="$FIXTURES/result-success-cheap.json" ISSUE_NUMBER=42 \
+        WORKFLOW_RUN_URL=https://example.test/run/1 RENDER_ONLY=1 \
+        MODEL=claude-sonnet-5 AGENT=claude \
+        bash "$ROOT/scripts/post-run-report.sh")"
+assert_not_contains "$out" '**Plan:**' "HAS_PLAN unset → no Plan field (older runs stay parseable)"
+
+# A salvaged PR is reported as such, not as an ordinary success — otherwise the
+# /ai-stats ship rate counts salvage as if the agent had done it cleanly.
+out="$(RESULT_FILE="$FIXTURES/result-success-cheap.json" ISSUE_NUMBER=42 \
+        WORKFLOW_RUN_URL=https://example.test/run/1 RENDER_ONLY=1 SALVAGED=true \
+        bash "$ROOT/scripts/post-run-report.sh")"
+assert_contains "$out" 'success (salvaged' "post-run-report flags a salvaged PR"
+assert_contains "$out" 'ai:done'           "salvaged run still labels ai:done"
+
+out="$(RESULT_FILE="$FIXTURES/result-success-cheap.json" ISSUE_NUMBER=42 \
+        WORKFLOW_RUN_URL=https://example.test/run/1 RENDER_ONLY=1 \
+        bash "$ROOT/scripts/post-run-report.sh")"
+assert_not_contains "$out" 'salvaged'      "an ordinary success is not flagged as salvaged"
+
+# --- salvage: run finished cleanly but never committed ----------------------
+#
+# The single largest observed failure mode ("run completed but no PR was
+# opened", 24 of 48 failures across the fleet) is a run that did real work and
+# left it uncommitted in the workspace. Recovery used to bail because the branch
+# had nothing pushed, discarding the work. Salvage commits and pushes it so the
+# run ends in a reviewable draft PR instead of a silent loss.
+#
+# SALVAGE_APPLY=0 is the test seam: it skips the git add/commit/push writes but
+# still exercises the decision path and the gh pr create call. It is passed
+# explicitly on every case below — the script also refuses the writes outside
+# GitHub Actions, but a test must not depend on that second line of defence.
+
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=main BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        WORKTREE_DIRTY=true SALVAGE_APPLY=0)"
+assert_contains "$out" 'pr create'        "dirty worktree + no usable branch → salvage opens a PR"
+assert_contains "$out" 'pr-present=true'  "salvage → pr-present=true"
+assert_contains "$out" 'salvaged=true'    "salvage → salvaged=true"
+assert_contains "$out" 'Closes #42'       "salvage PR body closes the issue"
+assert_contains "$out" 'salvage/issue-42' "salvage pushes a dedicated salvage branch"
+
+# Branch exists but has no commits pushed — same salvage path.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=false \
+        WORKTREE_DIRTY=true SALVAGE_APPLY=0)"
+assert_contains "$out" 'salvaged=true'    "branch with no commits + dirty tree → salvaged"
+
+# Clean worktree → nothing to salvage, previous behaviour preserved.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=main BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        WORKTREE_DIRTY=false SALVAGE_APPLY=0)"
+assert_contains "$out" 'pr-present=false'  "clean worktree → no salvage"
+assert_contains "$out" 'salvaged=false'    "clean worktree → salvaged=false"
+assert_not_contains "$out" 'pr create'     "clean worktree → never calls gh pr create"
+
+# A genuine agent error is still owned by the existing handling — salvage is
+# scoped to the clean-exit-but-no-PR case it was measured against.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=true DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' WORKTREE_DIRTY=true SALVAGE_APPLY=0)"
+assert_contains "$out" 'salvaged=false'    "IS_ERROR=true → no salvage"
+assert_not_contains "$out" 'pr create'     "IS_ERROR=true → never calls gh pr create"
+
+# Outside GitHub Actions the git writes are refused even when nothing pins the
+# seam — an unpinned test run must never commit or push from a real checkout.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=main BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        WORKTREE_DIRTY=true GITHUB_ACTIONS=)"
+assert_contains "$out" 'salvaged=true' "salvage decision still reached outside CI"
+
+# Normal recovery (branch pushed and ahead) is not reported as a salvage.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        WORKTREE_DIRTY=true SALVAGE_APPLY=0)"
+assert_contains "$out" 'recovered=true'    "pushed branch → ordinary recovery"
+assert_contains "$out" 'salvaged=false'    "pushed branch → not a salvage"
+
+# --- pr-number output (#364) ------------------------------------------------
+
+# The checks probe needs a PR number. Without one it exits 2 and — carrying
+# continue-on-error — fails silently, which is the very class of bug #364 is
+# about. So assert on the script's own stdout, which is unambiguously its
+# emit(): find-pipeline-pr.sh inherits GITHUB_OUTPUT and writes a pr-number
+# there too, so the file alone could not tell the two apart.
+verify_stdout() {
+  local log; log="$(mktemp)"
+  GH_MOCK_LOG="$log" PATH="$MOCKS:$PATH" "$@" bash "$VERIFY" 2>/dev/null || true
+  rm -f "$log"
+}
+# Last wins, which is how GitHub Actions itself resolves a repeated output key.
+last_output_value() {
+  sed -n "s/^$2=//p" "$1" | tail -1
+}
+
+out="$(verify_stdout env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false \
+        PIPELINE_PRS_JSON='[{"number":123,"isDraft":true,"headRefName":"fix/42-x","author":{"login":"app/github-actions"},"headRefOid":"abc123","body":"Closes #42"}]')"
+assert_contains "$out" 'pr-present=true'   "found PR → pr-present=true"
+assert_contains "$out" 'pr-number=123'     "found PR → pr-number on stdout"
+
+go_found="$(mktemp)"; : > "$go_found"
+verify_stdout env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false GITHUB_OUTPUT="$go_found" \
+        PIPELINE_PRS_JSON='[{"number":123,"isDraft":true,"headRefName":"fix/42-x","author":{"login":"app/github-actions"},"headRefOid":"abc123","body":"Closes #42"}]' >/dev/null
+assert_equals "$(last_output_value "$go_found" pr-number)" "123" \
+  "found PR → pr-number in GITHUB_OUTPUT"
+
+# A genuine agent failure reports no PR, so the number must be empty, not stale.
+go_err="$(mktemp)"; : > "$go_err"
+out="$(verify_stdout env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=true GITHUB_OUTPUT="$go_err")"
+assert_contains "$out" 'pr-number='        "agent failure → pr-number key still emitted"
+assert_not_contains "$out" 'pr-number=123' "agent failure → no stale number"
+assert_equals "$(last_output_value "$go_err" pr-number)" "" \
+  "agent failure → GITHUB_OUTPUT pr-number is empty"
+
+# Recovery opened the PR: the number comes from the URL `gh pr create` printed.
+pr_url_map="$(mktemp)"; pr_url_fixture="$(mktemp)"
+printf 'https://github.com/o/r/pull/456\n' > "$pr_url_fixture"
+printf 'pr create\t%s\n' "$pr_url_fixture" > "$pr_url_map"
+out="$(verify_stdout env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        GH_MOCK_STDOUT_MAP="$pr_url_map")"
+assert_contains "$out" 'recovered=true'    "recovery → recovered=true"
+assert_contains "$out" 'pr-number=456'     "recovery → pr-number parsed from the created PR's URL"
+
+# `gh pr create` failing prints prose, not a URL. Reporting a fragment of it as
+# a PR number would send the probe at a nonexistent PR.
+ctr_num="$(mktemp)"; : > "$ctr_num"
+out="$(verify_stdout env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=main \
+        PIPELINE_PRS_JSON='[]' BRANCH=ai/issue-42 BRANCH_REMOTE_EXISTS=true BRANCH_AHEAD=true \
+        GH_RETRY_SLEEP_CMD=: GH_RETRY_NO_JITTER=1 \
+        GH_MOCK_PR_CREATE_FAIL_TIMES=9 GH_MOCK_PR_CREATE_CTR="$ctr_num" \
+        GH_MOCK_PR_CREATE_STDERR='not permitted to create or approve pull requests')"
+assert_contains "$out" 'pr-present=false'  "failed pr create → pr-present=false"
+assert_contains "$out" 'pr-number='        "failed pr create → pr-number key emitted"
+assert_not_contains "$out" 'pr-number=not' "failed pr create → error prose is not a PR number"
+
+section "check-attempt-cap — stop redispatching an issue forever"
+
+CAP="$ROOT/scripts/check-attempt-cap.sh"
+
+cap_run() {
+  local go log; go="$(mktemp)"; log="$(mktemp)"
+  GITHUB_OUTPUT="$go" GH_MOCK_LOG="$log" PATH="$MOCKS:$PATH" "$@" bash "$CAP" >/dev/null 2>&1 || true
+  printf 'LOG<<%s>>\n' "$(tr '\n' ';' < "$log")"
+  cat "$go"; rm -f "$go" "$log"
+}
+
+run_report='{"body":"## ai-implement run\n\n**Outcome:** :x: failed"}'
+
+# No prior run reports → first attempt, proceed.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r ISSUE_COMMENTS_JSON='[]')"
+assert_contains "$out" 'proceed=true'   "no prior attempts → proceed"
+assert_contains "$out" 'attempt=1'      "no prior attempts → attempt 1"
+
+# One prior attempt → still under the cap of 2.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r ISSUE_COMMENTS_JSON="[$run_report]")"
+assert_contains "$out" 'proceed=true'   "one prior attempt → proceed"
+assert_contains "$out" 'attempt=2'      "one prior attempt → attempt 2"
+
+# Two prior attempts → cap reached, park instead of dispatching again.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r ISSUE_COMMENTS_JSON="[$run_report,$run_report]")"
+assert_contains "$out" 'proceed=false'  "two prior attempts → do not proceed"
+assert_contains "$out" 'attempt=3'      "two prior attempts → would be attempt 3"
+assert_contains "$out" 'issue edit'     "cap reached → edits the issue labels"
+assert_contains "$out" 'parked'         "cap reached → applies the parked label"
+assert_contains "$out" 'remove-label'   "cap reached → removes the dispatch label"
+assert_contains "$out" 'issue comment'  "cap reached → explains itself on the issue"
+assert_contains "$out" 'label create'   "cap reached → creates the park label if the repo lacks it"
+
+# Comments that are not run reports never count towards the cap.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r \
+        ISSUE_COMMENTS_JSON='[{"body":"just a comment"},{"body":"## something else"}]')"
+assert_contains "$out" 'proceed=true'   "unrelated comments do not count as attempts"
+assert_contains "$out" 'attempt=1'      "unrelated comments leave the attempt at 1"
+
+# MAX_ATTEMPTS is configurable.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r MAX_ATTEMPTS=4 \
+        ISSUE_COMMENTS_JSON="[$run_report,$run_report]")"
+assert_contains "$out" 'proceed=true'    "a raised MAX_ATTEMPTS keeps going"
+assert_contains "$out" 'max-attempts=4'  "reports the configured cap"
+
+# DRY_RUN decides without writing to GitHub.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 \
+        ISSUE_COMMENTS_JSON="[$run_report,$run_report]")"
+assert_contains "$out" 'proceed=false'   "DRY_RUN still decides"
+assert_not_contains "$out" 'issue edit'  "DRY_RUN makes no label writes"
+
+# Missing required env → exit 2.
+ec="$(run_capture_ec env REPO=o/r bash "$CAP")"
+assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
+
+# --- non-starts (#393) ------------------------------------------------------
+# A run that reported 0 turns and $0.00 never reached the agent: it executed no
+# step of the plan and spent nothing. Counting it as an attempt parked #302
+# after a single real attempt, and also spent classify-agent.sh's
+# escalate-on-retry on a run that never happened.
+
+# shellcheck disable=SC2016  # literal dollar amounts, not expansions
+real_report='{"body":"## ai-implement run\n\n**Outcome:** :x: failed\n**Duration:** 11m 26s · **Turns:** 104 / cap 120 · **Cost:** $7.28"}'
+# shellcheck disable=SC2016  # literal dollar amounts, not expansions
+nonstart_report='{"body":"## ai-implement run\n\n**Outcome:** :x: failed\n**Duration:** 0s · **Turns:** 0 / cap 120 · **Cost:** $0.00"}'
+# shellcheck disable=SC2016  # literal dollar amounts, not expansions
+turns_only='{"body":"## ai-implement run\n\n**Outcome:** :x: failed\n**Duration:** 2m · **Turns:** 5 / cap 120 · **Cost:** $0.00"}'
+# shellcheck disable=SC2016  # literal dollar amounts, not expansions
+cost_only='{"body":"## ai-implement run\n\n**Outcome:** :x: failed\n**Duration:** 2m · **Turns:** 0 / cap 120 · **Cost:** $1.20"}'
+
+# Two non-starts plus one real attempt is ONE attempt at the work.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r \
+        ISSUE_COMMENTS_JSON="[$nonstart_report,$real_report,$nonstart_report]")"
+assert_contains "$out" 'proceed=true'   "non-starts do not consume attempts"
+assert_contains "$out" 'attempt=2'      "attempt counts only runs that ran"
+assert_contains "$out" 'non-starts=2'   "non-starts are reported separately"
+
+# Two real attempts still park, exactly as before.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r \
+        ISSUE_COMMENTS_JSON="[$real_report,$real_report]")"
+assert_contains "$out" 'proceed=false'  "two real attempts → park"
+
+# Half-zero is not a non-start: the run did something.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r \
+        ISSUE_COMMENTS_JSON="[$turns_only,$turns_only]")"
+assert_contains "$out" 'proceed=false'  "turns>0 with zero cost counts as a real attempt"
+
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r \
+        ISSUE_COMMENTS_JSON="[$cost_only,$cost_only]")"
+assert_contains "$out" 'proceed=false'  "cost>0 with zero turns counts as a real attempt"
+
+# Fail closed: a report whose fields cannot be parsed is a real attempt.
+unparseable='{"body":"## ai-implement run\n\n**Outcome:** :x: failed"}'
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r \
+        ISSUE_COMMENTS_JSON="[$unparseable,$unparseable]")"
+assert_contains "$out" 'proceed=false'  "unparseable report counts as a real attempt"
+assert_contains "$out" 'non-starts=0'   "unparseable report is not a non-start"
+
+# The non-start ceiling still stops a broken credential looping forever.
+five_nonstarts="[$nonstart_report,$nonstart_report,$nonstart_report,$nonstart_report,$nonstart_report]"
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r ISSUE_COMMENTS_JSON="$five_nonstarts")"
+assert_contains "$out" 'proceed=false'      "five non-starts → park"
+assert_contains "$out" 'non-starts=5'       "five non-starts → reported"
+assert_contains "$out" 'max-non-starts=5'   "the non-start ceiling is reported"
+assert_contains "$out" 'issue comment'      "non-start park → explains itself"
+
+# Four non-starts is still under the ceiling.
+four_nonstarts="[$nonstart_report,$nonstart_report,$nonstart_report,$nonstart_report]"
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r ISSUE_COMMENTS_JSON="$four_nonstarts")"
+assert_contains "$out" 'proceed=true'   "four non-starts → still under the ceiling"
+assert_contains "$out" 'attempt=1'      "non-starts never advance the attempt number"
+
+# MAX_NON_STARTS is configurable, like MAX_ATTEMPTS.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r MAX_NON_STARTS=2 \
+        ISSUE_COMMENTS_JSON="[$nonstart_report,$nonstart_report]")"
+assert_contains "$out" 'proceed=false'      "a lowered MAX_NON_STARTS parks sooner"
+assert_contains "$out" 'max-non-starts=2'   "reports the configured non-start ceiling"
+
+# DRY_RUN decides without writing, on the non-start path too.
+out="$(cap_run env ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 ISSUE_COMMENTS_JSON="$five_nonstarts")"
+assert_contains "$out" 'proceed=false'   "DRY_RUN decides on the non-start ceiling"
+assert_not_contains "$out" 'issue edit'  "DRY_RUN makes no label writes on the non-start path"
 
 # --- setup/link-partials.sh -------------------------------------------------
 
@@ -2456,6 +3894,219 @@ mkdir -p "$bs_home3/repos/github/freaxnx01/public"
 ln -s "$ROOT" "$bs_home3/repos/github/freaxnx01/public/agent-workflow"
 bs_ec="$(run_capture_ec env HOME="$bs_home3" bash "$BOOTSTRAP" --no-sync --copy)"
 assert_equals "$bs_ec" "0" "--copy accepted end-to-end"
+
+section "link-commands — installs every scripts/lib helper, not just detect-forge"
+
+# Regression: the installer hardcoded a single LIB_SRC/LIB_DEST pair, so
+# parse-enrich-args.sh shipped in the repo but never reached ~/.claude and
+# /enrich's argument parsing failed with "No such file or directory".
+LINKER="$ROOT/setup/link-commands.sh"
+fake_home="$(mktemp -d)"
+
+HOME="$fake_home" REPO_DIR="$ROOT" bash "$LINKER" --no-sync >/dev/null 2>&1 || true
+
+installed_dir="$fake_home/.claude/scripts/lib"
+for lib in "$ROOT"/scripts/lib/*.sh; do
+  name="$(basename "$lib")"
+  if [[ -f "$installed_dir/$name" ]]; then
+    pass "installed scripts/lib/$name"
+  else
+    fail "installed scripts/lib/$name" "file missing under \$HOME/.claude/scripts/lib"
+  fi
+done
+
+# The two helpers user-level commands actually source must be byte-identical.
+for name in detect-forge.sh parse-enrich-args.sh; do
+  if cmp -s "$ROOT/scripts/lib/$name" "$installed_dir/$name"; then
+    pass "  → $name matches the repo copy byte-for-byte"
+  else
+    fail "  → $name matches the repo copy byte-for-byte" "content differs or file absent"
+  fi
+done
+
+rm -rf "$fake_home"
+
+section "checks-blocked warning (#364)"
+
+# Reuses the existing success fixture: a blocked run is still a SUCCESSFUL run,
+# so the outcome must not change. That is the regression this guards.
+out="$(CHECKS_RUNNABLE=false CHECKS_BLOCKED_REASON=no-app-token \
+  render_only result-success-cheap.json)"
+assert_contains "$out" 'Required checks could not run'  "blocked → warning block rendered"
+assert_contains "$out" 'PIPELINE_APP_ID'                "blocked → names the unset secret"
+assert_contains "$out" 'docs/PIPELINE-APP-SETUP.md'     "blocked → points at the runbook"
+assert_contains "$out" 'ai:checks-blocked'              "blocked → label in LABELS line"
+assert_contains "$out" 'LABELS: ai:done'                "blocked → outcome STILL ai:done"
+
+out="$(CHECKS_RUNNABLE=false CHECKS_BLOCKED_REASON=rollup-empty \
+  render_only result-success-cheap.json)"
+assert_contains "$out" 'A pipeline App token was minted' "rollup-empty → different wording"
+assert_contains "$out" 'ai:checks-blocked'               "rollup-empty → label present"
+
+out="$(CHECKS_RUNNABLE=true render_only result-success-cheap.json)"
+assert_not_contains "$out" 'Required checks could not run' "runnable → no warning block"
+assert_not_contains "$out" 'ai:checks-blocked'             "runnable → no label"
+
+out="$(render_only result-success-cheap.json)"
+assert_not_contains "$out" 'Required checks could not run' "unset → no warning block"
+assert_not_contains "$out" 'ai:checks-blocked'             "unset → no label"
+
+# The ctx label is orthogonal and must survive alongside the new one — the
+# labels_csv() rewrite is where those two could have collided.
+out="$(CHECKS_RUNNABLE=false CHECKS_BLOCKED_REASON=no-app-token \
+  render_only result-high-context.json exec-high-context.ndjson)"
+assert_contains "$out" 'LABELS: ai:done,ctx:high,ai:checks-blocked' \
+  "blocked + high context → all three labels, outcome first"
+
+section "no npm anywhere in the pipeline (#395)"
+
+# #302 took the claude path off npm; #395 takes opencode off it. Nothing in
+# scripts/ should shell out to npm any more, in any shape. The guard is
+# inverted on purpose: it stops npm coming BACK, rather than asserting that
+# some particular mitigation is still in place.
+#
+# `^[^#]*` restricts this to INVOCATIONS. Both installers carry a comment
+# naming `npm install -g` to record which hazard they exist to avoid, and that
+# rationale is the most useful thing in either header — a guard that banned the
+# word would force it out and leave the next maintainer to rediscover #302.
+assert_equals "$(grep -rnE '^[^#]*npm install' "$ROOT/scripts" 2>/dev/null | wc -l | tr -d ' ')" "0" \
+  "no script installs anything with npm"
+
+# The canonical pin stays in exactly one place and is passed down.
+assert_equals "$(grep -c '^OPENCODE_VERSION=' "$ROOT/scripts/ensure-toolchain.sh" || true)" "1" \
+  "OPENCODE_VERSION is declared exactly once"
+
+assert_contains "$(cat "$ROOT/scripts/ensure-toolchain.sh")" 'install-opencode.sh' \
+  "ensure_opencode delegates to the native installer"
+
+# The runner contract no longer demands Node.js.
+assert_not_contains "$(cat "$ROOT/docs/RUNNER-REQUIREMENTS.md")" 'nodejs' \
+  "RUNNER-REQUIREMENTS no longer requires nodejs"
+
+section "agent-implement.yml — pipeline pushes act as the App (#430)"
+
+# Configuring the App made pipeline PRs App-authored, but every `git push` was
+# still github-actions[bot], so the runs those pushes trigger stalled at
+# action_required exactly as before. Observed on PR #424: opened by the App at
+# 14:36 with checks running, then runs created at 14:47 with
+# actor=github-actions[bot] stalled and the PR dropped to checks: 0.
+WF430="$ROOT/.github/workflows/agent-implement.yml"
+
+# Strip comments before asserting: the steps deliberately explain why the token
+# is needed, and matching the whole file would count the explanation.
+wf430_exec="$(grep -vE '^[[:space:]]*#' "$WF430")"
+
+# The agent pushes with the credentials actions/checkout persists.
+assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'token: ..{ steps.app_token' || true)" "1" \
+  "the consumer checkout receives the App token"
+
+# Ordering: the mint must come before the checkout that consumes it. Compare
+# line numbers within the implement job.
+mint_line="$(grep -n 'id: app_token' "$WF430" | head -1 | cut -d: -f1)"
+ckout_line="$(grep -n 'name: Checkout consumer repo' "$WF430" | head -1 | cut -d: -f1)"
+if [[ -n "$mint_line" && -n "$ckout_line" ]] && (( mint_line < ckout_line )); then
+  pass "the mint step precedes the consumer checkout it serves"
+else
+  fail "the mint step precedes the consumer checkout it serves" \
+    "mint at ${mint_line:-none}, checkout at ${ckout_line:-none}"
+fi
+
+# The pipeline-ref checkouts fetch agent-workflow itself and must keep the
+# default token — scoping the change.
+assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'ref: ..{ inputs.pipeline-ref' || true)" "3" \
+  "the three pipeline-ref checkouts are still present and untouched"
+
+# Both review jobs must mint their own token. Passing one between jobs via a
+# job output is not an option: job outputs are not secret-masked.
+assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'id: app_token' || true)" "3" \
+  "all three jobs mint an installation token"
+
+# The mint's if: tests env.PIPELINE_APP_ID because the secrets context is not
+# available in if:. Without the job-level env line the condition evaluates
+# empty and the step silently never runs.
+assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'PIPELINE_APP_ID: ..{ secrets' || true)" "3" \
+  "all three jobs declare PIPELINE_APP_ID at job level"
+
+# self-fix pushes; it must not be handed the ambient token.
+assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'GH_TOKEN: ..{ steps.app_token' || true)" "8" \
+  "both self-fix steps get the App token (6 implement-job callers + 2)"
+
+section "agent-implement.test.yml — caller permissions cover the callee (#435)"
+
+# A reusable workflow's caller must grant at least what the callee's jobs
+# declare. Grant less and GitHub rejects the workflow AT LOAD: startup_failure,
+# no jobs, no assertions — while still showing up in the checks list looking
+# like an ordinary failure.
+#
+# This has now happened twice. #34 fixed it once; #421 added `actions: write`
+# to the implement job without widening the caller, and the Layer-2 guard
+# startup_failed on every invocation for four days across six branches before
+# anyone noticed. A green run cannot prove the sets agree in future, because
+# the failure mode is that nothing runs — so it is asserted here, in a test
+# that cannot itself fail to start.
+CALLEE_WF="$ROOT/.github/workflows/agent-implement.yml"
+CALLER_WF="$ROOT/.github/workflows/agent-implement.test.yml"
+
+perm_union() {
+  # Union of every job's permissions in the callee, as sorted "key: value" lines.
+  python3 -c '
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+need = {}
+for job in d["jobs"].values():
+    for k, v in (job.get("permissions") or {}).items():
+        need[k] = v
+print("\n".join(f"{k}: {v}" for k, v in sorted(need.items())))
+' "$1"
+}
+
+perm_caller() {
+  python3 -c '
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+p = d.get("permissions") or {}
+print("\n".join(f"{k}: {v}" for k, v in sorted(p.items())))
+' "$1"
+}
+
+needed="$(perm_union "$CALLEE_WF")"
+granted="$(perm_caller "$CALLER_WF")"
+
+assert_equals "$granted" "$needed" \
+  "the test caller grants exactly the union of the callee's job permissions"
+
+# Pin the specific regression: actions: write is what #421 added and #435 restored.
+assert_contains "$granted" "actions: write" \
+  "the caller grants actions: write (the #421 regression)"
+
+# Every opencode ensure-toolchain step must honour dry-run. The Layer-2
+# scenarios put tests/mocks/ on PATH; install-opencode.sh calls curl, hits the
+# mock, downloads nothing, and the checksum guard correctly refuses — failing
+# every self-fix scenario. This was invisible for four days because the Layer-2
+# guard itself was startup_failing (#435), and the old npm path was never
+# mocked so it never hit this.
+callee_raw="$(cat "$CALLEE_WF")"
+assert_equals "$(printf '%s' "$callee_raw" | grep -c 'AGENT: opencode' || true)" "3" \
+  "three steps run ensure-toolchain.sh with AGENT=opencode"
+assert_equals "$(printf '%s' "$callee_raw" | grep -c 'OPENCODE_DRY_RUN: ..{ inputs.dry-run' || true)" "3" \
+  "each of them honours dry-run, so a dry run installs nothing"
+
+section "agent-implement.yml — a failed agent run fails the implement job (#439)"
+
+# The OpenCode step swallows opencode's exit code on purpose so the adapter,
+# classifier, retry and run report still run. Nothing turned the failure back into
+# a red job, so game-sky-fury run 36632007246 showed green with
+# "Outcome: failed: error_during_execution" in its report.
+WF439="$ROOT/.github/workflows/agent-implement.yml"
+impl439="$(awk '/^  implement:$/{f=1;next} f && /^  [a-z_]+:$/{exit} f' "$WF439")"
+last439="$(printf '%s\n' "$impl439" | grep -E '^      - name: ' | tail -1 | sed 's/^      - name: //')"
+assert_equals "$last439" "Fail the job when the agent run failed" \
+  "the implement job's LAST step fails it on a failed run (post-run steps run first)"
+step439="$(printf '%s\n' "$impl439" | awk '/^      - name: Fail the job when the agent run failed$/{f=1;print;next} f && /^      - name: /{exit} f' | grep -vE '^[[:space:]]*#')"
+assert_contains "$step439" 'always()'                                  "fail step runs after earlier failures too"
+assert_contains "$step439" '!inputs.stub-claude'                       "fail step skips stub runs (act suite asserts outputs)"
+assert_contains "$step439" "steps.outputs.outputs.outcome == 'failed'" "fail step keys off the run outcome"
+assert_contains "$step439" 'exit 1'                                    "fail step actually fails"
 
 # --- summary ----------------------------------------------------------------
 

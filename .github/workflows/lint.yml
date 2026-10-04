@@ -3,6 +3,14 @@ name: lint
 # Polyglot lint gate via pre-commit (actionlint, yamllint, shellcheck, ruff,
 # markdownlint, hadolint, typos, gitleaks, hygiene). Replaces the standalone
 # actionlint + shellcheck jobs — the pre-commit config covers both and more.
+#
+# Also runs the Layer-1 test suite (#354). `tests/run-all.sh` discovers every
+# `run-*-tests.sh`, so this workflow and `just test` cannot run a different set —
+# before that, the justfile named 7 of 9 runners and CI ran none.
+#
+# NOTE: neither job is in main's `required_status_checks` yet (only
+# `gate-selftest` is), so a red run here is visible but does not block merge.
+# Adding `test` there is a repo-settings change left to the owner.
 
 on:
   pull_request:
@@ -35,3 +43,16 @@ jobs:
 
       - name: Run pre-commit
         run: pre-commit run --all-files --show-diff-on-failure
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Run the Layer-1 suite
+        # tests/run-all.sh discovers every run-*-tests.sh, so this job and
+        # `just test` cannot diverge (#354). No network, no Docker, no secrets.
+        run: bash tests/run-all.sh

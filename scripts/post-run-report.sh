@@ -28,6 +28,14 @@
 #   RENDER_ONLY         If "1", print the rendered comment + label list to
 #                       stdout and skip all GitHub API calls. Used by Layer-1
 #                       fixture tests.
+#   CHECKS_RUNNABLE     "false" when check-pr-checks-runnable.sh determined the
+#                       PR's required checks cannot run. Adds a warning block to
+#                       the comment and the ai:checks-blocked label. Never
+#                       changes the outcome — a blocked run is still a
+#                       successful run (#364).
+#   CHECKS_BLOCKED_REASON
+#                       "no-app-token" | "rollup-empty". Selects the remedy
+#                       wording. Only read when CHECKS_RUNNABLE is "false".
 #
 # Exit codes:
 #   0   success
@@ -36,6 +44,14 @@
 #   65  RESULT_FILE not valid JSON
 set -euo pipefail
 IFS=$'\n\t'
+
+# The forge write verbs (#253). Same calls this script made directly; routing
+# them through the adapter is what lets the read/write path stop naming a forge.
+_PRR_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/detect-forge.sh
+source "$_PRR_HERE/lib/detect-forge.sh"
+# shellcheck source=scripts/lib/forge.sh
+source "$_PRR_HERE/lib/forge.sh"
 
 require_env() {
   local var="$1"
@@ -56,6 +72,40 @@ EXECUTION_FILE="${EXECUTION_FILE:-}"
 MODEL="${MODEL:-}"   # resolved model (steps.triage.outputs.model) — optional
 AGENT="${AGENT:-}"   # resolved agent (steps.classify_agent.outputs.agent) — optional
 MAX_TURNS="${MAX_TURNS:-}"   # configured turn budget (steps.triage_turns.outputs.turns) — optional
+SALVAGED="${SALVAGED:-}"     # "true" when the PR came from verify-or-recover-pr.sh salvage
+HAS_PLAN="${HAS_PLAN:-}"     # "true"/"false": did the issue body carry an "## Implementation Plan"
+CHECKS_RUNNABLE="${CHECKS_RUNNABLE:-}"              # "false" → checks cannot run (#364)
+CHECKS_BLOCKED_REASON="${CHECKS_BLOCKED_REASON:-}"  # no-app-token | rollup-empty
+
+# Rendered into the comment, and gates the ai:checks-blocked label. Built here
+# rather than inside render_comment so labels_csv can test one variable.
+#
+# Single-quoted and literally multi-line on purpose: backticks are markdown
+# code spans, not command substitution, and `$(printf ...)` would strip the
+# trailing newline the surrounding blank line needs. Empty renders as the one
+# blank line that already separated the table from the run link.
+CHECKS_BLOCKED_BLOCK=''
+# shellcheck disable=SC2016  # the backticks are markdown code spans in the
+# rendered comment, not command substitution — single quotes are the point.
+if [[ "$CHECKS_RUNNABLE" == "false" ]]; then
+  if [[ "$CHECKS_BLOCKED_REASON" == "rollup-empty" ]]; then
+    CHECKS_BLOCKED_BLOCK='
+> [!WARNING]
+> **Required checks could not run on this PR.**
+> A pipeline App token was minted, yet no checks appeared. This is not the
+> usual cause — inspect the PR directly. See `docs/PIPELINE-APP-SETUP.md`.
+'
+  else
+    CHECKS_BLOCKED_BLOCK='
+> [!WARNING]
+> **Required checks could not run on this PR.**
+> No `PIPELINE_APP_ID` is configured, so the PR is authored by
+> `github-actions` and its checks stall awaiting manual approval — the PR
+> stays BLOCKED until someone approves them or pushes to the branch.
+> The implementation itself is unaffected. Fix: `docs/PIPELINE-APP-SETUP.md`.
+'
+  fi
+fi
 
 [[ -r "$RESULT_FILE" ]] || {
   printf 'error: RESULT_FILE not readable: %s\n' "$RESULT_FILE" >&2
@@ -202,16 +252,27 @@ CACHE_DENOM=$(( CACHE_READ + INPUT_TOKENS + CACHE_CREATE ))
 TOTAL_TOKENS=$(( INPUT_TOKENS + OUTPUT_TOKENS + CACHE_READ + CACHE_CREATE ))
 
 # Optional "Model · Agent" line (#59). Empty when neither is provided.
+# Plan is appended when known, so /ai-stats can correlate enrichment with
+# shipping. Left off entirely when unset, keeping older reports parseable.
 MODEL_AGENT_LINE=''
 if [[ -n "$MODEL" || -n "$AGENT" ]]; then
   MODEL_AGENT_LINE="**Model:** ${MODEL:-n/a} · **Agent:** ${AGENT:-n/a}"
+  case "$HAS_PLAN" in
+    true)  MODEL_AGENT_LINE+=" · **Plan:** enriched" ;;
+    false) MODEL_AGENT_LINE+=" · **Plan:** none" ;;
+  esac
 fi
 CACHE_HIT_PCT="$(pct "$CACHE_READ" "$CACHE_DENOM")"
 
 TURNS_TEXT="$NUM_TURNS"
 [[ -n "$MAX_TURNS" ]] && TURNS_TEXT="${NUM_TURNS} / cap ${MAX_TURNS}"
 
-if [[ "$IS_ERROR" == "true" ]]; then
+# A terminal `subtype` of error_* is authoritative even when is_error is false:
+# the CLI reports `error_max_turns` with `"is_error": false`, so keying off the
+# flag alone drops the one field that names the cause and falls through to the
+# generic no-PR branch below (flowhub#20 run 32883249971 — three dispatches were
+# spent reading raw logs for a reason the result JSON already carried).
+if [[ "$IS_ERROR" == "true" || "$SUBTYPE" == error_* ]]; then
   STATUS_EMOJI=':x:'
   STATUS_TEXT="failed: ${SUBTYPE}"
   STATUS_LABEL='ai:failed'
@@ -223,6 +284,14 @@ elif [[ "${PR_PRESENT:-}" == "false" ]]; then
   STATUS_TEXT='failed: run completed but no PR was opened'
   STATUS_LABEL='ai:failed'
   STATUS_LABEL_OPPOSITE='ai:done'
+elif [[ "${SALVAGED:-}" == "true" ]]; then
+  # The run never opened a PR itself; verify-or-recover-pr.sh committed the work
+  # it left behind and opened one. Reviewable, but not the same thing as a clean
+  # success — say so, or the stats count it as one.
+  STATUS_EMOJI=':white_check_mark:'
+  STATUS_TEXT='success (salvaged: uncommitted work committed for review)'
+  STATUS_LABEL='ai:done'
+  STATUS_LABEL_OPPOSITE='ai:failed'
 else
   STATUS_EMOJI=':white_check_mark:'
   STATUS_TEXT='success'
@@ -261,17 +330,18 @@ ${MODEL_AGENT_LINE}
 | Cache create | $(format_int "$CACHE_CREATE") |
 | Total tokens | $(format_int "$TOTAL_TOKENS") |
 | Max context per turn | ${CONTEXT_ROW} |
-
+${CHECKS_BLOCKED_BLOCK}
 [View workflow run](${WORKFLOW_RUN_URL})
 EOF
 }
 
 labels_csv() {
-  if [[ -n "$CTX_LABEL" ]]; then
-    printf '%s,%s' "$STATUS_LABEL" "$CTX_LABEL"
-  else
-    printf '%s' "$STATUS_LABEL"
-  fi
+  local out="$STATUS_LABEL"
+  [[ -n "$CTX_LABEL" ]] && out="${out},${CTX_LABEL}"
+  # Additive only. A blocked run is still ai:done — the agent did its job and
+  # the PR is reviewable; it is the repo that is misconfigured (#364).
+  [[ -n "$CHECKS_BLOCKED_BLOCK" ]] && out="${out},ai:checks-blocked"
+  printf '%s' "$out"
 }
 
 # --- output / post ----------------------------------------------------------
@@ -291,9 +361,9 @@ tmpfile="$(mktemp)"
 trap 'rm -f "$tmpfile"' EXIT
 render_comment > "$tmpfile"
 
-gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body-file "$tmpfile"
-gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "$(labels_csv)"
+forge_issue_comment "$ISSUE_NUMBER" "$tmpfile"
+forge_issue_label_add "$ISSUE_NUMBER" "$(labels_csv)"
 # Best-effort cleanup of stale lifecycle labels from prior runs. Each call
 # errors when the label isn't present; that's expected and ignored.
-gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label 'ai:running'         2>/dev/null || true
-gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label "$STATUS_LABEL_OPPOSITE" 2>/dev/null || true
+forge_issue_label_remove "$ISSUE_NUMBER" 'ai:running'         2>/dev/null || true
+forge_issue_label_remove "$ISSUE_NUMBER" "$STATUS_LABEL_OPPOSITE" 2>/dev/null || true

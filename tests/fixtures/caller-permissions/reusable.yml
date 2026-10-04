@@ -1,0 +1,22 @@
+# Synthetic reusable workflow: one job with its own block, one inheriting the
+# workflow-level block. Exercises "job-level REPLACES top-level".
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  implement:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # a comment inside the block must not end it
+      actions: write   # trailing comment
+    steps:
+      - run: true
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - run: true

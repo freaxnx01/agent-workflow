@@ -23,7 +23,7 @@ gh issue view <N> --comments --json number,title,state,labels,body,assignees
 ```
 
 Also note any linked spec/plan files and existing PRs. If it's closed, parked
-(`🧊 parked`), or already assigned to an agent, say so and stop.
+(`parked`), or already assigned to an agent, say so and stop.
 
 ### Step 2 — Readiness gate (first, non-negotiable)
 
@@ -45,8 +45,6 @@ Judge the issue on:
   subsystems, recommend decomposing into separate issues first.)
 - **Locality needs** — does it need things only a local maintainer has: real secrets /
   a live DB, manual/visual verification, hardware, or back-and-forth design iteration?
-- **Stack fit** — anything Copilot tends to struggle with (obscure tooling, heavy
-  domain context).
 
 ### Step 4 — Map to a route
 
@@ -54,23 +52,23 @@ Judge the issue on:
 |---|---|---|
 | Not ready (no AC / scope / open unknowns) | **`/enrich`** then re-run | agents guess badly without AC |
 | Needs local secrets, live DB, manual/visual verify, or design iteration | **`/work <N>`** (local, in-session) | only you have the env; you drive it, subagent-driven |
-| Ready · small/mechanical · well-trodden | **`/gh:assign <N> copilot`** | fast, reliable trigger; cheap |
+| Ready · small/mechanical · well-trodden | **`/gh:assign <N> claude`** (or **`/gh:implement <N>`** + cheap OpenCode model, Step 4b) | Copilot disabled — Claude direct-assign or the OpenCode pipeline are the cheapest routes left |
 | Ready · complex reasoning / architecture / subtle correctness / security | **`/gh:assign <N> claude`** *or* **`/gh:implement <N>`** | stronger reasoning where it matters |
 | Want the label-pipeline (`agent.yml`) rather than a direct assignee | **`/gh:implement <N>`** | pipeline path; Claude opens a draft PR |
 
 **How the routes differ (say this when relevant):**
 
 - **`/gh:assign`** → hands the issue to a GitHub **coding agent** on its own branch/PR.
-  Prefer **copilot** (the reliable trigger here); **claude** only when confirmed
-  responsive in this repo.
+  **Copilot is disabled as of 2026-09-01** — always use **claude**.
 - **`/gh:implement`** → applies the `ai-implement` label, which fires the repo's
   **agent-workflow** (`agent.yml`) → Claude implements and opens a draft PR.
 - **`/work`** → **local, in this session**: brainstorm → plan → worktree →
   subagent-driven. Best when you want to stay in the loop or the work isn't
   cloud-friendly.
 
-A rough rule of thumb: **mechanical → Copilot**, **needs real judgement → Claude**,
-**needs your machine or your eyes → local `/work`**, **not ready → enrich first**.
+A rough rule of thumb: **mechanical → Claude direct-assign or OpenCode-cheap**,
+**needs real judgement → Claude**, **needs your machine or your eyes → local
+`/work`**, **not ready → enrich first**. (Copilot disabled as of 2026-09-01.)
 
 ### Step 4b — If the route is the agent-workflow, also pick the model
 
@@ -86,9 +84,9 @@ comparison (provenance: the living [model-comparison report](https://github.com/
 
 | Task shape | Recommend | Why |
 |---|---|---|
-| Straightforward feature / endpoint / CRUD | `agent:opencode` + `model:gpt-oss-120b` (~0.03/0.15) | Won the .NET endpoint comparison — cleanest output, ~100× cheaper than Opus |
+| Straightforward feature / endpoint / CRUD | `agent:opencode` + `model:minimax-m2` | Tool-use coder; the repo's `default-model` is the safe fallback. `model:gpt-oss-120b` is **retired** — it won a single benchmark round but shipped only 2 of 10 real runs |
 | Validation- / architecture-heavy | `agent:opencode` + `model:gemini-flash` (~0.10/0.40) | Most idiomatic structure (DTOs, model-binding validation) in the comparison |
-| Bugfix / small mechanical | `agent:opencode` + `model:gpt-oss-120b` | Cheap and reliable for bounded changes; escalate if it stalls |
+| Bugfix / small mechanical | `agent:opencode` (repo `default-model`) | Cheap for bounded changes; escalate if it stalls |
 | Ambiguous / high-stakes / large refactor | `agent:claude` + `model:sonnet` (or `model:opus` if truly high-stakes) | Reliability and judgement over cost |
 
 Before recommending an OpenCode model, sanity-check the repo can honour it: the pinned
@@ -150,7 +148,7 @@ tea api --login git-home "repos/$repo/issues/$ARGUMENTS/comments"
 ```
 
 Note any linked spec/plan files and existing PRs. If it's closed, parked
-(`🧊 parked`), or already being worked (an `issue-$ARGUMENTS-*` branch or open PR
+(`parked`), or already being worked (an `issue-$ARGUMENTS-*` branch or open PR
 exists), say so and stop.
 
 ### Step 2 — Readiness gate (first, non-negotiable)
@@ -196,7 +194,38 @@ If you hit a blocker (issue not found, ambiguous readiness, or the Forgejo Actio
 pipeline becomes available and this routing table is now stale), reason it out,
 recommend the closest sensible option, and update this command for the future.
 
+## Azure DevOps
+
+Recommend how to implement a **work item**, by complexity and readiness.
+
+```bash
+source "$HOME/.claude/scripts/lib/detect-forge.sh"
+source "$HOME/.claude/scripts/lib/azdo.sh"
+resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
+```
+
+Read the one work item rather than querying a set:
+
+```bash
+az boards work-item show --id <id> --org "$(azdo_org_url)" \
+  --output json --only-show-errors
+```
+
+The routing judgement itself is forge-independent — size, clarity, blast radius,
+whether acceptance criteria exist — so apply the same rubric the GitHub section
+uses. Two differences in the inputs:
+
+- **There is no `ai-implement` dispatch here.** agent-workflow's pipeline is
+  GitHub-only (ADR-012), so the "hand it to the pipeline" route is unavailable.
+  Recommend local execution instead, and say why rather than silently dropping
+  the option.
+- **Complexity signals come from the work-item *type*, not labels.** Azure DevOps
+  has no `bug` / `chore` labels; it has `Bug`, `Task`, `Epic` types — and which
+  of those exist is template-specific. Use `azdo_work_item_types` rather than
+  assuming.
+
 ## Unknown host
 
-Report the detected host and that no authed GitHub or Forgejo login matched
-it; point at `gh auth login` / `tea login add`. Don't guess a forge.
+Report the detected host and that it matched no authed GitHub or Forgejo login
+and none of the Azure DevOps host forms; point at `gh auth login` /
+`tea login add` / `az devops login`. Don't guess a forge.

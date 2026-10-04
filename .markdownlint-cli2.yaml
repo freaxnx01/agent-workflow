@@ -21,6 +21,17 @@ ignores:
   # this a local run lints every worktree checkout too — hundreds of phantom
   # errors that CI never sees, since a fresh checkout has no worktrees.
   - ".worktrees/**"
+  # Derived handoff index (scripts/lib/handoff-index.sh, gitignored). Its cells
+  # quote whatever the handoff files say, so their emphasis style is not ours to
+  # fix — and pre-commit never sees it, being untracked. Same generated-file
+  # rationale as the excludes above.
+  - ".claude/handoffs.md"
+  # Superpowers SDD scratch (gitignored, see .gitignore). `globs:` above reads the
+  # disk rather than the git index, so an untracked directory is still linted —
+  # the same trap the .worktrees/** entry above exists for. CI never has this
+  # directory, so without the entry `pre-commit run --all-files` fails locally and
+  # passes in CI, which is the divergence #354 exists to remove.
+  - ".superpowers/**"
   - "CLAUDE.md"
   - "SKILL.md"
   - ".github/copilot-instructions.md"
@@ -32,3 +43,10 @@ ignores:
   # AI agent working notes (see CLAUDE.md "Documentation Structure") — transient
   # session records, same rationale as the superpowers docs above.
   - "docs/ai-notes/**"
+  # Test fixtures are captured inputs, not authored prose. They are copies of
+  # what a real system produced (a GitHub issue body, an API response), and
+  # their value is being byte-for-byte faithful to it. Reformatting one to
+  # satisfy a style rule corrupts the very thing it records — and for
+  # issue-body-large-plan.md it would change the file's size, which is the
+  # property the classify-turns SIGPIPE regression test depends on.
+  - "tests/fixtures/**"

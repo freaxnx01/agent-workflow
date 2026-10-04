@@ -1,0 +1,11 @@
+{
+  "labels": [
+    { "name": "ai-implement" },
+    { "name": "turns:80" }
+  ],
+  "title": "Do the thing",
+  "body": "Implement the thing.",
+  "comments": [
+    { "author": { "login": "someone" }, "body": "A real discussion comment." }
+  ]
+}

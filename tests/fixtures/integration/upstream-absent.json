@@ -1,0 +1,4 @@
+[{"repo":"o/r","workflow":null,"latest_release":"v3.0.0","secrets_set":[],"labels":[],
+  "settings":{"actions_can_create_prs":false,"allow_auto_merge":false,"allow_squash_merge":true},
+  "instructions":{"stack":"exotic","files":{"CLAUDE.md":true,".ai/base-instructions.md":true},
+  "blobs":{".ai/stacks/exotic.md":{"local":"abc1234","upstream":""}}}}]

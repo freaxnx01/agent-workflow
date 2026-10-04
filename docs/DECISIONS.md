@@ -137,6 +137,11 @@ the normalized JSON, not on agent identity.
 
 ## ADR-002 — Auto-review and auto-merge safety envelope (2026-05-23)
 
+**Superseded in part (2026-09-03):** the names `auto-review` /
+`ai-auto-review` / `auto_review` are replaced by `ai-review-ai-merge` per
+ADR-009. The decision itself — the review and the merge safety envelope —
+is unchanged.
+
 **Status:** Accepted — supersedes constraint #4 ("Draft PRs only") in
 `docs/DESIGN.md`.
 **Tracking:** [#12](https://github.com/freaxnx01/agent-pipeline/issues/12) under epic [#3](https://github.com/freaxnx01/agent-pipeline/issues/3)
@@ -402,6 +407,47 @@ here.)
   pipeline ever forks, the fork's first task is to update the guard.
   Prose alone is insufficient — the guard MUST exist in code.
 
+### Addendum — find-pipeline-pr.sh search-index race (2026-08-12)
+
+**Tracking:** [#249](https://github.com/freaxnx01/agent-workflow/issues/249)
+
+`find-pipeline-pr.sh` locates the pipeline-opened draft PR via `gh pr list
+--search "closes #N in:body"` — GitHub's full-text search index, which is
+eventually consistent. On a fast `implement` run, the `auto_review`/
+`pre_preview` job's `find_pr` step can query before the index catches up,
+get zero results, and report `found=false` for a PR that genuinely exists
+and matches every criterion (open, draft, correct `Closes #N`, allowlisted
+author).
+
+Observed on `game-geography-quiz#13` (2026-08-11): a 39s/18-turn `implement`
+run — the fastest of four issues dispatched in the same batch — opened a
+correct draft PR, but `find_pr` reported `found=false` immediately after.
+`post-auto-review-block.sh` stamped the issue `ai:review-blocked`, which
+reads identically to "an agent reviewed this and found real problems" even
+though no review ever ran. The other three issues in the same batch (1m/2m/
+11m durations) all found their PR correctly — the correlation with the
+*shortest* run pointed at index-propagation lag rather than a logic bug.
+
+**Fix:** `find-pipeline-pr.sh` now retries the search on an empty result
+(default 3 attempts, ~2s/4s backoff across 2 sleeps) before reporting `found=false`. This
+is a distinct retry condition from `scripts/lib/gh-retry.sh`'s
+`with_backoff`, which retries a *failed* `gh` call (non-zero exit matching a
+transient-error signature) — here the call *succeeds* with a *stale-empty*
+result, so a separate loop was added rather than reusing `with_backoff`
+directly. Both known call sites (`verify-or-recover-pr.sh`'s recovery check,
+and the `auto_review`/`pre_preview` jobs) share this script, so the fix
+covers both without workflow YAML changes.
+
+**Consequences:**
+
++ A genuinely nonexistent PR still reports `found=false`, just after the
+  retry budget (~6s worst case, 2 sleeps of 2s + 4s across 3 attempts) instead of immediately — negligible given
+  the multi-minute scale of the surrounding job.
++ `verify-or-recover-pr.sh`'s "already exists" fallback comment (`# PR
+  already existed — the search index lagged`) documents the same underlying
+  race from the recovery-attempt angle; the retry reduces how often that
+  fallback path is needed, though it remains as a second line of defense.
+
 ### Addendum — Self-fix + pending-checks interaction (2026-08-04)
 
 **Tracking:** [#193](https://github.com/freaxnx01/agent-workflow/issues/193)
@@ -418,7 +464,9 @@ even though the underlying fix was good.
 This is a known, accepted limitation for now — not a regression, and not
 blocking Phase 2's merge. A fix (e.g. a brief poll/wait for required-check
 completion before the envelope check, scoped to the self-fix-approved
-path specifically) is tracked as a follow-up.
+path specifically) is tracked as a follow-up: [#238](https://github.com/freaxnx01/agent-workflow/issues/238).
+
+**Resolved (2026-08-04):** A bounded wait — `gh pr checks --required --watch`, capped at 3 minutes via `continue-on-error: true` + the step's own `timeout-minutes` — now runs after a self-fix approve and before this envelope re-check, giving required checks on the fresh commit a real chance to finish. Gate 5's semantics are unchanged (pending still fails); the wait just buys the pending state more time to resolve before the decision is made. On timeout, execution falls through to the same envelope re-check and block path described above, unchanged. Scoped to the post-self-fix approve path only — the plain (non-self-fix) approve path is untouched.
 
 ---
 
@@ -652,6 +700,11 @@ maintainer must manually re-dispatch the next issue in the chain.
 
 ## ADR-004 — Pre-preview mode (agent self-review → human merge) (2026-06-04)
 
+**Superseded in part (2026-09-03):** the names `pre-preview` /
+`ai-pre-preview` / `pre_preview` are replaced by `ai-review-human-merge`
+per ADR-009. The decision itself — agent review, human merge, no envelope —
+is unchanged.
+
 **Status:** Accepted
 **Tracking:** [#77](https://github.com/freaxnx01/agent-pipeline/issues/77)
 
@@ -708,6 +761,31 @@ only changes what the human reviewer eventually sees. Cap-exhausted blocks
 get distinct wording in `post-auto-review-block.sh` ("self-fix exhausted
 after N/M iterations") via new `SELF_FIX_ITERATIONS` / `SELF_FIX_MAX` env,
 byte-identical to the original wording when self-fix didn't run.
+
+### Addendum — Self-fix generalized to auto_review + agent routing (2026-08-04)
+
+**Tracking:** [#193](https://github.com/freaxnx01/agent-workflow/issues/193)
+
+The self-fix pass above generalizes further, closing two gaps: it only ran
+inside `pre_preview`, and it always dispatched a hardcoded Claude fix
+wrapper regardless of which agent actually implemented the issue.
+
++ `auto_review` (ADR-002) gains the identical embedded self-fix step
+  `pre_preview` already had — same shape, not a shared job. On `approve`
+  (first-pass or post-self-fix), the merge envelope is evaluated
+  against the final HEAD before auto-merge, same as any other approve path.
+  See ADR-002's own addendum (2026-08-04) for a known limitation on this
+  path: a self-fix-approved PR commonly still lands in `ai:review-blocked`
+  today, because the envelope's required-checks gate runs before CI on the
+  freshly-pushed fix commit has finished.
++ The fix call now routes to `needs.implement.outputs.agent` (`claude` |
+  `opencode`) and `needs.implement.outputs.model` — the agent that actually
+  implemented the issue — instead of a hardcoded Claude wrapper and the
+  *review* model. The review step's own agent identity (`AGENT: claude`,
+  `review-model`) is unchanged; only the fix call's agent/model became
+  dynamic. `scripts/self-fix-pr.sh` resolves the wrapper via a new `AGENT`
+  env; `scripts/lib/agent-cmd-opencode-fix.sh` mirrors the existing Claude
+  wrapper for the OpenCode case.
 
 ## ADR-005 — Operator console lives here; user-level vs project-scoped commands (2026-07-12)
 
@@ -922,3 +1000,606 @@ answer; a live pipeline run was out of scope for this evaluation (issue #160).
 + Follow-up: [#171](https://github.com/freaxnx01/agent-workflow/issues/171)
   — a scoped sandbox-repo spike to test headless reachability directly, filed
   rather than executed here.
+
+---
+
+## ADR-009 — Actor-pair naming for the review flows (2026-09-03)
+
+**Status:** Accepted
+**Tracking:** [#280](https://github.com/freaxnx01/agent-workflow/issues/280)
+**Supersedes naming in:** ADR-002, ADR-004
+
+### Context
+
+The pipeline has three end-states after it opens a draft PR: a raw draft, an
+agent review that auto-merges (ADR-002), and an agent review that promotes
+the draft to ready for a human to merge (ADR-004).
+
+Neither of the two review flows was named for what distinguishes it.
+`pre-preview` names a *stage* — and a doubled one, a thing before a preview
+— when the actual differentiator is **who merges**. `auto-review` has the
+mirror problem: it names the review half and stays silent on the automatic
+merge, the half that carries all the risk. Reading a list of issue labels,
+nothing told a maintainer which flow ends with a machine pushing to `main`.
+
+### Decision
+
+Name each flow by its actor pair — who reviews, who merges. Both flows are
+AI-reviewed, so the names differ in the second half, which is the axis that
+matters.
+
+| Surface | was | is |
+|---|---|---|
+| Input / label | `auto-review` / `ai-auto-review` | `ai-review-ai-merge` |
+| Input / label | `pre-preview` / `ai-pre-preview` | `ai-review-human-merge` |
+| Job id | `auto_review` / `pre_preview` | `ai_review_ai_merge` / `ai_review_human_merge` |
+| Gate script | `check-auto-review-gate.sh` / `check-preview-gate.sh` | `check-ai-merge-gate.sh` / `check-human-merge-gate.sh` |
+| Gate env var | `INPUT_AUTO_REVIEW` / `INPUT_PRE_PREVIEW` | `INPUT_AI_REVIEW_AI_MERGE` / `INPUT_AI_REVIEW_HUMAN_MERGE` |
+| `post-auto-review-block.sh` `MODE=` | `auto-review` / `pre-preview` | `ai-merge` / `human-merge` |
+| `onboard-consumer.sh` flag | `--auto-review` / `--pre-preview` | `--ai-review-ai-merge` / `--ai-review-human-merge` |
+
+Precedence is unchanged: an issue enabling both runs `ai_review_human_merge`
+and suppresses `ai_review_ai_merge`. Under the new names that reads as a
+sentence rather than needing the comment that used to explain it.
+
+### Consequences
+
++ **Deprecated, removed in v3:** the inputs `auto-review` / `pre-preview`,
+  the labels `ai-auto-review` / `ai-pre-preview`, and the output
+  `auto-review-enabled`. Each gate script honours the old spelling and emits
+  a `::warning::` annotation naming the replacement. Test-only stub inputs
+  and assertion outputs were renamed outright — their only consumer is this
+  repo's own act suite.
++ `ensure-issue-labels.sh` creates only the new labels. Old labels already
+  present are never deleted (the gates still honour them) and the pipeline
+  never mutates labels on an issue — `docs/CONSUMER-SETUP.md` documents the
+  bulk relabel for a maintainer to run.
++ Design history under `docs/superpowers/`, released `CHANGELOG.md` entries,
+  and the bodies of ADR-002 and ADR-004 keep the old names. Supersession is
+  a follow-on entry, never an edit. **A grep for `pre-preview` still returns
+  hits after this lands, by design.**
++ ADR-006 lists six consumer repos; flowhub, FlowHub-CAS-AISE and
+  agent-action-sandbox pin `@main` and pick this up on merge with no action
+  from them. That is why the inputs and labels are aliased rather than cut.
++ `claude-implement.yml`, the v1 compatibility shim, keeps its public input
+  and output **keys** v1-spelled — that is its purpose — and only moves its
+  values to the renamed downstream outputs.
+
+---
+
+## ADR-010 — Milestone selection in `/new`; roadmap/parked carry no milestone (2026-09-09)
+
+**Status:** Accepted
+**Tracking:** none — direct change, no issue
+
+> **Amended 2026-10-04:** "midday UTC" below no longer holds. GitHub keeps only the
+> date of a milestone's `due_on` and stores any time as `T00:00:00Z` — a midday write
+> to `agent-workflow` milestone #5 read back as midnight. `/new` and `/milestone`
+> now send `T00:00:00Z`, so the read-back matches the request.
+
+### Context
+
+`/new` set a milestone only when the notes named one, and otherwise neither set
+one nor asked. Every issue therefore arrived un-milestoned and had to be picked up
+later by `/milestone triage`. The ask was for a *proposed* milestone at filing
+time, pre-selected but overridable.
+
+Two ways to derive a default were considered and rejected. Inferring
+`general-<month>-<year>` from today's date hardcodes this org's milestone naming
+into a public, general-purpose command set, where it silently never matches. A
+per-repo config file (`defaultMilestone`) is portable and explicit but introduces
+a config mechanism agent-workflow does not have, an onboarding step to write it,
+and a monthly edit to roll it forward.
+
+Sorting by nearest due date was also considered and is **provably wrong**: in
+August 2026 the open milestones were `finnova-tellco-august-2026` (due 08-10),
+`baloise-august-2026` (08-23) and `general-august-2026` (08-30), so it would have
+proposed a customer milestone for general work for three weeks.
+
+### Decision
+
++ **No stored and no inferred default. The ordering *is* the proposal.** `/new`
+  lists the open milestones sorted soonest-due-first, plus `none`, and the first
+  entry is pre-selected. Nothing to configure, nothing to go stale next month, and
+  identical on both forges.
++ **`none` is always offered and is a legitimate answer.** `roadmap` and
+  `🧊 parked` issues are *defined* by having no milestone, so the option to
+  decline a milestone can never be removed.
++ **Pre-selecting does not violate `/milestone triage`'s "No default milestone, no
+  inferring".** That rule forbids assigning *without an explicit answer*. `/new`
+  still requires one — silence is never an assignment — so triage's rule needed no
+  edit. This is written into `/new` so a future reader does not "fix" the apparent
+  contradiction.
++ **Sort milestones locally, never with the API's `sort=due_on`.** GitHub's
+  `sort=due_on&direction=asc` returns **undated** milestones **first**, which would
+  put an undated milestone in the pre-selected slot ahead of a dated one. Use
+  `sort_by(.due_on // "9999")` — the sentinel idiom the Forgejo sections already
+  used. Folded into **every GitHub call site**: `/milestone list`,
+  `/milestone triage` Phase 2, `/roadmap promote`'s failure list, `/issues pick` and
+  `/triage pick`. All five are lists a human reads to choose a milestone, so one
+  milestone set is never displayed in two different orders. The Forgejo sides of all
+  five already used the sentinel — the GitHub calls were the outliers.
++ **Zero open milestones → offer to create `general-<month>-<year>`**, due the
+  **30th clamped to the month length** (matching `general-july-2026` /
+  `-august-2026` / `-september-2026`, two of which are deliberately not month-end),
+  midday UTC. **Confirm first** — this keeps the existing "never create a milestone
+  silently" rule intact instead of carving an exception into it. Declining files the
+  issue with no milestone and never aborts issue creation. The month name is
+  locale-pinned (`LC_ALL=C date +%B | tr 'A-Z' 'a-z'`); bare `date +%B` returns
+  `September` capitalized even on an English-ish setup and a translated name
+  elsewhere, either of which forks the naming permanently on first use. Note this
+  makes the convention a **creation template only, never a matcher** — the thing
+  rejected above.
++ **Exactly one open milestone → assign it silently**, but the read-back must report
+  it. A silent assignment is always visible, never implicit.
++ **A roadmap or parked issue carries no milestone**, enforced *downstream* rather
+  than guessed at filing time: `/roadmap defer` and `/parked repark` strip it. `/new`
+  does not attempt to detect that intent from raw notes.
++ **`/parked repark` records what it stripped**, as a `milestone-was: <name>` second
+  line in its own reason comment, and `/parked unpark` reads it and **offers** the
+  milestone back — asking first, never restoring silently, and never recreating a
+  milestone that has since been closed or deleted. The second line is deliberate:
+  every reason read-back in `/parked` takes `split("\n")[0]`, so the bookkeeping
+  line stays invisible to `/parked list`. `/roadmap defer` does **not** record
+  anything, because `/roadmap promote` already requires the target milestone to be
+  named explicitly — nothing is lost there.
+
+### Consequences
+
++ **The roadmap/parked invariant is only partially enforced.** Nothing in the
+  command set *adds* those labels — they are applied by hand in the web UI, so
+  there is no chokepoint. `defer` and `repark` are the only hooks; an issue labelled
+  by hand keeps its milestone. A reporting check in `/roadmap list` and
+  `/parked list` would close the gap and is deliberately not part of this change.
++ **`/milestone triage` structurally cannot surface a violation** — it filters
+  `roadmap` and `🧊 parked` out of the un-milestoned gap before looking, so an
+  issue that wrongly *has* a milestone is invisible to it.
++ Picker UIs cap at four options, so above three open milestones `/new` falls back
+  to a numbered plain-text list naming the first entry as the proposal.
++ `gh issue edit --remove-milestone` on an issue with no milestone is a no-op that
+  exits 0 (verified 2026-09-09), so `defer`/`repark` run it unconditionally.
++ **`/parked unpark` is only a partial inverse of `repark`.** It offers the recorded
+  milestone back, but a park → unpark round trip across a milestone's closure ends
+  un-milestoned by design: the recorded name is reported and skipped rather than
+  recreated.
++ A closed `general-<month>-<year>` makes "zero open milestones" true while the
+  create returns `422 already_exists`. `/milestone new`'s rule applies verbatim —
+  report the existing milestone and stop, no variant name, no reopen path.
++ The `tea` milestone-removal form is taken from tea's source, not a live run —
+  the same epistemic status every other `tea` flag in these commands carries.
++ A milestone stripped by hand in the web UI, or by `/roadmap defer`, is not
+  recoverable through `unpark` — only `repark` writes the `milestone-was:` line.
+
+---
+
+## ADR-011 — The handoff overview is a derived index, in two places (2026-09-09)
+
+**Status:** Accepted
+**Tracking:** none — direct change, no issue
+
+### Context
+
+`/handoff` writes one committed `.claude/handoff-<branch-slug>.md` per branch. That
+scales to a board of parallel sessions — several worktrees of one repo, plus several
+repos, each with its own agent — but it gives no way to *see* the board: you have to
+know a branch's name before you can find its handoff, and nothing tells you which
+other branches are parked. The ask was a central overview carrying the worktree /
+branch name and the resume prompt, plus a way to hand off and pick up every open
+session at once when the sessions are Herdr panes.
+
+A live check of the Herdr session at the time showed agents in four different
+repositories, so "all open sessions" is not a per-repo concept.
+
+### Decision
+
++ **The overview is derived, never authored.** Every `/handoff` and `/pickup`
+  regenerates it from the per-branch files on disk via
+  `scripts/lib/handoff-index.sh`. The committed per-branch files remain the source
+  of truth; the index is a view. An append-a-row index cannot survive the Herdr
+  fan-out — N sessions writing at the same moment would lose each other's rows —
+  whereas regeneration is idempotent by construction.
++ **Two locations, both generated by the same run.** `.claude/handoffs.md` covers
+  one repo across all its worktrees; `~/.claude/handoffs.md` covers the machine,
+  one marker-delimited section per repo. Only the calling repo's section is
+  rewritten, so a repo regenerating its own section cannot corrupt another's.
+  Sections are ordered by repo path so the file is byte-stable regardless of which
+  repo regenerated last.
++ **Neither index is committed.** `.claude/handoffs.md` is gitignored. A tracked
+  central file would reintroduce exactly the fixed-shared-path failure the
+  branch-slugged naming exists to avoid: N worktrees, N divergent copies, and
+  cross-contamination on every rebase.
++ **Rows are keyed by branch**, with the worktree as a convenience column — the
+  branch travels with a clone, `.worktrees/<name>` does not. A handoff whose branch
+  is checked out nowhere still gets a row, marked *not checked out*.
++ **Herdr fan-out acts only on `idle`/`done` agents.** `working` is mid-turn and a
+  handoff would freeze a half-finished phase; `blocked` is parked on a dialog only
+  the user can answer; `unknown` is not evidence of anything. All three are skipped
+  and reported, and the fan-out never waits for one to settle.
++ **`/pickup all` reuses live panes only.** It never splits a pane or starts an
+  agent; orphaned handoffs are printed with a copy-paste resume line. A pane the
+  session did not open belongs to the user.
++ **A handoff is never committed to `main`.** Step 5 of `/handoff` commits and
+  pushes without asking, which across a fan-out could put a child on the default
+  branch — so on `main` the file stays uncommitted and the report says so, rather
+  than pushing past branch protection.
+
+### Consequences
+
++ The index makes stale handoffs visible for the first time — the first real run
+  surfaced two committed handoff files for branches merged weeks earlier, plus the
+  pre-slug legacy `.claude/handoff.md`. Listing them is the intended behaviour;
+  cleaning them up is a separate pass.
++ `hooks/handoff-resume.sh` still reads the legacy unslugged `.claude/handoff.md`,
+  so the `SessionStart(clear)` injection is already blind to branch-slugged
+  handoffs. This change does not fix it — deliberately parked, tracked in `TODO.md`.
++ The machine-wide file is machine-local by nature: it names absolute paths and is
+  never committed, so it does not travel to another clone. The per-branch handoffs
+  still do.
++ Row content is lifted out of the handoff's `## Resume:` heading and its
+  `**Next step:**` paragraph. A handoff written without them still gets a row —
+  title falls back to the first non-empty line, next step to "read the file" — but
+  the index is only as useful as those two lines.
++ Layer-1 coverage is `tests/run-handoff-index-tests.sh` (34 assertions over
+  throwaway git repos: dedup across worktrees, orphan branches, the legacy name,
+  section upsert, idempotency, empty-repo removal, and the lock on the
+  machine-wide file — held-lock timeout, stale-lock reclaim, release on exit).
+  The lock's retry count and sleep are env-tunable
+  (`HANDOFF_INDEX_LOCK_ATTEMPTS` / `HANDOFF_INDEX_LOCK_SLEEP`) for the sole
+  reason that testing the timeout otherwise costs ten seconds of sleeps, which
+  would blow the suite's sub-five-second budget. No `herdr` mock is needed —
+  the script touches only git and the filesystem; the fan-out itself is prompt-level
+  policy in the two command docs.
+
+---
+
+## ADR-012 — Azure DevOps as a third forge: work items, iterations, PRs (2026-09-09)
+
+**Status:** Accepted
+**Tracking:** none — direct change, no issue
+
+### Context
+
+The issue commands were consolidated out of `gh:`/`fj:` namespaces into
+forge-agnostic files with one section per forge (#198/#199). Supporting Azure
+DevOps is therefore a third `## Azure DevOps` section in the 12 issue-related
+commands, not an `ado:` namespace — the question is only what the ADO objects
+*map to*, since three of them have no clean counterpart.
+
+**Work items are project-scoped.** A repo does not own them, so "the current
+repo's issues" — which both existing forges read straight off the git remote —
+has no direct translation and must be *chosen*.
+
+**Milestones have three candidate mappings**, and two are on the wrong axis.
+`docs/glossary.md` defines a milestone as the *when does this ship* axis carrying
+a due date, distinct from an epic (*what work, what scope*) and a label (*a filter
+tag*). Area Path is a what-component axis, i.e. label/epic territory; a parent
+Feature or Epic work item is the epic axis the glossary explicitly excludes.
+
+**State and type names are not fixed.** They come from the project's process
+template: Basic uses `To Do / Doing / Done`, Agile `New / Active / Resolved /
+Closed`, Scrum `New / Approved / Committed / Done / Removed`. Any hardcoded
+"closed states" list is therefore wrong on some templates, and
+`az boards work-item create --type` is a required argument with no portable default.
+
+### Decision
+
++ **Detect ADO from the hostname alone, before any auth probe.** `dev.azure.com`,
+  `ssh.dev.azure.com` and `*.visualstudio.com` collide with nothing, so there is no
+  ambiguity for a login check to resolve, and an unauthenticated machine still
+  routes to the ADO section — which is where a missing PAT gets reported, instead
+  of falling through to "unknown host" and naming the wrong CLI. Precedent: the
+  existing `github.com` fallback already detects without auth.
++ **`detect_forge` keeps its two-field `"<forge> <host>"` contract** and gains only
+  `azdo <host>`. Org/project/repo come from a separate `resolve_azdo_context`,
+  because widening the return value would break the 12 commands that parse it.
++ **`resolve_azdo_context` returns variables (`AZDO_ORG`/`AZDO_PROJECT`/`AZDO_REPO`),
+  not a line to split.** An ADO project name may contain spaces, arriving as `%20`
+  in the remote URL; the space-separated echo idiom would split such a name in half
+  at every call site.
++ **Scope by Area Path matching the repo name**, with an explicit guard and no
+  automatic fallback. When the query returns nothing, the command checks whether a
+  matching area exists and says so, then *asks* before widening. Silently widening
+  to project-wide would present other repos' work as this repo's, which in a
+  multi-repo project — the common ADO layout — is worse than an empty list.
++ **Milestone maps to Iteration Path.** It is the only candidate on the right axis,
+  it carries dates, and a work item has exactly one — preserving "at most one
+  milestone per issue".
++ **Derive closed states and valid types from project metadata**, via
+  `az devops invoke --area wit --resource workitemtypes`, using each state's
+  `category` (`Completed`/`Removed` mean not-open). Categories are
+  template-independent where state names are not, and the same single call also
+  answers the work-item-type question `/new` faces.
++ **PRs map to Azure Repos PRs, keyed on `active`.** The status vocabulary is
+  `active`/`completed`/`abandoned` with no `open`, and WIP means an **active**
+  linked PR.
++ **Derive PR↔work-item links from the first-class link API**
+  (`az repos pr work-item list`), iterating active PRs rather than work items.
+  This *replaces* Forgejo's `closes|fixes|resolves #N` regex scrape with an exact
+  lookup — the one place ADO is better than both existing forges.
++ **Out of scope, deliberately: the hybrid host case** — boards in ADO, code on
+  GitHub. `detect_forge` keys off the remote, so such a repo detects as `github`
+  and never reaches the ADO path. Supporting it means splitting "code host" from
+  "work-item backend" as orthogonal axes, reshaping dispatch in all 12 commands.
+  Recorded here so the limitation is known rather than rediscovered.
+
+### Consequences
+
++ `/issues` is the only command carrying an ADO section for now — a deliberate
+  seam, taken so a wrong scoping model would surface on one file instead of twelve.
++ **The seam is explicit, not implicit: all 11 other commands carry a stop-guard.**
+  Left unguarded, their sections would be `## GitHub` / `## Forgejo` /
+  `## Unknown host` with *nothing matching* `azdo` and nothing instructing the
+  reader — so the closest section would get picked and `gh` would run against an
+  Azure DevOps remote, failing confusingly on a read and aiming at the wrong forge
+  entirely on a write. Each therefore has a `## Azure DevOps` section that names the
+  forge, refuses the GitHub/Forgejo fallback explicitly, and stops. Unsupported and
+  *safe*, rather than unsupported and silently wrong.
++ All 12 `## Unknown host` sections now name `az devops login` alongside
+  `gh auth login` / `tea login add`, so an unmatched host no longer points at only
+  two of the three forges.
++ **The other 11 commands' "Unknown host" sections still name only
+  `gh auth login` / `tea login add`**, so an ADO user is pointed at the wrong CLI.
+  `/issues` is updated; the rest are 11 one-line edits, not yet made.
++ **Flags and command names were verified by running `--help` against `az` 2.87.0
+  with azure-devops 1.0.4; JSON field names, the `workitemtypes` response shape and
+  the WIQL clauses were not, for want of a reachable organization.** That is the
+  same epistemic status the `tea` sections carry, and this repo has been bitten by
+  it once already (`tea issues create` takes `--description`, not `--body`). The
+  ADO section says so inline and carries a self-improving footer.
++ **`/milestone new` will be a two-step operation on this forge.**
+  `az boards iteration project create` makes the node, but
+  `az boards iteration team add` is what makes it assignable — step one alone
+  yields an iteration nothing can be put in, so a naive port would report success
+  and leave assignment broken.
++ **`/milestone list` changes shape on this forge: iterations nest, GitHub
+  milestones are flat.** Compounding it, `--depth` defaults to **1** on both
+  `az boards iteration project list` and `az boards area project list`, so a naive
+  listing silently hides every nested sprint and area.
++ Iterations are **project-scoped**, so `/milestone new` mutates a tree shared by
+  every repo in the project and likely needs project-admin rights, where the
+  GitHub equivalent creates a repo-local object.
++ Iterations carry **two dates** (`--start-date`, `--finish-date`) against
+  GitHub's single `due_on`.
++ **Tag writes have no `--tags` flag.** `az boards work-item create` takes tags only
+  via `--fields "System.Tags=a;b"`, semicolon-delimited — relevant to `/new` when
+  it sets `needs-enrichment`.
++ **Tag filters match the bare word `parked`, not `🧊 parked`**, to keep a
+  non-ASCII literal out of a query string crossing `az`, REST and WIQL. A tag
+  merely containing "parked" would also be dropped; acceptable under a
+  one-parked-tag convention.
++ `/triage`'s "bugs first" ordering keys off a label today. On ADO the natural
+  signal is the work item **type** (`Bug` vs `User Story` vs `Task`) and a `bug`
+  tag may not exist at all — a semantic decision left for whoever ports `/triage`.
++ A third section makes these command files roughly 1.5× longer, and `/issues` is
+  now ~410 lines. Noted as a structural cost of the one-file-per-command,
+  one-section-per-forge shape; no restructuring proposed here.
+
+---
+
+## ADR-013 — Moving major tag updated by `release.yml`, forward-only (2026-09-10)
+
+**Status:** Accepted
+**Tracking:** [#261](https://github.com/freaxnx01/agent-workflow/issues/261)
+
+### Context
+
+Consumer repos pin the reusable workflow by major tag (`agent-implement.yml@v1`),
+the convention `actions/checkout` and friends use — a moving tag that is meant to
+track the newest `v1.*.*` release. Nothing moved it. It was updated once by hand
+(#261, 2026-08-18: `v1` → `v1.11.1`) and the drift came straight back within a
+week: `v1.12.0` and `v1.13.0` both shipped and `v1` followed neither, leaving it
+159 commits behind `main`. Staleness is silent by construction — runs stay green,
+consumers just execute old code — and it has already cost one consumer real
+money: `classify-turns.sh` does not exist at `v1`, so a `@v1` consumer silently
+got `max_turns: 30` and burned five dispatches (~$3.50) chasing what looked like
+a model/plan problem before anyone suspected the pinned ref.
+
+Two places could own the move: the `justfile`'s `push-release` recipe (the
+obvious place), or `release.yml` (the workflow the tag push already triggers).
+
+### Decision
+
+**Extend `release.yml`, not the `justfile`.** A new `update-moving-tag` job runs
+`scripts/update-moving-tag.sh` after the `release` job succeeds, force-updating
+`refs/tags/v<major>` to the pushed commit.
+
+`push-release` was rejected because it runs `git push origin main "v$v"` —
+it assumes the release is cut from `main`. `v1.12.0` and `v1.13.0` were both cut
+on the `backport-v1.12.0-claude-timeout` branch, so whatever produced them was
+not this recipe; a fix living there would have missed exactly the two releases
+that caused the current gap. `release.yml` fires on the tag push itself, from
+whatever branch the release was cut on, which is precisely the case the
+`justfile` route misses. A local recipe is also opt-in — the failure mode is a
+human not running a step, so the fix must not be another step a human has to
+run. A scheduled reconciler was also considered and rejected: it repairs drift
+after the fact rather than preventing it, leaving a window where consumers run
+a stale pipeline, and adds a second source of truth for where `vX` should point.
+
+**Forward-only, by design.** Releases are not always cut in ascending order — a
+late hotfix can land on an older line after a newer release already shipped
+(exactly what happened with the backport branch). The script therefore moves
+`vX` to the pushed tag **only if** that tag is the highest non-prerelease
+`vX.*.*` tag that exists, comparing with `sort -V` (semver, not lexical — an
+earlier bug class this guards against: `v1.9.0` sorts after `v1.10.0`
+lexically). Anything else is a **skip**, and a skip exits `0`: a non-zero exit
+would fail the release workflow on a perfectly legitimate hotfix, which is worse
+than the drift this ADR fixes. The moving tag may therefore end up pointing at a
+commit that is not an ancestor of `main` — that is correct, not a bug: the tag
+follows the newest *release*, and a backport release is still a release. "What
+is released" is answered by the tags, never by `main`.
+
+### Consequences
+
++ `@v1` consumers now pick up a new pipeline release on their next dispatch,
+  automatically, with no review step and no human action.
++ `v1` and `main` can diverge indefinitely. A consumer (or maintainer) asking
+  "what does `v1` run?" must read the tag, not assume it tracks `main`.
++ The one-time catch-up (`v1` `v1.11.1` → `v1.13.0`) is **not** performed by this
+  change — it force-updates a tag every consumer follows and stays a deliberate,
+  manual maintainer action, tracked on #261.
++ Logging the resolved pipeline ref in run output (so "which version am I
+  running?" is answerable from a log) and offering consumers exact-pin +
+  Dependabot are both out of scope here and filed separately from #261.
+
+---
+
+## ADR-014 — The PR search is a prefilter; the issue link is verified (2026-09-13)
+
+**Status:** Accepted
+**Tracking:** [#343](https://github.com/freaxnx01/agent-workflow/issues/343)
+
+### Context
+
+`find-pipeline-pr.sh` locates the PR a run opened by asking GitHub search for
+`closes #N in:body`. That query does not mean what it reads like. Search has no
+phrase semantics here: it tokenises the expression and drops the `#`, so `#11`
+reduces to `11` and the result set contains **every** open PR whose body
+mentions the bare number anywhere — a line number, a cell index, a viewport
+width. `select_from_json` then filtered on draft status and author, but never on
+whether the candidate had anything to do with the issue, so the first
+false positive won.
+
+This is not theoretical. On `game-wipfelkratzer#11` the run finished `success`
+with `ai:done` and no branch and no PR — 59 turns and $2.76 of work that died
+with the runner. `verify-or-recover-pr.sh` exists to salvage exactly that case
+(“run completed but no PR was opened” is the largest measured failure class in
+the fleet, 24 of 48), and it stood down because `find-pipeline-pr.sh` told it a
+PR already existed. The PR it had found was #28, which closes #13; it matched on
+the phrase “chairs at cells 5 and **11** next to the stair opening”.
+
+The existing tiebreaker made this worse rather than better: “highest-numbered
+draft wins” picks *among* the false positives instead of excluding them. And
+[#249](https://github.com/freaxnx01/agent-workflow/issues/249)'s retry loop
+guards only the opposite failure — an empty result from search-index lag — and
+stops at the first selection, so a false positive is never reconsidered.
+
+The cost is asymmetric, which decides the design. A false negative is cheap and
+self-correcting: salvage runs, and at worst opens a PR that already existed. A
+false positive silently discards a run's entire output and reports `success`,
+indistinguishable from a real one in both the run report and `/ai-stats`.
+
+### Decision
+
+**The search result is a prefilter, not an answer.** Every candidate is verified
+before it counts as “the PR for this issue”. Two signals, either sufficient:
+
+1. `closingIssuesReferences` contains the issue, **scoped to this repository** —
+   the same number in another repo does not count.
+2. A closing keyword for the issue in the body:
+   `\b(close[sd]?|fix(es|ed)?|resolve[sd]?)\s+#N\b`, case-insensitive. The `\b`
+   is load-bearing: without it `Closes #420` satisfies issue 42.
+
+Both fields ride along on the `gh pr list` request that was already being made,
+so verification costs **no additional API calls**.
+
+### Consequences
+
++ A candidate satisfying neither signal is discarded even though search returned
+  it. For `verify-or-recover-pr.sh` that means salvage runs — the safe direction,
+  per the asymmetry above.
++ **Signal 2 is not a mere fallback; on this pipeline it is the only signal that
+  ever fires.** GitHub forms no closing-issue reference for a PR authored by the
+  github-actions app ([#303](https://github.com/freaxnx01/agent-workflow/issues/303)),
+  so a pipeline PR reaches this code with `closingIssuesReferences: []` and is
+  matched on its body alone. Removing the body check as redundant would break
+  every run. Signal 1 covers PRs opened under other identities and is kept
+  because it is the stronger evidence when it is present.
++ The pipeline's PR body **must** contain `Closes #N`. That was already true —
+  the search query depended on it — but it is now a correctness requirement
+  rather than a search hint, and the agent instructions state it explicitly.
++ Fixtures for this script must carry `body` and `closingIssuesReferences`; one
+  without them no longer resembles a real response. This reached beyond the test
+  file: the canned `PIPELINE_PRS_JSON` that `agent-implement.yml` emits under
+  `stub-review-verdict` had to gain a `Closes #<issue>` body, since the stub is
+  now subject to the same predicate as a real response.
+
+## ADR-015 — The unattended lane drives `/enrich` through a nested `claude --print` session (2026-09-21)
+
+**Context.** `/autopilot` (#373) runs from a systemd timer. A timer runs a
+process, not a slash command, so the driver is `scripts/autopilot.sh`. The
+per-issue enrichment still has to be `/enrich`, because that command is where
+the whole spec/plan/issue-body contract lives — reimplementing it in bash would
+fork it.
+
+**Decision.** Each issue gets its own nested `claude --print` session, invoked
+with the prompt `/enrich <n> --quick --headless` on stdin and the working
+directory set to that repo's managed clone. One session per issue, not one per
+run: a single long-lived session would share one context across N enrichments,
+and a mid-run context exhaustion would lose the whole batch.
+
+**Verified.** On 2026-09-21, `printf '/commands\n' | claude --print` expanded
+the custom command and returned a full listing of the 37 user-level and 3
+project-level slash commands, confirming this install resolves custom slash
+commands rather than treating them as literal prose. `printf '/enrich\n' |
+claude --print` also expanded the custom command: the response demonstrated
+concrete knowledge of `commands/enrich.md`'s actual content — it named the
+`/enrich <issue-number> [--quick]` usage format verbatim and acted on the
+command's own instructions by inspecting real repository state (issue #373's
+body length, its labels, and the unpushed local commit `3feeb13`) rather than
+describing `/enrich` in the abstract. It did not, however, emit the literal
+`Issue number is required.` stderr line from the command's argument-parsing
+bash block verbatim; instead, given no issue number, it used agentic judgment
+to treat #373 as the likely target and reported that issue's state, offering
+the same usage string as one of several suggested next steps. The command body
+was executed, just not down the exact hard-stop branch the raw bash snippet
+specifies — Claude interprets command markdown as a playbook, not as a literal
+script interpreter, so it substituted a more helpful path for the missing-argument
+case instead of exiting.
+
+**Consequences.** The nested session inherits the wrapper's `--allowedTools`
+list rather than an interactive permission prompt, so the tool set the headless
+enrich may use is fixed at the wrapper. The driver learns the outcome by
+re-reading the issue's labels, not from the session's exit code — see the spec's
+"Dispatch" section.
+
+## ADR-016 — The parked label is plain ASCII `parked` (2026-09-24)
+
+**Status:** accepted. Supersedes the tag-filter rationale in **ADR-012**.
+
+**Context.** Azure DevOps rejects emoji in tag names:
+
+```text
+az boards work-item update --id 2 --fields "System.Tags=🧊 parked"
+→ ERROR: TF401407: The tag name is invalid. It contains invalid characters.
+```
+
+Rejected with and without the space. This is not a Unicode restriction — `übung`
+stores fine; ADO refuses emoji specifically. So the label as previously spelled
+**cannot exist** on that forge, by any client, and the convention did not port.
+
+ADR-012 anticipated the symptom but got the cause wrong. It recorded:
+
+> **Tag filters match the bare word `parked`, not `🧊 parked`**, to keep a
+> non-ASCII literal out of a query string that crosses `az`, the REST layer and
+> WIQL's own parser.
+
+Two things turned out false when that was finally run against a live
+organization (see `docs/ai-notes/2026-09-22-ado-manual-test-run.md`):
+
++ There is no emoji literal to keep out of the query, because the tag cannot be
+  created in that form at all.
++ The stated cost of bare-word matching — that a tag merely *containing*
+  "parked" would also be dropped — does not exist. WIQL's `CONTAINS` on
+  `System.Tags` matches **whole tags** despite the operator's name: a `parked`
+  filter leaves `unparked`, `parkedx` and `parked-later` untouched.
+
+**Decision.** The label is **`parked`** on all three forges. It was the only
+emoji-bearing label in the scheme — every other label `ensure-issue-labels.sh`
+creates is already ASCII — so one rename buys portability and removes the
+inconsistency rather than encoding it.
+
+**Rejected: a per-forge mapping** (`🧊 parked` on GitHub and Forgejo, `parked` on
+ADO). It avoids a migration, and a partial seam already existed in
+`check-attempt-cap.sh`'s `PARK_LABEL`. Rejected because it makes every
+label-touching command consult a mapping forever, to preserve decoration on the
+one label in the scheme that carried any.
+
+**Consequences.**
+
++ Existing repos migrate with `gh label edit '🧊 parked' --name 'parked'`. It must
+  be a rename **in place**: delete-and-create would silently unpark every parked
+  issue, which is precisely what the label exists to prevent.
++ `PARK_LABEL` keeps its override seam, defaulting to `parked`, so a consumer
+  that has not migrated can export the old value.
++ ADR-012's tag-filter bullet stays as written. It records what was believed
+  then; this ADR records what a live run showed instead.

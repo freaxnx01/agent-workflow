@@ -10,7 +10,8 @@
 # `implement` job already grants Claude for writing the PR in the first
 # place (see .github/workflows/agent-implement.yml's "Run Claude Code" step).
 #
-# MODEL is optional; if set it becomes a `--model <value>` flag.
+# MODEL is optional; if set it becomes a `--model <value>` flag. A model on
+# the blocked-models.sh denylist is substituted before the flag is built.
 #
 # stdout/stderr are captured to $RUNNER_TEMP/self-fix-agent-output.log
 # (falls back to /tmp) instead of discarded, so a failed fix attempt
@@ -19,7 +20,14 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# shellcheck source=scripts/lib/blocked-models.sh disable=SC1091  # hook runs without -x; SC1091 is conventionally suppressed
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/blocked-models.sh"
+
 prompt="$1"
+
+# The chokepoint for FIX_MODEL, which self-fix-loop.sh defaults to the
+# caller's review-model — a route that never sees classify-task.sh.
+MODEL="$(allowed_model_or_fallback "${MODEL:-}")"
 
 args=(--print --allowedTools 'Edit,Write,Read,Glob,Grep,MultiEdit,Bash')
 [[ -n "${MODEL:-}" ]] && args+=(--model "$MODEL")

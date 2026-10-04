@@ -10,7 +10,7 @@ what each step actually does and why.
 
 **Target:** $ARGUMENTS (optional `owner/repo`; defaults to the current
 directory's `origin` remote. Anything after a bare `--` is forwarded verbatim
-to `onboard-consumer.sh`, e.g. `/agent-workflow-init -- --auto-review --chain`.)
+to `onboard-consumer.sh`, e.g. `/agent-workflow-init -- --ai-review-ai-merge --chain`.)
 
 ## Step 1 — Resolve the target repo
 

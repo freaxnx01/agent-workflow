@@ -2,8 +2,8 @@
 description: Update my user-level slash commands, hooks, and skills from agent-workflow (pull + reinstall)
 ---
 
-Update my personal user-level Claude Code slash commands and hooks. **All 45 commands
-now live in one repo**, [freaxnx01/agent-workflow](https://github.com/freaxnx01/agent-workflow)
+Update my personal user-level Claude Code slash commands and hooks. **Every user-level
+command now lives in one repo**, [freaxnx01/agent-workflow](https://github.com/freaxnx01/agent-workflow)
 (`~/repos/github/freaxnx01/public/agent-workflow`) — the issue-workflow console plus
 the generic session-hygiene, handoff/pickup and `wt:*` commands, and the
 `handoff-resume` hook.

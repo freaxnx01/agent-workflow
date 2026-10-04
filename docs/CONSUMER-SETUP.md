@@ -4,7 +4,7 @@ How to wire `agent-workflow` into a consumer repo. Three flows:
 
 1. **Minimum stub** — labeled-issue → draft PR (no auto-merge).
 2. **Auto-review + auto-merge** — labeled-issue → draft PR → agent review → squash-merge, inside ADR-002's safety envelope.
-3. **Pre-preview** — labeled-issue → draft PR → agent reviews its own PR → on approve, promote draft→ready; a human merges. No envelope, no auto-merge. Opt in with `pre-preview: true` + the `ai-pre-preview` label. On `request_changes`, optionally opt into a bounded self-fix pass with `self-fix: true` (+ `self-fix-max-iterations`, default 2) — the agent attempts to fix its own findings and re-review before falling back to `ai:review-blocked`. See ADR-004.
+3. **AI review, human merge** — labeled-issue → draft PR → agent reviews its own PR → on approve, promote draft→ready; a human merges. No envelope, no auto-merge. Opt in with `ai-review-human-merge: true` + the `ai-review-human-merge` label. On `request_changes` from either this flow or the AI-merge flow above, optionally opt into a bounded self-fix pass with `self-fix: true` (+ `self-fix-max-iterations`, default 2) — the *original implementer's* agent (Claude or OpenCode, whichever wrote the PR) attempts to fix its own findings and re-review before falling back to `ai:review-blocked`. See ADR-004.
 
 > **Agent selection — two independent mechanisms, don't conflate them:**
 >
@@ -30,8 +30,15 @@ example see `ai-notes/quicktask-vikunja-pipeline-runbook.md`.
 - [ ] Decide **public vs private**. Public → GitHub-hosted runners only
       (`'["ubuntu-latest"]'`). **Never attach a self-hosted runner to a public
       repo** — fork-PR attack surface (DESIGN.md, non-negotiable).
-- [ ] Confirm the pipeline ref to pin. Use `@v1` once real tags exist; until then
-      a `v1` branch on the pipeline repo also resolves for `uses: …@v1`.
+- [ ] Confirm the pipeline ref to pin. `@vX` is a **moving** tag that follows
+      the newest non-prerelease `vX.*.*` release, updated automatically by
+      `release.yml` when a release is published — a consumer pinned to `@vX`
+      picks up the new pipeline on its **next dispatch**, with no review step
+      and no human action required. It may point at a commit that is **not on
+      `main`** — a backport release is still a release; "what is released" is
+      answered by the tags, never by `main`. Consumers who want pipeline
+      changes to arrive as reviewable PRs instead should pin an exact
+      `@vX.Y.Z` and use Dependabot.
 
 ### 1. Add the auth secret
 
@@ -96,8 +103,10 @@ after several clean draft-only runs, enable auto-merge per §2 — including the
    `scripts/` checkout uses them, and `@v1` in `uses:` does **not** propagate to
    that checkout (GitHub's `workflow_ref` points at the caller). Mismatch breaks
    the run at the scripts step.
-2. **`v1` may be a branch, not a tag.** `uses:` accepts either; promote to real
-   `v1.0.0` + moving `v1` tags when convenient.
+2. **`v1` moves automatically on release, and may point off `main`.**
+   `release.yml` force-updates `v1` to the newest non-prerelease `v1.*.*`
+   release whenever one is published, including releases cut on a backport
+   branch — the moving tag follows the newest *release*, not `main`.
 3. **Public repos: hosted runners only.** No self-hosted, ever.
 4. **First run draft-only.** Don't enable auto-merge until the required vuln
    check is in place and you've watched the pipeline behave on the repo.
@@ -147,11 +156,13 @@ permissions:            # the reusable jobs need these; a caller can't grant a
   contents: write       # reusable workflow more than it has, and the repo's
   pull-requests: write  # default GITHUB_TOKEN is read-only on most repos, so
   issues: write         # omitting this fails the run at startup (see below)
+  actions: write        # retry-dispatch.sh re-dispatches THIS workflow; without
+                        # it every retry 403s and transient failures go hard
 
 jobs:
   claude:
     if: github.event.label.name == 'ai-implement'
-    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
+    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     with:
@@ -179,7 +190,7 @@ Apply `ai-implement` to an issue; Claude opens a draft PR. That's it.
 
 ## 2. Auto-review + auto-merge
 
-The auto-merge flow promotes the draft → ready → `gh pr merge --auto --squash` **only when every gate in [ADR-002](DECISIONS.md#adr-002--auto-review-and-auto-merge-safety-envelope) is satisfied**. Failing any gate leaves the PR draft and stamps `ai:review-blocked` on the originating issue.
+The AI-merge flow promotes the draft → ready → `gh pr merge --auto --squash` **only when every gate in [ADR-002](DECISIONS.md#adr-002--auto-review-and-auto-merge-safety-envelope) is satisfied**. Failing any gate leaves the PR draft and stamps `ai:review-blocked` on the originating issue.
 
 > **Auto-merge requires a GitHub App or PAT for PR creation — the ambient
 > `GITHUB_TOKEN` is not enough.** GitHub does **not** run workflows on PRs opened
@@ -197,7 +208,11 @@ App* (triggers required checks; stable bot login). To enable:
 
 1. **Create a GitHub App** — Settings → Developer settings → GitHub Apps → New.
    Repository permissions: **Contents: R/W**, **Pull requests: R/W**,
-   **Issues: R/W**. No webhook needed.
+   **Issues: R/W**, and **Workflows: R/W** if any plan will edit a file under
+   `.github/workflows/` — without it such a push is rejected outright and the
+   run ends with no branch and no PR. No webhook needed. See
+   [`PIPELINE-APP-SETUP.md`](PIPELINE-APP-SETUP.md) for the full permission
+   table and what each one is used for.
 2. **Generate a private key** (downloads a `.pem`) and **install the App** on the
    consumer repo.
 3. **Add two repo secrets:** `PIPELINE_APP_ID` (the numeric App ID) and
@@ -208,10 +223,10 @@ App* (triggers required checks; stable bot login). To enable:
    ```yaml
    jobs:
      claude:
-       uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
+       uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2
        with:
          issue-number: ${{ github.event.issue.number }}
-         auto-review: true
+         ai-review-ai-merge: true
          pipeline-author-allowlist: my-app[bot]
        secrets:
          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -221,6 +236,13 @@ App* (triggers required checks; stable bot login). To enable:
 
 When `PIPELINE_APP_ID` is unset the workflow mints nothing and falls back to
 `GITHUB_TOKEN` (the draft-PR-only posture) — so this is a no-op until you opt in.
+
+**Optional but recommended:** `PIPELINE_APP_ID` + `PIPELINE_APP_PRIVATE_KEY`.
+Without them the pipeline's PRs are authored by `github-actions` and their
+required checks stall awaiting manual approval — the PR then satisfies no
+required check and sits `BLOCKED` (#364). Each such run says so on the issue
+(`ai:checks-blocked` plus a warning block in the run report). Step-by-step
+runbook: [`PIPELINE-APP-SETUP.md`](PIPELINE-APP-SETUP.md).
 
 > ⚠️ **Experimental:** the App-token path is wired and falls back safely, but has
 > not yet been verified end-to-end against a real installed App.
@@ -250,15 +272,15 @@ Caveats:
 # .github/workflows/agent.yml
 jobs:
   claude:
-    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
+    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2
     with:
       issue-number: ${{ github.event.issue.number }}
-      auto-review: true        # per-repo opt-in (ADR-002 gate 3)
+      ai-review-ai-merge: true        # per-repo opt-in (ADR-002 gate 3)
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
-Then apply both `ai-implement` AND `ai-auto-review` to the issue (ADR-002 gate 2). Either alone leaves the PR draft.
+Then apply both `ai-implement` AND `ai-review-ai-merge` to the issue (ADR-002 gate 2). Either alone leaves the PR draft.
 
 ### Required: a dependency-vulnerability check
 
@@ -274,7 +296,7 @@ ADR-002 gate 5 ("all required status checks green") is the only thing standing b
 
 Mark it required under **Settings → Branches → Branch protection → Require status checks**.
 
-If no such check is required, `auto-review: true` lets a malicious dependency bump squash-merge into `main`. The pipeline does not block manifest changes itself — gate 6 only blocks `.github/` and secret files (full list in ADR-002 §2.6).
+If no such check is required, `ai-review-ai-merge: true` lets a malicious dependency bump squash-merge into `main`. The pipeline does not block manifest changes itself — gate 6 only blocks `.github/` and secret files (full list in ADR-002 §2.6).
 
 ### Optional: per-repo path blocklist
 
@@ -295,7 +317,7 @@ If your consumer repo uses a GitHub App or PAT for `gh pr create` instead of the
 
 ```yaml
 with:
-  auto-review: true
+  ai-review-ai-merge: true
   pipeline-author-allowlist: |
     github-actions[bot]
     my-app[bot]
@@ -305,8 +327,8 @@ Never set this to a value that matches arbitrary humans — gate 1's purpose is 
 
 ### Kill switches
 
-- **Per-repo:** `auto-review: false` at the call site.
-- **Per-issue:** remove `ai-auto-review` from the issue.
+- **Per-repo:** `ai-review-ai-merge: false` at the call site.
+- **Per-issue:** remove `ai-review-ai-merge` from the issue.
 
 Both only take effect on the next run; PRs that already armed `gh pr merge --auto` will still land once required checks pass. Disarm in-flight with `gh pr merge --disable-auto <PR>`.
 
@@ -322,7 +344,7 @@ Choose the agent at the call site or per-issue:
 # .github/workflows/agent.yml
 jobs:
   claude:
-    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v1
+    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2
     with:
       issue-number: ${{ github.event.issue.number }}
       agent: opencode             # ← workflow-input default for this repo
@@ -347,7 +369,8 @@ Pick the model per issue with a `model:*` label (alongside `agent:opencode`). Th
 | `model:deepseek-r1` | `deepseek/deepseek-r1-0528` | Reasoning model |
 | `model:llama-4-maverick` | `meta-llama/llama-4-maverick` | Meta open-weight |
 | `model:qwen3-coder` | `qwen/qwen3-coder-30b-a3b-instruct` | Qwen3 coder (tool-use capable, unlike 2.5-coder) |
-| `model:gpt-oss-120b` | `openai/gpt-oss-120b` | OpenAI open-weight, cheap |
+| ~~`model:gpt-oss-120b`~~ | `openai/gpt-oss-120b` | **Retired** — 2 of 10 runs shipped across the fleet. The label warns and falls back to `default-model`. See [model-comparison](model-comparison.md#retired-models) |
+| `model:glm` | `z-ai/glm-5.2` | **Fleet default** — best measured OpenRouter model (15 of 18 runs shipped) |
 | `model:glm-flash` | `z-ai/glm-4.7-flash` | GLM agentic coder |
 | `model:minimax-m2` | `minimax/minimax-m2.5` | Agentic/tool-use coder |
 | `model:deepseek-v32` | `deepseek/deepseek-v3.2` | Newer DeepSeek all-rounder |
@@ -357,7 +380,7 @@ Pick the model per issue with a `model:*` label (alongside `agent:opencode`). Th
 
 For measured per-model results — which model produced the cleanest code on a real task, and which ones failed — see the living [model-comparison report](model-comparison.md).
 
-Claude-path labels (`model:opus` / `model:sonnet` / `model:haiku`) are documented in DESIGN.md.
+Claude-path labels (`model:opus` / `model:sonnet` / `model:haiku` / `model:fable`) are documented in DESIGN.md.
 
 ### Mint the OpenRouter key
 
@@ -379,14 +402,22 @@ Claude-path labels (`model:opus` / `model:sonnet` / `model:haiku`) are documente
 > is what opencode documents. Since #164 the pipeline preflights the secret and
 > fails with an explicit `OPENROUTER_API_KEY is not set` message instead.
 > Verify with `gh secret list -R <owner>/<repo>`.
+>
+> If the key *is* present (the run log shows `OPENROUTER_API_KEY present`) and
+> the run died at **0 turns**, opencode most likely failed to fetch its model
+> catalog at startup and fell back to a bundled snapshot that doesn't know
+> newer models. Since #439 the pipeline classifies that as `transient` and
+> retries it automatically; with `escalate-on-retry` the retry runs on Claude.
+> Only a failure that **recurs** on retry with an `agent:opencode` label points
+> to a genuinely wrong model id.
 
-- The same `ai-auto-review` opt-in (§2) and chain semantics (§4 — below) apply regardless of which agent ran the implementation.
+- The same `ai-review-ai-merge` opt-in (§2) and chain semantics (§4 — below) apply regardless of which agent ran the implementation.
 
 ### What's left (multi-agent epic)
 
 Wiring the secret is just the first piece. The OpenCode CLI install (#8), classifier (#9), runner step (#10), and act fixtures (#11) land next. Until #10 merges, setting `agent: opencode` produces a no-op job per the workflow input docstring.
 
-## 4. Issue chaining (optional, requires auto-review)
+## 4. Issue chaining (optional, requires ai-review-ai-merge)
 
 When an auto-merged PR closes an issue, the pipeline can dispatch a follow-up issue that was `Blocked by:` it. Conventions live in [ADR-003](DECISIONS.md#adr-003--issue-chain-dispatch-on-auto-merge); this section is just the wiring.
 
@@ -442,23 +473,189 @@ Open an issue **titled exactly** `ai:chain-paused`. The dispatcher checks for th
 - **Cycle / depth caps.** Coming in #19. Until then, file shallow chains and watch the chain-state issue.
 - **Manual merges don't trigger the chain** — by design. A human who steps in mid-chain takes over the rest.
 
+## Pinning: which ref to use, and when to move it
+
+Pin the **moving major tag**, in both places the stub names it:
+
+```yaml
+uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2
+with:
+  pipeline-ref: v2
+```
+
+`v2` follows every `v2.x.y` release on its own — `release.yml` moves it when a
+release is published, forward-only, so a hotfix on an older line cannot drag it
+backwards (#261). A consumer picks up pipeline fixes on its next dispatch with
+no human step and no PR in the consumer repo.
+
+**Do not pin a full version** (`@v2.0.5`). It freezes you out of every fix and
+nothing will tell you. One repo was pinned that way and it turned a routine bulk
+migration into a broken ref, because a find-and-replace on `@v1` naturally
+caught `@v1.13.0` too.
+
+**Do not pin `main`** unless you are deliberately testing unreleased pipeline
+changes. `main` is where the pipeline's own agent works.
+
+### What the moving tag does not cover
+
+It keeps you current *within* a major line. It does nothing *between* them.
+`update-moving-tag.sh` derives the tag from the pushed release
+(`major="${RELEASE_TAG%%.*}"`), so releasing `v3.0.0` moves `v3` — never `v2`.
+The day a new major line opens, every `@v2` consumer stops receiving anything.
+
+This is not theoretical. `v1` froze at `v1.11.1` on 2026-08-03 and sat 173
+commits behind `main` while **70 repos** pinned it. Not one of the fixes in
+issues #335, #337, #338, #340, #342 and #345 reached them, and
+`classify-turns.sh` did not exist at `v1` at all — so those runs silently used
+`max_turns: 30` and died at
+`error_max_turns`, which is indistinguishable from a legitimate agent failure.
+Six weeks, no signal, real money.
+
+So since then the pipeline **tells you**. Every dispatch runs
+`check-major-drift.sh`, which compares your pinned major against the newest
+released one and raises a workflow annotation when you are behind:
+
+> **agent-workflow major line v2 is no longer maintained** — This repo pins
+> `@v2`, but `v3` has been released. The moving tag `v2` only follows `v2.x.y`
+> releases, and there will be no more of them …
+
+It is advisory and never fails your run: a major bump is allowed to break
+things, so *when* to upgrade stays your decision. Only *noticing* is taken off
+your plate — the moving-tag design already established that anything relying on
+a human remembering has been falsified in practice.
+
+### Migrating to a new major line
+
+`scripts/migrate-consumers.sh` does this across a fleet. Its two modes answer
+the two questions separately.
+
+**Where do I stand?** No target, no writes, safe any time:
+
+```bash
+bash scripts/migrate-consumers.sh --owner <owner>
+# freaxnx01/flowhub              v2  inventory  perms:ok
+# freaxnx01/game-tank-toys       v2  inventory  perms:MISSING actions
+```
+
+> **`perms:MISSING <scope>`** means the stub grants less than
+> `agent-implement.yml`'s jobs request. A reusable workflow can't be granted
+> more than its caller, so that repo fails **every** `ai-implement` dispatch at
+> `startup_failure` (zero jobs, no logs). Add the named scopes to the stub's
+> `permissions:` block — compare with the stub in §1. Most often this is
+> `actions: write`, which `@v2` needs for retry re-dispatch (#351) and which
+> stubs created before 2026-09-23 lack (#434).
+
+**Fix a `perms:MISSING` fleet.** `--fix-perms` adds exactly the missing scopes
+to each stub's caller `permissions:` block — the calling job's own block if it
+has one, else the top-level one — and opens **one PR per repo** on
+`fix/agent-workflow-caller-permissions`. Dry run first:
+
+```bash
+bash scripts/migrate-consumers.sh --owner <owner> --fix-perms            # dry run
+bash scripts/migrate-consumers.sh --owner <owner> --fix-perms --apply    # one PR per repo
+bash scripts/migrate-consumers.sh --owner <owner>                        # after merging: expect perms:ok
+```
+
+`perms:ok` repos are skipped. `perms:ERROR`, and shapes it will not edit
+(flow-style `{ … }`, `read-all`/`write-all`, no block at all), are reported for
+a hand edit and make the run exit 1. A repo whose fix PR is already open is
+skipped, so a re-run is safe.
+
+**Roll out a new line.** Dry run first — `--apply` is required to write
+anything:
+
+```bash
+bash scripts/migrate-consumers.sh --owner <owner> --to v3           # dry run
+bash scripts/migrate-consumers.sh --owner <owner> --to v3 --apply
+```
+
+Before the rollout, read the major release's `CHANGELOG.md` entry for
+`BREAKING CHANGE:` and check whether an input you actually set was removed.
+Inputs are deprecated for a full major line before removal, so the usual answer
+is no. Then migrate **one** repo, dispatch an issue there, and confirm the run
+is green before doing the rest.
+
+Three behaviours worth knowing, each of them a mistake someone already made:
+
+- **The whole ref is replaced, never a substring.** A stub pinned `@v1.13.0`
+  becomes `@v2` — not `@v2.13.0`. A find-and-replace of `@v1` → `@v2` produces
+  exactly that non-existent ref, and did.
+- **Non-version pins are left alone.** `main`, a branch or a SHA is a
+  deliberate choice; `--force` overrides.
+- **It is idempotent.** Running it twice changes nothing the second time, so a
+  partial run is safe to repeat.
+
+Use `--pr` wherever the default branch is protected — it opens a pull request
+per repo instead of committing directly, which is the normal case outside
+personal repos.
+
 ## Troubleshooting
 
 ### "Auto-merge held: …" comment on the PR
 
-The auto-review job ran, but a gate refused promotion. The comment names the reason. The originating issue gets `ai:review-blocked`. Take over manually: review the diff, fix any blocker, then `gh pr ready` + `gh pr merge --squash` yourself.
+The review job ran, but a gate refused promotion. The comment names the reason. The originating issue gets `ai:review-blocked`. Take over manually: review the diff, fix any blocker, then `gh pr ready` + `gh pr merge --squash` yourself.
 
-### Draft PR opens but no auto-review job runs
+### Draft PR opens but no review job runs
 
 Check the workflow run for the `auto_review` job. It only triggers when:
 
 - the `implement` job succeeded
-- `auto-review: true` was passed
-- the issue carries `ai-auto-review`
-- the `implement` job's `auto-review-enabled` output is `true`
+- `ai-review-ai-merge: true` was passed
+- the issue carries `ai-review-ai-merge`
+- the `implement` job's `ai-review-ai-merge-enabled` output is `true`
 
 If all four hold and the job still didn't run, the issue is in workflow plumbing — file an issue against `agent-workflow`.
 
 ### Self-modification guard
 
-The `freaxnx01/agent-workflow` repo itself never auto-merges, regardless of input or label state — ADR-002 §"Self-modification / dogfooding". Hardcoded; no way to disable. If you forked `agent-workflow`, update the guard's hardcoded repo string before enabling `auto-review: true` on the fork.
+The `freaxnx01/agent-workflow` repo itself never auto-merges, regardless of input or label state — ADR-002 §"Self-modification / dogfooding". Hardcoded; no way to disable. If you forked `agent-workflow`, update the guard's hardcoded repo string before enabling `ai-review-ai-merge: true` on the fork.
+
+---
+
+## Migrating from `auto-review` / `pre-preview` (ADR-009)
+
+The pre-ADR-009 input and label names still work, but every run that uses
+one emits a warning annotation, and they are **removed in v3**. Two steps
+per repo.
+
+**1. Rename the inputs** in `.github/workflows/agent.yml`:
+
+```yaml
+auto-review: true    # ->  ai-review-ai-merge: true
+pre-preview: true    # ->  ai-review-human-merge: true
+```
+
+**2. Relabel open issues.** The pipeline never does this for you — it
+tolerates the old labels but does not rewrite labels a human applied. Run
+`scripts/ensure-issue-labels.sh` first so the new labels exist:
+
+```bash
+gh issue list --label ai-pre-preview --json number --jq '.[].number' \
+  | xargs -I{} gh issue edit {} \
+      --add-label ai-review-human-merge \
+      --remove-label ai-pre-preview
+
+gh issue list --label ai-auto-review --json number --jq '.[].number' \
+  | xargs -I{} gh issue edit {} \
+      --add-label ai-review-ai-merge \
+      --remove-label ai-auto-review
+```
+
+The old labels are left in place; delete them yourself once no issue carries
+one. Consumers still calling `claude-implement.yml` (the v1 shim) need no
+change: its public inputs and outputs keep their v1 names.
+
+### Migrating an existing repo's parked label
+
+The parked label was `🧊 parked` before 2026-09-24. Azure DevOps rejects emoji in
+tag names (`TF401407`), so it is now plain `parked` — see **ADR-016**. Rename it
+**in place**; do **not** delete and re-create, which would silently unpark every
+parked issue:
+
+```bash
+gh label edit '🧊 parked' --name 'parked' --repo <owner>/<repo>
+```
+
+Repos onboarded after that date get the new name from `ensure-issue-labels.sh`
+and need nothing. If you cannot migrate yet, `export PARK_LABEL='🧊 parked'` keeps
+`check-attempt-cap.sh` matching the old name.

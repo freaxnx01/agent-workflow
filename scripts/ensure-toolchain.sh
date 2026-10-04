@@ -22,14 +22,18 @@
 #            Anything else: OpenCode install is skipped entirely.
 #   OPENCODE_DRY_RUN
 #            If "1", report whether OpenCode would be installed but skip
-#            the actual network/npm step. Used by Layer-1 tests.
+#            the actual network/install step. Used by Layer-1 tests.
 #
 # Exit codes:
 #   0   all required tools present (with or without install)
-#   1   apt install attempted but at least one tool is still missing,
-#       OR OpenCode install failed
+#   1   apt install attempted but at least one tool is still missing
+#   64/65/66
+#       propagated from scripts/install-opencode.sh — prerequisite absent,
+#       installer checksum mismatch, or installed-but-not-found respectively.
 set -euo pipefail
 IFS=$'\n\t'
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Pinned OpenCode version. Bump in one place. The line is parsed by
 # docs/RUNNER-REQUIREMENTS.md's CI check (when it exists) to keep the
@@ -97,21 +101,19 @@ ensure_opencode() {
     return 0
   fi
 
-  # Install via npm — pinned by exact version. The maintainer can swap
-  # to a curl-installer with vendored checksum if upstream changes its
-  # distribution; the contract (binary `opencode` on PATH, returning
-  # OPENCODE_VERSION from `--version`) is what downstream code relies on.
-  if command -v npm >/dev/null 2>&1; then
-    npm install -g "opencode-ai@${OPENCODE_VERSION}"
-  else
-    printf 'error: npm not available; cannot install opencode\n' >&2
-    return 1
-  fi
-
-  if ! command -v opencode >/dev/null 2>&1; then
-    printf 'error: opencode still missing after install\n' >&2
-    return 1
-  fi
+  # Native installer, checksum-pinned — not `npm install -g`, which resolves to
+  # the shared global prefix and dies with EACCES on a persistent runner whose
+  # prefix was ever written as root (#395, the same hazard #302 fixed for the
+  # claude path). The contract downstream relies on is unchanged: binary
+  # `opencode` on PATH, returning OPENCODE_VERSION from `--version`.
+  #
+  # install-opencode.sh owns the post-install verification and exits 66 if the
+  # binary is not there, so there is no `command -v opencode` re-check here: it
+  # would run in THIS shell, where $HOME/.opencode/bin is not on PATH yet — the
+  # installer appends that dir to $GITHUB_PATH, which only reaches later steps.
+  # The npm version got away with the re-check because /usr/local/bin was
+  # already on PATH.
+  OPENCODE_VERSION="$OPENCODE_VERSION" bash "$HERE/install-opencode.sh"
 
   printf 'opencode installed at version %s\n' "$OPENCODE_VERSION"
 }

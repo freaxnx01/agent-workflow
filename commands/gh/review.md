@@ -1,5 +1,5 @@
 ---
-description: Pre-review PRs against their issue's AC, then trigger the right agent (@copilot/@claude) to fix
+description: Pre-review PRs against their issue's AC, then trigger Claude to fix (Copilot disabled)
 argument-hint: "[PR numbers, e.g. 83 84 — or empty for all open non-merged PRs]"
 ---
 
@@ -14,14 +14,14 @@ number,title,author,isDraft,headRefName` — include drafts (agent PRs are usual
 drafts), but skip a PR that is already approved with no open threads. Always say
 which PRs you picked before starting.
 
-**Skip a PR the pipeline's own pre-preview (ADR-004) already reviewed and
-approved** — check for a "Pre-reviewed ✓ — promoted to ready" comment from the
-pipeline on the PR (`gh pr view <N> --json comments`). That means an agent
+**Skip a PR the pipeline's own AI-review / human-merge flow (ADR-004) already
+reviewed and approved** — check for a "Reviewed ✓ — promoted to ready" comment
+from the pipeline on the PR (`gh pr view <N> --json comments`). That means an agent
 already reviewed this exact diff and a human just needs to merge; running this
 manual pass again is redundant unless the user explicitly wants a second
-opinion. If the linked issue instead carries `ai:review-blocked`, pre-preview
+opinion. If the linked issue instead carries `ai:review-blocked`, that flow
 ran and found problems (left the PR draft) — still worth this manual pass, and
-say so, since pre-preview's own verdict/reason is useful context to fold in
+say so, since its own verdict/reason is useful context to fold in
 rather than re-derive from scratch.
 
 ## Reviewing (one reviewer per PR, in parallel)
@@ -64,39 +64,25 @@ Skip this entirely for a clean `Approve`. For `Changes-requested` or
 (not the review) addressed to the agent, with a concise **numbered** fix list (the
 blocking items first).
 
+**Copilot is disabled as of 2026-09-01** (GitHub Copilot access was revoked on
+this account) — never nudge `@copilot`, even for a PR it opened, and even as a
+"just get any agent to pick this up" fallback. To re-enable, restore the
+pre-2026-09-01 version of this section (see git history).
+
 Pick the mention from the PR's owner — `gh pr view <N> --json author,assignees,headRefName`:
 
-- `app/copilot-swe-agent` → **`@copilot`**.
-- `app/anthropic-code-agent` (assignee *Claude*, branch `claude/…`) → Claude's agent.
+- `app/copilot-swe-agent` → no nudge. Copilot can't act on it — tell the user
+  the fix needs a manual pass or a re-dispatch to Claude instead.
+- `app/anthropic-code-agent` (assignee *Claude*, branch `claude/…`) → mention
+  Claude's agent.
 - `app/github-actions` (opened by the `agent-workflow` pipeline via the
-  `ai-implement` label) → **do not nudge `@copilot`**. There is currently no
-  mechanism for `agent-workflow` to react to review comments with the *same*
-  model that did the implementation — that gap is tracked as
-  `agent-workflow#193` (builds on `#81`). Handing the fix to `@copilot` instead
-  silently switches the implementing model/vendor, which the user has
-  explicitly said not to do (model consistency, and Copilot usage budget is
-  not agent-workflow's to spend). Post the should-fix findings as the review
-  comment as normal, but **skip the second nudge comment** — tell the user the
-  fix needs either a manual pass, a redispatch through `agent-workflow`, or
-  `#193` implemented, and let them choose. Don't default to `@copilot` just
-  because it is the more reliable wake trigger.
-
-**Learned default — prefer `@copilot`, but only for PRs Copilot's own agent
-opened.** In practice `@copilot` is the reliable trigger: it reacts (👀)
-within a minute and starts a session, and it can take over a PR regardless of
-who opened it. A bare `@claude` mention registers in the timeline but the
-native Anthropic agent does **not** reliably wake from a PR comment. That
-makes `@copilot` the right *mechanical* choice only when the goal is "get any
-agent to pick this up" — it is the wrong choice whenever the user cares which
-model does the fix (see the `agent-workflow` case above, and generally: don't
-silently hand a Claude-authored PR to Copilot either).
-
-- Copilot-owned PR → `@copilot`.
-- Claude-owned PR (`app/anthropic-code-agent`) → mention Claude's agent first.
-  Use `@copilot` as a fallback only if the user confirms they're fine with the
-  model switch, not as a silent first choice.
-- `agent-workflow`-owned PR (`app/github-actions`) → see above: no nudge,
-  surface the gap instead.
+  `ai-implement` label) → no nudge. There is currently no mechanism for
+  `agent-workflow` to react to review comments with the *same* model that did
+  the implementation — that gap is tracked as `agent-workflow#193` (builds on
+  `#81`). Post the should-fix findings as the review comment as normal, but
+  **skip the second nudge comment** — tell the user the fix needs either a
+  manual pass, a redispatch through `agent-workflow`, or `#193` implemented,
+  and let them choose.
 - If a repo defines its own `.github/workflows/*claude*.yml`, that's a self-hosted
   `@claude` Action — then `@claude` is genuinely the trigger; check for it first.
 

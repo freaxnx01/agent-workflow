@@ -3,7 +3,7 @@
 # check-merge-envelope.sh — Enforce ADR-002's auto-merge safety envelope.
 #
 # This script evaluates gates 1, 5, 6, 7 from ADR-002. Gates 2 + 3 are
-# evaluated by `check-auto-review-gate.sh` and gate 4 (verdict=approve)
+# evaluated by `check-ai-merge-gate.sh` and gate 4 (verdict=approve)
 # is evaluated by the calling workflow against `review-pr.sh`'s output.
 # This is the single source of truth for path/branch/author checks; any
 # divergence with the ADR is a bug here, not a policy disagreement.

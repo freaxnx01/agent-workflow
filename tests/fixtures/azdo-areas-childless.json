@@ -1,0 +1,11 @@
+{
+  "attributes": null,
+  "children": null,
+  "hasChildren": false,
+  "id": 430,
+  "identifier": "00000000-0000-0000-0000-000000000000",
+  "name": "MyProject",
+  "path": "\\MyProject\\Area",
+  "structureType": "area",
+  "url": "https://dev.azure.com/contoso/00000000-0000-0000-0000-000000000000/_apis/wit/classificationNodes/Areas"
+}

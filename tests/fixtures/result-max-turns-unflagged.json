@@ -1,0 +1,16 @@
+{
+  "type": "result",
+  "subtype": "error_max_turns",
+  "is_error": false,
+  "duration_ms": 1999288,
+  "num_turns": 200,
+  "total_cost_usd": 10.7245218,
+  "session_id": "sess_maxturns_unflagged",
+  "result": "Reached the configured max_turns limit (200) before completing the task.",
+  "usage": {
+    "input_tokens": 624,
+    "output_tokens": 3324,
+    "cache_creation_input_tokens": 735617,
+    "cache_read_input_tokens": 31387679
+  }
+}

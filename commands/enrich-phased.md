@@ -29,8 +29,12 @@ truth for which phase runs next.
 
 On invocation:
 
-1. If an issue number was passed as an argument (strip any leading `#`), start a new
-   run: write `issue=<N>` and `phase=spec`.
+1. If an issue number was passed as an argument (strip any leading `#`), this is a
+   **new run**: carry the number through this invocation and dispatch to Phase
+   `spec`. **Don't write the state file yet** — Phase `spec`'s lock steps can end
+   the run before it starts, and a file written now would let a later no-argument
+   resume skip them and enrich an issue another session holds a fresh lock on.
+   Phase `spec` step 4 writes `issue=<N>` and `phase=spec` once the lock is held.
 2. Else read `.claude/enrich-phased.state` and continue from its `phase`. If no
    argument and no state file, tell the user there's nothing to resume and stop.
 
@@ -39,15 +43,137 @@ Then dispatch to the matching phase below.
 ### Phase `spec`
 
 1. `gh issue view <issue> --comments`. If the issue is closed, already has
-   `ai-implement`, or is `🧊 parked`, stop and say so.
-2. Assess readiness (acceptance criteria + scope + no blocking unknowns). If it's
-   already complete, say so, suggest `/gh:implement <issue>`, clear the state file,
-   and stop.
-3. Invoke **superpowers:brainstorming** with the issue as context. Follow it
+   `ai-implement`, or is `parked`, stop and say so. **On a resume** (a state
+   file already existed for this run — see *On invocation*), this run already
+   holds the lock from a prior step 4, and stopping here abandons it without
+   releasing. Release it first — no `2>/dev/null || true`, since this run
+   applied the label itself and a non-zero exit is a real failure, not a
+   missing repo convention:
+
+   ```bash
+   gh issue edit <issue> --remove-label enrichment-ongoing
+   ```
+
+   If it fails, tell the user the lock is still held and has to be removed
+   by hand. On a new run there is nothing to release yet (step 4 hasn't run)
+   — skip this entirely.
+2. **Check for an existing enrichment lock — new runs only.** Skip this step
+   entirely on a resume (no argument, continuing from the state file): that is the
+   same run continuing, so the only lock it could find is its own. If the issue
+   carries the `enrichment-ongoing` label, scan the comments already fetched in
+   step 1 for the most recent `🔒 Enrichment lock (re-)acquired at <timestamp>`
+   line and compute its age against `date -u +%Y-%m-%dT%H:%M:%SZ`:
+   - No `enrichment-ongoing` label → continue to step 3.
+   - Label present, a matching comment found, age < 24 hours → **stop**. Tell the
+     user the issue is already being enriched (show the age) and end the command.
+     No state file exists yet (see *On invocation*), so there is nothing to resume
+     into — leave it that way.
+   - Label present, age ≥ 24 hours, or no matching comment found (treat unknown age
+     as stale) → tell the user the lock looks abandoned (show age and the 24h
+     threshold) and ask whether to take over.
+     - No → stop, same as above.
+     - Yes → continue to step 3; step 4 will re-acquire the lock and note the
+       takeover.
+
+   Remember which lock comments you saw here — step 4's race re-check has to tell
+   them apart from ones posted after this point.
+3. Assess readiness (acceptance criteria + scope + no blocking unknowns). If it's
+   already complete, say so, suggest `/gh:implement <issue>`, and stop. **On a
+   resume**, a state file exists here (written by a prior step 4) and this run
+   holds the lock — release it before deleting the file, same as step 1's
+   resume path:
+
+   ```bash
+   gh issue edit <issue> --remove-label enrichment-ongoing
+   ```
+
+   If it fails, tell the user the lock is still held and has to be removed by
+   hand. **On a new run**, no state file exists yet (step 4 hasn't run) and
+   there is nothing to release — just confirm no file exists and stop.
+4. **Acquire the enrichment lock — new runs only**, same gate as step 2: on a
+   resume skip this step entirely and go straight to step 5, since the lock is
+   already held from the original acquisition. Running it again would post a second
+   lock comment and then lose the race re-check below to the run's own earlier
+   lock, dead-ending every future resume. Acquire before brainstorming — the
+   expensive shared resource two sessions could collide on. Make sure the label
+   exists first:
+
+   ```bash
+   gh label create enrichment-ongoing --color FBCA04 \
+     --description "Another /enrich session is actively enriching this issue — do not start a second one" \
+     2>/dev/null || true
+   ```
+
+   Post the timestamp comment before applying the label — a label with no matching
+   comment reads as "unknown age → stale" to step 2's check, defeating detection.
+   Fresh acquisition (step 2 found no lock):
+
+   ```bash
+   gh issue comment <issue> --body "🔒 Enrichment lock acquired at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+   ```
+
+   Takeover of a stale lock (step 2 found one and the user agreed to take over —
+   substitute the actual age you showed the user for `<Xh>`):
+
+   ```bash
+   gh issue comment <issue> --body "🔒 Enrichment lock re-acquired at $(date -u +%Y-%m-%dT%H:%M:%SZ) (previous lock stale, <Xh> old)"
+   ```
+
+   Note the exact timestamp you posted, then apply the label:
+
+   ```bash
+   gh issue edit <issue> --add-label enrichment-ongoing
+   ```
+
+   **Verify this succeeded before continuing.** If it fails, the run does not
+   hold the lock even though the timestamp comment claims it does — abort
+   without brainstorming and tell the user the lock could not be acquired.
+   The state file isn't written until after the race re-check below
+   succeeds, so there's nothing to clean up here.
+
+   **Then re-check for a competitor** — step 2 and this step are not atomic (the
+   readiness check, and on the takeover path a user prompt, sit between them).
+   Re-fetch comments:
+
+   ```bash
+   gh issue view <issue> --comments
+   ```
+
+   Look for a `🔒 Enrichment lock (re-)acquired` comment that is **not** the one you
+   just posted and was **not** already present at step 2. If one exists and its
+   timestamp is earlier than yours (same second → the one listed first wins), you
+   lost the race. Stand down:
+
+   ```bash
+   gh issue comment <issue> --body "🔓 Enrichment lock released at $(date -u +%Y-%m-%dT%H:%M:%SZ) (lost race to the lock acquired at <winner timestamp>)"
+   ```
+
+   Leave the `enrichment-ongoing` label in place — the winning session depends on
+   it. Tell the user another session won the race and end the command without
+   brainstorming; still no state file, so nothing can resume past this.
+
+   Otherwise the lock is yours. **Now write the state file** — `issue=<N>` and
+   `phase=spec` — and continue to step 5. This is its first write: a run that
+   stopped at step 2 or lost the race leaves no file behind, so it can never be
+   resumed past the check that stopped it.
+5. Invoke **superpowers:brainstorming** with the issue as context. Follow it
    end-to-end — clarifying questions, approaches, design sections, the spec
    self-review, and the **user approval gate**. Save the spec to the repo's tracked
    specs dir (see *Choosing a tracked path*), commit it, and record `spec=<path>`.
-4. **Phase boundary** (see *Between phases*): set `phase=plan`, hand off, stop.
+
+   **If the user declines the approval gate** (does not approve the spec), the run
+   is over — not paused. Release the lock and delete `.claude/enrich-phased.state`
+   before stopping:
+
+   ```bash
+   gh issue edit <issue> --remove-label enrichment-ongoing
+   ```
+
+   No `2>/dev/null || true` on this one: this run applied that label itself, so a
+   non-zero exit is a real failure, not a missing repo convention. If it fails,
+   tell the user the lock is still held and has to be removed by hand — otherwise
+   it blocks the issue for the full 24 hours.
+6. **Phase boundary** (see *Between phases*): set `phase=plan`, hand off, stop.
 
 ### Phase `plan`
 
@@ -76,15 +202,23 @@ Then dispatch to the matching phase below.
      markdown) — human/reviewer reference only, not needed by the implementing agent.
 2. Clear the readiness labels — `needs-enrichment` and `❓ to-be-defined` mean
    "not ready yet," and the issue now is. `/gh:implement` treats either as a
-   hard stop regardless of body content, so leaving one on is a silent trap:
+   hard stop regardless of body content, so leaving one on is a silent trap.
+   Then release the enrichment lock acquired back in Phase `spec` — the run is
+   done, nothing else will clear it:
 
    ```bash
    gh issue edit <issue> --remove-label needs-enrichment 2>/dev/null || true
    gh issue edit <issue> --remove-label "❓ to-be-defined" 2>/dev/null || true
+   gh issue edit <issue> --remove-label enrichment-ongoing
    ```
 
-   (run each on its own line with `|| true` — a repo that doesn't define one of
-   the two label conventions would otherwise error on the `--remove-label`)
+   The readiness labels go first on purpose: the lock release can then never be
+   what leaves the issue in `/gh:implement`'s hard-stop state. They run on their
+   own lines with `|| true` because a repo that doesn't define one of those two
+   conventions would otherwise error on the `--remove-label`. The lock release
+   doesn't — this run applied that label itself, so a non-zero exit is a real
+   failure: tell the user the lock is still held and has to be removed by hand,
+   otherwise it blocks the issue for the full 24 hours.
 3. Push if anything else is pending.
 4. **Done:** delete `.claude/enrich-phased.state` and `.claude/handoff.md`. Print the
    issue URL, the spec and plan paths, and: *"Issue is ready — run
@@ -159,8 +293,12 @@ of truth for which phase runs next.
 
 On invocation:
 
-1. If an issue number was passed as an argument (strip any leading `#`), start a new
-   run: write `issue=<N>` and `phase=spec`.
+1. If an issue number was passed as an argument (strip any leading `#`), this is a
+   **new run**: carry the number through this invocation and dispatch to Phase
+   `spec`. **Don't write the state file yet** — Phase `spec`'s lock steps can end
+   the run before it starts, and a file written now would let a later no-argument
+   resume skip them and enrich an issue another session holds a fresh lock on.
+   Phase `spec` step 4 writes `issue=<N>` and `phase=spec` once the lock is held.
 2. Else read `.claude/fj-enrich-phased.state` and continue from its `phase`. If no
    argument and no state file, tell the user there's nothing to resume and stop.
 
@@ -169,16 +307,151 @@ Then dispatch to the matching phase below.
 ### Phase `spec`
 
 1. `tea issues <issue> --login git-home` + `tea api --login git-home
-   "repos/$repo/issues/<issue>/comments"`. If the issue is closed or `🧊 parked`,
-   stop and say so.
-2. Assess readiness (acceptance criteria + scope + no blocking unknowns). If it's
-   already complete, say so, suggest `/work <issue>`, clear the state file, and
-   stop.
-3. Invoke **superpowers:brainstorming** with the issue as context. Follow it
+   "repos/$repo/issues/<issue>/comments"`. If the issue is closed or `parked`,
+   stop and say so. **On a resume** (a state file already existed for this run
+   — see *On invocation*), this run already holds the lock from a prior
+   step 4, and stopping here abandons it without releasing:
+
+   ```bash
+   current=$(tea api --login git-home "repos/$repo/issues/<issue>" | jq -r '[.labels[].name]')
+   [[ -n "$current" && "$current" != "null" ]] || { echo "failed to read current labels, aborting" >&2; exit 1; }
+   kept=$(echo "$current" | jq -c '[.[] | select(. != "enrichment-ongoing")]')
+   tea api --login git-home -X PUT "repos/$repo/issues/<issue>/labels" -f labels="$kept" >/dev/null
+   ```
+
+   If either command fails, tell the user the lock is still held and has to
+   be removed by hand. On a new run there is nothing to release yet (step 4
+   hasn't run) — skip this entirely.
+2. **Check for an existing enrichment lock — new runs only.** Skip this step
+   entirely on a resume (no argument, continuing from the state file): that is the
+   same run continuing, so the only lock it could find is its own. If the issue
+   carries the `enrichment-ongoing` label, scan the comments already fetched in
+   step 1 for the most recent `🔒 Enrichment lock (re-)acquired at <timestamp>`
+   line and compute its age against `date -u +%Y-%m-%dT%H:%M:%SZ`:
+   - No `enrichment-ongoing` label → continue to step 3.
+   - Label present, a matching comment found, age < 24 hours → **stop**. Tell the
+     user the issue is already being enriched (show the age) and end the command.
+     No state file exists yet (see *On invocation*), so there is nothing to resume
+     into — leave it that way.
+   - Label present, age ≥ 24 hours, or no matching comment found (treat unknown age
+     as stale) → tell the user the lock looks abandoned (show age and the 24h
+     threshold) and ask whether to take over.
+     - No → stop, same as above.
+     - Yes → continue to step 3; step 4 will re-acquire the lock and note the
+       takeover.
+
+   Remember which lock comments you saw here — step 4's race re-check has to tell
+   them apart from ones posted after this point.
+3. Assess readiness (acceptance criteria + scope + no blocking unknowns). If it's
+   already complete, say so, suggest `/work <issue>`, and stop. **On a resume**,
+   a state file exists here (written by a prior step 4) and this run holds the
+   lock — release it before deleting the file, same as step 1's resume path:
+
+   ```bash
+   current=$(tea api --login git-home "repos/$repo/issues/<issue>" | jq -r '[.labels[].name]')
+   [[ -n "$current" && "$current" != "null" ]] || { echo "failed to read current labels, aborting" >&2; exit 1; }
+   kept=$(echo "$current" | jq -c '[.[] | select(. != "enrichment-ongoing")]')
+   tea api --login git-home -X PUT "repos/$repo/issues/<issue>/labels" -f labels="$kept" >/dev/null
+   ```
+
+   If either command fails, tell the user the lock is still held and has to
+   be removed by hand. **On a new run**, no state file exists yet (step 4
+   hasn't run) and there is nothing to release — just confirm no file exists
+   and stop.
+4. **Acquire the enrichment lock — new runs only**, same gate as step 2: on a
+   resume skip this step entirely and go straight to step 5, since the lock is
+   already held from the original acquisition. Running it again would post a second
+   lock comment and then lose the race re-check below to the run's own earlier
+   lock, dead-ending every future resume. Acquire before brainstorming — the
+   expensive shared resource two sessions could collide on. Make sure the label
+   exists first:
+
+   ```bash
+   tea labels create --login git-home --name enrichment-ongoing --color "#fbca04" \
+     --description "Another /enrich session is actively enriching this issue — do not start a second one" \
+     2>/dev/null || true
+   ```
+
+   Post the timestamp comment before applying the label — a label with no matching
+   comment reads as "unknown age → stale" to step 2's check, defeating detection.
+   Fresh acquisition (step 2 found no lock):
+
+   ```bash
+   tea api --login git-home -X POST "repos/$repo/issues/<issue>/comments" \
+     -f body="🔒 Enrichment lock acquired at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+   ```
+
+   Takeover of a stale lock (step 2 found one and the user agreed to take over —
+   substitute the actual age you showed the user for `<Xh>`):
+
+   ```bash
+   tea api --login git-home -X POST "repos/$repo/issues/<issue>/comments" \
+     -f body="🔒 Enrichment lock re-acquired at $(date -u +%Y-%m-%dT%H:%M:%SZ) (previous lock stale, <Xh> old)"
+   ```
+
+   Note the exact timestamp you posted, then apply the label. `tea` has no
+   per-issue label add/remove subcommand, so read the current labels and PUT back
+   the set with `enrichment-ongoing` added — guarding the read, because an empty
+   `current` would PUT an empty set and wipe **every** label on the issue:
+
+   ```bash
+   current=$(tea api --login git-home "repos/$repo/issues/<issue>" | jq -r '[.labels[].name]')
+   [[ -n "$current" && "$current" != "null" ]] || { echo "failed to read current labels, aborting" >&2; exit 1; }
+   locked=$(echo "$current" | jq -c '. + ["enrichment-ongoing"] | unique')
+   tea api --login git-home -X PUT "repos/$repo/issues/<issue>/labels" -f labels="$locked" >/dev/null
+   ```
+
+   **Verify the `PUT` succeeded before continuing.** If it fails, the run
+   does not hold the lock even though the timestamp comment claims it does —
+   abort without brainstorming and tell the user the lock could not be
+   acquired. The state file isn't written until after the race re-check
+   below succeeds, so there's nothing to clean up here.
+
+   **Then re-check for a competitor** — step 2 and this step are not atomic (the
+   readiness check, and on the takeover path a user prompt, sit between them).
+   Re-fetch comments:
+
+   ```bash
+   tea api --login git-home "repos/$repo/issues/<issue>/comments"
+   ```
+
+   Look for a `🔒 Enrichment lock (re-)acquired` comment that is **not** the one you
+   just posted and was **not** already present at step 2. If one exists and its
+   timestamp is earlier than yours (same second → lowest comment `id` wins), you
+   lost the race. Stand down:
+
+   ```bash
+   tea api --login git-home -X POST "repos/$repo/issues/<issue>/comments" \
+     -f body="🔓 Enrichment lock released at $(date -u +%Y-%m-%dT%H:%M:%SZ) (lost race to the lock acquired at <winner timestamp>)"
+   ```
+
+   Leave the `enrichment-ongoing` label in place — the winning session depends on
+   it. Tell the user another session won the race and end the command without
+   brainstorming; still no state file, so nothing can resume past this.
+
+   Otherwise the lock is yours. **Now write the state file** — `issue=<N>` and
+   `phase=spec` — and continue to step 5. This is its first write: a run that
+   stopped at step 2 or lost the race leaves no file behind, so it can never be
+   resumed past the check that stopped it.
+5. Invoke **superpowers:brainstorming** with the issue as context. Follow it
    end-to-end — clarifying questions, approaches, design sections, the spec
    self-review, and the **user approval gate**. Save the spec to the repo's tracked
    specs dir (see *Choosing a tracked path*), commit it, and record `spec=<path>`.
-4. **Phase boundary** (see *Between phases*): set `phase=plan`, hand off, stop.
+
+   **If the user declines the approval gate** (does not approve the spec), the run
+   is over — not paused. Release the lock and delete
+   `.claude/fj-enrich-phased.state` before stopping:
+
+   ```bash
+   current=$(tea api --login git-home "repos/$repo/issues/<issue>" | jq -r '[.labels[].name]')
+   [[ -n "$current" && "$current" != "null" ]] || { echo "failed to read current labels, aborting" >&2; exit 1; }
+   kept=$(echo "$current" | jq -c '[.[] | select(. != "enrichment-ongoing")]')
+   tea api --login git-home -X PUT "repos/$repo/issues/<issue>/labels" -f labels="$kept" >/dev/null
+   ```
+
+   If either command fails, tell the user the lock is still held and has to be
+   removed by hand — otherwise it blocks the issue for the full 24 hours.
+6. **Phase boundary** (see *Between phases*): set `phase=plan`, hand off, stop.
 
 ### Phase `plan`
 
@@ -205,14 +478,22 @@ Then dispatch to the matching phase below.
      `spec=` and `plan=`, plus: *"Read the plan before writing any code — it contains
      the full task breakdown, file structure, TDD steps, and exact code."*
 2. Clear the readiness labels — `needs-enrichment` and `❓ to-be-defined` mean "not
-   ready yet," and the issue now is. `tea` has no per-issue label add/remove
-   subcommand, so read-filter-PUT:
+   ready yet," and the issue now is — and release the enrichment lock acquired back
+   in Phase `spec`, since the run is done and nothing else will clear it. All three
+   go in one write, so a failure can't clear the lock while leaving a readiness
+   label on. `tea` has no per-issue label add/remove subcommand, so
+   read-filter-PUT, guarding the read (an empty `current` would PUT an empty set
+   and wipe **every** label on the issue):
 
    ```bash
    current=$(tea api --login git-home "repos/$repo/issues/<issue>" | jq -r '[.labels[].name]')
-   kept=$(echo "$current" | jq -c '[.[] | select(. != "needs-enrichment" and . != "❓ to-be-defined")]')
+   [[ -n "$current" && "$current" != "null" ]] || { echo "failed to read current labels, aborting" >&2; exit 1; }
+   kept=$(echo "$current" | jq -c '[.[] | select(. != "needs-enrichment" and . != "❓ to-be-defined" and . != "enrichment-ongoing")]')
    tea api --login git-home -X PUT "repos/$repo/issues/<issue>/labels" -f labels="$kept" >/dev/null
    ```
+
+   If this fails, say so — the lock is still held and has to be removed by hand,
+   otherwise it blocks the issue for the full 24 hours.
 
 3. Push if anything else is pending.
 4. **Done:** delete `.claude/fj-enrich-phased.state` and `.claude/handoff.md`. Print
@@ -259,7 +540,39 @@ If you run into blockers (ignored docs dir, push auth, brainstorming/writing-pla
 unavailable, state file lost, body PATCH rejected), find a solution and update this
 command for the future.
 
+## Azure DevOps
+
+Same position as `/enrich`: **the reads work, the writes do not.**
+
+```bash
+source "$HOME/.claude/scripts/lib/detect-forge.sh"
+source "$HOME/.claude/scripts/lib/azdo.sh"
+resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
+```
+
+Each phase's *thinking* half is forge-independent — spec, then plan, with a
+`/clear` between them to keep the contexts isolated. Fetch the work item with:
+
+```bash
+az boards work-item show --id <id> --org "$(azdo_org_url)" \
+  --output json --only-show-errors
+```
+
+The phase boundary is where this breaks. `/enrich-phased` relies on the
+**enrichment lock** surviving a `/clear`, and the lock is a label plus a
+timestamped comment. On this forge `az boards work-item update --fields` appends
+to `System.Tags` rather than replacing it, and an empty value is a no-op — so a
+lock can be acquired and **not released**. A phased run that cannot release its
+lock leaves the work item blocked for the full 24-hour staleness window.
+
+So on an ADO remote: say the phased flow is unavailable, and offer the
+single-pass read-only path from `/enrich`'s section instead — spec and plan
+committed to `docs/superpowers/`, work item untouched.
+
+Tracked in **#286** Task 6.
+
 ## Unknown host
 
-Report the detected host and that no authed GitHub or Forgejo login matched
-it; point at `gh auth login` / `tea login add`. Don't guess a forge.
+Report the detected host and that it matched no authed GitHub or Forgejo login
+and none of the Azure DevOps host forms; point at `gh auth login` /
+`tea login add` / `az devops login`. Don't guess a forge.

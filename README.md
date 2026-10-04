@@ -11,7 +11,7 @@ Two halves, one repo (see [ADR-005](docs/DECISIONS.md)):
 | **CI pipeline** | `.github/workflows/`, `.github/actions/`, `scripts/`, `gate-tests/` | Reusable workflows a consumer repo calls with a ~15-line stub, plus the quality gates and their self-tests |
 | **Operator console** | `commands/`, `skills/`, `hooks/`, `setup/` | 45 forge-agnostic slash commands, the user-level skills, and the `handoff-resume` hook — installed once into `~/.claude/` and available in every repo |
 
-Design notes: [`docs/DESIGN.md`](docs/DESIGN.md) · decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md) · consumer onboarding: [`docs/CONSUMER-SETUP.md`](docs/CONSUMER-SETUP.md) · glossary: [`docs/glossary.md`](docs/glossary.md)
+Design notes: [`docs/DESIGN.md`](docs/DESIGN.md) · decisions: [`docs/DECISIONS.md`](docs/DECISIONS.md) · consumer onboarding: [`docs/CONSUMER-SETUP.md`](docs/CONSUMER-SETUP.md) · glossary: [`docs/glossary.md`](docs/glossary.md) · unattended enrich lane + kill switch: [`docs/AUTOPILOT.md`](docs/AUTOPILOT.md)
 
 ---
 
@@ -139,9 +139,9 @@ commands/
   gh/    → /gh:assign  /gh:implement  /gh:implementation-contract  /gh:review
   wt/    → /wt:status  /wt:finish
   *.md   → /handoff  /pickup  /todo  /wrap-up  /loose-ends  /clear-check
-           /issues  /prs  /triage  /route  /work  /milestone  /new  /enrich
+           /issues  /prs  /triage  /queue  /route  /work  /milestone  /new  /enrich
            /enrich-phased  /parked  /roadmap  /done  (forge-agnostic)
-           /capture-idea  /commands  /update-commands
+           /capture-idea  /commands  /update-commands  /advisor
 ```
 
 `setup/link-commands.sh` installs them into `~/.claude/commands/`, preserving the

@@ -147,6 +147,28 @@ Left open by design, tracked elsewhere (not closed by this):
   `minimax-m2.5` (13 turns, $0.01, correct PR) and `gpt-oss-120b` (2 turns, zero output)
   now have scores on it.
 
+## Session follow-ups — 2026-07-30
+
+Surfaced while merging PR #197 (glossary SDLC entry + `docs/ideas.md` capture).
+None acted on yet.
+
+- [ ] **Branch protection doesn't actually require a PR review.** `CLAUDE.md`
+  documents "at least 1 PR review" as required for `main`, but
+  `gh api repos/freaxnx01/agent-workflow/branches/main/protection` shows only
+  `required_status_checks: [gate-selftest]` — no `required_pull_request_reviews`
+  block at all. PR #197 merged with zero reviews as a result. Decide whether to
+  configure the missing review requirement on GitHub, or update `CLAUDE.md` to
+  match reality.
+
+- [ ] **No `[Unreleased]` CHANGELOG entry for #197.** The `docs/ideas.md` +
+  `docs/glossary.md` changes merged without a changelog line, though repo
+  convention has all changes accumulate there.
+
+- [ ] **"Docs-only changes can go direct to main" — never reconciled.** Raised
+  mid-session as a suggested exception to the no-direct-push rule; PR #197 was
+  merged normally instead (checks + review path), so no standing decision was
+  made for future docs-only changes.
+
 ## Deferred — decide with the user before starting
 
 - [ ] **`config`'s remaining content has no clear home.** ADR-007 removed all

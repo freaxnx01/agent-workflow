@@ -61,10 +61,10 @@ on:
       stub-fixture:
         type: string
         default: success
-      stub-auto-review-enabled:
+      stub-ai-merge-enabled:
         type: boolean
         default: false
-      stub-pre-preview-enabled:
+      stub-human-merge-enabled:
         type: boolean
         default: false
       stub-review-verdict:
@@ -105,14 +105,16 @@ on:
         value: ${{ jobs.forward.outputs.failure-class }}
       retry-decision:
         value: ${{ jobs.forward.outputs.retry-decision }}
+      # Public output KEYS stay v1-spelled — that is this shim's entire
+      # purpose. Only the values move to agent-implement.yml's ADR-009 names.
       auto-review-enabled:
-        value: ${{ jobs.forward.outputs.auto-review-enabled }}
+        value: ${{ jobs.forward.outputs.ai-review-ai-merge-enabled }}
       auto-review-merge-attempted:
-        value: ${{ jobs.forward.outputs.auto-review-merge-attempted }}
+        value: ${{ jobs.forward.outputs.ai-review-ai-merge-merge-attempted }}
       pre-preview-merge-attempted:
-        value: ${{ jobs.forward.outputs.pre-preview-merge-attempted }}
+        value: ${{ jobs.forward.outputs.ai-review-human-merge-merge-attempted }}
       pre-preview-ready-attempted:
-        value: ${{ jobs.forward.outputs.pre-preview-ready-attempted }}
+        value: ${{ jobs.forward.outputs.ai-review-human-merge-ready-attempted }}
 
 jobs:
   forward:
@@ -131,8 +133,8 @@ jobs:
       local-scripts: ${{ inputs.local-scripts }}
       stub-claude: ${{ inputs.stub-claude }}
       stub-fixture: ${{ inputs.stub-fixture }}
-      stub-auto-review-enabled: ${{ inputs.stub-auto-review-enabled }}
-      stub-pre-preview-enabled: ${{ inputs.stub-pre-preview-enabled }}
+      stub-ai-merge-enabled: ${{ inputs.stub-ai-merge-enabled }}
+      stub-human-merge-enabled: ${{ inputs.stub-human-merge-enabled }}
       stub-review-verdict: ${{ inputs.stub-review-verdict }}
       stub-pr-files: ${{ inputs.stub-pr-files }}
       attempt: ${{ inputs.attempt }}

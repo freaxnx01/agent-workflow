@@ -63,6 +63,39 @@ run_detect_forge() {
   )
 }
 
+# run_resolve_azdo <repo-dir> — echoes "org|project|repo", or "FAIL" when the
+# remote is not an Azure DevOps one. Pipe-separated, not space-separated: ADO
+# project names may contain spaces.
+run_resolve_azdo() {
+  local dir="$1"
+  (
+    cd "$dir"
+    # No PATH mock needed: resolve_azdo_context shells out to git and sed only,
+    # never to gh/tea/az.
+    # shellcheck disable=SC1090
+    source "$LIB"
+    if resolve_azdo_context; then
+      printf '%s|%s|%s\n' "$AZDO_ORG" "$AZDO_PROJECT" "$AZDO_REPO"
+    else
+      echo "FAIL"
+    fi
+  )
+}
+
+# run_url_path <repo-dir> — echoes _forge_url_path's result for that repo's
+# origin. resolve_azdo_context bails on non-ADO hosts, so this is the only way
+# to assert the shared path parser against a GitHub or Forgejo remote.
+run_url_path() {
+  local dir="$1"
+  (
+    cd "$dir"
+    # shellcheck disable=SC1090
+    source "$LIB"
+    _forge_url_path "$(git remote get-url origin)"
+    printf '\n'
+  )
+}
+
 # --- cases -------------------------------------------------------------
 
 section "github"
@@ -94,6 +127,134 @@ section "unknown"
 REPO="$(make_repo "https://gitlab.example.com/freax/whatever.git")"
 assert_eq "unrecognized host, no gh/tea match" "unknown gitlab.example.com" \
   "$(run_detect_forge "$REPO" "" "")"
+rm -rf "$REPO"
+
+section "azure devops — detection"
+
+REPO="$(make_repo "https://dev.azure.com/contoso/MyProject/_git/my-repo")"
+assert_eq "https dev.azure.com remote" "azdo dev.azure.com" \
+  "$(run_detect_forge "$REPO" "" "")"
+rm -rf "$REPO"
+
+REPO="$(make_repo "git@ssh.dev.azure.com:v3/contoso/MyProject/my-repo")"
+assert_eq "scp-style ssh.dev.azure.com remote" "azdo ssh.dev.azure.com" \
+  "$(run_detect_forge "$REPO" "" "")"
+rm -rf "$REPO"
+
+REPO="$(make_repo "https://contoso.visualstudio.com/MyProject/_git/my-repo")"
+assert_eq "legacy visualstudio.com remote" "azdo contoso.visualstudio.com" \
+  "$(run_detect_forge "$REPO" "" "")"
+rm -rf "$REPO"
+
+# Detection must not need an `az` login: the ADO hostnames collide with nothing,
+# so an unauthenticated machine still routes to the ADO section (which is where
+# the missing login gets reported). Same precedent as the github.com fallback.
+REPO="$(make_repo "https://dev.azure.com/contoso/MyProject/_git/my-repo")"
+assert_eq "ADO detected with no gh/tea auth at all" "azdo dev.azure.com" \
+  "$(run_detect_forge "$REPO" "" "")"
+rm -rf "$REPO"
+
+section "azure devops — context resolution"
+
+REPO="$(make_repo "https://dev.azure.com/contoso/MyProject/_git/my-repo")"
+assert_eq "https form" "contoso|MyProject|my-repo" "$(run_resolve_azdo "$REPO")"
+rm -rf "$REPO"
+
+REPO="$(make_repo "https://contoso@dev.azure.com/contoso/MyProject/_git/my-repo")"
+assert_eq "https form with org@ prefix" "contoso|MyProject|my-repo" \
+  "$(run_resolve_azdo "$REPO")"
+rm -rf "$REPO"
+
+REPO="$(make_repo "git@ssh.dev.azure.com:v3/contoso/MyProject/my-repo")"
+assert_eq "scp-style v3 form (no _git segment)" "contoso|MyProject|my-repo" \
+  "$(run_resolve_azdo "$REPO")"
+rm -rf "$REPO"
+
+REPO="$(make_repo "ssh://git@ssh.dev.azure.com:v3/contoso/MyProject/my-repo")"
+assert_eq "ssh:// v3 form" "contoso|MyProject|my-repo" \
+  "$(run_resolve_azdo "$REPO")"
+rm -rf "$REPO"
+
+# An ssh:// remote may carry an explicit port. The port must not be mistaken for
+# a path segment — doing so shifts org/project/repo each by one. See #387.
+REPO="$(make_repo "ssh://git@ssh.dev.azure.com:22/v3/contoso/MyProject/my-repo")"
+assert_eq "ssh:// with explicit port 22" "contoso|MyProject|my-repo" \
+  "$(run_resolve_azdo "$REPO")"
+rm -rf "$REPO"
+
+REPO="$(make_repo "ssh://git@ssh.dev.azure.com:7999/v3/contoso/MyProject/my-repo")"
+assert_eq "ssh:// with non-standard port" "contoso|MyProject|my-repo" \
+  "$(run_resolve_azdo "$REPO")"
+rm -rf "$REPO"
+
+# No userinfo, with a port — the authority is host:port alone.
+REPO="$(make_repo "ssh://ssh.dev.azure.com:22/v3/contoso/MyProject/my-repo")"
+assert_eq "ssh:// port, no userinfo" "contoso|MyProject|my-repo" \
+  "$(run_resolve_azdo "$REPO")"
+rm -rf "$REPO"
+
+# The reason AZDO_* are variables rather than a space-separated echo.
+REPO="$(make_repo "https://dev.azure.com/contoso/My%20Project/_git/my-repo")"
+assert_eq "percent-encoded space in project name" "contoso|My Project|my-repo" \
+  "$(run_resolve_azdo "$REPO")"
+rm -rf "$REPO"
+
+REPO="$(make_repo "https://contoso.visualstudio.com/MyProject/_git/my-repo")"
+assert_eq "legacy form takes org from the hostname" "contoso|MyProject|my-repo" \
+  "$(run_resolve_azdo "$REPO")"
+rm -rf "$REPO"
+
+REPO="$(make_repo "https://contoso.visualstudio.com/DefaultCollection/MyProject/_git/my-repo")"
+assert_eq "legacy form with DefaultCollection segment" "contoso|MyProject|my-repo" \
+  "$(run_resolve_azdo "$REPO")"
+rm -rf "$REPO"
+
+REPO="$(make_repo "https://dev.azure.com/contoso/MyProject/_git/my-repo.git")"
+assert_eq "trailing .git stripped" "contoso|MyProject|my-repo" \
+  "$(run_resolve_azdo "$REPO")"
+rm -rf "$REPO"
+
+REPO="$(make_repo "https://dev.azure.com/contoso/MyApp/_git/MyApp")"
+assert_eq "project and repo sharing a name (ADO's default)" "contoso|MyApp|MyApp" \
+  "$(run_resolve_azdo "$REPO")"
+rm -rf "$REPO"
+
+REPO="$(make_repo "https://dev.azure.com/contoso")"
+assert_eq "org-only ADO url resolves nothing and fails" "FAIL" \
+  "$(run_resolve_azdo "$REPO")"
+rm -rf "$REPO"
+
+REPO="$(make_repo "https://github.com/freaxnx01/agent-workflow.git")"
+assert_eq "non-ADO remote resolves nothing and fails" "FAIL" \
+  "$(run_resolve_azdo "$REPO")"
+rm -rf "$REPO"
+
+section "shared path parser (_forge_url_path)"
+
+# The same expression that broke ADO broke any forge on a non-standard SSH port.
+REPO="$(make_repo "ssh://git@git.home.freaxnx01.ch:2222/freax/hello-forgejo")"
+assert_eq "forgejo ssh:// with explicit port" "freax/hello-forgejo" \
+  "$(run_url_path "$REPO")"
+rm -rf "$REPO"
+
+REPO="$(make_repo "ssh://git@github.com:2222/freaxnx01/agent-workflow")"
+assert_eq "github ssh:// with explicit port" "freaxnx01/agent-workflow" \
+  "$(run_url_path "$REPO")"
+rm -rf "$REPO"
+
+# scp-style has no port: the `:` is the path separator and must stay one.
+REPO="$(make_repo "git@github.com:freaxnx01/agent-workflow")"
+assert_eq "scp-style colon is the path separator" "freaxnx01/agent-workflow" \
+  "$(run_url_path "$REPO")"
+rm -rf "$REPO"
+
+# Load-bearing: ssh:// carrying the scp-style `:v3` with NO port. After #387 the
+# `v3` is consumed as part of the authority rather than by resolve_azdo_context's
+# ${path#v3/} strip. Same result, different route — do not "simplify" either side
+# without re-running this.
+REPO="$(make_repo "ssh://git@ssh.dev.azure.com:v3/contoso/MyProject/my-repo")"
+assert_eq "ssh:// :v3 with no port still resolves" "contoso/MyProject/my-repo" \
+  "$(run_url_path "$REPO")"
 rm -rf "$REPO"
 
 # --- summary -------------------------------------------------------------

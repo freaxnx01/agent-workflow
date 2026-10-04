@@ -35,8 +35,12 @@
 #     write}} and .part.cost. Summed across steps for usage + cost; the count
 #     is num_turns.
 #   - text        — assistant output; the LAST one's .part.text is the result.
-#   - error       — failure; .error.data.message becomes the result and flips
-#     is_error. step_start / tool_use are informational.
+#   - error       — failure; flips is_error. EVERY error event's
+#     .error.data.message (falling back to .error.name) is joined, in stream
+#     order, into the result: opencode may follow the meaningful error with a
+#     generic "Unexpected server error", so keeping only the last one threw away
+#     the only line the classifier can bucket (#439). step_start / tool_use are
+#     informational.
 # On a parse failure (opencode errored before emitting events and wrote plain
 # text) we emit an error_during_execution result with the raw bytes inlined so
 # classify-failure.sh can bucket it and an operator can diagnose.
@@ -108,8 +112,9 @@ jq -s -c \
     session_id: ((.[0].sessionID // null) // ("opencode-" + ($model | gsub("/"; "-")))),
     result: (
       ($texts | last | .part.text)
-      // ($errs  | last | .error.data.message)
-      // ($errs  | last | .error.name)
+      // (if ($errs | length) > 0
+          then [ $errs[] | (.error.data.message // .error.name // empty) ] | join("\n")
+          else null end)
       // ""
     ),
     usage: {

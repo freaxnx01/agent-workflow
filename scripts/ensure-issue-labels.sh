@@ -13,15 +13,34 @@
 #   selectors  agent:claude, agent:opencode
 #              — read by classify-agent.sh to override the workflow input
 #                (see ADR-001 in docs/DECISIONS.md)
-#   gates      ai-auto-review, ai-pre-preview, ai-chain, ai:chain-paused
-#              — read by auto-review (epic #3) and chain-dispatch
-#                (epic #4) workflows; user-applied opt-ins / kill switch
-#   outcome    ai:review-blocked
-#              — written by the auto-review job (ADR-002, epic #3) when
-#                the safety envelope or verdict leaves the PR draft
-#   coordination enrichment-ongoing
-#              — read/written by /enrich (Step 1.5 / 2.5 / 6) to prevent two
-#                sessions from concurrently enriching the same issue
+#   gates      ai-review-ai-merge, ai-review-human-merge, ai-chain, ai:chain-paused
+#              — read by the review flows (epic #3, ADR-009) and
+#                chain-dispatch (epic #4) workflows; user-applied opt-ins /
+#                kill switch. The pre-ADR-009 names ai-auto-review and
+#                ai-pre-preview are still honoured by the gates until v3,
+#                but are no longer created here.
+#   budget     turns:50, turns:80, turns:120, turns:160
+#              — read by classify-turns.sh as an explicit stage-1 override of
+#                the task-count heuristic; `gh issue edit --add-label` fails
+#                outright on a label that does not exist, so the documented
+#                override is unusable until these are created
+#   outcome    ai:review-blocked, ai:checks-blocked
+#              — ai:review-blocked is written by either review job (ADR-002,
+#                epic #3) when the safety envelope or verdict leaves the PR
+#                draft. ai:checks-blocked is written by post-run-report.sh when
+#                the PR's required status checks could not run at all (#364) —
+#                a repo misconfiguration, not a verdict, so it is additive and
+#                the run's outcome stays ai:done
+#   coordination enrichment-ongoing, needs-human
+#              — enrichment-ongoing is read/written by /enrich (Step 1.5 / 2.5 / 6)
+#                to prevent two sessions from concurrently enriching the same issue.
+#                needs-human is written by the unattended /autopilot lane (headless
+#                /enrich hitting a one-way door, a blocked assumption, or a
+#                [low]-confidence assumption; scripts/autopilot.sh's crash/timeout
+#                escalation; a failed post-enrichment dispatch write) via
+#                `gh issue edit --add-label`, which fails outright on a label that
+#                does not exist — so without it the escalation silently drops
+#                instead of flagging a human
 #
 # Idempotent: existing labels are preserved unchanged (`gh label create` errors
 # when the label exists; we ignore that error rather than passing `--force`, so
@@ -37,6 +56,13 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# The forge write verbs (#253).
+_EIL_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/detect-forge.sh
+source "$_EIL_HERE/lib/detect-forge.sh"
+# shellcheck source=scripts/lib/forge.sh
+source "$_EIL_HERE/lib/forge.sh"
+
 if [[ -z "${REPO:-}" ]]; then
   printf 'error: REPO must be set\n' >&2
   exit 2
@@ -44,7 +70,7 @@ fi
 
 create() {
   local name="$1" color="$2" desc="$3"
-  if gh label create "$name" --repo "$REPO" --color "$color" --description "$desc" >/dev/null 2>&1; then
+  if forge_label_ensure "$name" "$color" "$desc" >/dev/null 2>&1; then
     printf 'created: %s\n' "$name"
   else
     printf 'present: %s\n' "$name"
@@ -62,11 +88,26 @@ create ctx:high   D73A4A 'Peak context utilization 75%+ (consider trimming)'
 create agent:claude    0075CA 'Force the Claude Code agent for this run'
 create agent:opencode  0075CA 'Force the OpenCode (OpenRouter) agent for this run'
 
-create ai-auto-review  0E8A16 'Run auto-review after PR opens; auto-merge on approve+green'
-create ai-pre-preview  1D76DB 'Run agent pre-review after PR opens; promote to ready for human merge (no auto-merge)'
+create ai-review-ai-merge     0E8A16 'AI reviews the PR and auto-merges on approve+green'
+create ai-review-human-merge  1D76DB 'AI reviews the PR and promotes it to ready; a human merges'
 create ai-chain        0E8A16 'Eligible for chain-dispatch when blockers resolve'
 create ai:chain-paused D73A4A 'Repo-wide kill switch for chain-dispatch'
 
+create 'parked' BFD4F2 'Parked for a human — agent attempt cap reached'
+
+create turns:50  5319E7 'Override the agent turn budget to 50 (classify-turns.sh stage 1)'
+create turns:80  5319E7 'Override the agent turn budget to 80 (classify-turns.sh stage 1)'
+create turns:120 5319E7 'Override the agent turn budget to 120 (classify-turns.sh stage 1)'
+create turns:160 5319E7 'Override the agent turn budget to 160 (classify-turns.sh stage 1)'
+
 create ai:review-blocked D73A4A 'Auto-review left the PR draft; human action required'
 
+# Three blocked states, deliberately distinct:
+#   ai:review-blocked  — the reviewer RAN and refused to promote the PR
+#   ai:runner-blocked  — the reviewer NEVER STARTED; runner toolchain unmet (#384)
+#   ai:checks-blocked  — the PR is fine; its required checks cannot run (#364)
+create ai:runner-blocked D73A4A 'Review never started — runner toolchain unmet'
+create ai:checks-blocked D73A4A 'Required checks cannot run on the pipeline PR'
+
 create enrichment-ongoing FBCA04 'Another /enrich session is actively enriching this issue — do not start a second one'
+create needs-human D93F0B 'Autopilot could not decide this unattended — a human must resolve it'

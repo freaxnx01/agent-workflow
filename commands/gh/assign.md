@@ -1,22 +1,24 @@
 ---
-description: Assign an issue to a GitHub coding agent (@claude / @copilot) to implement it
-argument-hint: "<issue-number> [copilot|claude] [async] — agent defaults to claude, monitor defaults on"
+description: Assign an issue to a GitHub coding agent (@claude) to implement it — Copilot disabled
+argument-hint: "<issue-number> [async] — agent is claude only (Copilot disabled), monitor defaults on"
 ---
 
 Hand an existing issue to a GitHub **coding agent** so it opens a PR implementing it.
-`$ARGUMENTS` is `<issue-number>` plus an optional agent (`copilot` or `claude`) plus an
-optional `async` token. `async` (or `--async`) skips the post-assignment monitor —
-otherwise a monitor is set up by default, see **Monitor** below.
+`$ARGUMENTS` is `<issue-number>` plus an optional `async` token. `async` (or
+`--async`) skips the post-assignment monitor — otherwise a monitor is set up by
+default, see **Monitor** below.
 
-## Agent default — prefer `@claude`
+## Agent — claude only (Copilot disabled)
 
-If no agent is given, default to **claude** (`anthropic-code-agent`). Only pick
-copilot (`copilot-swe-agent`) when the user explicitly asks for Copilot (or has
-confirmed it's responsive in this repo).
+**Copilot is disabled as of 2026-09-01** (GitHub Copilot access was revoked on
+this account). Always assign to **claude** (`anthropic-code-agent`) — do not
+resolve or assign `copilot-swe-agent`, even if explicitly requested; explain
+why and stop instead. To re-enable, restore the pre-2026-09-01 version of this
+section and the `case` branch below (see git history).
 
 ## Preconditions — confirm before assigning
 
-1. The issue is **open**, **not parked** (`🧊 parked`), and not already assigned to an agent —
+1. The issue is **open**, **not parked** (`parked`), and not already assigned to an agent —
    `gh issue view <N> --json state,labels,assignees`. If parked or already agent-owned, stop and say so.
 2. The issue is **actionable** — it has clear scope/AC. If it's `❓ to-be-defined` or
    `needs-enrichment`, warn that the agent will likely produce a weak PR, and confirm before proceeding.
@@ -32,6 +34,28 @@ as an issue comment with `<N>` replaced by the issue number from `$ARGUMENTS`.
 That file is the single source of truth for both the rule and the two contract
 bodies — do not restate either here.
 
+**On a re-dispatch, check the contract is not stale before relying on it.** The
+contract is a comment, and re-applying `ai-implement` does not re-post it — the
+agent reads whatever comment is already there, however old. When
+`implementation-contract.md` has changed since it was posted, the run silently
+follows superseded instructions.
+
+So before labelling, look for an existing contract comment on the issue:
+
+- **None** → post the chosen variant, as above.
+- **One that matches the variant you would post now** → leave it; say so and move on.
+- **One that differs** → post the current variant as a new comment, opening it with
+  one line naming what it supersedes and why, e.g.
+  `> **Superseding the contract posted at <timestamp>.** It told you to commit but
+  never to push, so a truncated run lost everything.` Do not edit or delete the old
+  comment — the issue's history is how an operator reconstructs which instructions a
+  given run actually followed.
+
+This is not hypothetical. `flowhub#20` was dispatched three times against a contract
+posted before the push-per-task fix landed. The third run implemented six of seven
+tasks, committed each one exactly as that stale contract asked, pushed none of them,
+and produced nothing — the fix had been merged hours earlier and the issue never saw it.
+
 Before posting, print one line naming the variant chosen and the rule that selected
 it, e.g. `contract: docs-only (rule 1 — AC says "no test is added or changed")`, so
 the operator can correct it before the agent picks the issue up.
@@ -42,12 +66,8 @@ Bots can't be assigned via `gh issue edit --add-assignee` (it resolves logins as
 Use the GraphQL `replaceActorsForAssignable` mutation with the bot's actor id:
 
 ```bash
-n="<issue-number>"; agent="${1:-claude}"
-case "$agent" in
-  copilot) bot="copilot-swe-agent" ;;
-  claude)  bot="anthropic-code-agent" ;;
-  *) echo "agent must be 'copilot' or 'claude'"; exit 1 ;;
-esac
+n="<issue-number>"
+bot="anthropic-code-agent"
 owner="$(gh repo view --json owner -q .owner.login)"
 name="$(gh repo view --json name -q .name)"
 

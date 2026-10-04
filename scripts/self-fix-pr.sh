@@ -3,7 +3,7 @@
 # self-fix-pr.sh — self-fix-loop.sh's default FIX_CMD. Checks out the PR's
 # head branch, runs the agent agentically against the prior review's
 # concerns (scripts/lib/self-fix-prompt.md), then commits the fix. Part of
-# pre-preview's self-fix pass (#81 / ADR-004 follow-up).
+# the review flows' self-fix pass (#81 / ADR-004 follow-up).
 #
 # Contract: self-fix-pr.sh <pr-number> <concerns-json-file>
 #

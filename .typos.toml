@@ -3,10 +3,20 @@
 # do not "correct" it to "unparsable".
 [default.extend-words]
 unparseable = "unparseable"
+# `Nd` is the placeholder in /ai-stats' `--since Nd / Nw / Nm` window syntax
+# (N days / weeks / months). typos reads it as a misspelling of "And" and
+# silently rewrites the flag's documentation into nonsense.
+Nd = "Nd"
 
 [default]
 # Git SHAs in docs are hex, not prose: `ba94ff4` tripped "ba → by/be" when the
 # merge commits for #132/#46 were recorded in docs/TODO.md. Scoped to
 # backtick-wrapped hex so it cannot mask a real typo in ordinary text — an
 # allowlist entry per SHA would grow without bound.
-extend-ignore-re = ["`[0-9a-f]{7,40}`"]
+#
+# The transliterations `ae oe ue` appear in partials/german-correspondence.md as the
+# example of what NOT to write (real umlauts are required instead), so typos reads
+# `ue` as a misspelling of "use"/"due" and fails the lint gate on the very rule that
+# forbids it. Scoped to the exact backtick-wrapped triple, so a stray `ue` in ordinary
+# prose is still caught.
+extend-ignore-re = ["`[0-9a-f]{7,40}`", "`ae oe ue`"]

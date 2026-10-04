@@ -5,7 +5,87 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.6](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.0.6) - 2026-09-14
+
+### Added
+
+- **pipeline:** Warn a consumer when its pinned major line is stale (#346)
+- **scripts:** `migrate-consumers.sh` — fleet inventory and major-line migration (#346)
+
+### Fixed
+
+- **find-pipeline-pr:** Verify the PR actually closes the issue (#343) (#345)
+- **onboard:** Resolve the pin at run time instead of baking a major into the script (#346)
+
+## [2.0.5](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.0.5) - 2026-09-13
+
+### Fixed
+
+- **pipeline:** Route model and max-turns through claude_args, cap the step itself (#341) (#342)
+
+## [2.0.4](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.0.4) - 2026-09-13
+
+### Fixed
+
+- **pipeline:** Restore the tool allowlist via claude_args (#339) (#340)
+
+## [2.0.3](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.0.3) - 2026-09-13
+
+## [2.0.2](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.0.2) - 2026-09-13
+
+### Fixed
+
+- **pipeline:** Upload the raw Claude execution log as an artifact (#338)
+
+## [2.0.1](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.0.1) - 2026-09-12
+
+### Fixed
+
+- **pipeline:** Update the Claude Code CLI the runner installs (#337)
+
+## [2.0.0](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.0.0) - 2026-09-12
+
+### Added
+
+- **new:** Propose a milestone at filing time; strip it on defer/repark (#298)
+- **partials:** Correspondence conventions — German style + email style (#304)
+- **handoff:** Derive a handoffs.md overview and fan out under Herdr (#306)
+- **azdo:** Detect Azure DevOps as a third forge; add /issues support
+- **azdo:** Guard the 11 commands without an Azure DevOps section
+- **commands:** Add /ai-funnel — backlog readiness, not dispatch outcome
+- **triage:** Add model:fable for design-shaped work on the Claude path (#330)
+- **commands:** Add /queue — issues in implementation order (#329)
+
+### Fixed
+
+- **implement:** Apply the trigger label alone so a missing review label cannot deadlock dispatch (#308)
+- **review:** Install the CLI into a job-local prefix, not the shared global one (#309)
+- **pipeline:** Warn when the PR will not auto-close its issue (#310)
+- **hooks:** Resolve the branch slug in handoff-resume (#317)
+- **ai-stats:** Union ClosedEvent.closer so agent PRs count as shipped
+- **pipeline:** Set a git identity before the agent runs (#335)
+- **release:** Move the v1 major tag when a release is published (#261) (#336)
+
+### Documentation
+
+- **azdo:** Disclose the --query gap; record the 11-command guard as a trap
+- **azdo:** Renumber this ADR 011 -> 012 after #306 claimed 011
+- **release:** Spec and plan for the moving major tag (#261) (#312)
+- **partials:** Require bold + backticked TL;DR marker (#314)
+- **changelog:** Record /ai-funnel, and fix a typos-hook failure
+- Add a command cheat sheet, and define ship rate once
+- **cheatsheet:** Drop a retracted claim, and finish two remedies
+- **cheatsheet:** Collapse a double blank line (MD012)
+- **changelog:** Fold the #319 entry into the existing Fixed section
+
 ## [Unreleased]
+
+### Deprecated
+
+- **naming:** the inputs `auto-review` / `pre-preview`, the labels
+  `ai-auto-review` / `ai-pre-preview`, and the output `auto-review-enabled`
+  still work but emit a warning annotation naming the replacement.
+  **Removed in v3.** See the migration section in `docs/CONSUMER-SETUP.md`.
 
 ### Removed
 
@@ -20,9 +100,258 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **commands:** `/integration` — per-repo or fleet-wide report of how a repo is wired
+  into agent-workflow and ai-instructions: pinned ref against the current release,
+  agent/model, flow, timeouts, and the repo-side state a run silently depends on
+  (secrets forwarded vs. set, the `ai-*` labels, Actions-can-create-PRs, auto-merge).
+  Instructions drift is judged by comparing git blob SHAs against upstream `main`,
+  because `ai-instructions` has no tags and the sync writes no provenance — so the
+  report says "drifted", never "N commits behind", and says a secret is "set, not
+  validated". Every read classifies its failure as absent / transient / fatal and
+  retries the transient ones; a read that still fails makes the repo `unreadable`,
+  graded with that one finding alone rather than with conclusions drawn from data
+  that was never read. So neither a rate-limited sweep nor a token without admin
+  scope can quietly report a wired repo as not-integrated or invent a missing
+  secret.
+- **migrate-consumers:** `--rename-flow` renames the deprecated flow inputs across a
+  fleet — `pre-preview` → `ai-review-human-merge`, `auto-review` → `ai-review-ai-merge`.
+  Both still work and both are removed in v3; a survey found 40 consumer repos still on
+  the old spelling. Anchored to the key, so indentation and trailing comments survive
+  and a mention inside a comment is left alone.
+- **runners:** `ai:runner-blocked` — the review never started because the
+  runner's toolchain is unmet, as distinct from `ai:review-blocked`, where the
+  reviewer ran and refused to promote the PR. Previously a toolchain failure
+  aborted the job and posted nothing at all (#384).
+- **pipeline:** a run whose PR cannot get its required checks to run now says
+  so — a warning at job start when `PIPELINE_APP_ID` is unset, a bounded probe
+  of the PR's `statusCheckRollup` after it opens, an `ai:checks-blocked` label,
+  and a warning block in the run report naming the remedy. Previously a stalled
+  PR was indistinguishable from a finished one (#364).
+- **docs:** `docs/PIPELINE-APP-SETUP.md` — operator runbook for configuring the
+  pipeline GitHub App, which is what actually lets those checks run.
+- **autopilot:** unattended enrich lane — `/autopilot` and
+  `scripts/autopilot.sh` quick-enrich `needs-enrichment` issues in allowlisted
+  repos and dispatch the clean ones, on a systemd timer, escalating anything
+  undecidable to `needs-human` (#373)
+- **enrich:** `--headless` flag — quick mode with no prompts; a one-way door or
+  a `[low]` assumption routes to `needs-human` instead of asking (#373)
+- **ci:** a `test` job in `.github/workflows/lint.yml` runs the Layer-1 suite on
+  every PR. Nothing ran it before: `tests/run-*-tests.sh` lived only behind
+  `just test`, so a PR breaking `run-script-tests.sh` — 693 assertions — merged
+  green (#354, absorbing #353).
+- **tests:** `tests/run-all.sh` is now the single definition of the Layer-1 test
+  set, discovering every `run-*-tests.sh` with `find` rather than a hand-kept
+  list. Both `just test` and the CI job call it, so the two cannot name different
+  runners — `run-parse-enrich-args-tests.sh` and `run-link-skills-tests.sh` were
+  in neither the old recipe nor CI, and so were run by nothing at all.
+- **just:** new `lint-shell` recipe — the fast inner-loop path, shell and
+  workflows only, for when the full gate is too slow.
+
+- **release:** publishing a release now automatically moves the moving major
+  tag (`vX`) to the released commit, forward-only — a hotfix released on an
+  older line can no longer drag it backwards. `@vX` consumers pick up the new
+  pipeline on their next dispatch, with no human step. (#261)
+- **triage:** `model:fable` selects `claude-fable-5-1` on the Claude path, for
+  work whose point is how it looks. It is an **override only** — the classifier
+  never picks Fable on its own, because whether a task is design-shaped is the
+  author's judgment, not a keyword heuristic's. Incompatible with
+  `agent: opencode`, where it warns and falls through like the other Claude
+  labels. The label is not created by `onboard-consumer.sh`; add it to a repo
+  that wants it, as with every other `model:*` label.
+
+- **commands:** `/queue` — open issues in implementation order, each with its
+  readiness and whether it is already in flight (a linked PR, a local branch or
+  worktree, or a running pipeline). Complements `/triage`, which sorts by
+  category rather than sequence, and `/issues`, which hides work in flight
+  instead of leading with it. Dependencies are inferred from issue text and the
+  command is required to say so; an explicit `Blocked by #N` line in a body is
+  honoured over its own reading, read from the full body rather than the
+  preview.
+
+- **models:** a cost guard (`scripts/lib/blocked-models.sh`) so Fable can only
+  be reached by a deliberate per-issue choice. `model:fable` (#330) is
+  unchanged and still selects `claude-fable-5-1` — the label *is* the decision.
+  What is now substituted, with a warning annotation, is every route where
+  nobody decided per issue: a Fable id in `default-model` or `escalate-model`
+  (which the `claude-*` prefix test in `classify-task.sh` used to wave straight
+  through, since it only separates Claude ids from OpenRouter ids), a Fable
+  `review-model` (which drives both review and the self-fix loop), and a
+  **retry** of a deliberate Fable run — attempt 2 onwards escalates off Fable
+  rather than spending a second budget unattended. The keyword heuristic never
+  picked Fable and still does not.
+
+  Enforced at each point where `--model` gets its value: `classify-task.sh`
+  (so a substituted id never reaches `$GITHUB_OUTPUT` or the run report
+  either), `lib/agent-cmd-claude.sh`, `lib/agent-cmd-claude-fix.sh`, and
+  `review-pr.sh`'s own ad-hoc wrapper. Guarding another model means adding one
+  glob to `BLOCKED_MODEL_PATTERNS`.
+
+- **triage:** an unrecognised `model:*` label now warns instead of resolving to
+  the default silently — the same failure shape #330 removed for `model:fable`,
+  now covered for typos (`model:opsu`) too.
+
+- **docs:** new `docs/COMMAND-CHEATSHEET.md` — the task-shaped view of the
+  console: the issue→PR path in the order you chain it
+  (`/capture-idea` → `/new` → `/triage` → `/enrich` → `/gh:implement` →
+  `/gh:review` → `/done`), the two measurement points (`/ai-funnel` before
+  dispatch, `/ai-stats` after), how to read a run report, and a symptom→cause
+  table for when a dispatch goes nowhere. Deliberately not a fourth inventory of
+  all 37 commands — it cross-links the three that already exist and adds the
+  route instead, so it does not rot when a command is added.
+
+  Its **ship rate** section documents that "ship rate" is three different
+  numbers with two different denominators, that `/ai-stats`'s "Issue shipped" and
+  `/ai-funnel`'s "Shipped by the pipeline" are the same measure (both
+  dispatched-only, `ai-stats.sh:174`), and that they nevertheless disagree today
+  because of #319 — including that `shipped` gates the A–F grade, so an issue
+  that shipped cleanly can currently read `F`. `docs/glossary.md` gains a
+  **Ship rate** entry pointing there rather than duplicating the caveats.
+
+- **commands:** new `/ai-funnel` — backlog readiness for the `ai-implement`
+  pipeline, the question that comes before `/ai-stats`'s. It reports how many
+  issues could be dispatched **at all**: open → live → carrying a plan → ready,
+  with everything blocking the rest named per issue. "Ready" applies
+  `/gh:implement`'s own preconditions, so a counted issue is one that command
+  will accept. Backed by `scripts/lib/ai-funnel.sh` and 54 fixture assertions in
+  `tests/run-ai-funnel-tests.sh`.
+
+  A repo can have a flawless ship rate and still be starved, and no
+  dispatch-outcome report can see it — an issue that was never dispatched leaves
+  no dispatch record. On the milestone this was built against, 35 of 39 live
+  issues were blocked on enrichment while the ship rate read 67%.
+
+  It also reads **shipped** from `ClosedEvent.closer` rather than
+  `closedByPullRequestsReferences` alone: GitHub forms no closing reference for a
+  PR authored by `app/github-actions`, which is every PR this pipeline opens, so
+  the reference list misses most agent-shipped issues. `/ai-stats` has the same
+  bug and is fixed separately (#319). And it warns when a plan's task headings
+  are at the wrong level (`## Task N` rather than `### Task N`), which
+  `classify-turns.sh` scores zero — silently landing a large plan on the 50-turn
+  floor (#297).
+
+- **partials:** new `email-style.md` — mail drafts lead with a `TL;DR:` block
+  stating the actual conclusion, then stay short: the mail carries the conclusion
+  and the asks, not the reasoning chain that produced them. Detail is offered on
+  request rather than pasted in. Notes how this differs from the chat-answer
+  `TL;DR` rule, which repeats at the end of a long answer where a mail must not.
+
+- **partials:** new `german-correspondence.md` — capitalize German address
+  pronouns (`Du`/`Dir`/`Dein…`, `Ihr`/`Euch`/`Euer…`), leave quoted foreign text
+  verbatim, and write real umlauts (`ä ö ü`) instead of `ae oe ue`. Also records
+  why a "named HTML entities for Outlook" rule does not contradict it: the two
+  govern different formats (plain text vs. the HTML Word renders).
+
+- **commands:** `/handoff` and `/pickup` now maintain a **derived handoff
+  overview** — `.claude/handoffs.md` for the repo (all worktrees) and
+  `~/.claude/handoffs.md` for the machine (one section per repo) — rendered by the
+  new `scripts/lib/handoff-index.sh`. Rows carry branch, worktree, phase, next
+  step, save date, handoff file and resume line. The index is regenerated from the
+  committed per-branch `.claude/handoff-<branch>.md` files on every run, so it is
+  safe to write from many sessions at once; neither index is committed. Both
+  commands also gained a **Herdr `all` mode**: `/handoff all` hands off every live
+  `idle`/`done` agent in the Herdr session (skipping `working`/`blocked`/`unknown`,
+  orchestrator last) and `/pickup all` resumes every session that has a handoff,
+  reusing live panes only. See ADR-011.
+- **azdo:** Detect Azure DevOps as a third forge and add an `## Azure DevOps`
+  section to `/issues`. `detect_forge` keeps its two-field contract and gains
+  `azdo <host>`, matched on hostname alone so an unauthenticated machine still
+  routes to the ADO section; a new `resolve_azdo_context` returns
+  `AZDO_ORG`/`AZDO_PROJECT`/`AZDO_REPO` as variables, since ADO project names may
+  contain spaces. Milestones map to **Iteration Path**, PRs key on **`active`**
+  (there is no `open`), and PR↔work-item links come from the first-class link API
+  rather than a `closes #N` regex. Closed states and work-item types are read from
+  the project's process template instead of hardcoded. See ADR-012 — including the
+  hybrid case (ADO boards + GitHub code) recorded as out of scope.
+- **azdo:** Guard the 11 commands that have no Azure DevOps section yet. Each
+  gains a `## Azure DevOps` section that names the forge, explicitly refuses the
+  GitHub/Forgejo fallback — `gh`/`tea` cannot read ADO work items, and on a
+  writing command the fallback would aim at the wrong forge — and stops. All 12
+  `## Unknown host` sections now name `az devops login` alongside
+  `gh auth login` / `tea login add`.
+
+- **ci:** `verify-or-recover-pr.sh` now **salvages uncommitted work**. A run that
+  exited cleanly without opening a PR used to discard whatever it left in the
+  workspace — the largest measured failure mode (24 of 48 failures across the
+  fleet, reported as "run completed but no PR was opened"). Its work is now
+  committed to a `salvage/issue-<n>` branch and opened as a draft PR. The run
+  report flags it as `success (salvaged: ...)` so it is not counted as a clean
+  success. Salvage is scoped to the clean-exit case; a genuine agent error is
+  still owned by the existing handling, and the git writes only run inside
+  GitHub Actions.
+
+- **ci:** Add `scripts/check-attempt-cap.sh` and a `max-attempts` workflow input
+  (default 2). After the cap, an issue is **parked for a human** instead of
+  redispatched — measured across the fleet, extra attempts do not improve the
+  odds, and the dispatches spent on issues that never shipped were pure loss.
+  Set `max-attempts: 0` to disable.
+
+- **ci:** **Escalate to Claude on retry.** From attempt 2 onwards a run switches
+  to Claude (`escalate-on-retry`, default true; `escalate-model`, default
+  `claude-sonnet-5`). A model that failed a job once rarely succeeds on an
+  identical second run, so the retry is spent on a stronger agent instead. An
+  explicit `agent:*` label still wins. Combined with the attempt cap this gives
+  a fixed ladder: cheap attempt, Claude attempt, park.
+
+- **ci:** Record whether an issue carried an `## Implementation Plan` when it was
+  dispatched. The workflow stamps it, `post-run-report.sh` renders it as
+  `**Plan:** enriched|none`, and `/ai-stats` groups ship rate and attempts by it
+  — so the pipeline can finally answer whether enrichment predicts shipping.
+  Runs from before this change report as `unknown`.
+
+- **models:** Add the `model:glm` label for `z-ai/glm-5.2`.
+
+- **commands:** Add `/ai-stats` — reports ai-implement dispatch statistics for the
+  current repo (`--all` for every repo under the owner). Reconstructs each dispatch
+  from `ai-implement` label events plus the `## ai-implement run` comments
+  `post-run-report.sh` already posts, so no new bookkeeping is needed. Reports ship
+  rate per issue and per dispatch, spend per shipped issue, an A-F grade per issue,
+  and OK-rate/cost breakdowns by coding agent and by model. Backed by
+  `scripts/lib/ai-stats.sh` and Layer-1 fixture tests in
+  `tests/run-ai-stats-tests.sh`.
+
+- **issues:** `/issues` takes an optional milestone argument, matching
+  `/triage`'s — `/issues <name>` scopes the list to one milestone (exact title,
+  else a unique case-insensitive substring), and `/issues pick` lists the open
+  milestones with their counts and asks which. A bare `/issues` is unchanged and
+  still lists every in-scope issue repo-wide. An argument that matches nothing,
+  or more than one milestone, never resolves silently and never falls back to
+  "all issues" — it asks. Rows now carry the milestone and its due date, which is
+  what makes a wrongly resolved substring visible. On GitHub the scope is a
+  server-side `filterBy:{milestoneNumber:}` on the existing GraphQL query — it
+  takes the milestone *number*, not its title, so the REST milestones lookup runs
+  even for an exact title, and passing the variable **empty** returns zero issues
+  rather than all of them; the Forgejo half filters client-side for the same
+  unverified-`&milestones=` reason as `/triage` (#289).
+- **triage:** `/triage` takes an optional milestone argument — `/triage <name>`
+  scopes the list to one milestone (exact title, else a unique case-insensitive
+  substring), and `/triage pick` lists the open milestones with their counts and
+  asks which. A bare `/triage` is unchanged and still lists every in-scope issue.
+  An argument that matches nothing, or more than one milestone, never resolves
+  silently and never falls back to "all issues" — it asks. On GitHub the scope is
+  `gh issue list --milestone`, filtered server-side so the call stays one cheap
+  request; the Forgejo half filters client-side because its `&milestones=` query
+  parameter has not been verified against a live `tea`.
+- **enrich:** `--quick` flag for non-interactive enrichment — suppress all
+  clarifying questions and the user approval gate (except on [one-way
+  doors](docs/glossary.md#one-way-door)), record all unaided decisions in an
+  `## Assumptions` block with confidence markers and rejected alternatives,
+  and include a `## Consequences` block for collateral effects. Converts the
+  synchronous interview into an async review queue (#255)
+- **enrich-phased:** concurrency lock — Phase `spec` now detects an existing
+  `enrichment-ongoing` lock and acquires its own before brainstorming, using
+  the same 24h staleness window `/enrich`'s lock now uses (see below) to
+  absorb the `/clear` boundaries a phased run legitimately pauses across.
+  Both steps run on a new run only, never on a resume — and a resume whose
+  earlier stop (issue closed/parked, already-complete) would otherwise
+  abandon the lock now releases it first. The state file is written only
+  once the lock is confirmed held, so a hard-stop or a lost race leaves
+  nothing resumable behind, and label application is verified before the
+  race re-check runs. Phase `issue` releases the label on the success path.
+  Same label and comment format as `/enrich`, so a lock set by either
+  command is seen by the other (#237)
 - **enrich:** concurrency lock — `/enrich` claims an `enrichment-ongoing` label
   plus a timestamped lock comment before brainstorming (Step 2.5), hard-stops
-  when another session holds a lock younger than 4h (Step 1.5), offers a
+  when another session holds a lock younger than 24h (Step 1.5), offers a
   takeover past that threshold, re-checks after acquiring so the session that
   acquired first wins the race, and releases the label at Step 6 or on any
   earlier user-initiated abort (#229)
@@ -30,6 +359,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inputs — on a `request_changes` verdict, optionally let the agent
   attempt bounded fix → re-review cycles before falling back to the
   human-review block path (#81)
+- **self-fix:** generalized to also run inside auto-review (not just
+  pre-preview), and to route the fix call to whichever agent (Claude or
+  OpenCode) actually implemented the issue instead of a hardcoded Claude
+  fallback (#193)
 - **commands:** `/milestone triage` — lists open issues with no milestone,
   excluding `🧊 parked` and `roadmap`, then walks them one at a time to assign
   one, every write confirmed by read-back (#178)
@@ -42,6 +375,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **runners:** opencode installs via its native installer (checksum-pinned)
+  instead of `npm install -g`, which resolved to the shared global prefix and
+  died with `EACCES` on a persistent runner whose prefix was ever written as
+  root (#395 — the same hazard #302 fixed for the claude path). With this, no
+  pipeline path uses npm: `nodejs` is no longer a runner requirement.
+- **runners:** the review and self-fix jobs install the Claude Code CLI via the
+  native installer (checksum-pinned) instead of `npm`, matching how the
+  implement job's base action acquires it. Removes the last `npm` dependency
+  from the `AGENT=claude` path, which failed with `EACCES` on a persistent
+  runner with a root-owned global prefix (#302) and with a bare
+  `npm: command not found` on a runner with no Node.js (#384).
+- **just:** `lint` now runs `pre-commit run --all-files`, the exact command CI
+  runs, so a clean local run predicts a clean CI lint. It is therefore the whole
+  polyglot gate rather than "actionlint + shellcheck", and it needs `pre-commit`
+  installed — the recipe exits 127 with an install hint rather than a bare
+  `command not found`. Previously the recipe scanned only `scripts/` and
+  `tests/`, missing 12 tracked shell files under `gate-tests/`, `hooks/`,
+  `setup/` and `.github/actions/`, and ran 1 of 11 hooks (#354).
+
+- **models:** **Flip the default implementation agent and model** to
+  `opencode` + `z-ai/glm-5.2`. Across the fleet glm-5.2 shipped 15 of 18 runs
+  (83%) for $4.25 total, against 59% for `claude-opus-4-7` at $181.70 — the
+  cheap OpenRouter models carry ordinary work at a better rate for a fraction
+  of the cost. Two guards make the flip safe: `classify-agent.sh` falls back to
+  Claude when `OPENROUTER_API_KEY` is unavailable, and `classify-task.sh`
+  substitutes a compatible model whenever the resolved agent and the configured
+  `default-model` come from different families (either direction).
+  **BREAKING CHANGE:** consumers who relied on the implicit Claude default now
+  run on OpenCode where an OpenRouter key exists. Pin `agent: claude` to keep
+  the old behaviour. agent-workflow's own `agent.yml` dogfoods the new defaults
+  and now forwards `OPENROUTER_API_KEY` to the reusable workflow — without that
+  forwarding the credential guard silently keeps every run on Claude.
+
+- **models:** **Retire `gpt-oss-120b`** from the selection policy. It won the
+  Round-2 benchmark, but shipped only 2 of 10 dispatched runs (20%) across the
+  fleet — the worst measured rate of any model with a real sample.
+  `classify-task.sh` no longer selects it; the `model:gpt-oss-120b` label is
+  still recognised but warns and falls through to the repo's `default-model`.
+  **BREAKING CHANGE:** issues relying on that label now run on `default-model`.
+
+- **commands:** `/ai-stats` excludes `*-sandbox` repos from its totals by
+  default — a sandbox absorbs failed runs, so its zeroes are noise. Excluded
+  repos are still reported under an **Excluded** heading rather than dropped
+  silently. `--exclude <glob>` replaces the defaults, `--no-exclude` clears them,
+  and a repo named with `--repo` always counts.
+
+- **turns:** an issue with no `## Implementation Plan` section now gets
+  `UNPLANNED_MAX_TURNS` (120) instead of the `max-turns` floor (50). A
+  never-enriched issue has to pay for its own discovery before it can edit
+  anything, so it needs a *bigger* budget than a planned one, not the smallest
+  available. A `turns:<N>` label still overrides. `max-turns` is now only the
+  floor for a plan section with no countable `### Task N` headings (#260, #262).
+
+- **commands:** `/gh:implement` hard-stops on an issue with no
+  `## Implementation Plan` section — acceptance criteria alone no longer clear
+  the readiness gate. Run `/enrich` first, or dispatch deliberately with an
+  explicit `turns:50` label (#260, #262).
+
+- **naming:** the two review flows are named for their actor pair —
+  `auto-review` → `ai-review-ai-merge` and `pre-preview` →
+  `ai-review-human-merge` — across workflow inputs, issue labels, job ids and
+  the two gate scripts (ADR-009). Behaviour and precedence are unchanged.
+- **triage:** `/triage` now drops parked (`🧊 parked`) and `roadmap`
+  issues in the query itself, and shows each issue's milestone + due date
+  alongside its body length. Milestone is displayed, **not** sorted on — the
+  bugs → quick wins → rest ordering is unchanged, because triage asks what's
+  broken and what's cheap, not when it ships. Body length rides beside the
+  200-char preview so the "short, well-defined" quick-win signal survives
+  truncation. WIP stays deliberately unexcluded: filtering it needs `/issues`'
+  GraphQL timeline query, which would cost `/triage` its single cheap
+  `gh issue list` call. Both the GitHub and Forgejo halves.
 - **partials:** `subagent-driven-default.md` now carves out issue-based
   dispatch — when a plan targets a GitHub issue in a repo with
   agent-workflow's pipeline wired up, default to `/enrich`'s issue-body +
@@ -60,6 +464,158 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **autopilot:** the test-gate eligibility condition now verifies the gate
+  gates. "Has completed a run on the default branch" was satisfied by a
+  `workflow_dispatch`-only workflow documented as "not part of the agent
+  pipeline", in a repo with no branch protection — the lane would have
+  auto-merged behind a gate that gated nothing. The gate must now also have run
+  for a pull request, and the default branch must require at least one status
+  check; an API failure refuses with its own reason rather than reading as
+  absence (#381, satisfying #263).
+- **ci:** `agent-implement.test.yml` runs again. The Layer-2 guard had ended in
+  `startup_failure` on every invocation since 2026-09-24 — starting no jobs and
+  asserting nothing while still appearing in the checks list — because #421 added
+  `actions: write` to the callee's implement job without widening the caller, and
+  a caller granting less than the callee is rejected at load. The caller now
+  grants the union of the callee's job permissions, and a Layer-1 test asserts
+  the two sets agree so the same regression cannot recur silently a third time
+  (#435, previously #34).
+- **ci:** the OpenCode toolchain steps honour `dry-run`. #395 moved
+  `ensure_opencode` from `npm install -g` to a `curl`-based native installer;
+  the Layer-2 scenarios put `tests/mocks/` on `PATH`, so `curl` hit the mock,
+  nothing downloaded, and the checksum guard correctly refused — failing every
+  self-fix scenario. The old npm path was never mocked, so it never hit this,
+  and the Layer-2 guard was `startup_failing` at the time so nothing caught it
+  (#435).
+- **pipeline:** pushes now act as the GitHub App, not `github-actions[bot]`.
+  Configuring the App made pipeline *PRs* App-authored, but `actions/checkout`
+  persisted `github.token`, so every push still stalled its runs at
+  `action_required` — which mattered increasingly once agents began pushing
+  after every task. The implement job's checkout takes the App token (and its
+  mint step moved above the checkout to make that possible), and both review
+  jobs now mint a token and hand it to self-fix. Consumers without the App are
+  unaffected: every reference falls back to `github.token` (#430).
+- **pipeline:** the attempt cap no longer counts a run that never started. A
+  report stating 0 turns and `$0.00` never reached the agent, so it is not an
+  attempt at the work — on #302 one such run consumed half the issue's dispatch
+  budget and also spent `classify-agent.sh`'s escalate-on-retry on a run that
+  never happened. Non-starts now have their own higher ceiling
+  (`MAX_NON_STARTS`, default 5) so a missing credential still parks eventually,
+  with a park message naming the credential rather than advising
+  re-enrichment (#393).
+- **pipeline:** the implementation contract now actually reaches the agent. The
+  prompt was built from `gh issue view --json title,body`, so issue *comments*
+  were never fetched — and the contract `/gh:implement` posts is a comment. It
+  reached no agent, in any run, ever, which is why the push-per-task and
+  TDD-evidence rules went unobserved while inlined plans were followed closely
+  (two channels; one of them worked). Prompt assembly moves to
+  `scripts/build-agent-prompt.sh`, which includes comments minus
+  pipeline-generated chatter (run reports, enrichment locks, review-held
+  notices) and is fixture-tested (#393).
+- **ci:** the pre-commit shellcheck hook now passes `-x -e SC1091`, so CI follows
+  sourced files and a `# shellcheck source=` directive is verified rather than
+  inert. Without it a script sourcing a `lib/` helper was clean under `just lint`
+  and failed CI — as #350 did on three `source` lines (#353, #354).
+- **tests:** the Layer-1 suite is now hermetic against the ambient environment —
+  `run-all.sh` and `run-script-tests.sh` clear `GITHUB_REPOSITORY`,
+  `GITHUB_OUTPUT`, `GITHUB_ACTIONS` and `GITHUB_TOKEN`. On a runner
+  `GITHUB_REPOSITORY` is always set and the scripts under test fall back to it,
+  so six `missing REPO → exit 2` assertions passed locally and failed the first
+  time the suite ran in CI. Found by wiring the suite up, which is the point of
+  it (#354).
+- **lint:** `.markdownlint-cli2.yaml` now ignores `.superpowers/**`. Its `globs:`
+  key overrides the file list pre-commit passes, so markdownlint read the disk
+  rather than the git index: the gitignored, untracked `.superpowers/` directory
+  is absent from CI's fresh checkout but present on any machine that has run
+  superpowers SDD, making `pre-commit run --all-files` fail locally while CI
+  stayed green. The same trap the `.worktrees/**` entry already guarded (#354).
+
+- **pipeline:** `find-pipeline-pr.sh` now verifies a candidate PR actually
+  closes the issue instead of trusting the search result. GitHub tokenises
+  `closes #N in:body` and drops the `#`, so the query matched every open PR
+  whose body contained the bare number anywhere — a line number, a cell index.
+  A false hit told `verify-or-recover-pr.sh` a PR already existed, so salvage
+  stood down and a run that pushed nothing ended as `success` with its work
+  discarded (59 turns, $2.76, observed on `game-wipfelkratzer#11`). Candidates
+  are now checked against `closingIssuesReferences` scoped to the repo, or a
+  closing keyword for the issue in the body; both fields come from the existing
+  `gh pr list` call, so this costs no extra API requests. (#343)
+
+- **pipeline:** pass the tool allowlist through `claude_args`, not the removed
+  `allowed_tools` input. The action's main branch dropped that input in favour of
+  `settings`/`claude_args`, and Actions silently ignores unknown `with:` keys — so
+  from v2.0.1 the agent ran on default permissions. It could edit files but not
+  `git checkout -b`, and sat asking for an approval no CI run can give. Six
+  dispatches failed as "run completed but no PR was opened" before the raw-output
+  artifact exposed the denials (#339).
+
+- **pipeline:** upload the raw Claude execution log as an artifact, as the
+  OpenCode path already did. The run report carries only the final `result`
+  object, so a run that ends `success` having changed nothing tells you *that*
+  there were permission denials but never *which* tools were denied — the
+  per-turn detail lives in a file written to `RUNNER_TEMP` that died with the
+  runner. Retained 7 days, same as the OpenCode artifact.
+
+- **pipeline:** bump `anthropics/claude-code-base-action` to a maintained
+  main-branch SHA. Its newest *release*, v0.0.63 from 2025-08-22, installs Claude
+  Code 1.0.88, and the API now refuses current models on it — a `model:fable`
+  dispatch died at turn 1 for $0.00 with
+  `claude_code_version_too_old` ("version 2.1.251 or newer is required"). The
+  action's main branch is still maintained and installs 2.1.270. Pinned by SHA as
+  before; re-pin to a tag if upstream cuts one newer than v0.0.63.
+
+- **pipeline:** configure a git identity on the runner before the agent starts.
+  Without it the agent's first `git commit` died with `Author identity unknown` /
+  `fatal: empty ident name`, it spent its whole turn budget working around that,
+  and the run ended `error_max_turns` with no PR — surfaced only as the generic
+  "run completed but no PR was opened". That reads as a weak model or a bad plan,
+  so the natural response is to re-dispatch on a stronger model, which reproduces
+  it exactly. Observed across five consecutive runs in one consumer repo, about
+  $3.50, before anyone read the log. Commits now attribute to
+  `github-actions[bot]`, the identity GitHub's own first-party actions use.
+
+- **ai-stats:** `shipped` was read from `closedByPullRequestsReferences` alone, and
+  GitHub forms **no closing reference** for a PR authored by `app/github-actions` —
+  which is every PR this pipeline opens. So on exactly the repos `/ai-stats` exists to
+  measure, most shipped issues read as never shipped (#319).
+
+  It gated more than one row: `shipped` decides the grade
+  (`if $shipped | not then "F"`), so an issue that shipped on the first cheap attempt
+  graded **F**, and the enrichment table read *enriched 13% vs unenriched 67%* — the
+  opposite of the truth, because enriched issues are the recent pipeline-driven ones.
+
+  Now unions `ClosedEvent.closer` with the reference list. Measured on the repo this was
+  found on: ship rate 36% → **79%**, grades A3/B2/F9 → **A5/B6/F3**, first-attempt
+  shipped 38% → **100%**, spend per shipped issue $8.50 → $4.74 — with no run changing.
+
+  The `ClosedEvent` selection is aliased and queried with `last:` rather than folded into
+  the `LABELED_EVENT` window, in both `ai-stats.sh` and `ai-funnel.sh`: a close is late
+  in an issue's timeline, so sharing one `first:100` page with label events would let a
+  heavily relabelled issue push the closer off the page and reintroduce the undercount.
+
+- **hooks:** `handoff-resume.sh` read only the pre-slug `.claude/handoff.md`, so
+  the `SessionStart(clear)` context injection had been blind to every
+  branch-keyed `.claude/handoff-<branch>.md` written since handoffs moved to
+  branch slugs — `/clear` silently injected nothing. It now resolves the cleared
+  project's branch slug (detached HEAD included), injects that branch's handoff,
+  keeps the legacy name as a fallback, names the file it read, and points at
+  `.claude/handoffs.md` when one is present. A sibling worktree's handoff is
+  still never injected — that is the whole reason handoffs are branch-keyed.
+  First test coverage for the hook: `tests/run-handoff-resume-tests.sh`
+  (16 assertions).
+
+- **enrich:** the `enrichment-ongoing` release no longer swallows its own
+  failure with `2>/dev/null || true` — that pattern is for labels a repo may
+  not define, and hiding a failed release leaves the lock held for the full
+  staleness window with no signal. Every Forgejo read-modify-PUT of the label
+  set now also guards its read: an empty or failed read used to PUT an empty
+  set, wiping every label on the issue including `ai-implement` (#237)
+- **enrich:** staleness threshold raised from 4h to 24h, matching
+  `/enrich-phased`. The lock comment doesn't record which command acquired
+  it, so both must use the same window — at 4h, `/enrich` read an
+  `/enrich-phased` run's ordinary overnight pause as abandoned and offered it
+  up for takeover, the exact double-enrichment bug the lock exists to
+  prevent, just via the other command (#237)
 - **setup:** `setup/link-commands.sh` now prunes command files it previously
   installed that no longer exist in the repo's `commands/` tree, instead of
   only ever adding/updating. Previously a re-install after a command was
@@ -70,6 +626,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   general user-commands directory, not exclusively agent-workflow's, so a
   file this installer never placed (hand-authored, or from another tool) is
   never touched.
+- **auto-review self-fix:** the post-self-fix approve path now waits (bounded, up to 3 minutes) for required checks to complete before the merge-envelope re-check, instead of routinely dead-ending at `ai:review-blocked` because checks on the freshly-pushed fix commit hadn't finished yet (#238).
+- **pipeline:** `classify-turns.sh` now counts `## Task N` headings as well as
+  `### Task N` when sizing an issue's turn budget. `writing-plans`, the skill
+  `/enrich` invokes, emits h2 task headings, but the heuristic only matched
+  h3 — so a fully enriched plan of any size silently landed at `task_count=0`
+  and took the 50-turn default. #354 died at 51/50 turns on a 6-task h2 plan
+  that should have earned 160: $1.24, no PR, and the issue's last allowed
+  attempt consumed. An `## Implementation Plan` section that still yields
+  zero countable tasks now emits a `::warning::` annotation naming the likely
+  cause, instead of failing silently (#359).
 
 ## [1.11.0](https://github.com/freaxnx01/agent-workflow/releases/tag/v1.11.0) - 2026-07-27
 

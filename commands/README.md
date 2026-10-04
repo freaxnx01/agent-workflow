@@ -31,10 +31,19 @@ for how this fits alongside the plugin and project-scoped command sources.
 
 ## Commands
 
+> **Driving the pipeline?** [`docs/COMMAND-CHEATSHEET.md`](../docs/COMMAND-CHEATSHEET.md)
+> is the task-shaped view: the issue→PR path in the order you chain it, the two
+> measurement points (`/ai-funnel` before dispatch, `/ai-stats` after), what
+> "ship rate" actually divides by, and a symptom→cause table for when a dispatch
+> goes nowhere. The listing below is the inventory; that page is the route.
+
 **Session hygiene**: `/loose-ends` · `/clear-check` · `/todo` · `/wrap-up`
 
 **Phase handoff** (pairs with the `SessionStart(clear)` hook in `hooks/`):
-`/handoff` · `/pickup`
+`/handoff` · `/pickup` — both regenerate the derived overview
+(`.claude/handoffs.md` per repo, `~/.claude/handoffs.md` per machine) via
+`scripts/lib/handoff-index.sh`, and both take `all` under Herdr to fan out across
+every open session.
 
 **Worktree** (`wt/`): `/wt:status` · `/wt:finish`
 
@@ -50,8 +59,8 @@ vocabulary (MudBlazor, shadcn/ui, Flutter widgets, …) comes from the project's
 **Superpowers**: `/subagent-driven`
 
 **Forge-agnostic** (detect GitHub vs Forgejo from the `origin` remote internally):
-`/issues` · `/prs` · `/parked` · `/triage` · `/done` · `/new` · `/enrich` ·
-`/enrich-phased` · `/route` · `/work` · `/milestone` · `/roadmap`
+`/issues` · `/prs` · `/parked` · `/triage` · `/queue` · `/done` · `/new` ·
+`/enrich` · `/enrich-phased` · `/route` · `/work` · `/milestone` · `/roadmap`
 
 **Idea capture** (forge-agnostic, local — precedes the issue funnel):
 `/capture-idea <idea>` — jot an idea into the current repo's `docs/ideas.md`.
@@ -62,6 +71,13 @@ vocabulary (MudBlazor, shadcn/ui, Flutter widgets, …) comes from the project's
 > batch into Issue / `TODO.md` / implement-now with dedup and a resumable worklog.
 
 **GitHub-only** (`gh/`, no Forgejo equivalent): `/gh:assign` · `/gh:implement` ·
-`/gh:implementation-contract` · `/gh:review`
+`/gh:implementation-contract` · `/gh:review` · `/autopilot` — the unattended
+version of the `/enrich → /gh:implement` hop, dry-run by default
+
+**Advisor** (relies on `gh`, so GitHub-only): `/advisor <topic>` — turns the session
+into the Software Factory advisor: reads `docs/ADVISOR-PROMPT.md` and
+`docs/FACTORY-MAP.md`, then works one topic, verifying runs from `gh` evidence
+rather than labels. Launch with `claude --settings setup/advisor-settings.json` to
+enforce its never-merge guardrail.
 
 Each `.md` file's `description:` front-matter shows in the `/` autocomplete menu.

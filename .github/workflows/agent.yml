@@ -1,10 +1,10 @@
 # Production caller — dogfoods this pipeline on its OWN issues.
 #
 # Trigger: apply the `ai-implement` label to an issue. The agent implements it
-# and opens a draft PR. Because `pre-preview: true` is set here, an issue that
-# ALSO carries `ai-pre-preview` runs the pre-preview flow (ADR-004): the agent
+# and opens a draft PR. Because `ai-review-human-merge: true` is set here, an issue that
+# ALSO carries `ai-review-human-merge` runs that flow (ADR-004, named by ADR-009): the agent
 # reviews its own draft PR and, on approve, promotes it to ready for a HUMAN to
-# merge — no envelope, no auto-merge. Issues without `ai-pre-preview` get the
+# merge — no envelope, no auto-merge. Issues without `ai-review-human-merge` get the
 # plain draft-only flow (#1).
 #
 # Self-dogfood specifics:
@@ -26,6 +26,12 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  # retry-dispatch.sh re-dispatches this workflow with `gh workflow run`, which
+  # POSTs to /actions/workflows/{id}/dispatches and needs `actions: write`.
+  # Without it the retry 403s ("Resource not accessible by integration"), the
+  # step exits 1, and a transient failure the classifier had already decided to
+  # retry becomes a hard ai:failed instead — so escalate-on-retry never fires.
+  actions: write
 
 jobs:
   claude:
@@ -33,9 +39,53 @@ jobs:
     uses: ./.github/workflows/agent-implement.yml
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      # Kept although this repo now defaults to Claude: it is what makes a
+      # per-issue `agent:opencode` label actually work. Without it
+      # classify-agent.sh's credential guard silently falls back to Claude, so
+      # the label would look honoured while the run stayed on Claude.
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      # Forwarded explicitly — this stub does not use `secrets: inherit`, so a
+      # secret that is set on the repo but not listed here never reaches the
+      # reusable workflow, and the App silently stays inert with no error
+      # anywhere. See docs/PIPELINE-APP-SETUP.md step 7.
+      PIPELINE_APP_ID: ${{ secrets.PIPELINE_APP_ID }}
+      PIPELINE_APP_PRIVATE_KEY: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
     with:
       issue-number: ${{ github.event.issue.number }}
       runner-labels: '["ubuntu-latest"]'
+      # Factory repos run Claude, not the cheap fleet default. agent-workflow,
+      # bridge, ai-instructions and the rest of the core table in
+      # docs/FACTORY-MAP.md are the tooling every other repo's pipeline runs
+      # on, so a bad implementation here propagates to every consumer instead
+      # of staying in one product. The measurement that picked glm-5.2 for the
+      # fleet (#294: 15 of 18 runs at $4.25, against 59% for claude-opus-4-7 at
+      # $181.70) still stands for product repos — it just isn't the trade to
+      # make on the factory itself.
+      #
+      # Selecting `claude` also re-enables classify-task.sh's keyword
+      # escalation, which is claude-only: under opencode every run was pinned
+      # to the default model with no per-task triage at all.
+      agent: claude
       default-model: claude-sonnet-5
       local-scripts: true
-      pre-preview: true
+      ai-review-human-merge: true
+      # The App opens the PR, so its author is `freaxnx01-pipeline[bot]`, not
+      # the default `github-actions[bot]`. Without this the review job stops
+      # recognising its own PR and reports "could not find a pipeline-opened
+      # draft PR ... from an allowlisted author" — which reads like a missing
+      # PR rather than a rejected author (docs/PIPELINE-APP-SETUP.md step 7).
+      pipeline-author-allowlist: freaxnx01-pipeline[bot]
+      # The action's own default is 10 minutes, which kills a multi-task plan
+      # mid-implementation while max_turns is nowhere near spent (#280 died
+      # there twice). At the ~7.7s/turn this repo actually measures, the
+      # 160-turn tier classify-turns.sh can hand out needs ~20 minutes, so a
+      # cap below that makes the top tiers unreachable. 25 was measured too
+      # small in turn: #280's 8-task plan reached only task 3 of 8 before the
+      # 25-minute cap killed it. Stays under timeout-minutes below, so the
+      # process cap trips first and the job still reports a result.
+      claude-timeout-minutes: 55
+      # The reusable workflow defaults the job cap to 30, which would trip
+      # before the process cap above and kill the job without a run report.
+      timeout-minutes: 60
+      self-fix: true
+      self-fix-max-iterations: 2

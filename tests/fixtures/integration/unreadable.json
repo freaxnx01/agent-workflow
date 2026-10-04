@@ -1,0 +1,4 @@
+[{"repo":"o/unreadable","unreadable":true,"workflow":null,"latest_release":"v3.0.0",
+  "secrets_set":[],"labels":[],
+  "settings":{"actions_can_create_prs":false,"allow_auto_merge":false,"allow_squash_merge":false},
+  "instructions":{"stack":null,"files":{},"blobs":{}}}]
