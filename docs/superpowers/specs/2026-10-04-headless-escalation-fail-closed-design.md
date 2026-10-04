@@ -79,8 +79,9 @@ backstop for both.
 - The crash branch's escalation (write + both log variants) is extracted into
   one helper, `escalate_issue <repo> <n> <reason>`, called by both branches,
   so the two cannot drift.
-- Log lines:
-  - success: `failed (enrich did not complete); escalated to needs-human`
+- Log lines, following the crash branch's convention (the reason alone means
+  "escalated"; `docs/AUTOPILOT.md`'s table says so):
+  - success: `failed (enrich did not complete)`
   - escalation write fails:
     `failed (enrich did not complete); ESCALATION FAILED: needs-human not applied, enrichment-ongoing may still be set`
 - The crash branch's existing log text is unchanged.
@@ -109,7 +110,8 @@ and states that the session's exit status is not part of the contract.
 `docs/AUTOPILOT.md`:
 
 - the log table: replace the `skipped (enrich did not complete …)` row
-  (`:121`) with the two new `failed (enrich did not complete)…` rows;
+  (`:121`) with a `failed (enrich did not complete)` row, and widen the
+  `ESCALATION FAILED` row from "the crash above" to every escalation;
 - "When something is wedged": the stuck-`enrichment-ongoing` bullet now
   applies only when the escalation write itself failed (the `ESCALATION
   FAILED` log line), not to every incomplete enrich.
