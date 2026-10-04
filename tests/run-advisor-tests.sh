@@ -77,7 +77,14 @@ assert_contains "reads FACTORY-MAP.md" "$COMMAND" "docs/FACTORY-MAP.md"
 assert_contains "takes the topic from \$ARGUMENTS" "$COMMAND" '$ARGUMENTS'
 assert_contains "asks for a topic when given none" "$COMMAND" "ask for one"
 assert_contains "names the auto-lane-v1 agenda" "$COMMAND" "--milestone auto-lane-v1"
-assert_contains "verifies runs by triggeringActor" "$COMMAND" "triggeringActor"
+assert_contains "reads run actors from the REST API" "$COMMAND" "triggering_actor"
+# `gh run view --json` has no actor fields ("Unknown JSON field: actor") —
+# found by the first real advisor run against #430.
+if grep -qE '^gh run view .*--json[^|]*actor' "$COMMAND"; then
+  fail "does not ask gh run view for actor fields" "gh run view --json has no actor/triggeringActor"
+else
+  pass "does not ask gh run view for actor fields"
+fi
 assert_contains "points at the guardrail settings" "$COMMAND" "setup/advisor-settings.json"
 
 section "setup/advisor-settings.json"

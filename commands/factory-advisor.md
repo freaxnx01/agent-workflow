@@ -39,12 +39,19 @@ shows:
 gh pr view <n> --json state,isDraft,headRefName,files,commits
 gh pr checks <n>
 gh run list --workflow agent.yml --limit 10
-gh run view <id> --json conclusion,event,actor,triggeringActor,jobs
+gh run view <id> --json conclusion,event,jobs
+gh api repos/<owner>/<repo>/actions/runs/<id> --jq '[.actor.login, .triggering_actor.login, .run_attempt] | @tsv'
+gh api repos/<owner>/<repo>/pulls/<n>/commits --jq '.[] | [.sha[0:7], (.author.login // .commit.author.name), (.commit.message | split("\n")[0])] | @tsv'
 ```
 
-- `actor` vs `triggeringActor` tells a human re-run from the pipeline's own
-  dispatch: a re-run keeps the original `actor` but carries the person who
-  pressed the button as `triggeringActor`.
+- Run actors come from the REST API: `gh run view --json` has no `actor` or
+  `triggeringActor` field. A re-run keeps the original `actor` but carries the
+  person who pressed the button as `triggering_actor`.
+- A green run is not a landed change: a dispatch can conclude `success` while
+  its run report says no PR was opened. Read the run report comment on the issue.
+- Commit authors say who did the work: the pipeline's commits come from the
+  bot, a human-applied patch from a person. A PR merged with human commits on
+  it was finished by hand, whatever its label says.
 - Diff against the plan: compare the tasks under the issue body's
   `## Implementation Plan` with `gh pr diff <n> --name-only`, and read the
   issue comments. A task with no file in the diff did not land.
