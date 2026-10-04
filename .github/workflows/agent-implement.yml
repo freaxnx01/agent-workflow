@@ -1030,7 +1030,8 @@ jobs:
       && needs.implement.outputs.ai-review-ai-merge-enabled == 'true'
       && needs.implement.outputs.ai-review-human-merge-enabled != 'true'
     runs-on: ${{ fromJSON(inputs.runner-labels) }}
-    timeout-minutes: 15
+    # Review (~7 min) + the self-fix step's own 30-minute cap + overhead (#474).
+    timeout-minutes: 45
     env:
       # Mirrors the implement job: the mint step's `if:` tests this, because
       # the `secrets` context is not available in `if:`. Without it the
@@ -1279,6 +1280,11 @@ jobs:
           && steps.verdict.outputs.value == 'request_changes'
           && inputs.self-fix
         id: self_fix
+        # #474: bounded on its own and non-fatal, so a timeout or crash still
+        # reaches the blocked step below with a reason instead of cancelling
+        # the whole job.
+        timeout-minutes: 30
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
           REPO: ${{ github.repository }}
@@ -1403,6 +1409,7 @@ jobs:
           PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
           FOUND: ${{ steps.find_pr.outputs.found }}
           VERDICT: ${{ steps.final.outputs.verdict }}
+          SELF_FIX_OUTCOME: ${{ steps.self_fix.outcome }}
           ENVELOPE: ${{ steps.envelope.outputs.envelope }}
           ENVELOPE_REASON: ${{ steps.envelope.outputs.reason }}
           FAILED_GATES: ${{ steps.envelope.outputs.failed-gates }}
@@ -1440,7 +1447,8 @@ jobs:
       && needs.implement.outputs.outcome == 'success'
       && needs.implement.outputs.ai-review-human-merge-enabled == 'true'
     runs-on: ${{ fromJSON(inputs.runner-labels) }}
-    timeout-minutes: 10
+    # Review (~7 min) + the self-fix step's own 30-minute cap + overhead (#474).
+    timeout-minutes: 45
     env:
       # Mirrors the implement job: the mint step's `if:` tests this, because
       # the `secrets` context is not available in `if:`. Without it the
@@ -1629,6 +1637,11 @@ jobs:
           && steps.verdict.outputs.value == 'request_changes'
           && inputs.self-fix
         id: self_fix
+        # #474: bounded on its own and non-fatal, so a timeout or crash still
+        # reaches the blocked step below with a reason instead of cancelling
+        # the whole job.
+        timeout-minutes: 30
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
           REPO: ${{ github.repository }}
@@ -1687,6 +1700,7 @@ jobs:
           PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
           FOUND: ${{ steps.find_pr.outputs.found }}
           VERDICT: ${{ steps.final.outputs.verdict }}
+          SELF_FIX_OUTCOME: ${{ steps.self_fix.outcome }}
           SELF_FIX_ITERATIONS: ${{ steps.final.outputs.iterations-used }}
           SELF_FIX_MAX: ${{ inputs.self-fix-max-iterations }}
           MODE: human-merge

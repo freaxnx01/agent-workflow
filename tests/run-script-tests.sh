@@ -1453,6 +1453,43 @@ section "post-auto-review-block — reason selection + PR-vs-issue addressing"
 
 POST_BLOCK="$ROOT/scripts/post-auto-review-block.sh"
 
+# #474: a self-fix that timed out or crashed (step outcome `failure`, kept
+# non-fatal by continue-on-error) must say so — the run used to end as a bare
+# `cancelled` with no reason anywhere on the issue or PR.
+LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
+REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=100 FOUND=true \
+VERDICT=request_changes SELF_FIX_OUTCOME=failure MODE=human-merge \
+  bash "$POST_BLOCK" >/dev/null
+calls="$(cat "$LOG")"; rm -f "$LOG"
+assert_contains "$calls" 'self-fix did not finish (timed out or crashed) — see the run' \
+  "self-fix failure → block comment names it (#474)"
+assert_contains "$calls" 'issue edit 42 --repo o/r --add-label ai:review-blocked' \
+  "self-fix failure → still labels ai:review-blocked (#474)"
+
+LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
+REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=100 FOUND=true \
+VERDICT=request_changes SELF_FIX_OUTCOME=success \
+  bash "$POST_BLOCK" >/dev/null
+calls="$(cat "$LOG")"; rm -f "$LOG"
+assert_not_contains "$calls" 'did not finish' "self-fix success → no did-not-finish note (#474)"
+
+# #474: wiring — both review jobs give the self-fix step a step-level timeout
+# and keep it non-fatal, both job caps leave room for it, and both blocked
+# steps receive the self-fix outcome.
+WF="$ROOT/.github/workflows/agent-implement.yml"
+self_fix_blocks="$(awk '/- name: Self-fix loop \(/{on=1} on&&/^      - name: /&&!/Self-fix loop/{on=0} on' "$WF")"
+assert_equals "$(printf '%s\n' "$self_fix_blocks" | grep -c 'timeout-minutes: 30')" "2" \
+  "both self-fix steps have timeout-minutes: 30 (#474)"
+assert_equals "$(printf '%s\n' "$self_fix_blocks" | grep -c 'continue-on-error: true')" "2" \
+  "both self-fix steps are continue-on-error (#474)"
+assert_equals "$(grep -cE '^    timeout-minutes: 45$' "$WF")" "2" \
+  "both review jobs are capped at 45 minutes (#474)"
+# shellcheck disable=SC2016  # literal GitHub Actions expression, not shell
+assert_equals "$(grep -c 'SELF_FIX_OUTCOME: ${{ steps.self_fix.outcome }}' "$WF")" "2" \
+  "both blocked steps receive the self-fix outcome (#474)"
+
 # Self-mod guard fires → reason names ADR-002 self-modification, comment
 # goes on the PR (PR_NUMBER is known via find-pipeline-pr.sh which runs
 # unconditionally).

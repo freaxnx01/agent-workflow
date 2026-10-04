@@ -31,6 +31,9 @@
 #                        "0" or unset → unchanged wording.
 #   SELF_FIX_MAX         The self-fix iteration cap, for the "exhausted"
 #                        wording. Only read when SELF_FIX_ITERATIONS != "0".
+#   SELF_FIX_OUTCOME     The self-fix step's outcome (#474). "failure" means it
+#                        timed out or crashed — the step is continue-on-error
+#                        so this script still runs — and the reason says so.
 #
 # Exit codes:
 #   0  success (refusal surfaced)
@@ -54,6 +57,7 @@ ENVELOPE_REASON="${ENVELOPE_REASON:-}"
 FAILED_GATES="${FAILED_GATES:-}"
 SELF_FIX_ITERATIONS="${SELF_FIX_ITERATIONS:-0}"
 SELF_FIX_MAX="${SELF_FIX_MAX:-}"
+SELF_FIX_OUTCOME="${SELF_FIX_OUTCOME:-}"
 MODE="${MODE:-ai-merge}"
 
 # Comment-prefix wording differs by mode; reason text is identical.
@@ -82,6 +86,12 @@ else
   gate_note=''
   [[ -n "$FAILED_GATES" ]] && gate_note=" (failed gates: $FAILED_GATES)"
   reason="merge-envelope failed: ${ENVELOPE_REASON:-unknown}${gate_note}"
+fi
+
+# #474: without this, a self-fix cut off by its timeout left the run a bare
+# `cancelled` with no reason on the issue or PR.
+if [[ "$SELF_FIX_OUTCOME" == 'failure' ]]; then
+  reason="$reason; self-fix did not finish (timed out or crashed) — see the run"
 fi
 
 printf 'review: %s\n' "$reason"
