@@ -89,11 +89,13 @@ PRs). Don't claim truncation when it might be PRs.
 ### new
 
 ```bash
-# with a due date — normalize a bare YYYY-MM-DD to MIDDAY UTC, deliberately:
-# midnight would let a viewer timezone offset render the previous day.
+# with a due date — send the bare YYYY-MM-DD at midnight UTC. GitHub keeps only
+# the date: any time you send is stored as T00:00:00Z (verified 2026-10-04 —
+# a midday write read back as midnight), so sending midnight makes the
+# read-back match the request exactly.
 gh api "repos/$repo/milestones" \
   -f title="<name>" \
-  -f due_on="<YYYY-MM-DD>T12:00:00Z"
+  -f due_on="<YYYY-MM-DD>T00:00:00Z"
 
 # no due date given — omit the field entirely, don't pass an empty value
 gh api "repos/$repo/milestones" -f title="<name>"
@@ -106,7 +108,8 @@ gh api "repos/$repo/milestones?state=open&per_page=100" \
   --jq '.[] | select(.title == "<name>") | [.number, .title, (.due_on // "-")] | @tsv'
 ```
 
-Confirm the `due_on` that came back is the date I asked for. A `422` with
+Confirm the date part of the `due_on` that came back (`.due_on[:10]`) is the date
+I asked for. A `422` with
 `already_exists` means the title is taken — report the existing milestone and
 **stop**; don't retry with a variant name.
 
