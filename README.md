@@ -141,7 +141,7 @@ commands/
   *.md   → /handoff  /pickup  /todo  /wrap-up  /loose-ends  /clear-check
            /issues  /prs  /triage  /queue  /route  /work  /milestone  /new  /enrich
            /enrich-phased  /parked  /roadmap  /done  (forge-agnostic)
-           /capture-idea  /commands  /update-commands
+           /capture-idea  /commands  /update-commands  /advisor
 ```
 
 `setup/link-commands.sh` installs them into `~/.claude/commands/`, preserving the
