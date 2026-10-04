@@ -5,7 +5,7 @@
 # Reads the run's result JSON (final SDK result message) and optionally the
 # full execution log (NDJSON of all SDK messages), computes summary metrics,
 # renders a Markdown comment, and posts it to a GitHub issue. Stamps
-# observability labels: ai:done | ai:failed, plus ctx:medium / ctx:high when
+# observability labels: ai:done | ai:failed | ai:partial, plus ctx:medium / ctx:high when
 # context utilization on any turn crosses a threshold.
 #
 # Required environment variables:
@@ -36,6 +36,14 @@
 #   CHECKS_BLOCKED_REASON
 #                       "no-app-token" | "rollup-empty". Selects the remedy
 #                       wording. Only read when CHECKS_RUNNABLE is "false".
+#   PLAN_COVERAGE       "complete" | "partial" | "unverifiable", from
+#                       check-plan-coverage.sh (#457). "partial" grades the run
+#                       ai:partial with :warning: — below an agent error and a
+#                       missing PR, above salvaged. "unverifiable" keeps the
+#                       grade and adds a "Plan coverage: not checked" line.
+#   MISSING_TASKS       Comma-separated plan task numbers; read when partial.
+#   PLAN_COVERAGE_REASON
+#                       Why coverage could not be checked; read when unverifiable.
 #
 # Exit codes:
 #   0   success
@@ -74,6 +82,9 @@ AGENT="${AGENT:-}"   # resolved agent (steps.classify_agent.outputs.agent) — o
 MAX_TURNS="${MAX_TURNS:-}"   # configured turn budget (steps.triage_turns.outputs.turns) — optional
 SALVAGED="${SALVAGED:-}"     # "true" when the PR came from verify-or-recover-pr.sh salvage
 HAS_PLAN="${HAS_PLAN:-}"     # "true"/"false": did the issue body carry an "## Implementation Plan"
+PLAN_COVERAGE="${PLAN_COVERAGE:-}"                # complete | partial | unverifiable (#457)
+MISSING_TASKS="${MISSING_TASKS:-}"                # comma-separated plan task numbers (partial)
+PLAN_COVERAGE_REASON="${PLAN_COVERAGE_REASON:-}"  # why coverage was unverifiable
 CHECKS_RUNNABLE="${CHECKS_RUNNABLE:-}"              # "false" → checks cannot run (#364)
 CHECKS_BLOCKED_REASON="${CHECKS_BLOCKED_REASON:-}"  # no-app-token | rollup-empty
 
@@ -262,6 +273,14 @@ if [[ -n "$MODEL" || -n "$AGENT" ]]; then
     false) MODEL_AGENT_LINE+=" · **Plan:** none" ;;
   esac
 fi
+
+# Header lines under the Outcome: the model/agent line, then — only when the
+# plan could not be checked — a coverage note (#457). Built here so an empty
+# coverage note adds no blank line to the comment.
+META_LINES="$MODEL_AGENT_LINE"
+if [[ "$PLAN_COVERAGE" == "unverifiable" ]]; then
+  META_LINES+=$'\n'"**Plan coverage:** not checked — ${PLAN_COVERAGE_REASON:-unknown}"
+fi
 CACHE_HIT_PCT="$(pct "$CACHE_READ" "$CACHE_DENOM")"
 
 TURNS_TEXT="$NUM_TURNS"
@@ -276,14 +295,19 @@ if [[ "$IS_ERROR" == "true" || "$SUBTYPE" == error_* ]]; then
   STATUS_EMOJI=':x:'
   STATUS_TEXT="failed: ${SUBTYPE}"
   STATUS_LABEL='ai:failed'
-  STATUS_LABEL_OPPOSITE='ai:done'
 elif [[ "${PR_PRESENT:-}" == "false" ]]; then
   # #100: run finished without error but no PR exists (and recovery, if any,
   # failed). Do not report success — the work is not reviewable.
   STATUS_EMOJI=':x:'
   STATUS_TEXT='failed: run completed but no PR was opened'
   STATUS_LABEL='ai:failed'
-  STATUS_LABEL_OPPOSITE='ai:done'
+elif [[ "$PLAN_COVERAGE" == "partial" ]]; then
+  # #457: the session ended cleanly but whole plan tasks have no file in the
+  # PR (#430). Not a success — ai-stats counts only :white_check_mark: — and
+  # the AI-merge job refuses it on plan-coverage != complete.
+  STATUS_EMOJI=':warning:'
+  STATUS_TEXT="partial: plan task(s) ${MISSING_TASKS//,/, } have no file in the PR"
+  STATUS_LABEL='ai:partial'
 elif [[ "${SALVAGED:-}" == "true" ]]; then
   # The run never opened a PR itself; verify-or-recover-pr.sh committed the work
   # it left behind and opened one. Reviewable, but not the same thing as a clean
@@ -291,12 +315,10 @@ elif [[ "${SALVAGED:-}" == "true" ]]; then
   STATUS_EMOJI=':white_check_mark:'
   STATUS_TEXT='success (salvaged: uncommitted work committed for review)'
   STATUS_LABEL='ai:done'
-  STATUS_LABEL_OPPOSITE='ai:failed'
 else
   STATUS_EMOJI=':white_check_mark:'
   STATUS_TEXT='success'
   STATUS_LABEL='ai:done'
-  STATUS_LABEL_OPPOSITE='ai:failed'
 fi
 
 CTX_LABEL=''
@@ -320,7 +342,7 @@ render_comment() {
 
 **Outcome:** ${STATUS_EMOJI} ${STATUS_TEXT}
 **Duration:** $(format_duration_ms "$DURATION_MS") · **Turns:** ${TURNS_TEXT} · **Cost:** $(format_usd "$COST_USD")
-${MODEL_AGENT_LINE}
+${META_LINES}
 
 | Metric | Value |
 |---|---|
@@ -366,4 +388,9 @@ forge_issue_label_add "$ISSUE_NUMBER" "$(labels_csv)"
 # Best-effort cleanup of stale lifecycle labels from prior runs. Each call
 # errors when the label isn't present; that's expected and ignored.
 forge_issue_label_remove "$ISSUE_NUMBER" 'ai:running'         2>/dev/null || true
-forge_issue_label_remove "$ISSUE_NUMBER" "$STATUS_LABEL_OPPOSITE" 2>/dev/null || true
+# Exactly one status label survives: a re-run that changes the grade must not
+# leave two grades on the issue (#457 added a third).
+for stale_label in ai:done ai:failed ai:partial; do
+  [[ "$stale_label" == "$STATUS_LABEL" ]] && continue
+  forge_issue_label_remove "$ISSUE_NUMBER" "$stale_label" 2>/dev/null || true
+done

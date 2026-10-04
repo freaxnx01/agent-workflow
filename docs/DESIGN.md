@@ -177,7 +177,7 @@ Every run posts a comment to the issue with:
 - Avg context utilization per turn (warn at 50%, alert at 75%)
 - Workflow run link
 
-Plus stamps labels: `ai:running`, `ai:done`, `ai:failed`, `ctx:high` / `ctx:medium`.
+Plus stamps labels: `ai:running`, `ai:done`, `ai:failed`, `ai:partial` (plan tasks missing from the PR, #457), `ctx:high` / `ctx:medium`.
 
 ### Retry / rate-limit handling
 

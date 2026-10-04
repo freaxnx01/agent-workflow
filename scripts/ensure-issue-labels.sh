@@ -8,7 +8,7 @@
 #              — the user-applied label the consumer `agent.yml` keys its
 #                `if:` on to start a run; the pipeline reads it, so ensure it
 #                exists (else the very first run can't be triggered)
-#   lifecycle  ai:running, ai:done, ai:failed, ctx:medium, ctx:high
+#   lifecycle  ai:running, ai:done, ai:failed, ai:partial, ctx:medium, ctx:high
 #              — written by post-run-report.sh after each run
 #   selectors  agent:claude, agent:opencode
 #              — read by classify-agent.sh to override the workflow input
@@ -82,6 +82,7 @@ create ai-implement 1D76DB 'Trigger the agent-workflow to implement this issue'
 create ai:running FBCA04 'Pipeline run in progress'
 create ai:done    0E8A16 'Pipeline run completed successfully'
 create ai:failed  D73A4A 'Pipeline run failed'
+create ai:partial FBCA04 'Pipeline run ended cleanly but plan tasks are missing from the PR'
 create ctx:medium FBCA04 'Peak context utilization 50-74%'
 create ctx:high   D73A4A 'Peak context utilization 75%+ (consider trimming)'
 
