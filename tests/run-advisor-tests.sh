@@ -121,6 +121,81 @@ assert_contains "commands/README.md lists /factory-advisor" "$ROOT/commands/READ
 assert_contains "COMMAND-CHEATSHEET.md lists /factory-advisor" "$ROOT/docs/COMMAND-CHEATSHEET.md" "/factory-advisor"
 assert_contains "README.md command block lists /factory-advisor" "$ROOT/README.md" "/factory-advisor"
 
+section "scripts/advisor-merge-docs.sh — the one merge the advisor may arm"
+
+# The deny-list blocks `gh pr merge` typed by the advisor. This script is the
+# single carve-out: it arms auto-merge only for a docs-only PR (every changed
+# file under docs/superpowers/), pinned to the head commit it checked.
+MERGE_DOCS="$ROOT/scripts/advisor-merge-docs.sh"
+T="$(mktemp -d)"
+trap 'rm -rf "$T"' EXIT
+export GH_MOCK_LOG="$T/gh.log"
+
+printf '{"state":"OPEN","baseRefName":"main","headRefOid":"abc1234","isCrossRepository":false}\n' > "$T/pr-open.json"
+printf '{"state":"MERGED","baseRefName":"main","headRefOid":"abc1234","isCrossRepository":false}\n' > "$T/pr-merged.json"
+printf '{"state":"OPEN","baseRefName":"main","headRefOid":"abc1234","isCrossRepository":true}\n' > "$T/pr-fork.json"
+printf '{"state":"OPEN","baseRefName":"release","headRefOid":"abc1234","isCrossRepository":false}\n' > "$T/pr-other-base.json"
+printf '{"default_branch":"main"}\n' > "$T/repo.json"
+printf '[{"filename":"docs/superpowers/specs/x-design.md"},{"filename":"docs/superpowers/plans/x.md"}]\n' > "$T/files-docs.json"
+printf '[{"filename":"docs/superpowers/plans/x.md"},{"filename":"scripts/autopilot.sh"}]\n' > "$T/files-mixed.json"
+printf '[{"filename":"docs/superpowers-evil/x.md"}]\n' > "$T/files-lookalike.json"
+printf '[]\n' > "$T/files-none.json"
+
+# map <pr-fixture> <files-fixture> → a GH_MOCK_STDOUT_MAP file. pulls/7/files
+# must precede the bare repos/o/r key: the mock serves the first match.
+map() {
+  printf 'pr view\t%s\npulls/7/files\t%s\nrepos/o/r\t%s\n' "$T/$1" "$T/$2" "$T/repo.json" > "$T/map"
+  printf '%s' "$T/map"
+}
+run_merge() {
+  : > "$GH_MOCK_LOG"
+  local rc=0
+  PATH="$ROOT/tests/mocks:$PATH" GH_MOCK_STDOUT_MAP="$(map "$1" "$2")" \
+    REPO=o/r bash "$MERGE_DOCS" 7 >"$T/out" 2>&1 || rc=$?
+  printf '%s' "$rc"
+}
+merge_calls() { grep -c 'pr merge' "$GH_MOCK_LOG" || true; }
+
+rc="$(run_merge pr-open.json files-docs.json)"
+if [[ "$rc" == "0" ]] && grep -q 'pr merge 7 --repo o/r --squash --auto --match-head-commit abc1234' "$GH_MOCK_LOG"; then
+  pass "a docs-only PR is armed for auto-merge, pinned to its head"
+else
+  fail "a docs-only PR is armed for auto-merge, pinned to its head" "rc=$rc log=$(cat "$GH_MOCK_LOG")"
+fi
+
+check_refused() {
+  local name="$1" pr="$2" files="$3" rc
+  rc="$(run_merge "$pr" "$files")"
+  if [[ "$rc" == "1" && "$(merge_calls)" == "0" ]]; then
+    pass "$name"
+  else
+    fail "$name" "rc=$rc merge calls=$(merge_calls) out=$(cat "$T/out")"
+  fi
+}
+check_refused "a PR touching a non-docs file is refused"         pr-open.json      files-mixed.json
+check_refused "a look-alike path (docs/superpowers-evil/) is refused" pr-open.json files-lookalike.json
+check_refused "a PR with no changed files is refused"            pr-open.json      files-none.json
+check_refused "a PR that is not open is refused"                 pr-merged.json    files-docs.json
+check_refused "a cross-repository (fork) PR is refused"          pr-fork.json      files-docs.json
+check_refused "a PR not targeting the default branch is refused" pr-other-base.json files-docs.json
+
+: > "$GH_MOCK_LOG"
+printf 'pulls/7/files\n' > "$T/fail.map"
+rc=0
+PATH="$ROOT/tests/mocks:$PATH" GH_MOCK_STDOUT_MAP="$(map pr-open.json files-docs.json)" \
+  GH_MOCK_FAIL_MAP="$T/fail.map" REPO=o/r bash "$MERGE_DOCS" 7 >/dev/null 2>&1 || rc=$?
+if [[ "$rc" == "3" && "$(merge_calls)" == "0" ]]; then
+  pass "a failed file-list read exits 3 and merges nothing"
+else
+  fail "a failed file-list read exits 3 and merges nothing" "rc=$rc merge calls=$(merge_calls)"
+fi
+
+rc=0; REPO=o/r bash "$MERGE_DOCS" >/dev/null 2>&1 || rc=$?
+if [[ "$rc" == "2" ]]; then pass "a missing PR number is a usage error"; else fail "a missing PR number is a usage error" "rc=$rc"; fi
+
+assert_contains "ADVISOR-PROMPT documents the docs-only carve-out" "$PROMPT" "scripts/advisor-merge-docs.sh"
+assert_contains "the command names the carve-out" "$COMMAND" "scripts/advisor-merge-docs.sh"
+
 # --- summary ---------------------------------------------------------------
 
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"

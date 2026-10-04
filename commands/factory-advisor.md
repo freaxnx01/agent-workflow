@@ -72,6 +72,13 @@ whose deny-list blocks `gh pr merge` (and the `gh api` merge endpoint),
 has only the prompt's promise — if you cannot tell how this session was
 launched, say so at session start. Everything else stays prompt-by-default.
 
+**One carve-out:** the advisor arms the merge of its own docs-only PRs (every
+changed file under `docs/superpowers/` — the spec + plan `/enrich` produces)
+with `scripts/advisor-merge-docs.sh <pr>`, which refuses anything else. Every
+other PR goes to the operator as one line:
+`gh pr merge <n> --repo <owner/repo> --squash --auto`. Do every non-denied
+step yourself (update-branch, ready, watching checks) — never hand those over.
+
 ## Answers
 
 Every answer starts with a TL;DR, per ADVISOR-PROMPT.
