@@ -403,6 +403,7 @@ jobs:
       ai-review-human-merge-enabled: ${{ steps.human_merge_gate.outputs.enabled || steps.human_merge_gate_stub.outputs.enabled }}
       agent:               ${{ steps.classify_agent.outputs.agent || inputs.agent }}
       model:               ${{ steps.triage.outputs.model || inputs.default-model }}
+      plan-coverage:       ${{ steps.plan_coverage.outputs.coverage }}
     env:
       # Optional GitHub App for PR creation (#55). Exposed as an env var so the
       # mint step's `if:` can test it (the `secrets` context isn't available in
@@ -963,6 +964,21 @@ jobs:
           GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
         run: bash .claude-pipeline/scripts/verify-or-recover-pr.sh
 
+      - name: Check plan coverage
+        # #457: grades the PR against the issue's Implementation Plan. A run
+        # can end cleanly with whole plan tasks missing (#430); `partial` is
+        # reported as ai:partial and, like `unverifiable`, keeps the PR out of
+        # the AI-merge job. The script exits 0 on every grade, a failed fetch
+        # included, so this step never fails the job.
+        id: plan_coverage
+        if: always() && !inputs.dry-run && steps.verify_pr.outputs.pr-present == 'true'
+        env:
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          PR_NUMBER: ${{ steps.verify_pr.outputs.pr-number }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+        run: bash .claude-pipeline/scripts/plan-coverage-step.sh
+
       - name: Check the PR's required checks can run
         id: pr_checks
         # Diagnostic only (#364). continue-on-error is what guarantees this can
@@ -995,6 +1011,9 @@ jobs:
           CHECKS_RUNNABLE: ${{ steps.pr_checks.outputs.checks-runnable }}
           CHECKS_BLOCKED_REASON: ${{ steps.pr_checks.outputs.checks-blocked-reason }}
           HAS_PLAN: ${{ steps.issue.outputs.has-plan }}
+          PLAN_COVERAGE: ${{ steps.plan_coverage.outputs.coverage }}
+          MISSING_TASKS: ${{ steps.plan_coverage.outputs.missing-tasks }}
+          PLAN_COVERAGE_REASON: ${{ steps.plan_coverage.outputs.reason }}
         run: bash .claude-pipeline/scripts/post-run-report.sh
 
       - name: Fail the job when the agent run failed
@@ -1021,6 +1040,10 @@ jobs:
     # gates 1/5/6/7 enforced in scripts/check-merge-envelope.sh. Verdict
     # !=approve or any failed gate leaves the PR draft and stamps
     # ai:review-blocked on the originating issue.
+    #
+    # #457: only a run whose PR covers every plan task reaches this job. The
+    # coverage step is skipped under dry-run, where the act suite drives this
+    # job with stub verdicts (agent-implement.test.yml), hence the exemption.
     name: AI review, AI merge — PR for issue #${{ inputs.issue-number }}
     needs: implement
     if: |
@@ -1029,6 +1052,7 @@ jobs:
       && needs.implement.outputs.outcome == 'success'
       && needs.implement.outputs.ai-review-ai-merge-enabled == 'true'
       && needs.implement.outputs.ai-review-human-merge-enabled != 'true'
+      && (inputs.dry-run || needs.implement.outputs.plan-coverage == 'complete')
     runs-on: ${{ fromJSON(inputs.runner-labels) }}
     timeout-minutes: 15
     env:

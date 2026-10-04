@@ -186,6 +186,71 @@ assert_eq "unset ISSUE_BODY_FILE exits 2" "2" "$rc"
 rc=0; ISSUE_BODY_FILE="$T/body-430.md" CHANGED_FILES_FILE="$T/nope.txt" bash "$CHECK" >/dev/null 2>&1 || rc=$?
 assert_eq "unreadable CHANGED_FILES_FILE exits 2" "2" "$rc"
 
+section "plan-coverage-step.sh (gh mocked)"
+
+STEP="$ROOT/scripts/plan-coverage-step.sh"
+export PATH="$ROOT/tests/mocks:$PATH"
+export GH_MOCK_LOG="$T/gh.log"
+
+# The mock ignores --jq and serves the fixture verbatim, so the files fixture is
+# the post-jq shape: one path per line.
+printf 'issue view\t%s\n' "$T/body-430.md" > "$T/step.map"
+printf 'pulls/7/files\t%s\n' "$T/changed-430.txt" >> "$T/step.map"
+
+: > "$GH_MOCK_LOG"
+out="$(GH_MOCK_STDOUT_MAP="$T/step.map" GITHUB_OUTPUT="$T/out1" \
+  REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=7 bash "$STEP"; cat "$T/out1")"
+assert_eq "the step writes the grade" "partial" "$(field "$out" coverage)"
+assert_eq "the step writes the missing tasks" "2,3" "$(field "$out" missing-tasks)"
+case "$(cat "$GH_MOCK_LOG")" in
+  *"api --paginate repos/o/r/pulls/7/files"*"previous_filename"*)
+    pass "changed files are paginated and include rename sources" ;;
+  *) fail "changed files are paginated and include rename sources" "$(cat "$GH_MOCK_LOG")" ;;
+esac
+
+printf 'pulls/7/files\n' > "$T/step-fail.map"
+rc=0
+out="$(GH_MOCK_STDOUT_MAP="$T/step.map" GH_MOCK_FAIL_MAP="$T/step-fail.map" GITHUB_OUTPUT="$T/out2" \
+  REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=7 bash "$STEP")" || rc=$?
+assert_eq "a failed fetch still exits 0" "0" "$rc"
+out="$(cat "$T/out2")"
+assert_eq "a failed fetch is unverifiable" "unverifiable" "$(field "$out" coverage)"
+assert_eq "a failed fetch says why" "fetch-failed" "$(field "$out" reason)"
+
+printf 'issue view\n' > "$T/step-fail-body.map"
+out="$(GH_MOCK_STDOUT_MAP="$T/step.map" GH_MOCK_FAIL_MAP="$T/step-fail-body.map" GITHUB_OUTPUT="$T/out3" \
+  REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=7 bash "$STEP"; cat "$T/out3")"
+assert_eq "a failed body fetch is unverifiable, never complete" "unverifiable" "$(field "$out" coverage)"
+
+rc=0; REPO=o/r ISSUE_NUMBER=42 PR_NUMBER='' bash "$STEP" >/dev/null 2>&1 || rc=$?
+assert_eq "missing PR_NUMBER exits 2" "2" "$rc"
+
+section "workflow wiring"
+
+WF="$ROOT/.github/workflows/agent-implement.yml"
+if grep -q 'run: bash .claude-pipeline/scripts/plan-coverage-step.sh' "$WF"; then
+  pass "the implement job runs the coverage step"
+else
+  fail "the implement job runs the coverage step"
+fi
+if grep -qE '^ +plan-coverage: +\$\{\{ steps\.plan_coverage\.outputs\.coverage \}\}' "$WF"; then
+  pass "the implement job exports plan-coverage"
+else
+  fail "the implement job exports plan-coverage"
+fi
+if grep -qF "&& (inputs.dry-run || needs.implement.outputs.plan-coverage == 'complete')" "$WF"; then
+  pass "AI-merge requires complete coverage outside dry-run"
+else
+  fail "AI-merge requires complete coverage outside dry-run"
+fi
+# shellcheck disable=SC2016  # the ${{ }} is GitHub Actions expression syntax
+# being searched for literally in the workflow, not a shell expansion.
+if grep -qF 'PLAN_COVERAGE: ${{ steps.plan_coverage.outputs.coverage }}' "$WF"; then
+  pass "the run report receives the coverage grade"
+else
+  fail "the run report receives the coverage grade"
+fi
+
 printf '\npassed: %d   failed: %d\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then
   printf 'failed:\n'
