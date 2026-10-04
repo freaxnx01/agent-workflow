@@ -19,18 +19,6 @@ session, run inside a managed clone of the target repo.
 
 **Spec:** [`docs/superpowers/specs/2026-09-21-autopilot-design.md`](../specs/2026-09-21-autopilot-design.md)
 
-> **Amendment (2026-09-22):** This plan describes the pre-implementation
-> design. In particular, every step below that has the consumer's
-> `.github/workflows/agent.yml` declare an `autopilot-test-gate:` key is
-> **not what was built** — that key is not a declared input on the reusable
-> workflow, and an operator who adds it breaks every `ai-implement` run in
-> that repo. As shipped, the test gate is named in the host-local autopilot
-> config instead (`repo=<owner/name>:<test-gate workflow file>`). See
-> [`docs/AUTOPILOT.md`](../../AUTOPILOT.md) for current behaviour and
-> Amendment 1 in the spec's [`## Amendments`](../specs/2026-09-21-autopilot-design.md#amendments)
-> section for the full rationale. The rest of this plan is left as the
-> historical record it is.
-
 ## Global Constraints
 
 - Every script starts with `#!/usr/bin/env bash`, `set -euo pipefail`, `IFS=$'\n\t'`.
@@ -296,7 +284,7 @@ And extend the sentence about variables not persisting so it names all three:
 Insert a new section immediately after the existing `## Quick mode` section and
 before the `## GitHub` section.
 
-````markdown
+```markdown
 ## Headless mode
 
 `--headless` is quick mode with nobody there to ask. It implies `--quick`, and
@@ -339,7 +327,7 @@ gh issue edit $ISSUE --add-label needs-human --remove-label enrichment-ongoing
 Headless mode changes nothing else. Every other step of the GitHub section
 below still runs: the lock, the spec, the plan, the push verification, the issue
 body.
-````
+```
 
 - [ ] **Step 3: Reference headless from the Quick mode section**
 
@@ -2354,7 +2342,7 @@ there.
 
 Create `commands/autopilot.md`:
 
-````markdown
+```markdown
 ---
 description: Unattended enrich lane — show what the next timer run would do, or drive one now
 ---
@@ -2420,7 +2408,7 @@ instructions, the allowlist, and the kill switch.
 ---
 
 If you run into blockers, find a solution and update this command for the future.
-````
+```
 
 - [ ] **Step 3: List it alongside its siblings**
 
@@ -2547,7 +2535,7 @@ WantedBy=timers.target
 
 Create `docs/AUTOPILOT.md`:
 
-````markdown
+```markdown
 # The unattended enrich lane
 
 `/autopilot` quick-enriches `needs-enrichment` issues in an allowlisted set of
@@ -2651,7 +2639,7 @@ Before any `game-*` repo is allowlisted it needs re-onboarding with
 `onboard-consumer.sh --ai-review-ai-merge`. As of 2026-09-21 game-tschau-sepp is
 pinned at `@v2` with a deprecated `pre-preview: true` and a stub still named
 `name: Claude` / `jobs: claude`. Tracked under freaxnx01/bridge#218.
-````
+```
 
 - [ ] **Step 4: Link it from the root README**
 
