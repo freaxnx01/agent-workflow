@@ -246,11 +246,21 @@ process_issue() {
   issue_label_state "$repo" "$n" needs-enrichment || enrich_state=$?
   case "$enrich_state" in
     1) : ;; # absent — /enrich completed and cleared it, proceed
-    0) # The session returned without enriching OR escalating — a prose-only
-       # reply, a denied tool, a stop on an error, or its own needs-human
-       # write failing. Escalate rather than skip: a skip leaves
-       # enrichment-ongoing set and nobody told (#458).
-       escalate_issue "$repo" "$n" "failed (enrich did not complete)"; return 0 ;;
+    0) # The session returned without enriching OR escalating. Escalate —
+       # unless enrichment-ongoing is still set: a session that stood down
+       # because ANOTHER session holds the lock (/enrich Step 1.5, or a lost
+       # race at 2.5) leaves exactly this state, and the driver cannot tell
+       # that lock from its own session's leftover. Releasing it would unlock
+       # an issue someone is actively enriching (#458, PR #471 review).
+       local lock_state=0
+       issue_label_state "$repo" "$n" enrichment-ongoing || lock_state=$?
+       case "$lock_state" in
+         1) escalate_issue "$repo" "$n" "failed (enrich did not complete)" ;;
+         0) log_issue "$repo" "$n" \
+              "skipped (enrichment-ongoing still set — may be another session's lock)" ;;
+         *) log_issue "$repo" "$n" "skipped (could not read labels — not dispatching)" ;;
+       esac
+       return 0 ;;
     *) log_issue "$repo" "$n" "skipped (could not read labels — not dispatching)"; return 0 ;;
   esac
 

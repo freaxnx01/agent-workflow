@@ -360,6 +360,23 @@ else
   pass "a failed escalation of an incomplete enrich dispatches nothing (#458)"
 fi
 
+# --- #458 amendment: the session stood down because ANOTHER session holds the
+#     lock (Step 1.5 / lost race at 2.5). Same labels as an incomplete enrich,
+#     plus enrichment-ongoing. The driver must not touch someone else's lock. ---
+printf '{"labels":[{"name":"needs-enrichment"},{"name":"enrichment-ongoing"}]}\n' > "$TMPDIR_T/labels-held-lock.json"
+sed "s#labels-not-enriched.json#labels-held-lock.json#" "$TMPDIR_T/gh-not-enriched.map" > "$TMPDIR_T/gh-held-lock.map"
+out="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/gh-held-lock.map" run_driver)"
+case "$out" in
+  *"o/r#41 skipped (enrichment-ongoing still set — may be another session's lock)"*)
+    pass "an incomplete enrich with the lock still set is skipped, not escalated (#458)" ;;
+  *) fail "an incomplete enrich with the lock still set is skipped, not escalated (#458)" "output was: $out" ;;
+esac
+if grep -q 'issue edit' "$GH_MOCK_LOG"; then
+  fail "a held lock is never released by the driver (#458)" "$(grep 'issue edit' "$GH_MOCK_LOG")"
+else
+  pass "a held lock is never released by the driver (#458)"
+fi
+
 # --- Fix 3: a human parks the issue while the (up to 30-minute) nested
 #     session is still running. The post-enrich re-read must catch it. ---
 printf '{"labels":[{"name":"parked"}]}\n' > "$TMPDIR_T/labels-parked.json"

@@ -90,6 +90,12 @@ else
   fail "the rule names label state as the contract"
 fi
 
+if printf '%s\n' "$section" | grep -qi 'only if this run acquired'; then
+  pass "never-wait releases the lock only if this run acquired it"
+else
+  fail "never-wait releases the lock only if this run acquired it"
+fi
+
 printf '\npassed: %d   failed: %d\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then
   printf 'failed:\n'

@@ -119,6 +119,7 @@ script:
 | `needs-human` | The enrich session hit a one-way door or a `[low]` assumption and handed it over |
 | `skipped (could not read labels — not dispatching)` | A post-enrich label re-read (`needs-human`, `needs-enrichment`, or `parked`) failed, or returned a state the driver did not expect; refuses to dispatch rather than guess |
 | `failed (enrich did not complete)` | The nested session exited 0 but neither enriched nor escalated the issue (prose-only reply, a denied tool, a stop on an error, or its own `needs-human` write failing) — `needs-enrichment` is still there and `needs-human` is not. Escalated to `needs-human` and the lock released, so the issue cannot silently drop out of the lane (#458) |
+| `skipped (enrichment-ongoing still set — may be another session's lock)` | The session neither enriched nor escalated, but the lock is still on the issue — most likely another `/enrich` session holds it (this one stood down at Step 1.5 or lost the Step 2.5 race). Nothing written; if no session is actually running, see "When something is wedged" |
 | `skipped (parked during enrich — not dispatching)` | A human applied `parked` while the (up to 30-minute) nested session was running; the driver re-reads it after the session returns and refuses to dispatch |
 | `failed (dispatch labels not applied); escalated to needs-human` | The enrich session came out clean, but applying `ai-implement`/`ai-review-ai-merge` failed even after retry; escalated to a human instead of silently dropping the issue |
 | `failed (dispatch labels not applied); ESCALATION FAILED: needs-human not applied` | The dispatch write failed, AND the escalation write also failed — the issue is now enriched with no dispatch labels and no `needs-human`; fix by hand |
@@ -146,14 +147,17 @@ The process's own exit code, distinct from the per-line outcomes above:
 - **A clone is in a bad state.** Delete it:
   `rm -rf ~/.cache/agent-workflow/autopilot/<owner>__<name>`. The next run
   re-clones.
-- **An issue is stuck with `enrichment-ongoing` and no run in flight.** The
-  driver releases the lock on every escalation, so this means either a run
-  logged `ESCALATION FAILED`, or the run itself was killed (e.g. the unit's
-  `TimeoutStartSec`). Nothing releases it automatically after that:
-  `/enrich`'s staleness check only offers to take
-  over a stale lock interactively, which headless mode forbids, and the lane
-  skips any issue still carrying `enrichment-ongoing` regardless of its age.
-  Remove the label by hand:
+- **An issue is stuck with `enrichment-ongoing` and no run in flight.** A lock
+  is left behind by any of: an `ESCALATION FAILED` log line; a
+  `skipped (enrichment-ongoing still set …)` line with no session actually
+  running; a dispatch-failure escalation (`failed (dispatch labels not
+  applied) …` adds `needs-human` only); `/enrich` Step 6 failing on the lock
+  release after it already removed `needs-enrichment`; or the run being
+  killed (e.g. the unit's `TimeoutStartSec`). Nothing releases it
+  automatically: `/enrich`'s staleness check only offers to take over a stale
+  lock interactively, which headless mode forbids, and the lane skips any
+  issue still carrying `enrichment-ongoing` regardless of its age. Remove the
+  label by hand:
   `gh issue edit <n> --repo <owner/repo> --remove-label enrichment-ongoing`.
 - **An issue keeps landing in `needs-human`.** That is the design working.
   Enrich it by hand with `/enrich <n>` and remove `needs-human`.

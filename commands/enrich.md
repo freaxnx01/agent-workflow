@@ -118,15 +118,18 @@ A headless run has nobody to answer a prompt and nobody to notice a stall. If a
 tool call fails or is denied and the current step cannot go on without it:
 
 1. Do not retry it with variations — a denied call stays denied.
-2. Release the lock, best effort:
-   `gh issue edit $ISSUE --remove-label enrichment-ongoing`. If that fails
-   too, say so.
+2. Release the lock **only if this run acquired it in Step 2.5**:
+   `gh issue edit $ISSUE --remove-label enrichment-ongoing`. If that fails,
+   say so. A run that stops before Step 2.5 releases nothing — any lock on
+   the issue then belongs to another session.
 3. Make the exact error text the final output, and stop.
 
 The session's exit status is **not** part of the contract: `claude --print`
 exits 0 whatever the model decides. Label state is. A run that stops this way
-leaves `needs-enrichment` on and `needs-human` off, and `scripts/autopilot.sh`
-escalates exactly that state to `needs-human` (#458). Outside the lane — a
+leaves `needs-enrichment` on, `needs-human` off and no lock of its own, and
+`scripts/autopilot.sh` escalates exactly that state to `needs-human` (#458).
+If `enrichment-ongoing` is still set, the driver assumes it may be another
+session's and leaves the issue alone. Outside the lane — a
 manual `/enrich --headless`, a batch of subagents — the error text is the only
 signal, so it must be the last thing the run says.
 
