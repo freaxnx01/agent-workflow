@@ -310,6 +310,9 @@ fi
 #     exits 0 — but never removed needs-enrichment. The driver must refuse to
 #     dispatch on this positive-evidence check, not just on the absence of
 #     needs-human. ---
+#     Since #458 it also escalates: the state is exactly what a session that
+#     stopped on an error (or whose own needs-human write failed) leaves
+#     behind, and skipping it left enrichment-ongoing set with no human told.
 printf '{"labels":[{"name":"needs-enrichment"}]}\n' > "$TMPDIR_T/labels-not-enriched.json"
 {
   printf 'contents/.github/workflows/agent.yml\t%s\n' "$FIX/agent-yml-good.yml"
@@ -323,14 +326,55 @@ printf '{"labels":[{"name":"needs-enrichment"}]}\n' > "$TMPDIR_T/labels-not-enri
 
 out="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/gh-not-enriched.map" run_driver)"
 case "$out" in
-  *"skipped (enrich did not complete — needs-enrichment still present)"*)
-    pass "rc==0 with needs-enrichment still present refuses to dispatch (Fix 1)" ;;
-  *) fail "rc==0 with needs-enrichment still present refuses to dispatch (Fix 1)" "output was: $out" ;;
+  *"o/r#41 failed (enrich did not complete)"*)
+    pass "rc==0 with needs-enrichment still present is logged as a failure (#458)" ;;
+  *) fail "rc==0 with needs-enrichment still present is logged as a failure (#458)" "output was: $out" ;;
 esac
-if grep -q 'issue edit' "$GH_MOCK_LOG"; then
-  fail "an incomplete enrich dispatches nothing (Fix 1)" "$(grep 'issue edit' "$GH_MOCK_LOG")"
+edits="$(grep 'issue edit' "$GH_MOCK_LOG" || true)"
+assert_eq "an incomplete enrich escalates in a single call (#458)" "1" \
+  "$(printf '%s\n' "$edits" | grep -c 'issue edit')"
+case "$edits" in
+  *"--add-label needs-human"*"--remove-label enrichment-ongoing"*)
+    pass "an incomplete enrich adds needs-human and releases the lock (#458)" ;;
+  *) fail "an incomplete enrich adds needs-human and releases the lock (#458)" "edits were: $edits" ;;
+esac
+if printf '%s\n' "$edits" | grep -q 'ai-implement'; then
+  fail "an incomplete enrich dispatches nothing (Fix 1)" "$edits"
 else
   pass "an incomplete enrich dispatches nothing (Fix 1)"
+fi
+
+# --- #458: the same incomplete enrich, and the escalation write fails too.
+#     Must be called out distinctly, and still never dispatch. ---
+printf 'issue edit\n' > "$TMPDIR_T/gh-fail-edit-458.map"
+out="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/gh-not-enriched.map" \
+  GH_MOCK_FAIL_MAP="$TMPDIR_T/gh-fail-edit-458.map" GH_RETRY_MAX=1 run_driver)"
+case "$out" in
+  *"failed (enrich did not complete); ESCALATION FAILED: needs-human not applied, enrichment-ongoing may still be set"*)
+    pass "a failed escalation of an incomplete enrich is called out (#458)" ;;
+  *) fail "a failed escalation of an incomplete enrich is called out (#458)" "output was: $out" ;;
+esac
+if grep 'issue edit' "$GH_MOCK_LOG" | grep -q 'ai-implement'; then
+  fail "a failed escalation of an incomplete enrich dispatches nothing (#458)" "$(grep 'issue edit' "$GH_MOCK_LOG")"
+else
+  pass "a failed escalation of an incomplete enrich dispatches nothing (#458)"
+fi
+
+# --- #458 amendment: the session stood down because ANOTHER session holds the
+#     lock (Step 1.5 / lost race at 2.5). Same labels as an incomplete enrich,
+#     plus enrichment-ongoing. The driver must not touch someone else's lock. ---
+printf '{"labels":[{"name":"needs-enrichment"},{"name":"enrichment-ongoing"}]}\n' > "$TMPDIR_T/labels-held-lock.json"
+sed "s#labels-not-enriched.json#labels-held-lock.json#" "$TMPDIR_T/gh-not-enriched.map" > "$TMPDIR_T/gh-held-lock.map"
+out="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/gh-held-lock.map" run_driver)"
+case "$out" in
+  *"o/r#41 skipped (enrichment-ongoing still set — may be another session's lock)"*)
+    pass "an incomplete enrich with the lock still set is skipped, not escalated (#458)" ;;
+  *) fail "an incomplete enrich with the lock still set is skipped, not escalated (#458)" "output was: $out" ;;
+esac
+if grep -q 'issue edit' "$GH_MOCK_LOG"; then
+  fail "a held lock is never released by the driver (#458)" "$(grep 'issue edit' "$GH_MOCK_LOG")"
+else
+  pass "a held lock is never released by the driver (#458)"
 fi
 
 # --- Fix 3: a human parks the issue while the (up to 30-minute) nested

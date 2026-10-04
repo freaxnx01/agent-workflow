@@ -151,3 +151,43 @@ TDD in `tests/run-autopilot-driver-tests.sh`:
 The rest of #455 (permission classifier on direct push, `❓ to-be-defined`
 noise, sandbox rule constraints, `--comments` text mode, retry on label
 calls, shared scratchpad, headless resume) stays there.
+
+## Amendment — 2026-10-04, after the PR #471 review
+
+The pipeline's review of PR #471 found a case this spec missed, and it was
+right. A nested session that **stands down** — Step 1.5 found a fresh lock, or
+Step 2.5's race re-check lost — exits 0 leaving `needs-enrichment` on,
+`needs-human` off and `enrichment-ongoing` **set, held by the competing
+session**. G2 as written escalates that state: it removes a live competitor's
+lock and stamps `needs-human` on an issue someone is actively enriching,
+against `/enrich` Step 2.5's own rule.
+
+The driver cannot tell its session's leftover lock from a competitor's (same
+author, same comment text), so:
+
+- **G2, amended.** The incomplete-enrich branch escalates **only when
+  `enrichment-ongoing` is absent** — the session never took the lock, or
+  released it. When it is present, the driver writes nothing and logs
+  `skipped (enrichment-ongoing still set — may be another session's lock)`.
+  When it cannot be read, it writes nothing and logs the existing
+  `skipped (could not read labels — not dispatching)`.
+- **G3, amended.** Never-wait releases the lock **only if this run acquired
+  it in Step 2.5**. A run that stops earlier releases nothing — any lock on
+  the issue then belongs to someone else.
+- Together: a headless run that follows never-wait releases its own lock, so
+  the driver sees the lock absent and escalates. A run that stops before
+  Step 2.5 never had a lock, same result. The remaining manual case — a
+  session exits 0 still holding its own lock, in breach of never-wait — is
+  the same silent skip as before #458, now with a distinct log line.
+- **Docs.** The "wedged" bullet in `docs/AUTOPILOT.md` lists every way a lock
+  can be left behind: an `ESCALATION FAILED` log line; the new
+  `skipped (enrichment-ongoing still set …)` line; a dispatch-failure
+  escalation (`failed (dispatch labels not applied) …`, which adds
+  `needs-human` only); `/enrich` Step 6 failing on the lock release after it
+  already removed `needs-enrichment`; or the run being killed.
+
+Added acceptance criteria:
+
+- [ ] An incomplete enrich with `enrichment-ongoing` still set writes nothing and logs the distinct skip line
+- [ ] Never-wait's lock release is scoped to "only if this run acquired it in Step 2.5"
+- [ ] The `docs/AUTOPILOT.md` wedged bullet lists all five ways a lock can be left behind

@@ -94,11 +94,44 @@ attention, and until async review of an assumptions block is proven workable a
 low-confidence guess gets a person.
 
 Apply steps 3 and 4 in a **single** `gh issue edit` call — two calls against the
-same issue race, which is the lesson of #365:
+same issue race, which is the lesson of #365. Create `needs-human` first: a repo
+that has never run the pipeline does not have it yet, and one missing label
+fails the whole edit, so the escalation would not happen at all (#455, #458).
+Color and description match `scripts/ensure-issue-labels.sh`; the create fails
+harmlessly when the label already exists. Then read it back:
 
 ```bash
+gh label create needs-human --color D93F0B \
+  --description "Autopilot could not decide this unattended — a human must resolve it" \
+  2>/dev/null || true
 gh issue edit $ISSUE --add-label needs-human --remove-label enrichment-ongoing
+gh issue view $ISSUE --json labels --jq '[.labels[].name] | index("needs-human") != null'
 ```
+
+If the read-back prints anything but `true`, the escalation did not land.
+Follow [Never wait](#never-wait): report the error and stop. Do not retry
+with variations and do not go on to any later step.
+
+### Never wait
+
+A headless run has nobody to answer a prompt and nobody to notice a stall. If a
+tool call fails or is denied and the current step cannot go on without it:
+
+1. Do not retry it with variations — a denied call stays denied.
+2. Release the lock **only if this run acquired it in Step 2.5**:
+   `gh issue edit $ISSUE --remove-label enrichment-ongoing`. If that fails,
+   say so. A run that stops before Step 2.5 releases nothing — any lock on
+   the issue then belongs to another session.
+3. Make the exact error text the final output, and stop.
+
+The session's exit status is **not** part of the contract: `claude --print`
+exits 0 whatever the model decides. Label state is. A run that stops this way
+leaves `needs-enrichment` on, `needs-human` off and no lock of its own, and
+`scripts/autopilot.sh` escalates exactly that state to `needs-human` (#458).
+If `enrichment-ongoing` is still set, the driver assumes it may be another
+session's and leaves the issue alone. Outside the lane — a
+manual `/enrich --headless`, a batch of subagents — the error text is the only
+signal, so it must be the last thing the run says.
 
 Headless mode changes nothing else. Every other step of the [GitHub](#github)
 section still runs: the lock, the spec, the plan, the push verification, the

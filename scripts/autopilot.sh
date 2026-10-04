@@ -168,6 +168,28 @@ issue_label_state() {
   esac
 }
 
+# Hands issue $2 in repo $1 to a human: needs-human added and the
+# enrichment-ongoing lock released in ONE call, so a failure cannot release
+# the lock while leaving the issue unlabelled (#365). Retried via gh-retry.sh
+# because a transient blip on this exact call is the one failure mode that
+# defeats the whole anti-poison-issue design: needs-human never lands,
+# enrichment-ongoing stays set, and autopilot-candidates.sh excludes issues
+# carrying enrichment-ongoing — so the issue silently drops out of the lane
+# for good. $3 is the log reason; on success it is logged alone, which
+# docs/AUTOPILOT.md documents as "escalated".
+escalate_issue() {
+  local repo="$1" n="$2" reason="$3" rc=0
+  AUTOPILOT_WROTE=1
+  with_backoff gh issue edit "$n" --repo "$repo" \
+    --add-label needs-human --remove-label enrichment-ongoing >/dev/null 2>&1 || rc=$?
+  if (( rc != 0 )); then
+    log_issue "$repo" "$n" \
+      "$reason; ESCALATION FAILED: needs-human not applied, enrichment-ongoing may still be set"
+    return 0
+  fi
+  log_issue "$repo" "$n" "$reason"
+}
+
 process_issue() {
   local repo="$1" n="$2" dir rc
   dir="$(autopilot_clone_dir "$repo")"
@@ -188,28 +210,14 @@ process_issue() {
   if (( rc != 0 )); then
     # A crash escalates to a human, not just to the log. Without this, an issue
     # that reliably kills the enrich session re-spawns a paid nested session on
-    # every run, forever. One call, so a failure cannot release the lock while
-    # leaving the issue unlabelled (#365). It's retried via gh-retry.sh because
-    # a transient blip on this exact call is the one failure mode that defeats
-    # the whole anti-poison-issue design: needs-human never lands,
-    # enrichment-ongoing (set by /enrich before it crashed) stays set, and
-    # autopilot-candidates.sh excludes issues carrying enrichment-ongoing — so
-    # the issue silently drops out of the lane for good.
-    local reason escalate_rc=0
+    # every run, forever.
+    local reason
     if (( rc == 124 )); then
       reason="failed (enrich timed out after ${AUTOPILOT_ENRICH_TIMEOUT}s)"
     else
       reason="failed (enrich exited $rc)"
     fi
-    AUTOPILOT_WROTE=1
-    with_backoff gh issue edit "$n" --repo "$repo" \
-      --add-label needs-human --remove-label enrichment-ongoing >/dev/null 2>&1 || escalate_rc=$?
-    if (( escalate_rc != 0 )); then
-      log_issue "$repo" "$n" \
-        "$reason; ESCALATION FAILED: needs-human not applied, enrichment-ongoing may still be set"
-    else
-      log_issue "$repo" "$n" "$reason"
-    fi
+    escalate_issue "$repo" "$n" "$reason"
     return 0
   fi
 
@@ -238,8 +246,21 @@ process_issue() {
   issue_label_state "$repo" "$n" needs-enrichment || enrich_state=$?
   case "$enrich_state" in
     1) : ;; # absent — /enrich completed and cleared it, proceed
-    0) log_issue "$repo" "$n" \
-         "skipped (enrich did not complete — needs-enrichment still present)"; return 0 ;;
+    0) # The session returned without enriching OR escalating. Escalate —
+       # unless enrichment-ongoing is still set: a session that stood down
+       # because ANOTHER session holds the lock (/enrich Step 1.5, or a lost
+       # race at 2.5) leaves exactly this state, and the driver cannot tell
+       # that lock from its own session's leftover. Releasing it would unlock
+       # an issue someone is actively enriching (#458, PR #471 review).
+       local lock_state=0
+       issue_label_state "$repo" "$n" enrichment-ongoing || lock_state=$?
+       case "$lock_state" in
+         1) escalate_issue "$repo" "$n" "failed (enrich did not complete)" ;;
+         0) log_issue "$repo" "$n" \
+              "skipped (enrichment-ongoing still set — may be another session's lock)" ;;
+         *) log_issue "$repo" "$n" "skipped (could not read labels — not dispatching)" ;;
+       esac
+       return 0 ;;
     *) log_issue "$repo" "$n" "skipped (could not read labels — not dispatching)"; return 0 ;;
   esac
 
