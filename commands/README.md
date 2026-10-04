@@ -74,4 +74,10 @@ vocabulary (MudBlazor, shadcn/ui, Flutter widgets, …) comes from the project's
 `/gh:implementation-contract` · `/gh:review` · `/autopilot` — the unattended
 version of the `/enrich → /gh:implement` hop, dry-run by default
 
+**Advisor** (relies on `gh`, so GitHub-only): `/advisor <topic>` — turns the session
+into the Software Factory advisor: reads `docs/ADVISOR-PROMPT.md` and
+`docs/FACTORY-MAP.md`, then works one topic, verifying runs from `gh` evidence
+rather than labels. Launch with `claude --settings setup/advisor-settings.json` to
+enforce its never-merge guardrail.
+
 Each `.md` file's `description:` front-matter shows in the `/` autocomplete menu.

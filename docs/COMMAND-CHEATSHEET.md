@@ -35,6 +35,16 @@ undecidable to `needs-human` for a person to pick up. It is gated on an
 allowlist a repo cannot opt itself into, and its default is a dry run — see
 [`docs/AUTOPILOT.md`](AUTOPILOT.md).
 
+### The advisor
+
+`/advisor <topic>` turns a Claude Code session into the Software Factory
+advisor — a second opinion on what to build next and whether a dispatch really
+shipped. It reads [`ADVISOR-PROMPT.md`](ADVISOR-PROMPT.md) and
+[`FACTORY-MAP.md`](FACTORY-MAP.md) every time, and verifies a run from the PR,
+its checks and the workflow run rather than from the `ai:done` label. Launch it
+with `claude --settings setup/advisor-settings.json` so its "never merges" rule
+is enforced by a deny-list, not just promised.
+
 | Step | Command | What it produces |
 |---|---|---|
 | Capture | `/capture-idea <idea>` | a line in the repo's `docs/ideas.md` — no issue yet |

@@ -20,10 +20,15 @@ SETTINGS="$ROOT/setup/advisor-settings.json"
 PROMPT="$ROOT/docs/ADVISOR-PROMPT.md"
 
 # The deny rules #459 §3 requires. Exact strings: a rule that is spelled
-# differently is a rule Claude Code may not match.
+# differently is a rule Claude Code may not match. The approve rules wildcard
+# both sides because the PR number usually comes first (`gh pr review 12
+# --approve`), which a `gh pr review --approve` prefix would never see; the
+# `gh api` merge endpoint is the same merge spelled another way.
 REQUIRED_DENY=(
   'Bash(gh pr merge:*)'
-  'Bash(gh pr review --approve:*)'
+  'Bash(gh pr review *--approve*)'
+  'Bash(gh pr review * -a*)'
+  'Bash(gh api *pulls/*/merge*)'
   'Bash(gh secret set:*)'
   'Bash(gh secret delete:*)'
 )
