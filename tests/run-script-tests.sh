@@ -3222,6 +3222,7 @@ assert_contains "$log" 'label create ai-implement --repo owner/repo' "creates ai
 assert_contains "$log" 'label create ai:running --repo owner/repo' "creates ai:running"
 assert_contains "$log" 'label create ai:done --repo owner/repo'    "creates ai:done"
 assert_contains "$log" 'label create ai:failed --repo owner/repo'  "creates ai:failed"
+assert_contains "$log" 'label create ai:partial --repo owner/repo' "creates ai:partial (#457)"
 assert_contains "$log" 'label create ctx:medium --repo owner/repo' "creates ctx:medium"
 assert_contains "$log" 'label create ctx:high --repo owner/repo'   "creates ctx:high"
 
@@ -3317,6 +3318,21 @@ assert_contains "$log" 'issue comment 42 --repo owner/repo --body-file' "calls '
 assert_contains "$log" 'issue edit 42 --repo owner/repo --add-label ai:done,ctx:high' "applies ai:done,ctx:high"
 assert_contains "$log" 'issue edit 42 --repo owner/repo --remove-label ai:running'   "removes ai:running"
 assert_contains "$log" 'issue edit 42 --repo owner/repo --remove-label ai:failed'    "removes opposite label (ai:failed) on success"
+assert_contains "$log" 'issue edit 42 --repo owner/repo --remove-label ai:partial'   "removes ai:partial on success (#457)"
+
+: > "$MOCK_LOG"
+PATH="$MOCKS:$PATH" \
+GH_MOCK_LOG="$MOCK_LOG" \
+RESULT_FILE="$FIXTURES/result-success-cheap.json" \
+ISSUE_NUMBER=42 \
+REPO=owner/repo \
+WORKFLOW_RUN_URL=https://example/run/778 \
+PLAN_COVERAGE=partial MISSING_TASKS=2 \
+  bash "$SCRIPT" >/dev/null
+log="$(cat "$MOCK_LOG")"
+assert_contains "$log" 'issue edit 42 --repo owner/repo --add-label ai:partial'      "applies ai:partial (#457)"
+assert_contains "$log" 'issue edit 42 --repo owner/repo --remove-label ai:done'      "partial removes ai:done (#457)"
+assert_contains "$log" 'issue edit 42 --repo owner/repo --remove-label ai:failed'    "partial removes ai:failed (#457)"
 
 section "gh-retry — backoff classifies and retries transient failures"
 
@@ -3495,6 +3511,49 @@ out="$(RESULT_FILE="$FIXTURES/result-success-cheap.json" ISSUE_NUMBER=42 \
         WORKFLOW_RUN_URL=https://example.test/run/1 RENDER_ONLY=1 \
         bash "$ROOT/scripts/post-run-report.sh")"
 assert_not_contains "$out" 'salvaged'      "an ordinary success is not flagged as salvaged"
+
+section "plan coverage grading (#457)"
+
+out="$(RESULT_FILE="$FIXTURES/result-success-cheap.json" ISSUE_NUMBER=42 \
+        WORKFLOW_RUN_URL=https://example.test/run/1 RENDER_ONLY=1 \
+        PLAN_COVERAGE=partial MISSING_TASKS=2,3 \
+        bash "$ROOT/scripts/post-run-report.sh")"
+assert_contains "$out" ':warning: partial: plan task(s) 2, 3 have no file in the PR' \
+  "partial coverage renders a warning naming the missing tasks"
+assert_contains "$out" 'LABELS: ai:partial' "partial coverage labels ai:partial"
+assert_not_contains "$out" ':white_check_mark:' "partial coverage is not reported as success"
+
+out="$(RESULT_FILE="$FIXTURES/result-success-cheap.json" ISSUE_NUMBER=42 \
+        WORKFLOW_RUN_URL=https://example.test/run/1 RENDER_ONLY=1 \
+        PLAN_COVERAGE=partial MISSING_TASKS=2 SALVAGED=true \
+        bash "$ROOT/scripts/post-run-report.sh")"
+assert_contains "$out" 'LABELS: ai:partial' "partial wins over salvaged"
+
+out="$(RESULT_FILE="$FIXTURES/result-rate-limit.json" ISSUE_NUMBER=42 \
+        WORKFLOW_RUN_URL=https://example.test/run/1 RENDER_ONLY=1 \
+        PLAN_COVERAGE=partial MISSING_TASKS=2 \
+        bash "$ROOT/scripts/post-run-report.sh")"
+assert_contains "$out" 'LABELS: ai:failed' "an agent error wins over partial"
+
+out="$(RESULT_FILE="$FIXTURES/result-success-cheap.json" ISSUE_NUMBER=42 \
+        WORKFLOW_RUN_URL=https://example.test/run/1 RENDER_ONLY=1 \
+        PR_PRESENT=false PLAN_COVERAGE=partial MISSING_TASKS=2 \
+        bash "$ROOT/scripts/post-run-report.sh")"
+assert_contains "$out" 'no PR was opened' "no PR wins over partial"
+
+out="$(RESULT_FILE="$FIXTURES/result-success-cheap.json" ISSUE_NUMBER=42 \
+        WORKFLOW_RUN_URL=https://example.test/run/1 RENDER_ONLY=1 \
+        PLAN_COVERAGE=unverifiable PLAN_COVERAGE_REASON=no-plan \
+        bash "$ROOT/scripts/post-run-report.sh")"
+assert_contains "$out" ':white_check_mark: success' "unverifiable keeps the success grade"
+assert_contains "$out" 'LABELS: ai:done' "unverifiable keeps ai:done"
+assert_contains "$out" '**Plan coverage:** not checked — no-plan' "unverifiable says coverage was not checked"
+
+out="$(RESULT_FILE="$FIXTURES/result-success-cheap.json" ISSUE_NUMBER=42 \
+        WORKFLOW_RUN_URL=https://example.test/run/1 RENDER_ONLY=1 \
+        PLAN_COVERAGE=complete \
+        bash "$ROOT/scripts/post-run-report.sh")"
+assert_not_contains "$out" 'Plan coverage' "complete coverage adds nothing to the report"
 
 # --- salvage: run finished cleanly but never committed ----------------------
 #
@@ -4065,8 +4124,8 @@ assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'PIPELINE_APP_ID: ..{ secre
   "all three jobs declare PIPELINE_APP_ID at job level"
 
 # self-fix pushes; it must not be handed the ambient token.
-assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'GH_TOKEN: ..{ steps.app_token' || true)" "8" \
-  "both self-fix steps get the App token (6 implement-job callers + 2)"
+assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'GH_TOKEN: ..{ steps.app_token' || true)" "9" \
+  "both self-fix steps get the App token (7 implement-job callers + 2)"
 
 section "agent-implement.test.yml — caller permissions cover the callee (#435)"
 
