@@ -121,10 +121,16 @@ The deny-list blocks the actions an advisor must never take:
 | `gh pr merge`, `gh api` on `pulls/*/merge` | Merging is the operator's decision, not the advisor's. |
 | `gh pr review` with `--approve` / `-a` | An approval is a merge gate; the advisor gives opinions, not gates. |
 | `gh api` on `branches/*/protection` | Branch protection is what makes the gates hold. |
-| `gh secret set` / `gh secret delete` | Secrets are out of an advisor's reach entirely. |
+| `gh secret delete` | Removing a secret can break every run that reads it; that is the operator's call. |
 
 Everything else stays prompt-by-default. A session started without
 `--settings` has only this file's promise.
+
+`gh secret set` is **allowed** (operator decision, 2026-10-06): wiring a
+consumer — the pipeline App's `PIPELINE_APP_ID` / `PIPELINE_APP_PRIVATE_KEY`,
+for instance — is advisor work, and a deny rule cannot be narrowed to one repo
+because a deny beats any allow. Pipe a value straight from Passbolt into
+`gh secret set`; never echo it into the transcript.
 
 ### The one merge the advisor may arm: its own docs
 

@@ -6,7 +6,6 @@
       "Bash(gh pr review * -a*)",
       "Bash(gh api *pulls/*/merge*)",
       "Bash(gh api *branches/*/protection*)",
-      "Bash(gh secret set:*)",
       "Bash(gh secret delete:*)"
     ]
   }

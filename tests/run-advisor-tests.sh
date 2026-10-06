@@ -24,12 +24,13 @@ PROMPT="$ROOT/docs/ADVISOR-PROMPT.md"
 # both sides because the PR number usually comes first (`gh pr review 12
 # --approve`), which a `gh pr review --approve` prefix would never see; the
 # `gh api` merge endpoint is the same merge spelled another way.
+# `gh secret set` is deliberately NOT here: wiring a consumer (e.g. the
+# pipeline App secrets) is advisor work, and deleting stays denied.
 REQUIRED_DENY=(
   'Bash(gh pr merge:*)'
   'Bash(gh pr review *--approve*)'
   'Bash(gh pr review * -a*)'
   'Bash(gh api *pulls/*/merge*)'
-  'Bash(gh secret set:*)'
   'Bash(gh secret delete:*)'
 )
 
@@ -97,6 +98,13 @@ if [[ -f "$SETTINGS" ]] && jq -e . "$SETTINGS" >/dev/null 2>&1; then
       fail "denies $rule"
     fi
   done
+  # A deny rule beats any allow, so a leftover `gh secret set` deny would
+  # silently block consumer wiring again.
+  if jq -e '[.permissions.deny[] | select(test("gh secret set"))] | length == 0' "$SETTINGS" >/dev/null; then
+    pass "allows gh secret set"
+  else
+    fail "allows gh secret set"
+  fi
   if jq -e '[.permissions.deny[] | select(test("protection"))] | length > 0' "$SETTINGS" >/dev/null; then
     pass "denies branch-protection writes"
   else
