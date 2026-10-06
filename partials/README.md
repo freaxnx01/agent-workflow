@@ -13,6 +13,7 @@ and picks up changes with a `git pull`.
 | [`response-formatting.md`](response-formatting.md) | Layout rules for answers: bold key terms, open with a `TL;DR:` line past two sentences and repeat it as the closing line once the answer is long enough to scroll, turn comma-separated runs into one-per-line bullets, and blank-line-separate list items. |
 | [`german-correspondence.md`](german-correspondence.md) | German writing conventions: capitalize the address pronouns (`Du`/`Dir`/`Dein…`, `Ihr`/`Euch`/`Euer…`) except in quoted foreign text, and always write real umlauts (`ä ö ü`) rather than `ae oe ue`. Explains why a companion "named HTML entities for Outlook" rule is the same rule encoded for Word, not an exception. |
 | [`email-style.md`](email-style.md) | Mail drafts open with a `TL;DR:` block carrying the actual conclusion, then stay short — the mail holds the conclusion and the asks, not the derivation; detail is offered on request rather than pasted in. |
+| [`temp-files.md`](temp-files.md) | Throwaway files go in the session scratchpad or the OS temp dir, not a hand-picked fixed folder like `C:\Temp`; a shared folder only when another identity (app pool, service, elevated process) must read it, in a per-task subfolder; clean up before finishing. |
 
 > `README.md` (this file) is **not** `@`-imported — the installer skips it. Any
 > other `*.md` dropped into this directory **is** imported automatically the
