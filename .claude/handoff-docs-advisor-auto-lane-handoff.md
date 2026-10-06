@@ -1,5 +1,5 @@
-## Resume: auto lane — sandbox end-to-end run for #373, ready to start
+## Resume: auto lane #373 — run 1 done (merge held, no App), run 2 next
 
-Run `/factory-advisor auto lane`, then read `docs/ai-notes/2026-10-06-auto-lane-sandbox-e2e.md` (on branch `docs/advisor-auto-lane-handoff`): it holds the milestone state, the finished sandbox setup, and the exact run command.
+Run `/factory-advisor auto lane`, then read `docs/ai-notes/2026-10-06-auto-lane-sandbox-e2e.md` (branch `docs/advisor-auto-lane-handoff`): run 1's stage table, the verified pipeline App (ID 5051377, key in Passbolt with flattened line breaks + the rebuild command), PR #477, and the findings to file.
 
-**Next step:** confirm `gh auth status` no longer reports an invalid `GH_TOKEN` (the PAT was rotated in Passbolt), confirm `~/.config/agent-workflow/autopilot.env` holds `CLAUDE_CODE_OAUTH_TOKEN`, re-run `scripts/autopilot.sh --dry-run --max 1` (expect `would: enrich … sandbox#16`), then have the operator start the paid run and verify every stage from evidence. For any implementation work that comes out of it, use `superpowers:subagent-driven-development`.
+**Next step:** confirm PR #477 is merged and this session was relaunched with `--settings …/advisor-settings.json` (so `gh secret set` is allowed); set `PIPELINE_APP_ID` / `PIPELINE_APP_PRIVATE_KEY` on `freaxnx01/agent-action-sandbox`, open the sandbox `agent.yml` PR (forward both + `pipeline-author-allowlist: freaxnx01-pipeline[bot]`), reset the candidate, dry-run, have the operator start run 2, verify every stage from evidence, and post both runs on #373. Use `superpowers:subagent-driven-development` for any implementation work.
