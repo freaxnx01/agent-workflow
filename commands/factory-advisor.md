@@ -58,8 +58,8 @@ gh api repos/<owner>/<repo>/pulls/<n>/commits --jq '.[] | [.sha[0:7], (.author.l
 
 ## Guardrail
 
-The advisor never merges, approves, edits branch protection, or touches
-secrets. That is enforced only when the session was launched with
+The advisor never merges, approves, edits branch protection, or deletes
+secrets. Setting one is allowed — pipe it from Passbolt, never echo it. That is enforced only when the session was launched with
 
 ```bash
 claude --settings ~/repos/github/freaxnx01/public/agent-workflow/setup/advisor-settings.json --remote-control "advisor"
@@ -67,7 +67,7 @@ claude --settings ~/repos/github/freaxnx01/public/agent-workflow/setup/advisor-s
 
 whose deny-list blocks `gh pr merge` (and the `gh api` merge endpoint),
 `gh pr review` with `--approve` / `-a`, `gh api` calls to branch protection, and
-`gh secret set` / `delete`. Do not start the advisor with `claude remote-control`
+`gh secret delete`. Do not start the advisor with `claude remote-control`
 (server mode): it refuses `--settings`. A session started without the settings
 has only the prompt's promise — if you cannot tell how this session was
 launched, say so at session start. Everything else stays prompt-by-default.
