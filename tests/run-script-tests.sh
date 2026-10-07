@@ -1475,6 +1475,16 @@ VERDICT=request_changes SELF_FIX_OUTCOME=success \
 calls="$(cat "$LOG")"; rm -f "$LOG"
 assert_not_contains "$calls" 'did not finish' "self-fix success → no did-not-finish note (#474)"
 
+# #482: the AI-merge job reads required checks with the App token when one is
+# minted — github.token has no `checks` permission there, and adding it would
+# exceed every consumer stub's permission ceiling.
+for step in 'Wait for required checks' 'Check merge envelope'; do
+  block="$(awk -v s="      - name: $step" 'index($0,s)==1{on=1;next} on&&/^      - name: /{on=0} on' "$ROOT/.github/workflows/agent-implement.yml")"
+  # shellcheck disable=SC2016  # literal GitHub Actions expression, not shell
+  assert_contains "$block" 'GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}' \
+    "'$step' reads checks with the App token, falling back to github.token (#482)"
+done
+
 # #474: wiring — both review jobs give the self-fix step a step-level timeout
 # and keep it non-fatal, both job caps leave room for it, and both blocked
 # steps receive the self-fix outcome.
@@ -4140,8 +4150,8 @@ assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'PIPELINE_APP_ID: ..{ secre
   "all three jobs declare PIPELINE_APP_ID at job level"
 
 # self-fix pushes; it must not be handed the ambient token.
-assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'GH_TOKEN: ..{ steps.app_token' || true)" "9" \
-  "both self-fix steps get the App token (7 implement-job callers + 2)"
+assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'GH_TOKEN: ..{ steps.app_token' || true)" "11" \
+  "App token consumers: 7 implement-job callers + 2 self-fix + 2 AI-merge checks readers (#482)"
 
 section "agent-implement.test.yml — caller permissions cover the callee (#435)"
 
