@@ -1378,7 +1378,8 @@ jobs:
         continue-on-error: true
         timeout-minutes: 3
         env:
-          GH_TOKEN: ${{ github.token }}
+          # #482: same token as the envelope below — github.token cannot see checks.
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
         run: gh pr checks "$PR_NUMBER" --repo "$REPO" --required --watch --interval 15 || true
@@ -1390,7 +1391,9 @@ jobs:
           && steps.final.outputs.verdict == 'approve'
         id: envelope
         env:
-          GH_TOKEN: ${{ github.token }}
+          # #482: github.token has no `checks` permission in this job, so it
+          # cannot see check runs; the App token can (Checks: read on the App).
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
           AUTHOR_ALLOWLIST: ${{ inputs.pipeline-author-allowlist }}
