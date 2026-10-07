@@ -1,7 +1,19 @@
-# Auto lane — sandbox end-to-end run for #373 (advisor session, 2026-10-04 → 06)
+# Auto lane — sandbox end-to-end run for #373 (advisor session, 2026-10-04 → 07)
 
-State of the `auto-lane-v1` milestone work and the exact next step. Written as a
-`/handoff` artifact so a cold `/factory-advisor auto lane` session can resume.
+**Outcome (2026-10-07):** run 4 merged end to end without a human step, and #373's
+end-to-end acceptance criterion is ticked. The results are posted on
+[#373](https://github.com/freaxnx01/agent-workflow/issues/373#issuecomment-6045536368).
+The sections below are the working record that got there.
+
+| Run | Stopped by | Fix |
+|---|---|---|
+| 1 | gate 5: PR by `github-actions[bot]`, so `ci` sat at `action_required` | App wired into the sandbox stub (sandbox PR #19) |
+| 2 | `verify_pr` ignored the author allowlist, so no PR number and the AI-merge job was skipped | #478 / PR #479 |
+| 3 | gate 5: checks read with a token that can't see check runs | #482 / PR #483, plus Checks / Commit statuses / Actions read on the App |
+| 4 | merged: sandbox #26 → PR #28 by `freaxnx01-pipeline[bot]`, envelope `pass` | |
+
+**Launch line:** start the driver through `direnv exec ~/repos/github/freaxnx01/public …`,
+so `GH_TOKEN` comes from the Passbolt-backed `.envrc` whichever directory you launch from.
 
 ## Where the milestone stands (verified live 2026-10-06)
 
