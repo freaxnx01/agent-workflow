@@ -3475,6 +3475,22 @@ out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false DEFAULT_BRANCH=mai
 assert_contains "$out" 'pr-present=true'   "gh pr create 'already exists' (search lag) → pr-present=true"
 assert_contains "$out" 'recovered=false'   "  → not counted as recovered (it pre-existed)"
 
+# #478: a PR opened by the pipeline App is found — with its number — when the
+# allowlist names the App's bot. Without the number plan coverage grades
+# `unverifiable` and the AI-merge job never runs.
+out="$(verify_run env ISSUE_NUMBER=42 REPO=o/r IS_ERROR=false \
+        AUTHOR_ALLOWLIST='freaxnx01-pipeline[bot]' \
+        PIPELINE_PRS_JSON='[{"number":22,"isDraft":true,"headRefOid":"x","author":{"login":"app/freaxnx01-pipeline"},"body":"Closes #42"}]')"
+assert_contains "$out" 'found=true'     "App-authored PR + allowlist → found=true (#478)"
+assert_contains "$out" 'pr-number=22'   "App-authored PR + allowlist → pr-number=22 (#478)"
+
+# #478: the workflow must hand the allowlist to the verify step; without it
+# find-pipeline-pr.sh falls back to github-actions[bot] and misses App PRs.
+verify_pr_block="$(awk '/^        id: verify_pr$/{on=1} on&&/^      - name: /{on=0} on' "$ROOT/.github/workflows/agent-implement.yml")"
+# shellcheck disable=SC2016  # literal GitHub Actions expression, not shell
+assert_contains "$verify_pr_block" 'AUTHOR_ALLOWLIST: ${{ inputs.pipeline-author-allowlist }}' \
+  "verify_pr step passes pipeline-author-allowlist (#478)"
+
 # Missing required env → exit 2.
 ec="$(run_capture_ec env REPO=o/r IS_ERROR=false bash "$VERIFY")"
 assert_equals "$ec" "2" "missing ISSUE_NUMBER → exit 2"
