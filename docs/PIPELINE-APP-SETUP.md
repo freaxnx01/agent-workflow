@@ -34,6 +34,7 @@ because the secrets are unset.
    | Issues | Read and write | Run report comments, labels |
    | Checks | Read | Merge envelope gate 5 and the checks diagnostic read the PR's check runs with the App token (#482) |
    | Commit statuses | Read | The same reads, for checks reported as commit statuses (#482) |
+   | Actions | Read | Run status reads (checks diagnostic, retry paths), so they work on the App token too (#482) |
    | Workflows | Read and write | Push a branch that touches `.github/workflows/` — needed only if plans will edit workflow files |
 
    **Workflows is not optional if any plan will edit a workflow file.** An
