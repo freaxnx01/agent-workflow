@@ -307,6 +307,58 @@ assert_eq "unescapes HTML entities" "a note & update" \
 
 rm -rf "$cm_dir"
 
+section "azdo_add_tag / azdo_remove_tag — read-modify-write, guarded"
+
+tg_dir="$(mktemp -d)"
+# shellcheck disable=SC2030,SC2031
+run_tag() {
+  local az_fixture="$1"; shift
+  (
+    export PATH="$MOCKS:$PATH"
+    export AZ_MOCK_FIXTURE="$FIXTURES/$az_fixture"
+    export CURL_MOCK_FIXTURE="$FIXTURES/azdo-set-tags-replaced.json"
+    export CURL_MOCK_BODY_LOG="$tg_dir/body.txt"
+    export AZDO_ORG=contoso AZDO_PROJECT=MyProject AZDO_REPO=my-repo
+    export AZURE_DEVOPS_EXT_PAT=not-a-real-token
+    # shellcheck disable=SC1090
+    source "$LIB"
+    "$@"
+  )
+}
+
+sent_value() {
+  python3 -c '
+import json,sys
+print(json.loads(open(sys.argv[1]).read().strip().splitlines()[0])[0]["value"])' "$tg_dir/body.txt"
+}
+
+rm -f "$tg_dir/body.txt"
+run_tag azdo-fields-tagged.json azdo_add_tag 5 enrichment-ongoing >/dev/null
+assert_eq "adding keeps the existing tags" "parked; roadmap; enrichment-ongoing" \
+  "$(sent_value)"
+
+# Review Focus 5 — releasing a lock must not take parked/roadmap with it.
+rm -f "$tg_dir/body.txt"
+run_tag azdo-fields-tagged.json azdo_remove_tag 5 roadmap >/dev/null
+assert_eq "removing leaves the others intact" "parked" "$(sent_value)"
+
+# Review Focus 1 — a failed read must not become a write.
+rm -f "$tg_dir/body.txt"
+rc=0
+run_tag azdo-wiql-tf51011.txt azdo_remove_tag 5 roadmap >/dev/null 2>&1 || rc=$?
+assert_eq "a failed read refuses the tag write" "1" "$rc"
+if [[ -s "$tg_dir/body.txt" ]]; then
+  fail "a failed tag read sends no PATCH" "a request body was recorded"
+else
+  pass "a failed tag read sends no PATCH"
+fi
+
+assert_eq "usage error without a tag" "2" \
+  "$( rc=0; run_tag azdo-fields-tagged.json azdo_add_tag 5 >/dev/null 2>&1 || rc=$?
+     printf '%s' "$rc" )"
+
+rm -rf "$tg_dir"
+
 # --- summary -------------------------------------------------------------
 
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"

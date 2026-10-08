@@ -363,3 +363,48 @@ for c in comments:
     text = re.sub(r"<[^>]+>", "", c.get("text", ""))
     print(" ".join(html.unescape(text).split()))'
 }
+
+# _azdo_edit_tags <id> <add|remove> <tag>  shared read-modify-write.
+#
+# azdo_set_tags replaces the WHOLE string, so a single-tag edit has to read the
+# current set first. The read's status is captured and a non-zero one aborts:
+# azdo_fields defaults an absent System.Tags to "", so an empty read is
+# indistinguishable from a failed one, and writing anyway would clear every tag
+# the item has -- parked and roadmap included.
+_azdo_edit_tags() {
+  local id="${1-}" mode="${2-}" tag="${3-}"
+  if [[ -z "$id" || -z "$mode" || -z "$tag" ]]; then
+    echo "usage: _azdo_edit_tags <id> <add|remove> <tag>" >&2
+    return 2
+  fi
+
+  local row rc=0
+  set +o pipefail
+  row="$(azdo_fields "$id" 2>/dev/null)" || rc=$?
+  set -o pipefail
+  if [[ $rc -ne 0 || -z "$row" ]]; then
+    echo "_azdo_edit_tags: could not read work item $id — refusing to write" >&2
+    return 1
+  fi
+
+  local next
+  next=$(printf '%s' "$row" | python3 -c '
+import sys, json
+row = json.loads(sys.stdin.readline())
+mode, tag = sys.argv[1], sys.argv[2]
+tags = [t.strip() for t in row.get("tags", "").split(";") if t.strip()]
+if mode == "add":
+    if tag not in tags:
+        tags.append(tag)
+else:
+    tags = [t for t in tags if t != tag]
+print("; ".join(tags))' "$mode" "$tag")
+
+  azdo_set_tags "$id" "$next"
+}
+
+# azdo_add_tag <id> <tag>  adds one tag, preserving the rest.
+azdo_add_tag() { _azdo_edit_tags "${1-}" add "${2-}"; }
+
+# azdo_remove_tag <id> <tag>  removes one tag, preserving the rest.
+azdo_remove_tag() { _azdo_edit_tags "${1-}" remove "${2-}"; }
