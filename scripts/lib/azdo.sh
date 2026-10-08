@@ -213,18 +213,25 @@ azdo_active_pr_work_items() {
 # azdo_set_tags <work-item-id> <tags>  REPLACES a work item's tags outright.
 # <tags> is semicolon-delimited ("a;b"); an empty string clears them.
 #
-# WARNING -- THE ID IS ORG-SCOPED, NOT PROJECT-SCOPED. The PATCH below goes to
-# /_apis/wit/workitems/<id>, which carries NO project segment, and neither does
-# `az boards work-item show --id`. Work-item ids are allocated per ORGANIZATION,
-# so an id that looks like "the next one in this project" may belong to a
-# different project entirely -- and this call will happily rewrite it. AZDO_PROJECT
-# does not constrain the write; it is used only by the reads.
+# WARNING -- THE ID IS ORG-SCOPED, NOT PROJECT-SCOPED.
 #
-# So never pass an id you guessed, counted on, or carried over from a plan. Pass
-# one you have READ BACK from the project you intend to touch, and verify its
-# System.TeamProject first if anything is riding on it. A live run against the
-# sandbox (2026-10-08) expected to create work item 5 and got 6; the predicted id
-# did not exist in that project at all.
+# OBSERVED (sandbox, 2026-10-08): the PATCH below goes to /_apis/wit/workitems/<id>,
+# which carries NO project segment, and neither does `az boards work-item show
+# --id`. AZDO_PROJECT does not constrain the write; it is used only by the reads.
+# Ids are allocated per ORGANIZATION, and the id a plan predicts need not be the
+# one the project holds -- a run that expected to create work item 5 got 6, and a
+# read of 5 from this project errors TF401232 ("does not exist, or you do not
+# have permissions to read it"), which does not distinguish the two cases.
+#
+# INFERRED from that URL shape, and deliberately NOT TESTED: that a PATCH naming
+# an id belonging to a DIFFERENT project would be accepted and rewrite it. The
+# experiment that would settle it is a write into a project we do not own, so we
+# will not run it. Treat it as an unverified worst case.
+#
+# The instruction does not depend on which of those it is. Never pass an id you
+# guessed, counted on, or carried over from a plan. Pass one you have READ BACK
+# from the project you intend to touch, and verify its System.TeamProject first
+# if anything is riding on it.
 #
 # This exists because `az boards work-item update --fields "System.Tags=..."`
 # cannot do it. That form APPENDS -- successive calls accumulate -- and an empty
@@ -295,9 +302,10 @@ sys.stdout.write(d.get("fields", {}).get("System.Description", ""))'
 
 # azdo_set_description <id> <html>  writes System.Description, echoes it back.
 #
-# WARNING -- the id is ORG-SCOPED. See the note above azdo_set_tags: this PATCH
-# goes to the same project-less URL, so a wrong id rewrites another project's
-# work item. Pass an id read back from the project you mean to touch.
+# WARNING -- the id is ORG-SCOPED. This PATCH goes to the same project-less URL
+# as azdo_set_tags, so the note above that function applies here in full --
+# including which part of it is observed and which part is only inferred. Pass
+# an id read back from the project you mean to touch.
 #
 # The json-patch op is CHOSEN FROM THE READ, never fixed. `add` on an existing
 # field is the appending behaviour azdo_set_tags exists to escape, so the read is
