@@ -379,9 +379,7 @@ _azdo_edit_tags() {
   fi
 
   local row rc=0
-  set +o pipefail
-  row="$(azdo_fields "$id" 2>/dev/null)" || rc=$?
-  set -o pipefail
+  row="$(azdo_fields "$id")" || rc=$?
   if [[ $rc -ne 0 || -z "$row" ]]; then
     echo "_azdo_edit_tags: could not read work item $id — refusing to write" >&2
     return 1
