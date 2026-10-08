@@ -347,6 +347,8 @@ azdo_comment() {
 # at ...</div>" -- so a caller matching a plain-text lock line finds nothing
 # unless the tags come off first. Newlines inside a comment are collapsed so one
 # comment stays one line and the caller's `tail -1` means what it looks like.
+# Comments are sorted by id ascending: the same-second lock tie-breaker is lowest
+# comment id, so a deterministic order makes `tail -1` mean "newest" reliably.
 azdo_comments() {
   local id="${1:?azdo_comments requires a work-item id}"
   : "${AZDO_PROJECT:?AZDO_PROJECT must be set — call resolve_azdo_context first}"
@@ -356,7 +358,8 @@ azdo_comments() {
   | python3 -c '
 import sys, json, re, html
 d = json.load(sys.stdin)
-for c in d.get("comments", []):
+comments = sorted(d.get("comments", []), key=lambda x: x.get("id", 0))
+for c in comments:
     text = re.sub(r"<[^>]+>", "", c.get("text", ""))
     print(" ".join(html.unescape(text).split()))'
 }

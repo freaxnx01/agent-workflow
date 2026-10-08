@@ -302,6 +302,9 @@ assert_eq "usage error without text" "2" \
   "$( rc=0; run_cm azdo-comments-locked.json azdo_comment 5 >/dev/null 2>&1 || rc=$?
      printf '%s' "$rc" )"
 
+assert_eq "unescapes HTML entities" "a note & update" \
+  "$(run_cm azdo-comments-locked.json azdo_comments 5 | head -1)"
+
 rm -rf "$cm_dir"
 
 # --- summary -------------------------------------------------------------
