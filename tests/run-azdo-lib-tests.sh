@@ -357,6 +357,18 @@ assert_eq "usage error without a tag" "2" \
   "$( rc=0; run_tag azdo-fields-tagged.json azdo_add_tag 5 >/dev/null 2>&1 || rc=$?
      printf '%s' "$rc" )"
 
+# Idempotency: adding a tag that already exists must not duplicate it.
+rm -f "$tg_dir/body.txt"
+run_tag azdo-fields-tagged.json azdo_add_tag 5 parked >/dev/null
+assert_eq "adding an existing tag does not duplicate" "parked; roadmap" \
+  "$(sent_value)"
+
+# Idempotency: removing a tag that does not exist is a harmless no-op.
+rm -f "$tg_dir/body.txt"
+run_tag azdo-fields-tagged.json azdo_remove_tag 5 enrichment-ongoing >/dev/null
+assert_eq "removing a non-existent tag is a no-op" "parked; roadmap" \
+  "$(sent_value)"
+
 rm -rf "$tg_dir"
 
 # --- summary -------------------------------------------------------------
