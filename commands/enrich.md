@@ -830,7 +830,8 @@ Blocked item and the issue is handed over with `needs-human`. See
 
 ## Azure DevOps
 
-**Reads work; the body write does not — and that write is the point of this command.**
+The write path works. `System.Description` is an **HTML** field, so what goes
+into it is not `/enrich`'s GitHub body — see ADR-017 for why that is deliberate.
 
 ```bash
 source "$HOME/.claude/scripts/lib/detect-forge.sh"
@@ -838,36 +839,42 @@ source "$HOME/.claude/scripts/lib/azdo.sh"
 resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
 ```
 
-The read half is fine: fetch the work item, brainstorm a spec, write a plan.
+**Acquire the lock** before brainstorming, mirroring the GitHub steps: the
+timestamped comment first, so the tag always has an age, then the tag.
 
 ```bash
-az boards work-item show --id <id> --org "$(azdo_org_url)" \
-  --output json --only-show-errors
+azdo_comment "$ID" "Enrichment lock acquired at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+azdo_add_tag "$ID" enrichment-ongoing
 ```
 
-What is **not** ported, and why it is not half-done:
+Read an existing lock with `azdo_comments "$ID"`, which strips the HTML the API
+returns. The 24-hour staleness rule and the same-second tie-break (lowest
+comment id wins) are the GitHub section's, unchanged.
 
-- **The issue-body update.** This command's contract is that the implementing
-  agent can work from the body alone. On ADO that means rewriting
-  `System.Description`, and `az boards work-item update --fields` has an
-  append-versus-replace behaviour that differs per field — proven for
-  `System.Tags`, which appends and cannot be cleared. Whether a json-patch
-  `replace` on the description behaves the way it does on the tags is
-  **unverified**; until someone writes one and reads it back, a partial write
-  would silently mangle an existing body.
+**Write the description** once the spec and plan are committed and pushed. The
+work item gets the original description, then the acceptance criteria, then
+pointers — not the inlined plan:
 
-**The enrichment lock is no longer the obstacle it was.** It is a tag plus a
-timestamped comment, and `azdo_set_tags` in `scripts/lib/azdo.sh` sets tags with
-a json-patch `replace`, so a lock can be *released* as well as acquired —
-`--fields` alone could only append. Wiring that into an actual lock is part of
-the port, not a prerequisite still missing.
+```bash
+orig="$(azdo_description "$ID")" || { echo "read failed — not writing"; exit 1; }
+ac="$(printf '%s' "$AC_TEXT" | azdo_html_escape)"
+azdo_set_description "$ID" "$orig<h2>Acceptance Criteria</h2><ul>$ac</ul>
+<h2>Spec &amp; Plan</h2><ul><li><code>$SPEC_PATH</code></li>
+<li><code>$PLAN_PATH</code></li></ul>
+<p>Read the plan before writing any code.</p>"
+```
 
-So on an ADO remote: do the spec and plan, commit them under
-`docs/superpowers/`, and **tell the user the work item was not updated**, naming
-the paths instead. Do not claim the item is ready to implement — the body an
-implementer would work from exists only in the repo.
+Every interpolated value goes through `azdo_html_escape` — an unescaped `<` or
+`&` in an acceptance criterion breaks the stored markup. Assert the read-back
+contains the heading and both paths rather than comparing bytes: Azure DevOps
+sanitizes stored HTML.
 
-Tracked in **#488**.
+**Release the lock** with `azdo_remove_tag "$ID" enrichment-ongoing`. The lock
+comment stays as an audit trail. There is no readiness tag to clear — per
+ADR-012 nothing on this forge dispatches, so `/new` never applies one.
+
+**Do not claim the item is dispatchable.** There is no `ai-implement` here;
+report the paths and stop.
 
 ## Unknown host
 

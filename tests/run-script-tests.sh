@@ -4257,6 +4257,31 @@ assert_contains "$step439" '!inputs.stub-claude'                       "fail ste
 assert_contains "$step439" "steps.outputs.outputs.outcome == 'failed'" "fail step keys off the run outcome"
 assert_contains "$step439" 'exit 1'                                    "fail step actually fails"
 
+section "azdo enrichment write-back — the command sections match the library"
+
+AZDO_LIB="$ROOT/scripts/lib/azdo.sh"
+
+for fn in azdo_description azdo_set_description azdo_html_escape \
+          azdo_comment azdo_comments azdo_add_tag azdo_remove_tag; do
+  assert_equals "$(grep -c "^$fn()" "$AZDO_LIB" || true)" "1" \
+    "$fn is defined exactly once in the library"
+done
+
+assert_equals "$(grep -cm1 'azdo_set_description' "$ROOT/commands/enrich.md" || true)" "1" \
+  "enrich.md calls the description writer"
+
+assert_equals "$(grep -cm1 'azdo_add_tag' "$ROOT/commands/enrich-phased.md" || true)" "1" \
+  "enrich-phased.md acquires its lock through the guarded tag writer"
+
+# The stale framing must be gone from all three, not just the two that change.
+for f in enrich.md enrich-phased.md work.md; do
+  assert_equals "$(grep -c '#286 Task 6' "$ROOT/commands/$f" || true)" "0" \
+    "$f no longer cites the closed issue"
+done
+
+assert_equals "$(grep -cm1 'ADR-017' "$ROOT/docs/DECISIONS.md" || true)" "1" \
+  "the divergence is recorded as an ADR"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"

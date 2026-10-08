@@ -91,9 +91,11 @@ rather than half-doing them:**
 - **No pipeline dispatch.** agent-workflow's pipeline is GitHub-only (ADR-012),
   so there is no `ai-implement` label to apply and no draft PR to wait on. This
   command's ADO path is local execution only.
-- **No issue-body enrichment.** `/enrich` is not ported for writes (see its own
-  section), so the plan is not written back to the work item. Keep the plan in
-  the repo under `docs/superpowers/plans/` and reference it.
+- **No pipeline dispatch, so no handoff.** `/enrich` can now write acceptance
+  criteria and plan pointers onto the work item (ADR-017), but per ADR-012
+  nothing here picks the item up afterwards. This command's Azure DevOps path
+  stays local execution only: plan, implement, open a PR with
+  `az repos pr create --work-items <id>`.
 
 What does work end to end: read the item, write the spec and plan, implement,
 open a PR with `az repos pr create --work-items <id>` so the item is linked, and

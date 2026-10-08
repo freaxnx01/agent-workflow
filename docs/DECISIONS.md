@@ -1603,3 +1603,30 @@ one label in the scheme that carried any.
   that has not migrated can export the old value.
 + ADR-012's tag-filter bullet stays as written. It records what was believed
   then; this ADR records what a live run showed instead.
+
+## ADR-017 — An enriched ADO work item carries criteria and pointers, not the plan (2026-10-08)
+
+**Status:** accepted
+
+**Context.** `/enrich`'s GitHub path inlines the whole implementation plan into
+the issue body, because the pipeline agent reads *only* that body.
+`System.Description` on Azure DevOps is an HTML field (`type=html`, read live
+from `AndreasImboden0022` on 2026-10-08); there is no Markdown-format field,
+and neither `python-markdown` nor `pandoc` is available.
+
+**Decision.** On Azure DevOps the work item gets the original description, the
+acceptance criteria, and pointers to the committed spec and plan. The plan is
+not inlined, in any form.
+
+**Why this is not a regression.** The "body alone is enough" rule exists for the
+pipeline agent, and per ADR-012 there is no pipeline on this forge. The reader
+here is a human or a local `/work` session, both with the repository checked
+out. Inlining a 40 KB plan into an HTML field would solve a problem Azure
+DevOps does not have, and render as an unformatted wall.
+
+**Rejected.** Wrapping the Markdown in `<pre>` — preserves the GitHub contract
+but produces an unusable work item. Converting Markdown to HTML — needs a
+dependency the guardrails forbid adding unasked, and makes the write lossy.
+
+**Consequence.** `/enrich` reports the paths and stops; it never claims the item
+is dispatchable, because nothing dispatches it.
