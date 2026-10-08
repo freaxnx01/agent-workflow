@@ -201,6 +201,76 @@ else
 fi
 rm -rf "$ct_dir"
 
+section "azdo_description / azdo_set_description — the HTML field"
+
+sd_dir="$(mktemp -d)"
+# shellcheck disable=SC2030,SC2031
+run_desc() {
+  local az_fixture="$1" curl_fixture="$2"; shift 2
+  (
+    export PATH="$MOCKS:$PATH"
+    export AZ_MOCK_FIXTURE="$FIXTURES/$az_fixture"
+    export CURL_MOCK_FIXTURE="$FIXTURES/$curl_fixture"
+    export CURL_MOCK_BODY_LOG="$sd_dir/body.txt" CURL_MOCK_LOG="$sd_dir/argv.txt"
+    export AZDO_ORG=contoso AZDO_PROJECT=MyProject AZDO_REPO=my-repo
+    export AZURE_DEVOPS_EXT_PAT=not-a-real-token
+    # shellcheck disable=SC1090
+    source "$LIB"
+    "$@"
+  )
+}
+
+assert_eq "reads an existing description" "<p>original</p>" \
+  "$(run_desc azdo-workitem-with-description.json azdo-set-description-stored.json \
+      azdo_description 5)"
+
+assert_eq "an absent description reads as empty, exit 0" "" \
+  "$(run_desc azdo-workitem-no-description.json azdo-set-description-stored.json \
+      azdo_description 5)"
+
+# Review Focus 2 — the op is chosen from the read, never fixed.
+rm -f "$sd_dir/body.txt"
+run_desc azdo-workitem-with-description.json azdo-set-description-stored.json \
+  azdo_set_description 5 '<p>new</p>' >/dev/null
+assert_eq "an existing description is REPLACED" "replace" \
+  "$(python3 -c '
+import json,sys
+print(json.loads(open(sys.argv[1]).read().strip().splitlines()[0])[0]["op"])' "$sd_dir/body.txt")"
+
+rm -f "$sd_dir/body.txt"
+run_desc azdo-workitem-no-description.json azdo-set-description-stored.json \
+  azdo_set_description 5 '<p>new</p>' >/dev/null
+assert_eq "an absent description is ADDead" "add" \
+  "$(python3 -c '
+import json,sys
+print(json.loads(open(sys.argv[1]).read().strip().splitlines()[0])[0]["op"])' "$sd_dir/body.txt")"
+
+# Review Focus 1 — a failed read must not become a write.
+rm -f "$sd_dir/body.txt"
+rc=0
+run_desc azdo-wiql-tf51011.txt azdo-set-description-stored.json \
+  azdo_set_description 5 '<p>new</p>' >/dev/null 2>&1 || rc=$?
+assert_eq "a failed read refuses the write" "1" "$rc"
+if [[ -s "$sd_dir/body.txt" ]]; then
+  fail "a failed read sends no PATCH" "a request body was recorded"
+else
+  pass "a failed read sends no PATCH"
+fi
+
+# Review Focus 3 — interpolated text is escaped.
+# Piped INTO run_desc, not run through `bash -c`: the subshell inherits stdin,
+# whereas a nested `bash -c` would not have the sourced function at all.
+assert_eq "escapes the HTML metacharacters" "a &lt;b&gt; &amp; &quot;c&quot;" \
+  "$(printf '%s' 'a <b> & "c"' \
+     | run_desc azdo-workitem-with-description.json azdo-set-description-stored.json \
+         azdo_html_escape)"
+
+assert_eq "usage error without an id" "2" \
+  "$( rc=0; run_desc azdo-workitem-with-description.json azdo-set-description-stored.json \
+       azdo_set_description >/dev/null 2>&1 || rc=$?; printf '%s' "$rc" )"
+
+rm -rf "$sd_dir"
+
 # --- summary -------------------------------------------------------------
 
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"

@@ -253,3 +253,76 @@ if "fields" not in d:
     sys.exit(1)
 print(d["fields"].get("System.Tags", ""))'
 }
+
+# azdo_html_escape  filter: stdin to stdout, escaping & < > " for System.Description.
+#
+# System.Description is an HTML field (type=html, verified live 2026-10-08), so
+# anything interpolated into it -- an AC line, a file path -- must be escaped or
+# it breaks the stored markup. html.escape is standard library; no dependency.
+azdo_html_escape() {
+  python3 -c 'import html, sys; sys.stdout.write(html.escape(sys.stdin.read()))'
+}
+
+# azdo_description <id>  echoes the work item's current System.Description.
+#
+# Exit 0 on success INCLUDING an absent field, which echoes nothing: a work item
+# that has never had a description simply omits the key. Exit 1 on a read error.
+# Callers must capture the status -- an empty echo alone cannot tell the two
+# apart, and composing a write from a failed read destroys the existing body.
+azdo_description() {
+  local id="${1:?azdo_description requires a work-item id}"
+  : "${AZDO_PROJECT:?AZDO_PROJECT must be set — call resolve_azdo_context first}"
+  az boards work-item show --id "$id" --org "$(azdo_org_url)" \
+      --output json --only-show-errors \
+  | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+sys.stdout.write(d.get("fields", {}).get("System.Description", ""))'
+}
+
+# azdo_set_description <id> <html>  writes System.Description, echoes it back.
+#
+# The json-patch op is CHOSEN FROM THE READ, never fixed: `replace` errors on a
+# field that does not exist yet, and `add` on an existing field is the appending
+# behaviour azdo_set_tags exists to escape. Reading first settles it, and the
+# caller has to read anyway to compose the new body.
+#
+# Exit 0 success, 1 read or write failure, 2 usage.
+azdo_set_description() {
+  local id="${1-}" html="${2-}"
+  if [[ -z "$id" || $# -lt 2 ]]; then
+    echo "usage: azdo_set_description <id> <html>" >&2
+    return 2
+  fi
+  : "${AZURE_DEVOPS_EXT_PAT:?AZURE_DEVOPS_EXT_PAT must be set}"
+
+  local current rc=0
+  current="$(azdo_description "$id")" || rc=$?
+  if [[ $rc -ne 0 ]]; then
+    echo "azdo_set_description: could not read work item $id — refusing to write" >&2
+    return 1
+  fi
+
+  local op=add
+  [[ -n "$current" ]] && op=replace
+
+  local url body out
+  url="$(azdo_org_url)/_apis/wit/workitems/${id}?api-version=7.1"
+  body=$(python3 -c '
+import json, sys
+print(json.dumps([{"op": sys.argv[1], "path": "/fields/System.Description",
+                   "value": sys.argv[2]}]))' "$op" "$html")
+
+  out=$(printf 'user = ":%s"\n' "$AZURE_DEVOPS_EXT_PAT" \
+    | curl -sS -K - \
+        -H 'Content-Type: application/json-patch+json' \
+        -X PATCH "$url" -d "$body") || return 1
+
+  printf '%s' "$out" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+if "fields" not in d:
+    sys.stderr.write("azdo_set_description: unexpected response: %s\n" % str(d)[:200])
+    sys.exit(1)
+sys.stdout.write(d["fields"].get("System.Description", ""))'
+}
