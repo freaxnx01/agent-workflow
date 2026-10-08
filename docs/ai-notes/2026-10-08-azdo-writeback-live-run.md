@@ -19,12 +19,51 @@ confirmation, because each contradicts something the code or the brief assumed.
 
 | # | Finding | Matched expectation? |
 |---|---|---|
+| 0 | **The write URL is org-scoped — a wrong id writes across projects** | Not anticipated at all |
 | 1 | The probe work item is **6**, not 5 | **No** — the brief assumed 5 |
 | 2 | `replace` on `System.Description` replaces | Yes |
 | 3 | The service **rewrites the HTML**: `<p>x</p>` comes back `<p>x </p>` | **No** — undocumented |
 | 4 | An emoji survives, but stored as an **HTML entity**, not a codepoint | **Partly** — see below |
 | 5 | `replace` on an **absent** `System.Tags` succeeds | **No** — `azdo.sh` says it errors |
 | 6 | A json-patch `test` on `/rev` **is honoured** | Yes (exploratory) |
+
+---
+
+## Finding 0 — the write URL is org-scoped, and nothing warns you
+
+The single most reusable thing in this file, so it gets its own heading rather
+than living inside Step 1.
+
+```text
+PATCH https://dev.azure.com/<org>/_apis/wit/workitems/<id>?api-version=7.1
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^
+                                  no project segment, anywhere
+```
+
+Both write functions in `scripts/lib/azdo.sh` use that URL, and
+`az boards work-item show --id` has the same shape. **`AZDO_PROJECT` does not
+constrain the write** — it is used only by the reads (`azdo_fields`,
+`azdo_comments`, `azdo_wiql`, all of which take a `project=` route parameter).
+
+Work-item ids are allocated **per organization**, not per project. So an id that
+looks like "the next one in this project" can belong to a different project, and
+the PATCH will rewrite it without complaint — no error, no mismatch warning,
+exit 0. There is no project check anywhere on the write path.
+
+This run demonstrated the premise concretely: the brief predicted id 5, the
+service issued 6, and 5 is not readable in this project at all. Had the brief's
+hardcoded `5` been used, every step would have aimed at whatever holds id 5
+org-wide. In an org that also contains production projects — this PAT reaches
+`bossinfo` — that is the whole ballgame.
+
+**Rule: never pass an id you guessed, counted on, or carried over from a plan.
+Pass one you have read back from the project you intend to touch.** Every write
+in this run ran behind a guard re-asserting, per invocation: the org URL is
+literally the sandbox one, the id is numeric and not in 1–4, and a fresh read of
+the id reports `System.TeamProject == agent-workflow-sandbox` with a title
+ending `(#488)`.
+
+Now recorded as a warning comment above `azdo_set_tags` and `azdo_set_description`.
 
 ---
 
@@ -63,17 +102,8 @@ another project this PAT cannot read", and a `@project` WIQL also excludes the
 recycle bin — **so the cause was not determined.** What is established is only
 that 5 was unavailable and the next id was issued.
 
-This is not cosmetic. The write endpoint is
-`https://dev.azure.com/<org>/_apis/wit/workitems/<id>` — **org-scoped, with no
-project segment** — as is `az boards work-item show --id`. Hardcoding the
-predicted `5` would have aimed every later PATCH at whatever item holds id 5
-anywhere in the org. Every step below therefore ran behind a guard that
-re-asserted, per invocation: the org URL is literally the sandbox one, the id is
-numeric and not in 1–4, and a fresh read of the id reports
-`System.TeamProject == agent-workflow-sandbox` with a title ending `(#488)`.
-
-> **Anyone scripting a write against ADO should treat the id as org-global and
-> verify the item's project before the PATCH.** The URL will not do it for you.
+This is not cosmetic — see **Finding 0** above for why a wrong id is dangerous
+rather than merely wrong, and for the guard every step below ran behind.
 
 ## Step 2 — the `add` branch, on an item with no description
 

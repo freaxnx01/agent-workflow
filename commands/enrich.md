@@ -863,10 +863,12 @@ API returns, and scan it for the same pattern the GitHub section keys on:
 ```
 
 The 24-hour staleness rule and the same-second tie-break (lowest comment id
-wins) are the GitHub section's, unchanged. The `🔒` marker surviving a
-`--discussion` write is unverified — the next task confirms it against a live
-work item; fall back to an ASCII marker such as `[LOCK]` if the service does
-not preserve it.
+wins) are the GitHub section's, unchanged. The `🔒` marker round-trips faithfully
+through `azdo_comment` / `azdo_comments` (verified live 2026-10-08), so no ASCII
+fallback is needed — but only through that pair: the service stores the marker as
+the HTML entity `&#128274;` rather than raw `U+1F512`, and `azdo_comments`
+unescapes it on the way back. A reader that scans `azdo_comments` output matches
+the plain marker above; one that greps the raw comments API matches nothing.
 
 **Write the description** once the spec and plan are committed and pushed. The
 work item gets the original description, then the acceptance criteria, then

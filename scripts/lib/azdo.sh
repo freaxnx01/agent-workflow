@@ -213,6 +213,19 @@ azdo_active_pr_work_items() {
 # azdo_set_tags <work-item-id> <tags>  REPLACES a work item's tags outright.
 # <tags> is semicolon-delimited ("a;b"); an empty string clears them.
 #
+# WARNING -- THE ID IS ORG-SCOPED, NOT PROJECT-SCOPED. The PATCH below goes to
+# /_apis/wit/workitems/<id>, which carries NO project segment, and neither does
+# `az boards work-item show --id`. Work-item ids are allocated per ORGANIZATION,
+# so an id that looks like "the next one in this project" may belong to a
+# different project entirely -- and this call will happily rewrite it. AZDO_PROJECT
+# does not constrain the write; it is used only by the reads.
+#
+# So never pass an id you guessed, counted on, or carried over from a plan. Pass
+# one you have READ BACK from the project you intend to touch, and verify its
+# System.TeamProject first if anything is riding on it. A live run against the
+# sandbox (2026-10-08) expected to create work item 5 and got 6; the predicted id
+# did not exist in that project at all.
+#
 # This exists because `az boards work-item update --fields "System.Tags=..."`
 # cannot do it. That form APPENDS -- successive calls accumulate -- and an empty
 # value is a silent no-op, so an "unpark" verb cannot be built on it at all.
@@ -282,10 +295,24 @@ sys.stdout.write(d.get("fields", {}).get("System.Description", ""))'
 
 # azdo_set_description <id> <html>  writes System.Description, echoes it back.
 #
-# The json-patch op is CHOSEN FROM THE READ, never fixed: `replace` errors on a
-# field that does not exist yet, and `add` on an existing field is the appending
-# behaviour azdo_set_tags exists to escape. Reading first settles it, and the
-# caller has to read anyway to compose the new body.
+# WARNING -- the id is ORG-SCOPED. See the note above azdo_set_tags: this PATCH
+# goes to the same project-less URL, so a wrong id rewrites another project's
+# work item. Pass an id read back from the project you mean to touch.
+#
+# The json-patch op is CHOSEN FROM THE READ, never fixed. `add` on an existing
+# field is the appending behaviour azdo_set_tags exists to escape, so the read is
+# load-bearing in that direction. In the other direction it is belt-and-braces:
+# `replace` on a field that does NOT exist yet was observed to SUCCEED (absent
+# System.Tags, sandbox 2026-10-08), so the once-stated claim that it errors is
+# wrong -- at least for System.Tags; System.Description was never sent that way
+# because this function correctly chose `add`. Keep choosing from the read
+# anyway: `add`-on-absent is the behaviour we rely on, not the behaviour we
+# happened to observe once, and the caller has to read to compose the new body
+# regardless. See docs/ai-notes/2026-10-08-azdo-writeback-live-run.md.
+#
+# A second write REPLACES rather than appends -- verified live, same run; the
+# whole write path rests on it. The service does rewrite the stored markup
+# (`<p>x</p>` comes back `<p>x </p>`), so never compare a round trip with `==`.
 #
 # Exit 0 success, 1 read or write failure, 2 usage.
 azdo_set_description() {
