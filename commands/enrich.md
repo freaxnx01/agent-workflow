@@ -839,6 +839,48 @@ source "$HOME/.claude/scripts/lib/azdo.sh"
 resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
 ```
 
+**Detect an existing lock** before acquiring. The tag is the boolean to key on,
+not the comment: release (below) clears the tag but keeps the lock comment as an
+audit trail, so a detector keyed on the comment alone would find a "held" lock on
+every previously-enriched item forever. Check the tag first:
+
+```bash
+azdo_fields "$ISSUE"
+```
+
+This emits one JSON object with a `tags` field, a semicolon-space-separated
+string — match `enrichment-ongoing` as a whole tag, not a substring. **If the
+command exits non-zero or prints nothing, stop** — an empty read is not "no tag" (the same
+rule `_azdo_edit_tags` applies before writing), and proceeding risks acquiring
+against a work item this project can't actually see.
+
+- Tag absent → continue to **Acquire the lock** below.
+- Tag present → only now scan `azdo_comments "$ISSUE"` (which strips the HTML the API
+  returns) for the most recent line matching the same pattern the GitHub section
+  keys on:
+
+  ```text
+  🔒 Enrichment lock (re-)acquired at <timestamp>
+  ```
+
+  Compute its age against `date -u +%Y-%m-%dT%H:%M:%SZ`. The 24-hour staleness
+  rule is the GitHub section's, unchanged — the tie-break on a same-second
+  acquisition does not apply here, since there is no race re-check below to
+  need one:
+  - A matching comment found, age < 24 hours → **stop**. Tell the user the item
+    is already being enriched (show the age) and end the command.
+  - Age ≥ 24 hours, or no matching comment found (treat unknown age as stale) →
+    tell the user the lock looks abandoned and ask whether to take over.
+    - No → stop.
+    - Yes → continue to **Acquire the lock**, which will note the takeover.
+
+The `🔒` marker round-trips faithfully through `azdo_comment` / `azdo_comments`
+(verified live 2026-10-08), so no ASCII fallback is needed — but only through
+that pair: the service stores the marker as the HTML entity `&#128274;` rather
+than raw `U+1F512`, and `azdo_comments` unescapes it on the way back. A reader
+that scans `azdo_comments` output matches the plain marker above; one that
+greps the raw comments API matches nothing.
+
 **Acquire the lock** before brainstorming, mirroring the GitHub steps: the
 timestamped comment first, so the tag always has an age, then the tag. Fresh
 acquisition:
@@ -855,20 +897,10 @@ azdo_comment "$ISSUE" "🔒 Enrichment lock re-acquired at $(date -u +%Y-%m-%dT%
 azdo_add_tag "$ISSUE" enrichment-ongoing
 ```
 
-Read an existing lock with `azdo_comments "$ISSUE"`, which strips the HTML the
-API returns, and scan it for the same pattern the GitHub section keys on:
-
-```text
-🔒 Enrichment lock (re-)acquired at <timestamp>
-```
-
-The 24-hour staleness rule and the same-second tie-break (lowest comment id
-wins) are the GitHub section's, unchanged. The `🔒` marker round-trips faithfully
-through `azdo_comment` / `azdo_comments` (verified live 2026-10-08), so no ASCII
-fallback is needed — but only through that pair: the service stores the marker as
-the HTML entity `&#128274;` rather than raw `U+1F512`, and `azdo_comments`
-unescapes it on the way back. A reader that scans `azdo_comments` output matches
-the plain marker above; one that greps the raw comments API matches nothing.
+**There is no race re-check here**, unlike the GitHub section's Step 2.5: two
+sessions can both pass detection before either tags the item, and nothing in
+this section re-verifies after acquiring — treat the window between detect and
+acquire as unprotected.
 
 **Write the description** once the spec and plan are committed and pushed. The
 work item gets the original description, then the acceptance criteria, then

@@ -18,12 +18,18 @@
 # Exit codes:
 #   0  success, including a query that legitimately matched nothing
 #   1  error (the underlying az stderr is passed through)
-#   2  the Area Path in the query does not exist (TF51011)
+#   2  meaning depends on the function:
+#        - azdo_wiql: the Area Path in the query does not exist (TF51011)
+#        - azdo_set_description, azdo_comment, azdo_add_tag, azdo_remove_tag,
+#          _azdo_edit_tags: a usage error (missing/malformed arguments)
 #
 # Callers must CAPTURE the status rather than calling bare. Sourcing this file
 # applies `set -e` to the caller (as detect-forge.sh already does), so a bare
 # `azdo_wiql ...` kills the shell on exit 2 before the caller can distinguish it
-# from an empty result -- which is the entire point of that exit code. Use:
+# from an empty result -- which is the entire point of that exit code. The
+# worked example below is for the query functions (currently just azdo_wiql)
+# only -- a writer's exit 2 is a usage bug in the caller, not a missing Area
+# Path:
 #
 #   rc=0; ids=$(azdo_wiql "$q") || rc=$?
 #   case $rc in

@@ -552,6 +552,13 @@ source "$HOME/.claude/scripts/lib/azdo.sh"
 resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
 ```
 
+**Detect an existing lock — new runs only**, same check as `/enrich`'s Azure
+DevOps section: `azdo_fields <issue>` for `enrichment-ongoing` in `tags` first,
+and only if present scan `azdo_comments <issue>` for the most recent lock
+comment to compute its age and apply the 24-hour staleness rule. Skip this
+entirely on a resume — that is the same run continuing, so the only lock it
+could find is its own.
+
 Acquire once, before the spec phase, and release once, after the body write:
 
 ```bash
@@ -564,6 +571,14 @@ azdo_remove_tag <issue> enrichment-ongoing
 `azdo_add_tag` and `azdo_remove_tag` read the current tags and write the whole
 set back, aborting if the read fails — so a transient error cannot strip
 `parked` or `roadmap` off the item along with the lock.
+
+**There is no race re-check between detect and acquire here**, unlike the
+GitHub phased flow's step 4: two sessions can both pass detection before either
+tags the item, and the window stays open across both `/clear`s — the first
+session's `azdo_remove_tag` releases the lock out from under the second one
+mid-phase, with no sign anything went wrong until the second session's own
+release silently no-ops on an already-cleared tag. Run only one phased session
+per work item at a time.
 
 The body write is `/enrich`'s Azure DevOps section verbatim: acceptance criteria
 plus pointers, never the inlined plan. See ADR-017.

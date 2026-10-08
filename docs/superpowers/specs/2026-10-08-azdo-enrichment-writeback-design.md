@@ -182,8 +182,9 @@ in the plan. Credentials: `direnv exec ~/repos/ado/personal …`.
 
 **Use a dedicated write-probe work item.** Sandbox fixtures 1–4 each prove
 something specific (linked-PR, `parked`, `roadmap`, plain control); a lock tag or
-a description on any of them corrupts the rig. Create work item **#5** once, keep
-it, and add it to the do-not-delete list in the ADO record.
+a description on any of them corrupts the rig. Create the probe work item once
+(the live run's was **#6** — the service assigns the id), keep it, and add it to
+the do-not-delete list in the ADO record.
 
 **Never write to the `bossinfo` organization.** The PAT reaches it and it is
 production.
@@ -208,8 +209,11 @@ development. Running `/update-commands` after the merge is part of delivery.
       `/work`'s corrected sentence no longer implies a missing prerequisite.
 - [ ] An ADR records the AC-plus-pointers divergence and its ADR-017 reason.
 - [ ] `tests/run-azdo-lib-tests.sh` and `tests/run-script-tests.sh` both pass.
-- [ ] Live verification ran locally against sandbox work item #5, and the run is
-      recorded under `docs/ai-notes/`.
+- [ ] Live verification ran locally against the sandbox probe work item (the live
+      run used **#6**, not the **#5** this spec originally assumed — see Finding 0
+      in `docs/ai-notes/2026-10-08-azdo-writeback-live-run.md` for why hardcoding a
+      work-item id for future readers is itself a hazard), and the run is recorded
+      under `docs/ai-notes/`.
 - [ ] `/update-commands` re-installed the commands after merge.
 
 ## Out of scope
