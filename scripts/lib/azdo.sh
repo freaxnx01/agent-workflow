@@ -326,3 +326,37 @@ if "fields" not in d:
     sys.exit(1)
 sys.stdout.write(d["fields"].get("System.Description", ""))'
 }
+
+# azdo_comment <id> <text>  posts a comment to the work item's discussion.
+#
+# `az boards work-item update --discussion` writes System.History, so no raw API
+# call is needed for the write. Exit 0 success, 1 failure, 2 usage.
+azdo_comment() {
+  local id="${1-}" text="${2-}"
+  if [[ -z "$id" || $# -lt 2 ]]; then
+    echo "usage: azdo_comment <id> <text>" >&2
+    return 2
+  fi
+  az boards work-item update --id "$id" --org "$(azdo_org_url)" \
+    --discussion "$text" --output json --only-show-errors >/dev/null
+}
+
+# azdo_comments <id>  echoes one comment per line, oldest first, HTML STRIPPED.
+#
+# The comments API returns each body as HTML -- "<div>Enrichment lock acquired
+# at ...</div>" -- so a caller matching a plain-text lock line finds nothing
+# unless the tags come off first. Newlines inside a comment are collapsed so one
+# comment stays one line and the caller's `tail -1` means what it looks like.
+azdo_comments() {
+  local id="${1:?azdo_comments requires a work-item id}"
+  : "${AZDO_PROJECT:?AZDO_PROJECT must be set — call resolve_azdo_context first}"
+  az devops invoke --org "$(azdo_org_url)" --area wit --resource comments \
+      --route-parameters project="$AZDO_PROJECT" workItemId="$id" \
+      --api-version 7.1-preview --output json --only-show-errors \
+  | python3 -c '
+import sys, json, re, html
+d = json.load(sys.stdin)
+for c in d.get("comments", []):
+    text = re.sub(r"<[^>]+>", "", c.get("text", ""))
+    print(" ".join(html.unescape(text).split()))'
+}

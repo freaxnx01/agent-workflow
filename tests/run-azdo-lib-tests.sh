@@ -271,6 +271,39 @@ assert_eq "usage error without an id" "2" \
 
 rm -rf "$sd_dir"
 
+section "azdo_comment / azdo_comments — the lock's timestamp"
+
+cm_dir="$(mktemp -d)"
+# shellcheck disable=SC2030,SC2031
+run_cm() {
+  local fixture="$1"; shift
+  (
+    export PATH="$MOCKS:$PATH"
+    export AZ_MOCK_FIXTURE="$FIXTURES/$fixture"
+    export AZ_MOCK_LOG="$cm_dir/argv.txt"
+    export AZDO_ORG=contoso AZDO_PROJECT=MyProject AZDO_REPO=my-repo
+    # shellcheck disable=SC1090
+    source "$LIB"
+    "$@"
+  )
+}
+
+# Review Focus 4 — the API returns comment bodies as HTML, so the lock pattern
+# only ever matches if the tags come off first.
+assert_eq "strips the HTML the comments API returns" \
+  "Enrichment lock acquired at 2026-10-08T09:05:27Z" \
+  "$(run_cm azdo-comments-locked.json azdo_comments 5 | tail -1)"
+
+assert_eq "posts through the discussion flag" "1" \
+  "$( run_cm azdo-comments-locked.json azdo_comment 5 'hello' >/dev/null
+     grep -c -- '--discussion hello' "$cm_dir/argv.txt" )"
+
+assert_eq "usage error without text" "2" \
+  "$( rc=0; run_cm azdo-comments-locked.json azdo_comment 5 >/dev/null 2>&1 || rc=$?
+     printf '%s' "$rc" )"
+
+rm -rf "$cm_dir"
+
 # --- summary -------------------------------------------------------------
 
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"
