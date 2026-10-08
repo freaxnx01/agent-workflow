@@ -86,11 +86,18 @@ effects at source time, exit codes as API.
 
 PATCH `/fields/System.Description`.
 
-Uses the json-patch **`add`** op, not `replace`. `add` is upsert for work-item
-fields; `replace` against an item that has never had a description is the
-failure mode the probe must rule out. If the probe shows `replace` works for
-both cases, either is acceptable — `add` is the default because it cannot fail
-that way.
+**The json-patch op is chosen from the read, not fixed.** `replace` when the
+field is already present, `add` when it is absent.
+
+A fixed `add` was the first choice, on the assumption that `add` is upsert for
+work-item fields. The repository contradicts it: `tests/run-azdo-lib-tests.sh`
+records that a json-patch `add` on `System.Tags` **appends**, which is the
+behaviour `replace` exists to escape. If that also holds for an HTML field, a
+fixed `add` would append to the existing description — the exact mangling this
+design avoids. A fixed `replace` fails on an item that never had one.
+
+Reading first settles both cases, and the read has to happen anyway to compose
+the new body. The live probe records which way `replace` actually behaves.
 
 ### `azdo_comment <id> <text>`
 
