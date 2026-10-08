@@ -19,7 +19,7 @@ confirmation, because each contradicts something the code or the brief assumed.
 
 | # | Finding | Matched expectation? |
 |---|---|---|
-| 0 | **The write URL is org-scoped — a wrong id writes across projects** | Not anticipated at all |
+| 0 | **The write URL is org-scoped — no project segment constrains a PATCH** | Not anticipated at all |
 | 1 | The probe work item is **6**, not 5 | **No** — the brief assumed 5 |
 | 2 | `replace` on `System.Description` replaces | Yes |
 | 3 | The service **rewrites the HTML**: `<p>x</p>` comes back `<p>x </p>` | **No** — undocumented |
@@ -45,16 +45,23 @@ Both write functions in `scripts/lib/azdo.sh` use that URL, and
 constrain the write** — it is used only by the reads (`azdo_fields`,
 `azdo_comments`, `azdo_wiql`, all of which take a `project=` route parameter).
 
-Work-item ids are allocated **per organization**, not per project. So an id that
-looks like "the next one in this project" can belong to a different project, and
-the PATCH will rewrite it without complaint — no error, no mismatch warning,
-exit 0. There is no project check anywhere on the write path.
+**Observed in this run:** the brief predicted id 5, the service issued 6, and
+id 5 is not readable from this project — `work-item show --id 5` errors
+`TF401232`. So the id a plan predicts and the id the project actually holds can
+differ, and the write path takes no project argument that would catch it.
 
-This run demonstrated the premise concretely: the brief predicted id 5, the
-service issued 6, and 5 is not readable in this project at all. Had the brief's
-hardcoded `5` been used, every step would have aimed at whatever holds id 5
-org-wide. In an org that also contains production projects — this PAT reaches
-`bossinfo` — that is the whole ballgame.
+**Inferred from the URL shape, deliberately NOT tested:** that a PATCH naming an
+id belonging to a *different* project succeeds and rewrites that item. Nothing
+here demonstrates that — it follows from the endpoint carrying no project
+segment and from `AZDO_PROJECT` being absent from the write call, but the
+experiment that would settle it is writing into another project, which is
+precisely what must never be done. Treat it as an unverified worst case and
+design against it.
+
+That distinction does not soften the rule. Had the brief's hardcoded `5` been
+used, every step would have aimed at an id this project does not hold, in an org
+whose PAT also reaches `bossinfo`. The cost of the inference being right is
+unbounded; the cost of assuming it is one extra read.
 
 **Rule: never pass an id you guessed, counted on, or carried over from a plan.
 Pass one you have read back from the project you intend to touch.** Every write
@@ -323,10 +330,41 @@ escaping values before interpolation is both necessary and sufficient.
 
 ## State the probe was left in
 
-Work item **6**: description `<p>third </p>`, tags `probe-control`, one comment
-carrying the lock line, rev 8. Fixtures **1–4 were never written to** — no
-description, no tag, no comment. The `bossinfo` org was never named in any
-command.
+Captured read-only after the fact, rather than reasoned from the steps above —
+because the first version of this section *was* reasoned, and it was wrong. The
+verbatim output of `az boards work-item show --id 6`:
+
+```text
+rev: 9
+description: '<p>a &lt; b &amp; &quot;c&quot; &gt; d </p>'
+tags: 'probe-control'
+```
+
+Plus one comment carrying the lock line.
+
+**Correction — this section previously claimed rev 8 and `<p>third </p>`.** That
+was the state *before* Step 6, and it was written before Step 6 ran and never
+updated when Step 6 was appended. Step 6 did run genuinely: the description was
+non-empty at that point, so `azdo_set_description` took the `replace` branch,
+which advanced rev 8 → 9 and stored the escaped value. Step 6's recorded output
+and its "Matched" verdict stand — the capture above confirms both the rev
+increment and the exact escaped string it reported.
+
+The rev chain reconciles with zero slack, which is what exposed the error:
+create rev1 → Step 2 `add` rev2 → Step 3 `replace` rev3 → Step 4a comment rev4 →
+Step 4b three tag writes rev5, rev6, rev7 → Step 5 reads "current rev=7"
+(corroborating the chain independently) → Step 5b succeeds to rev8 → Step 6
+`replace` rev9.
+
+> **Worth keeping as a lesson in its own right:** a summary derived from the
+> steps rather than captured from the system drifts the moment a step is added
+> after it. The rev counter is a cheap, monotonic audit trail — reconciling it
+> against the narrative catches exactly this class of error, and it is the only
+> reason this one surfaced.
+
+Fixtures **1–4 were never written to** — no description, no tag, no comment;
+re-verified by reading all five items at the end of the run. The `bossinfo` org
+was never named in any command.
 
 One side effect worth knowing: the probe sits in the queried area path, so
 `/issues`, `/queue` and `/triage` against the sandbox now return it alongside
@@ -334,13 +372,10 @@ work item 4. Rig checks that expect exactly one open plain item need updating.
 
 ## Outstanding
 
-- **A stale sentence in `commands/enrich.md`.** Its Azure DevOps section says
-  the `🔒` marker "surviving a `--discussion` write is unverified — the next task
-  confirms it against a live work item; fall back to an ASCII marker such as
-  `[LOCK]` if the service does not preserve it." That is this run, and the answer
-  is **it survives, no fallback needed**. The sentence should be replaced with
-  the entity caveat from Step 4a. **Not edited here** — out of this task's
-  two-file scope.
+- ~~A stale sentence in `commands/enrich.md`~~ — **done in `bcff130`.** Its
+  Azure DevOps section called the `🔒` marker "unverified" and offered `[LOCK]`
+  as a fallback; it now carries the entity caveat from Step 4a instead. The
+  library comments corrected in the same commit are described there.
 - **`/update-commands`** (brief Step 8) has **not** been run — it is a slash
   command for the human operator. The installed copies under `$HOME/.claude/`
   remain stale until it is.
