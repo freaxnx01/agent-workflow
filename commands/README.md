@@ -72,7 +72,9 @@ vocabulary (MudBlazor, shadcn/ui, Flutter widgets, …) comes from the project's
 
 **GitHub-only** (`gh/`, no Forgejo equivalent): `/gh:assign` · `/gh:implement` ·
 `/gh:implementation-contract` · `/gh:review` · `/autopilot` — the unattended
-version of the `/enrich → /gh:implement` hop, dry-run by default
+version of the `/enrich → /gh:implement` hop, dry-run by default · `/enrich-batch`
+— its interactive counterpart: groups the backlog, interviews you before and
+after, and fans out `/enrich --headless` subagents (never dispatches)
 
 **Advisor** (relies on `gh`, so GitHub-only): `/factory-advisor <topic>` — turns the session
 into the Software Factory advisor: reads `docs/ADVISOR-PROMPT.md` and

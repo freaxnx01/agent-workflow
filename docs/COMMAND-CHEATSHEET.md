@@ -34,6 +34,8 @@ set of repos and dispatches the ones that come out clean, escalating anything
 undecidable to `needs-human` for a person to pick up. It is gated on an
 allowlist a repo cannot opt itself into, and its default is a dry run — see
 [`docs/AUTOPILOT.md`](AUTOPILOT.md).
+For the interactive, human-in-the-loop version, run `/enrich-batch`: it asks
+the design questions before and after fanning out `/enrich --headless`.
 
 ### The advisor
 

@@ -142,6 +142,15 @@ else
   fail "ends with the self-improvement line" "last line: $last"
 fi
 
+# 12. Listed in the command docs.
+for listing in commands/README.md docs/COMMAND-CHEATSHEET.md; do
+  if grep -qF '/enrich-batch' "$ROOT/$listing"; then
+    pass "$listing lists /enrich-batch"
+  else
+    fail "$listing lists /enrich-batch"
+  fi
+done
+
 printf '\npassed: %d   failed: %d\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then
   printf 'failed:\n'
