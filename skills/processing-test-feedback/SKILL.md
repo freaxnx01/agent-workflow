@@ -157,6 +157,10 @@ A batch may span sessions. State lives in a committed worklog, not just the chat
 
 - **On start**, scan `docs/ai-notes/feedback/` for a worklog with entries not yet `done`.
   If one exists, offer to **resume** it (show remaining entries) instead of starting fresh.
+  Before re-triaging, search **all** issues (closed too) for each pending entry's Source
+  text: the entry may have been filed and fixed without the worklog being updated (the
+  2026-10-02 stuck-car batch sat at `awaiting-approval` for a week after its only entry
+  had been filed as #36 and fixed). Then just mark it `done` with the link.
 - **Worklog path:** `docs/ai-notes/feedback/<YYYY-MM-DD>-<slug>.md` (get the date from
   `date +%F`; slug from the feedback theme).
 - **Worklog contents:**
