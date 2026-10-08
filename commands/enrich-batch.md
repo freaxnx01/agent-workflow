@@ -1,6 +1,6 @@
 ---
 description: Interactive batch enrichment — group, interview, fan out /enrich --headless, interview again
-argument-hint: [<issue>...] [--milestone <name>]
+argument-hint: "[<issue>...] [--milestone <name>]"
 ---
 
 Enrich several issues in one session: pick and group them, ask the human the
@@ -51,7 +51,7 @@ already `needs-human` or `ai-implement`, empty body):
 
 ```bash
 gh issue view <n> --json state,labels,body \
-  --jq '{state, labels: [.labels[].name], empty_body: ((.body // "") | test("^\\s*$"))}'
+  --jq '{state, labels: [.labels[].name], empty_body: (((.body // "") | gsub("\\s"; "") | length) == 0)}'
 ```
 
 An empty batch ends the command here.
