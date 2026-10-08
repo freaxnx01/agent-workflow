@@ -200,8 +200,8 @@ fi
 Report every worktree kept, and why.
 
 **Landing order.** When two plans in the batch touch the same files or one
-needs the other first, record the landing order in both specs ("Lands after
-#<m>: <reason>"), and push it the same way as Step 5's amendments.
+needs the other first, record the landing order in both specs
+(`Lands after #<m>: <reason>`), and push it the same way as Step 5's amendments.
 
 ### Scope boundary
 
