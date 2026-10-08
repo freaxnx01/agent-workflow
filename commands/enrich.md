@@ -137,6 +137,43 @@ Headless mode changes nothing else. Every other step of the [GitHub](#github)
 section still runs: the lock, the spec, the plan, the push verification, the
 issue body.
 
+## Cost rules
+
+Enrichment subagents and pipeline implement runs share one subscription
+(`CLAUDE_CODE_OAUTH_TOKEN`), so enrichment spend starves dispatches. The 5-hour
+limit was hit twice in one day (#456). Spend the least that gets the issue
+ready.
+
+### Model by issue size
+
+| Issue kind | Model |
+|---|---|
+| Simple: a clear one-file fix, a small UI tweak, an amendment to an already-enriched issue | **Sonnet** |
+| Architectural or cross-cutting, and bugs whose cause is unknown | **Opus** |
+| Graphics and design work for new things | **Fable** |
+
+A session cannot switch its own model. The **caller** picks it at launch: the
+Agent tool's `model` parameter for a subagent, or `claude --model` for a nested
+session. `/enrich --headless` runs on whatever it was launched with. A batch
+caller (`/enrich-batch`, #453) picks per issue and states which model it picked
+in its plan of work. The unattended lane is the exception: it takes one `MODEL`
+per run, and Fable is refused there by `scripts/lib/blocked-models.sh`.
+
+### No dry runs
+
+- Where the issue already pins the problem down, do not trial-implement the
+  plan's code, and do not run Playwright or pipeline scripts to confirm the fix.
+- **Bugs keep the reproduction.** Reproduce headless and measure the cause
+  before planning. That stays mandatory.
+- Data probes (OSM, DSM, ...) stay allowed when a decision depends on a measured
+  number.
+
+### Concurrency
+
+A caller that fans out enrich subagents runs **at most 4** at once (3-4). The
+agent box has 12 GB and no swap, and hitting the cap thrashes rather than
+OOM-killing.
+
 ## GitHub
 
 Enrich GitHub issue #$ISSUE (strip any leading `#`) so it is ready for the
@@ -276,6 +313,8 @@ design sections, spec self-review, user approval gate).
 [Quick mode](#quick-mode) above. Suppress the clarifying questions and the user
 approval gate — treat the spec as approved the moment brainstorming's own
 self-review passes. Carry the assumptions and consequences forward to Step 6.
+
+Follow [Cost rules](#cost-rules): no dry runs where the issue already pins the problem down.
 
 ### Step 4 — Write implementation plan
 
@@ -659,6 +698,8 @@ approaches, design sections, spec self-review, user approval gate).
 [Quick mode](#quick-mode) above. Suppress the clarifying questions and the user
 approval gate — treat the spec as approved the moment brainstorming's own
 self-review passes. Carry the assumptions and consequences forward to Step 6.
+
+Follow [Cost rules](#cost-rules): no dry runs where the issue already pins the problem down.
 
 ### Step 4 — Write implementation plan
 
