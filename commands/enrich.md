@@ -840,38 +840,63 @@ resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
 ```
 
 **Acquire the lock** before brainstorming, mirroring the GitHub steps: the
-timestamped comment first, so the tag always has an age, then the tag.
+timestamped comment first, so the tag always has an age, then the tag. Fresh
+acquisition:
 
 ```bash
-azdo_comment "$ID" "Enrichment lock acquired at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-azdo_add_tag "$ID" enrichment-ongoing
+azdo_comment "$ISSUE" "🔒 Enrichment lock acquired at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+azdo_add_tag "$ISSUE" enrichment-ongoing
 ```
 
-Read an existing lock with `azdo_comments "$ID"`, which strips the HTML the API
-returns. The 24-hour staleness rule and the same-second tie-break (lowest
-comment id wins) are the GitHub section's, unchanged.
+Takeover of a stale lock (substitute the actual age for `<Xh>`):
+
+```bash
+azdo_comment "$ISSUE" "🔒 Enrichment lock re-acquired at $(date -u +%Y-%m-%dT%H:%M:%SZ) (previous lock stale, <Xh> old)"
+azdo_add_tag "$ISSUE" enrichment-ongoing
+```
+
+Read an existing lock with `azdo_comments "$ISSUE"`, which strips the HTML the
+API returns, and scan it for the same pattern the GitHub section keys on:
+
+```text
+🔒 Enrichment lock (re-)acquired at <timestamp>
+```
+
+The 24-hour staleness rule and the same-second tie-break (lowest comment id
+wins) are the GitHub section's, unchanged. The `🔒` marker surviving a
+`--discussion` write is unverified — the next task confirms it against a live
+work item; fall back to an ASCII marker such as `[LOCK]` if the service does
+not preserve it.
 
 **Write the description** once the spec and plan are committed and pushed. The
 work item gets the original description, then the acceptance criteria, then
 pointers — not the inlined plan:
 
 ```bash
-orig="$(azdo_description "$ID")" || { echo "read failed — not writing"; exit 1; }
-ac="$(printf '%s' "$AC_TEXT" | azdo_html_escape)"
-azdo_set_description "$ID" "$orig<h2>Acceptance Criteria</h2><ul>$ac</ul>
-<h2>Spec &amp; Plan</h2><ul><li><code>$SPEC_PATH</code></li>
-<li><code>$PLAN_PATH</code></li></ul>
+orig="$(azdo_description "$ISSUE")" || { echo "read failed — not writing"; exit 1; }
+ac=$(printf '%s\n' "$AC_TEXT" | python3 -c '
+import html, sys
+for line in sys.stdin:
+    line = line.strip().lstrip("-[ ]x").strip()
+    if line:
+        print("<li>%s</li>" % html.escape(line))')
+spec_path="$(printf '%s' "$SPEC_PATH" | azdo_html_escape)"
+plan_path="$(printf '%s' "$PLAN_PATH" | azdo_html_escape)"
+azdo_set_description "$ISSUE" "$orig<h2>Acceptance Criteria</h2><ul>$ac</ul>
+<h2>Spec &amp; Plan</h2><ul><li><code>$spec_path</code></li>
+<li><code>$plan_path</code></li></ul>
 <p>Read the plan before writing any code.</p>"
 ```
 
-Every interpolated value goes through `azdo_html_escape` — an unescaped `<` or
-`&` in an acceptance criterion breaks the stored markup. Assert the read-back
-contains the heading and both paths rather than comparing bytes: Azure DevOps
-sanitizes stored HTML.
+Every interpolated value is HTML-escaped before it lands in the markup — the
+paths through `azdo_html_escape`, each acceptance criterion through
+`html.escape` in the snippet above — an unescaped `<` or `&` breaks the stored
+markup. Assert the read-back contains the heading and both paths rather than
+comparing bytes: Azure DevOps sanitizes stored HTML.
 
-**Release the lock** with `azdo_remove_tag "$ID" enrichment-ongoing`. The lock
-comment stays as an audit trail. There is no readiness tag to clear — per
-ADR-012 nothing on this forge dispatches, so `/new` never applies one.
+**Release the lock** with `azdo_remove_tag "$ISSUE" enrichment-ongoing`. The
+lock comment stays as an audit trail. There is no readiness tag to clear — per
+ADR-017 nothing on this forge dispatches, so `/new` never applies one.
 
 **Do not claim the item is dispatchable.** There is no `ai-implement` here;
 report the paths and stop.

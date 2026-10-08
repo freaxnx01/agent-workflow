@@ -39,8 +39,9 @@ list, then the committed spec and plan paths.
 
 **This breaks `/enrich`'s "the implementing agent works from the body alone"
 rule, on purpose.** That rule exists because the GitHub pipeline agent reads
-*only* the issue body. Per **ADR-012** the pipeline is GitHub-only, so on this
-forge the reader is a human or a local `/work` session — both of which have the
+*only* the issue body. agent-workflow's pipeline is implemented as GitHub
+Actions workflows with no Azure DevOps equivalent (ADR-017), so on this forge
+the reader is a human or a local `/work` session — both of which have the
 repository checked out. Inlining a 40 KB plan into an HTML field would solve a
 problem this forge does not have, and would render as an unformatted wall.
 
@@ -156,7 +157,7 @@ function's comment rather than leaving the reader to wonder.
 - **`/enrich-phased`** — becomes available on ADO. Its phases depend on the lock
   surviving a `/clear`, which now works.
 - **`/work`** — **documentation only.** Its gap is pipeline dispatch, inherent to
-  the forge per ADR-012, not the description write. One corrected sentence; no
+  the forge per ADR-017, not the description write. One corrected sentence; no
   new capability.
 
 ## Testing

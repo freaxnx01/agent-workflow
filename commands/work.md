@@ -88,7 +88,7 @@ az boards work-item show --id <id> --org "$(azdo_org_url)" \
 **One thing this command does on GitHub that it cannot do here — say so plainly
 rather than half-doing it:**
 
-- **No pipeline dispatch.** agent-workflow's pipeline is GitHub-only (ADR-012),
+- **No pipeline dispatch.** agent-workflow's pipeline is GitHub-only (ADR-017),
   so there is no `ai-implement` label to apply and no draft PR to wait on.
   `/enrich` can now write acceptance criteria and plan pointers onto the work
   item (ADR-017), but nothing here picks the item up afterwards, so this

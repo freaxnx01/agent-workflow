@@ -1619,10 +1619,12 @@ acceptance criteria, and pointers to the committed spec and plan. The plan is
 not inlined, in any form.
 
 **Why this is not a regression.** The "body alone is enough" rule exists for the
-pipeline agent, and per ADR-012 there is no pipeline on this forge. The reader
-here is a human or a local `/work` session, both with the repository checked
-out. Inlining a 40 KB plan into an HTML field would solve a problem Azure
-DevOps does not have, and render as an unformatted wall.
+pipeline agent. agent-workflow's pipeline is implemented as GitHub Actions
+workflows under `.github/workflows/`, with no Azure DevOps equivalent, so there
+is no pipeline agent on this forge. The reader here is a human or a local
+`/work` session, both with the repository checked out. Inlining a 40 KB plan
+into an HTML field would solve a problem Azure DevOps does not have, and render
+as an unformatted wall.
 
 **Rejected.** Wrapping the Markdown in `<pre>` — preserves the GitHub contract
 but produces an unusable work item. Converting Markdown to HTML — needs a
