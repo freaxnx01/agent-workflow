@@ -558,18 +558,23 @@ az boards work-item show --id <id> --org "$(azdo_org_url)" \
   --output json --only-show-errors
 ```
 
-The phase boundary is where this breaks. `/enrich-phased` relies on the
-**enrichment lock** surviving a `/clear`, and the lock is a label plus a
-timestamped comment. On this forge `az boards work-item update --fields` appends
-to `System.Tags` rather than replacing it, and an empty value is a no-op — so a
-lock can be acquired and **not released**. A phased run that cannot release its
-lock leaves the work item blocked for the full 24-hour staleness window.
+**The lock is no longer what blocks this.** `/enrich-phased` relies on the
+**enrichment lock** surviving a `/clear`, and the lock is a tag plus a
+timestamped comment. `az boards work-item update --fields` appends to
+`System.Tags` rather than replacing it, and an empty value is a no-op — so with
+`--fields` alone a lock could be acquired and **not released**. `azdo_set_tags`
+in `scripts/lib/azdo.sh` replaces the tag string with a json-patch `replace`, so
+releasing one is possible now; it simply is not wired up yet.
+
+What still blocks the phased flow is the same thing that blocks `/enrich`: the
+`System.Description` write-back is unverified, so neither phase can put its
+output on the work item.
 
 So on an ADO remote: say the phased flow is unavailable, and offer the
 single-pass read-only path from `/enrich`'s section instead — spec and plan
 committed to `docs/superpowers/`, work item untouched.
 
-Tracked in **#286** Task 6.
+Tracked in **#488**.
 
 ## Unknown host
 
