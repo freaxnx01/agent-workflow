@@ -553,11 +553,12 @@ resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
 ```
 
 **Detect an existing lock — new runs only**, same check as `/enrich`'s Azure
-DevOps section: `azdo_fields <issue>` for `enrichment-ongoing` in `tags` first,
-and only if present scan `azdo_comments <issue>` for the most recent lock
-comment to compute its age and apply the 24-hour staleness rule. Skip this
-entirely on a resume — that is the same run continuing, so the only lock it
-could find is its own.
+DevOps section: `azdo_fields <issue>` for `enrichment-ongoing` in `tags` first.
+If `azdo_fields` exits non-zero or prints nothing, **stop** — an empty read is
+not "no tag". Only if the tag is present, scan `azdo_comments <issue>` for the
+most recent lock comment to compute its age and apply the 24-hour staleness
+rule. Skip this entirely on a resume — that is the same run continuing, so the
+only lock it could find is its own.
 
 Acquire once, before the spec phase, and release once, after the body write:
 
