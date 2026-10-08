@@ -206,7 +206,7 @@ development. Running `/update-commands` after the merge is part of delivery.
       a round trip.
 - [ ] `/enrich` and `/enrich-phased` ADO sections describe the write path, and
       `/work`'s corrected sentence no longer implies a missing prerequisite.
-- [ ] An ADR records the AC-plus-pointers divergence and its ADR-012 reason.
+- [ ] An ADR records the AC-plus-pointers divergence and its ADR-017 reason.
 - [ ] `tests/run-azdo-lib-tests.sh` and `tests/run-script-tests.sh` both pass.
 - [ ] Live verification ran locally against sandbox work item #5, and the run is
       recorded under `docs/ai-notes/`.

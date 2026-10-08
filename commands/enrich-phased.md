@@ -555,10 +555,10 @@ resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
 Acquire once, before the spec phase, and release once, after the body write:
 
 ```bash
-azdo_comment "$ISSUE" "🔒 Enrichment lock acquired at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-azdo_add_tag "$ISSUE" enrichment-ongoing
+azdo_comment <issue> "🔒 Enrichment lock acquired at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+azdo_add_tag <issue> enrichment-ongoing
 # ... spec phase, /clear, plan phase, /clear, body write ...
-azdo_remove_tag "$ISSUE" enrichment-ongoing
+azdo_remove_tag <issue> enrichment-ongoing
 ```
 
 `azdo_add_tag` and `azdo_remove_tag` read the current tags and write the whole

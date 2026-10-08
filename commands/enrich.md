@@ -875,9 +875,9 @@ pointers — not the inlined plan:
 ```bash
 orig="$(azdo_description "$ISSUE")" || { echo "read failed — not writing"; exit 1; }
 ac=$(printf '%s\n' "$AC_TEXT" | python3 -c '
-import html, sys
+import html, re, sys
 for line in sys.stdin:
-    line = line.strip().lstrip("-[ ]x").strip()
+    line = re.sub(r"^\s*(?:[-*]\s*)?(?:\[[ xX]\]\s*)?", "", line.strip())
     if line:
         print("<li>%s</li>" % html.escape(line))')
 spec_path="$(printf '%s' "$SPEC_PATH" | azdo_html_escape)"
@@ -888,11 +888,13 @@ azdo_set_description "$ISSUE" "$orig<h2>Acceptance Criteria</h2><ul>$ac</ul>
 <p>Read the plan before writing any code.</p>"
 ```
 
-Every interpolated value is HTML-escaped before it lands in the markup — the
-paths through `azdo_html_escape`, each acceptance criterion through
-`html.escape` in the snippet above — an unescaped `<` or `&` breaks the stored
-markup. Assert the read-back contains the heading and both paths rather than
-comparing bytes: Azure DevOps sanitizes stored HTML.
+Every value this command adds is HTML-escaped before it lands in the markup —
+the paths through `azdo_html_escape`, each acceptance criterion through
+`html.escape` in the snippet above. `$orig` is not escaped, deliberately: it is
+already-stored HTML, and escaping it again would corrupt it. An unescaped `<`
+or `&` in a value this command adds still breaks the stored markup. Assert the
+read-back contains the heading and both paths rather than comparing bytes:
+Azure DevOps sanitizes stored HTML.
 
 **Release the lock** with `azdo_remove_tag "$ISSUE" enrichment-ongoing`. The
 lock comment stays as an audit trail. There is no readiness tag to clear — per
