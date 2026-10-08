@@ -789,7 +789,7 @@ Blocked item and the issue is handed over with `needs-human`. See
 
 ## Azure DevOps
 
-**Reads work, writes do not — and the write is the point of this command.**
+**Reads work; the body write does not — and that write is the point of this command.**
 
 ```bash
 source "$HOME/.claude/scripts/lib/detect-forge.sh"
@@ -810,19 +810,23 @@ What is **not** ported, and why it is not half-done:
   agent can work from the body alone. On ADO that means rewriting
   `System.Description`, and `az boards work-item update --fields` has an
   append-versus-replace behaviour that differs per field — proven for
-  `System.Tags`, which appends and cannot be cleared. Until that is settled for
-  the description, a partial write would silently mangle an existing one.
-- **The enrichment lock.** It is a label plus a timestamped comment. Tag writes
-  on this forge append rather than replace, so acquiring a lock is possible but
-  *releasing* one is not, with `--fields` alone.
+  `System.Tags`, which appends and cannot be cleared. Whether a json-patch
+  `replace` on the description behaves the way it does on the tags is
+  **unverified**; until someone writes one and reads it back, a partial write
+  would silently mangle an existing body.
+
+**The enrichment lock is no longer the obstacle it was.** It is a tag plus a
+timestamped comment, and `azdo_set_tags` in `scripts/lib/azdo.sh` sets tags with
+a json-patch `replace`, so a lock can be *released* as well as acquired —
+`--fields` alone could only append. Wiring that into an actual lock is part of
+the port, not a prerequisite still missing.
 
 So on an ADO remote: do the spec and plan, commit them under
 `docs/superpowers/`, and **tell the user the work item was not updated**, naming
-the paths instead. Do not apply or clear any tag. Do not claim the issue is
-ready to implement.
+the paths instead. Do not claim the item is ready to implement — the body an
+implementer would work from exists only in the repo.
 
-Tracked in **#286** Task 6, which needs an `azdo_set_tags` built on a json-patch
-`replace` rather than `--fields`.
+Tracked in **#488**.
 
 ## Unknown host
 
