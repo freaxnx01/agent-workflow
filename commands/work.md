@@ -85,15 +85,14 @@ az boards work-item show --id <id> --org "$(azdo_org_url)" \
   --output json --only-show-errors
 ```
 
-**Two things this command does on GitHub that it cannot do here — say so plainly
-rather than half-doing them:**
+**One thing this command does on GitHub that it cannot do here — say so plainly
+rather than half-doing it:**
 
-- **No pipeline dispatch.** agent-workflow's pipeline is GitHub-only (ADR-012),
-  so there is no `ai-implement` label to apply and no draft PR to wait on. This
-  command's ADO path is local execution only.
-- **No issue-body enrichment.** `/enrich` is not ported for writes (see its own
-  section), so the plan is not written back to the work item. Keep the plan in
-  the repo under `docs/superpowers/plans/` and reference it.
+- **No pipeline dispatch.** agent-workflow's pipeline is GitHub-only (ADR-017),
+  so there is no `ai-implement` label to apply and no draft PR to wait on.
+  `/enrich` can now write acceptance criteria and plan pointers onto the work
+  item (ADR-017), but nothing here picks the item up afterwards, so this
+  command's Azure DevOps path stays local execution only.
 
 What does work end to end: read the item, write the spec and plan, implement,
 open a PR with `az repos pr create --work-items <id>` so the item is linked, and

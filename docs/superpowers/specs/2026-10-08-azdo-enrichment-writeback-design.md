@@ -39,8 +39,9 @@ list, then the committed spec and plan paths.
 
 **This breaks `/enrich`'s "the implementing agent works from the body alone"
 rule, on purpose.** That rule exists because the GitHub pipeline agent reads
-*only* the issue body. Per **ADR-012** the pipeline is GitHub-only, so on this
-forge the reader is a human or a local `/work` session — both of which have the
+*only* the issue body. agent-workflow's pipeline is implemented as GitHub
+Actions workflows with no Azure DevOps equivalent (ADR-017), so on this forge
+the reader is a human or a local `/work` session — both of which have the
 repository checked out. Inlining a 40 KB plan into an HTML field would solve a
 problem this forge does not have, and would render as an unformatted wall.
 
@@ -156,7 +157,7 @@ function's comment rather than leaving the reader to wonder.
 - **`/enrich-phased`** — becomes available on ADO. Its phases depend on the lock
   surviving a `/clear`, which now works.
 - **`/work`** — **documentation only.** Its gap is pipeline dispatch, inherent to
-  the forge per ADR-012, not the description write. One corrected sentence; no
+  the forge per ADR-017, not the description write. One corrected sentence; no
   new capability.
 
 ## Testing
@@ -181,8 +182,9 @@ in the plan. Credentials: `direnv exec ~/repos/ado/personal …`.
 
 **Use a dedicated write-probe work item.** Sandbox fixtures 1–4 each prove
 something specific (linked-PR, `parked`, `roadmap`, plain control); a lock tag or
-a description on any of them corrupts the rig. Create work item **#5** once, keep
-it, and add it to the do-not-delete list in the ADO record.
+a description on any of them corrupts the rig. Create the probe work item once
+(the live run's was **#6** — the service assigns the id), keep it, and add it to
+the do-not-delete list in the ADO record.
 
 **Never write to the `bossinfo` organization.** The PAT reaches it and it is
 production.
@@ -205,10 +207,13 @@ development. Running `/update-commands` after the merge is part of delivery.
       a round trip.
 - [ ] `/enrich` and `/enrich-phased` ADO sections describe the write path, and
       `/work`'s corrected sentence no longer implies a missing prerequisite.
-- [ ] An ADR records the AC-plus-pointers divergence and its ADR-012 reason.
+- [ ] An ADR records the AC-plus-pointers divergence and its ADR-017 reason.
 - [ ] `tests/run-azdo-lib-tests.sh` and `tests/run-script-tests.sh` both pass.
-- [ ] Live verification ran locally against sandbox work item #5, and the run is
-      recorded under `docs/ai-notes/`.
+- [ ] Live verification ran locally against the sandbox probe work item (the live
+      run used **#6**, not the **#5** this spec originally assumed — see Finding 0
+      in `docs/ai-notes/2026-10-08-azdo-writeback-live-run.md` for why hardcoding a
+      work-item id for future readers is itself a hazard), and the run is recorded
+      under `docs/ai-notes/`.
 - [ ] `/update-commands` re-installed the commands after merge.
 
 ## Out of scope

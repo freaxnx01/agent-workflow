@@ -18,12 +18,18 @@
 # Exit codes:
 #   0  success, including a query that legitimately matched nothing
 #   1  error (the underlying az stderr is passed through)
-#   2  the Area Path in the query does not exist (TF51011)
+#   2  meaning depends on the function:
+#        - azdo_wiql: the Area Path in the query does not exist (TF51011)
+#        - azdo_set_description, azdo_comment, azdo_add_tag, azdo_remove_tag,
+#          _azdo_edit_tags: a usage error (missing/malformed arguments)
 #
 # Callers must CAPTURE the status rather than calling bare. Sourcing this file
 # applies `set -e` to the caller (as detect-forge.sh already does), so a bare
 # `azdo_wiql ...` kills the shell on exit 2 before the caller can distinguish it
-# from an empty result -- which is the entire point of that exit code. Use:
+# from an empty result -- which is the entire point of that exit code. The
+# worked example below is for the query functions (currently just azdo_wiql)
+# only -- a writer's exit 2 is a usage bug in the caller, not a missing Area
+# Path:
 #
 #   rc=0; ids=$(azdo_wiql "$q") || rc=$?
 #   case $rc in
@@ -213,6 +219,26 @@ azdo_active_pr_work_items() {
 # azdo_set_tags <work-item-id> <tags>  REPLACES a work item's tags outright.
 # <tags> is semicolon-delimited ("a;b"); an empty string clears them.
 #
+# WARNING -- THE ID IS ORG-SCOPED, NOT PROJECT-SCOPED.
+#
+# OBSERVED (sandbox, 2026-10-08): the PATCH below goes to /_apis/wit/workitems/<id>,
+# which carries NO project segment, and neither does `az boards work-item show
+# --id`. AZDO_PROJECT does not constrain the write; it is used only by the reads.
+# Ids are allocated per ORGANIZATION, and the id a plan predicts need not be the
+# one the project holds -- a run that expected to create work item 5 got 6, and a
+# read of 5 from this project errors TF401232 ("does not exist, or you do not
+# have permissions to read it"), which does not distinguish the two cases.
+#
+# INFERRED from that URL shape, and deliberately NOT TESTED: that a PATCH naming
+# an id belonging to a DIFFERENT project would be accepted and rewrite it. The
+# experiment that would settle it is a write into a project we do not own, so we
+# will not run it. Treat it as an unverified worst case.
+#
+# The instruction does not depend on which of those it is. Never pass an id you
+# guessed, counted on, or carried over from a plan. Pass one you have READ BACK
+# from the project you intend to touch, and verify its System.TeamProject first
+# if anything is riding on it.
+#
 # This exists because `az boards work-item update --fields "System.Tags=..."`
 # cannot do it. That form APPENDS -- successive calls accumulate -- and an empty
 # value is a silent no-op, so an "unpark" verb cannot be built on it at all.
@@ -253,3 +279,171 @@ if "fields" not in d:
     sys.exit(1)
 print(d["fields"].get("System.Tags", ""))'
 }
+
+# azdo_html_escape  filter: stdin to stdout, escaping & < > " for System.Description.
+#
+# System.Description is an HTML field (type=html, verified live 2026-10-08), so
+# anything interpolated into it -- an AC line, a file path -- must be escaped or
+# it breaks the stored markup. html.escape is standard library; no dependency.
+azdo_html_escape() {
+  python3 -c 'import html, sys; sys.stdout.write(html.escape(sys.stdin.read()))'
+}
+
+# azdo_description <id>  echoes the work item's current System.Description.
+#
+# Exit 0 on success INCLUDING an absent field, which echoes nothing: a work item
+# that has never had a description simply omits the key. Exit 1 on a read error.
+# Callers must capture the status -- an empty echo alone cannot tell the two
+# apart, and composing a write from a failed read destroys the existing body.
+azdo_description() {
+  local id="${1:?azdo_description requires a work-item id}"
+  : "${AZDO_PROJECT:?AZDO_PROJECT must be set — call resolve_azdo_context first}"
+  az boards work-item show --id "$id" --org "$(azdo_org_url)" \
+      --output json --only-show-errors \
+  | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+sys.stdout.write(d.get("fields", {}).get("System.Description", ""))'
+}
+
+# azdo_set_description <id> <html>  writes System.Description, echoes it back.
+#
+# WARNING -- the id is ORG-SCOPED. This PATCH goes to the same project-less URL
+# as azdo_set_tags, so the note above that function applies here in full --
+# including which part of it is observed and which part is only inferred. Pass
+# an id read back from the project you mean to touch.
+#
+# The json-patch op is CHOSEN FROM THE READ, never fixed. `add` on an existing
+# field is the appending behaviour azdo_set_tags exists to escape, so the read is
+# load-bearing in that direction. In the other direction it is belt-and-braces:
+# `replace` on a field that does NOT exist yet was observed to SUCCEED (absent
+# System.Tags, sandbox 2026-10-08), so the once-stated claim that it errors is
+# wrong -- at least for System.Tags; System.Description was never sent that way
+# because this function correctly chose `add`. Keep choosing from the read
+# anyway: `add`-on-absent is the behaviour we rely on, not the behaviour we
+# happened to observe once, and the caller has to read to compose the new body
+# regardless. See docs/ai-notes/2026-10-08-azdo-writeback-live-run.md.
+#
+# A second write REPLACES rather than appends -- verified live, same run; the
+# whole write path rests on it. The service does rewrite the stored markup
+# (`<p>x</p>` comes back `<p>x </p>`), so never compare a round trip with `==`.
+#
+# Exit 0 success, 1 read or write failure, 2 usage.
+azdo_set_description() {
+  local id="${1-}" html="${2-}"
+  if [[ -z "$id" || $# -lt 2 ]]; then
+    echo "usage: azdo_set_description <id> <html>" >&2
+    return 2
+  fi
+  : "${AZURE_DEVOPS_EXT_PAT:?AZURE_DEVOPS_EXT_PAT must be set}"
+
+  local current rc=0
+  current="$(azdo_description "$id")" || rc=$?
+  if [[ $rc -ne 0 ]]; then
+    echo "azdo_set_description: could not read work item $id — refusing to write" >&2
+    return 1
+  fi
+
+  local op=add
+  [[ -n "$current" ]] && op=replace
+
+  local url body out
+  url="$(azdo_org_url)/_apis/wit/workitems/${id}?api-version=7.1"
+  body=$(python3 -c '
+import json, sys
+print(json.dumps([{"op": sys.argv[1], "path": "/fields/System.Description",
+                   "value": sys.argv[2]}]))' "$op" "$html")
+
+  out=$(printf 'user = ":%s"\n' "$AZURE_DEVOPS_EXT_PAT" \
+    | curl -sS -K - \
+        -H 'Content-Type: application/json-patch+json' \
+        -X PATCH "$url" -d "$body") || return 1
+
+  printf '%s' "$out" | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+if "fields" not in d:
+    sys.stderr.write("azdo_set_description: unexpected response: %s\n" % str(d)[:200])
+    sys.exit(1)
+sys.stdout.write(d["fields"].get("System.Description", ""))'
+}
+
+# azdo_comment <id> <text>  posts a comment to the work item's discussion.
+#
+# `az boards work-item update --discussion` writes System.History, so no raw API
+# call is needed for the write. Exit 0 success, 1 failure, 2 usage.
+azdo_comment() {
+  local id="${1-}" text="${2-}"
+  if [[ -z "$id" || $# -lt 2 ]]; then
+    echo "usage: azdo_comment <id> <text>" >&2
+    return 2
+  fi
+  az boards work-item update --id "$id" --org "$(azdo_org_url)" \
+    --discussion "$text" --output json --only-show-errors >/dev/null
+}
+
+# azdo_comments <id>  echoes one comment per line, oldest first, HTML STRIPPED.
+#
+# The comments API returns each body as HTML -- "<div>Enrichment lock acquired
+# at ...</div>" -- so a caller matching a plain-text lock line finds nothing
+# unless the tags come off first. Newlines inside a comment are collapsed so one
+# comment stays one line and the caller's `tail -1` means what it looks like.
+# Comments are sorted by id ascending: the same-second lock tie-breaker is lowest
+# comment id, so a deterministic order makes `tail -1` mean "newest" reliably.
+azdo_comments() {
+  local id="${1:?azdo_comments requires a work-item id}"
+  : "${AZDO_PROJECT:?AZDO_PROJECT must be set — call resolve_azdo_context first}"
+  az devops invoke --org "$(azdo_org_url)" --area wit --resource comments \
+      --route-parameters project="$AZDO_PROJECT" workItemId="$id" \
+      --api-version 7.1-preview --output json --only-show-errors \
+  | python3 -c '
+import sys, json, re, html
+d = json.load(sys.stdin)
+comments = sorted(d.get("comments", []), key=lambda x: x.get("id", 0))
+for c in comments:
+    text = re.sub(r"<[^>]+>", "", c.get("text", ""))
+    print(" ".join(html.unescape(text).split()))'
+}
+
+# _azdo_edit_tags <id> <add|remove> <tag>  shared read-modify-write.
+#
+# azdo_set_tags replaces the WHOLE string, so a single-tag edit has to read the
+# current set first. The read's status is captured and a non-zero one aborts:
+# azdo_fields defaults an absent System.Tags to "", so an empty read is
+# indistinguishable from a failed one, and writing anyway would clear every tag
+# the item has -- parked and roadmap included.
+_azdo_edit_tags() {
+  local id="${1-}" mode="${2-}" tag="${3-}"
+  if [[ -z "$id" || -z "$mode" || -z "$tag" ]]; then
+    echo "usage: _azdo_edit_tags <id> <add|remove> <tag>" >&2
+    return 2
+  fi
+
+  local row rc=0
+  row="$(azdo_fields "$id")" || rc=$?
+  if [[ $rc -ne 0 || -z "$row" ]]; then
+    echo "_azdo_edit_tags: could not read work item $id — refusing to write" >&2
+    return 1
+  fi
+
+  local next
+  next=$(printf '%s' "$row" | python3 -c '
+import sys, json
+row = json.loads(sys.stdin.readline())
+mode, tag = sys.argv[1], sys.argv[2]
+tags = [t.strip() for t in row.get("tags", "").split(";") if t.strip()]
+if mode == "add":
+    if tag not in tags:
+        tags.append(tag)
+else:
+    tags = [t for t in tags if t != tag]
+print("; ".join(tags))' "$mode" "$tag")
+
+  azdo_set_tags "$id" "$next"
+}
+
+# azdo_add_tag <id> <tag>  adds one tag, preserving the rest.
+azdo_add_tag() { _azdo_edit_tags "${1-}" add "${2-}"; }
+
+# azdo_remove_tag <id> <tag>  removes one tag, preserving the rest.
+azdo_remove_tag() { _azdo_edit_tags "${1-}" remove "${2-}"; }

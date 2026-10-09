@@ -28,8 +28,16 @@ argv="$( IFS=' '; printf '%s' "$*" )"
 
 [[ -n "${AZ_MOCK_LOG:-}" ]] && printf '%s\n' "$argv" >> "$AZ_MOCK_LOG"
 
-if [[ -n "${AZ_MOCK_STDIN_LOG:-}" && "$argv" == *"--in-file /dev/stdin"* ]]; then
-  cat >> "$AZ_MOCK_STDIN_LOG"
+# Consume stdin when --in-file /dev/stdin is passed. azdo_fields pipes the request
+# JSON through stdin, and the mock must consume it rather than leave the writer
+# blocked on a pipe — this causes EPIPE with pipefail, surfaced as exit 120.
+# The real `az` reads the file, so this never happens outside tests.
+if [[ "$argv" == *"--in-file /dev/stdin"* ]]; then
+  if [[ -n "${AZ_MOCK_STDIN_LOG:-}" ]]; then
+    cat >> "$AZ_MOCK_STDIN_LOG"
+  else
+    cat >/dev/null
+  fi
 fi
 
 fixture="$AZ_MOCK_FIXTURE"

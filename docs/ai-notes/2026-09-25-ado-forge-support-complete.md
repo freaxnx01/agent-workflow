@@ -52,6 +52,12 @@ ADO changes can be verified. Credentials: `direnv exec ~/repos/ado/personal …`
 Preserved fixtures, each chosen to prove something:
 
 - Work items **1–4** — linked-PR, `parked`, `roadmap`, and a plain control
+- Work item **6** — the write probe for `azdo_set_description` / the lock round
+  trip (#488). Its description, tags and comments are expected to churn; the
+  other four must not. (It is **6**, not 5: id 5 was not returned by a
+  project-scoped WIQL and `work-item show --id 5` errors `TF401232`. The cause
+  was not checked — treat work-item ids as org-scoped, and never assume the next
+  one.)
 - Areas `agent-workflow-sandbox` **and `empty-area`** — the empty one proves a
   present-but-empty area returns 0 rows while a *missing* one errors `TF51011`
 - Iterations `Sprint 1` (nested `Week A`) and `Sprint 2` — the `--depth` trap and

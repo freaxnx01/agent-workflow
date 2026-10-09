@@ -201,6 +201,176 @@ else
 fi
 rm -rf "$ct_dir"
 
+section "azdo_description / azdo_set_description — the HTML field"
+
+sd_dir="$(mktemp -d)"
+# shellcheck disable=SC2030,SC2031
+run_desc() {
+  local az_fixture="$1" curl_fixture="$2"; shift 2
+  (
+    export PATH="$MOCKS:$PATH"
+    export AZ_MOCK_FIXTURE="$FIXTURES/$az_fixture"
+    export CURL_MOCK_FIXTURE="$FIXTURES/$curl_fixture"
+    export CURL_MOCK_BODY_LOG="$sd_dir/body.txt" CURL_MOCK_LOG="$sd_dir/argv.txt"
+    export AZDO_ORG=contoso AZDO_PROJECT=MyProject AZDO_REPO=my-repo
+    export AZURE_DEVOPS_EXT_PAT=not-a-real-token
+    # shellcheck disable=SC1090
+    source "$LIB"
+    "$@"
+  )
+}
+
+assert_eq "reads an existing description" "<p>original</p>" \
+  "$(run_desc azdo-workitem-with-description.json azdo-set-description-stored.json \
+      azdo_description 5)"
+
+assert_eq "an absent description reads as empty, exit 0" "" \
+  "$(run_desc azdo-workitem-no-description.json azdo-set-description-stored.json \
+      azdo_description 5)"
+
+# Review Focus 2 — the op is chosen from the read, never fixed.
+rm -f "$sd_dir/body.txt"
+run_desc azdo-workitem-with-description.json azdo-set-description-stored.json \
+  azdo_set_description 5 '<p>new</p>' >/dev/null
+assert_eq "an existing description is REPLACED" "replace" \
+  "$(python3 -c '
+import json,sys
+print(json.loads(open(sys.argv[1]).read().strip().splitlines()[0])[0]["op"])' "$sd_dir/body.txt")"
+
+rm -f "$sd_dir/body.txt"
+run_desc azdo-workitem-no-description.json azdo-set-description-stored.json \
+  azdo_set_description 5 '<p>new</p>' >/dev/null
+assert_eq "an absent description is ADDead" "add" \
+  "$(python3 -c '
+import json,sys
+print(json.loads(open(sys.argv[1]).read().strip().splitlines()[0])[0]["op"])' "$sd_dir/body.txt")"
+
+# Review Focus 1 — a failed read must not become a write.
+rm -f "$sd_dir/body.txt"
+rc=0
+run_desc azdo-wiql-tf51011.txt azdo-set-description-stored.json \
+  azdo_set_description 5 '<p>new</p>' >/dev/null 2>&1 || rc=$?
+assert_eq "a failed read refuses the write" "1" "$rc"
+if [[ -s "$sd_dir/body.txt" ]]; then
+  fail "a failed read sends no PATCH" "a request body was recorded"
+else
+  pass "a failed read sends no PATCH"
+fi
+
+# Review Focus 3 — interpolated text is escaped.
+# Piped INTO run_desc, not run through `bash -c`: the subshell inherits stdin,
+# whereas a nested `bash -c` would not have the sourced function at all.
+assert_eq "escapes the HTML metacharacters" "a &lt;b&gt; &amp; &quot;c&quot;" \
+  "$(printf '%s' 'a <b> & "c"' \
+     | run_desc azdo-workitem-with-description.json azdo-set-description-stored.json \
+         azdo_html_escape)"
+
+assert_eq "usage error without an id" "2" \
+  "$( rc=0; run_desc azdo-workitem-with-description.json azdo-set-description-stored.json \
+       azdo_set_description >/dev/null 2>&1 || rc=$?; printf '%s' "$rc" )"
+
+rm -rf "$sd_dir"
+
+section "azdo_comment / azdo_comments — the lock's timestamp"
+
+cm_dir="$(mktemp -d)"
+# shellcheck disable=SC2030,SC2031
+run_cm() {
+  local fixture="$1"; shift
+  (
+    export PATH="$MOCKS:$PATH"
+    export AZ_MOCK_FIXTURE="$FIXTURES/$fixture"
+    export AZ_MOCK_LOG="$cm_dir/argv.txt"
+    export AZDO_ORG=contoso AZDO_PROJECT=MyProject AZDO_REPO=my-repo
+    # shellcheck disable=SC1090
+    source "$LIB"
+    "$@"
+  )
+}
+
+# Review Focus 4 — the API returns comment bodies as HTML, so the lock pattern
+# only ever matches if the tags come off first.
+assert_eq "strips the HTML the comments API returns" \
+  "Enrichment lock acquired at 2026-10-08T09:05:27Z" \
+  "$(run_cm azdo-comments-locked.json azdo_comments 5 | tail -1)"
+
+assert_eq "posts through the discussion flag" "1" \
+  "$( run_cm azdo-comments-locked.json azdo_comment 5 'hello' >/dev/null
+     grep -c -- '--discussion hello' "$cm_dir/argv.txt" )"
+
+assert_eq "usage error without text" "2" \
+  "$( rc=0; run_cm azdo-comments-locked.json azdo_comment 5 >/dev/null 2>&1 || rc=$?
+     printf '%s' "$rc" )"
+
+assert_eq "unescapes HTML entities" "a note & update" \
+  "$(run_cm azdo-comments-locked.json azdo_comments 5 | head -1)"
+
+rm -rf "$cm_dir"
+
+section "azdo_add_tag / azdo_remove_tag — read-modify-write, guarded"
+
+tg_dir="$(mktemp -d)"
+# shellcheck disable=SC2030,SC2031
+run_tag() {
+  local az_fixture="$1"; shift
+  (
+    export PATH="$MOCKS:$PATH"
+    export AZ_MOCK_FIXTURE="$FIXTURES/$az_fixture"
+    export CURL_MOCK_FIXTURE="$FIXTURES/azdo-set-tags-replaced.json"
+    export CURL_MOCK_BODY_LOG="$tg_dir/body.txt"
+    export AZDO_ORG=contoso AZDO_PROJECT=MyProject AZDO_REPO=my-repo
+    export AZURE_DEVOPS_EXT_PAT=not-a-real-token
+    # shellcheck disable=SC1090
+    source "$LIB"
+    "$@"
+  )
+}
+
+sent_value() {
+  python3 -c '
+import json,sys
+print(json.loads(open(sys.argv[1]).read().strip().splitlines()[0])[0]["value"])' "$tg_dir/body.txt"
+}
+
+rm -f "$tg_dir/body.txt"
+run_tag azdo-fields-tagged.json azdo_add_tag 5 enrichment-ongoing >/dev/null
+assert_eq "adding keeps the existing tags" "parked; roadmap; enrichment-ongoing" \
+  "$(sent_value)"
+
+# Review Focus 5 — releasing a lock must not take parked/roadmap with it.
+rm -f "$tg_dir/body.txt"
+run_tag azdo-fields-tagged.json azdo_remove_tag 5 roadmap >/dev/null
+assert_eq "removing leaves the others intact" "parked" "$(sent_value)"
+
+# Review Focus 1 — a failed read must not become a write.
+rm -f "$tg_dir/body.txt"
+rc=0
+run_tag azdo-wiql-tf51011.txt azdo_remove_tag 5 roadmap >/dev/null 2>&1 || rc=$?
+assert_eq "a failed read refuses the tag write" "1" "$rc"
+if [[ -s "$tg_dir/body.txt" ]]; then
+  fail "a failed tag read sends no PATCH" "a request body was recorded"
+else
+  pass "a failed tag read sends no PATCH"
+fi
+
+assert_eq "usage error without a tag" "2" \
+  "$( rc=0; run_tag azdo-fields-tagged.json azdo_add_tag 5 >/dev/null 2>&1 || rc=$?
+     printf '%s' "$rc" )"
+
+# Idempotency: adding a tag that already exists must not duplicate it.
+rm -f "$tg_dir/body.txt"
+run_tag azdo-fields-tagged.json azdo_add_tag 5 parked >/dev/null
+assert_eq "adding an existing tag does not duplicate" "parked; roadmap" \
+  "$(sent_value)"
+
+# Idempotency: removing a tag that does not exist is a harmless no-op.
+rm -f "$tg_dir/body.txt"
+run_tag azdo-fields-tagged.json azdo_remove_tag 5 enrichment-ongoing >/dev/null
+assert_eq "removing a non-existent tag is a no-op" "parked; roadmap" \
+  "$(sent_value)"
+
+rm -rf "$tg_dir"
+
 # --- summary -------------------------------------------------------------
 
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"

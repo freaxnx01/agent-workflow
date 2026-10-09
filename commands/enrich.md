@@ -830,7 +830,8 @@ Blocked item and the issue is handed over with `needs-human`. See
 
 ## Azure DevOps
 
-**Reads work; the body write does not — and that write is the point of this command.**
+The write path works. `System.Description` is an **HTML** field, so what goes
+into it is not `/enrich`'s GitHub body — see ADR-017 for why that is deliberate.
 
 ```bash
 source "$HOME/.claude/scripts/lib/detect-forge.sh"
@@ -838,36 +839,103 @@ source "$HOME/.claude/scripts/lib/azdo.sh"
 resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
 ```
 
-The read half is fine: fetch the work item, brainstorm a spec, write a plan.
+**Detect an existing lock** before acquiring. The tag is the boolean to key on,
+not the comment: release (below) clears the tag but keeps the lock comment as an
+audit trail, so a detector keyed on the comment alone would find a "held" lock on
+every previously-enriched item forever. Check the tag first:
 
 ```bash
-az boards work-item show --id <id> --org "$(azdo_org_url)" \
-  --output json --only-show-errors
+azdo_fields "$ISSUE"
 ```
 
-What is **not** ported, and why it is not half-done:
+This emits one JSON object with a `tags` field, a semicolon-space-separated
+string — match `enrichment-ongoing` as a whole tag, not a substring. **If the
+command exits non-zero or prints nothing, stop** — an empty read is not "no tag" (the same
+rule `_azdo_edit_tags` applies before writing), and proceeding risks acquiring
+against a work item this project can't actually see.
 
-- **The issue-body update.** This command's contract is that the implementing
-  agent can work from the body alone. On ADO that means rewriting
-  `System.Description`, and `az boards work-item update --fields` has an
-  append-versus-replace behaviour that differs per field — proven for
-  `System.Tags`, which appends and cannot be cleared. Whether a json-patch
-  `replace` on the description behaves the way it does on the tags is
-  **unverified**; until someone writes one and reads it back, a partial write
-  would silently mangle an existing body.
+- Tag absent → continue to **Acquire the lock** below.
+- Tag present → only now scan `azdo_comments "$ISSUE"` (which strips the HTML the API
+  returns) for the most recent line matching the same pattern the GitHub section
+  keys on:
 
-**The enrichment lock is no longer the obstacle it was.** It is a tag plus a
-timestamped comment, and `azdo_set_tags` in `scripts/lib/azdo.sh` sets tags with
-a json-patch `replace`, so a lock can be *released* as well as acquired —
-`--fields` alone could only append. Wiring that into an actual lock is part of
-the port, not a prerequisite still missing.
+  ```text
+  🔒 Enrichment lock (re-)acquired at <timestamp>
+  ```
 
-So on an ADO remote: do the spec and plan, commit them under
-`docs/superpowers/`, and **tell the user the work item was not updated**, naming
-the paths instead. Do not claim the item is ready to implement — the body an
-implementer would work from exists only in the repo.
+  Compute its age against `date -u +%Y-%m-%dT%H:%M:%SZ`. The 24-hour staleness
+  rule is the GitHub section's, unchanged — the tie-break on a same-second
+  acquisition does not apply here, since there is no race re-check below to
+  need one:
+  - A matching comment found, age < 24 hours → **stop**. Tell the user the item
+    is already being enriched (show the age) and end the command.
+  - Age ≥ 24 hours, or no matching comment found (treat unknown age as stale) →
+    tell the user the lock looks abandoned and ask whether to take over.
+    - No → stop.
+    - Yes → continue to **Acquire the lock**, which will note the takeover.
 
-Tracked in **#488**.
+The `🔒` marker round-trips faithfully through `azdo_comment` / `azdo_comments`
+(verified live 2026-10-08), so no ASCII fallback is needed — but only through
+that pair: the service stores the marker as the HTML entity `&#128274;` rather
+than raw `U+1F512`, and `azdo_comments` unescapes it on the way back. A reader
+that scans `azdo_comments` output matches the plain marker above; one that
+greps the raw comments API matches nothing.
+
+**Acquire the lock** before brainstorming, mirroring the GitHub steps: the
+timestamped comment first, so the tag always has an age, then the tag. Fresh
+acquisition:
+
+```bash
+azdo_comment "$ISSUE" "🔒 Enrichment lock acquired at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+azdo_add_tag "$ISSUE" enrichment-ongoing
+```
+
+Takeover of a stale lock (substitute the actual age for `<Xh>`):
+
+```bash
+azdo_comment "$ISSUE" "🔒 Enrichment lock re-acquired at $(date -u +%Y-%m-%dT%H:%M:%SZ) (previous lock stale, <Xh> old)"
+azdo_add_tag "$ISSUE" enrichment-ongoing
+```
+
+**There is no race re-check here**, unlike the GitHub section's Step 2.5: two
+sessions can both pass detection before either tags the item, and nothing in
+this section re-verifies after acquiring — treat the window between detect and
+acquire as unprotected.
+
+**Write the description** once the spec and plan are committed and pushed. The
+work item gets the original description, then the acceptance criteria, then
+pointers — not the inlined plan:
+
+```bash
+orig="$(azdo_description "$ISSUE")" || { echo "read failed — not writing"; exit 1; }
+ac=$(printf '%s\n' "$AC_TEXT" | python3 -c '
+import html, re, sys
+for line in sys.stdin:
+    line = re.sub(r"^\s*(?:[-*]\s*)?(?:\[[ xX]\]\s*)?", "", line.strip())
+    if line:
+        print("<li>%s</li>" % html.escape(line))')
+spec_path="$(printf '%s' "$SPEC_PATH" | azdo_html_escape)"
+plan_path="$(printf '%s' "$PLAN_PATH" | azdo_html_escape)"
+azdo_set_description "$ISSUE" "$orig<h2>Acceptance Criteria</h2><ul>$ac</ul>
+<h2>Spec &amp; Plan</h2><ul><li><code>$spec_path</code></li>
+<li><code>$plan_path</code></li></ul>
+<p>Read the plan before writing any code.</p>"
+```
+
+Every value this command adds is HTML-escaped before it lands in the markup —
+the paths through `azdo_html_escape`, each acceptance criterion through
+`html.escape` in the snippet above. `$orig` is not escaped, deliberately: it is
+already-stored HTML, and escaping it again would corrupt it. An unescaped `<`
+or `&` in a value this command adds still breaks the stored markup. Assert the
+read-back contains the heading and both paths rather than comparing bytes:
+Azure DevOps sanitizes stored HTML.
+
+**Release the lock** with `azdo_remove_tag "$ISSUE" enrichment-ongoing`. The
+lock comment stays as an audit trail. There is no readiness tag to clear — per
+ADR-017 nothing on this forge dispatches, so `/new` never applies one.
+
+**Do not claim the item is dispatchable.** There is no `ai-implement` here;
+report the paths and stop.
 
 ## Unknown host
 

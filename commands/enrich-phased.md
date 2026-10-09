@@ -542,7 +542,9 @@ command for the future.
 
 ## Azure DevOps
 
-Same position as `/enrich`: **the reads work, the writes do not.**
+The phased flow works here now. It depends on the **enrichment lock** surviving
+a `/clear`, and the lock can be released since `azdo_set_tags` replaces rather
+than appends.
 
 ```bash
 source "$HOME/.claude/scripts/lib/detect-forge.sh"
@@ -550,31 +552,37 @@ source "$HOME/.claude/scripts/lib/azdo.sh"
 resolve_azdo_context || { echo "not an Azure DevOps remote"; exit 1; }
 ```
 
-Each phase's *thinking* half is forge-independent — spec, then plan, with a
-`/clear` between them to keep the contexts isolated. Fetch the work item with:
+**Detect an existing lock — new runs only**, same check as `/enrich`'s Azure
+DevOps section: `azdo_fields <issue>` for `enrichment-ongoing` in `tags` first.
+If `azdo_fields` exits non-zero or prints nothing, **stop** — an empty read is
+not "no tag". Only if the tag is present, scan `azdo_comments <issue>` for the
+most recent lock comment to compute its age and apply the 24-hour staleness
+rule. Skip this entirely on a resume — that is the same run continuing, so the
+only lock it could find is its own.
+
+Acquire once, before the spec phase, and release once, after the body write:
 
 ```bash
-az boards work-item show --id <id> --org "$(azdo_org_url)" \
-  --output json --only-show-errors
+azdo_comment <issue> "🔒 Enrichment lock acquired at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+azdo_add_tag <issue> enrichment-ongoing
+# ... spec phase, /clear, plan phase, /clear, body write ...
+azdo_remove_tag <issue> enrichment-ongoing
 ```
 
-**The lock is no longer what blocks this.** `/enrich-phased` relies on the
-**enrichment lock** surviving a `/clear`, and the lock is a tag plus a
-timestamped comment. `az boards work-item update --fields` appends to
-`System.Tags` rather than replacing it, and an empty value is a no-op — so with
-`--fields` alone a lock could be acquired and **not released**. `azdo_set_tags`
-in `scripts/lib/azdo.sh` replaces the tag string with a json-patch `replace`, so
-releasing one is possible now; it simply is not wired up yet.
+`azdo_add_tag` and `azdo_remove_tag` read the current tags and write the whole
+set back, aborting if the read fails — so a transient error cannot strip
+`parked` or `roadmap` off the item along with the lock.
 
-What still blocks the phased flow is the same thing that blocks `/enrich`: the
-`System.Description` write-back is unverified, so neither phase can put its
-output on the work item.
+**There is no race re-check between detect and acquire here**, unlike the
+GitHub phased flow's step 4: two sessions can both pass detection before either
+tags the item, and the window stays open across both `/clear`s — the first
+session's `azdo_remove_tag` releases the lock out from under the second one
+mid-phase, with no sign anything went wrong until the second session's own
+release silently no-ops on an already-cleared tag. Run only one phased session
+per work item at a time.
 
-So on an ADO remote: say the phased flow is unavailable, and offer the
-single-pass read-only path from `/enrich`'s section instead — spec and plan
-committed to `docs/superpowers/`, work item untouched.
-
-Tracked in **#488**.
+The body write is `/enrich`'s Azure DevOps section verbatim: acceptance criteria
+plus pointers, never the inlined plan. See ADR-017.
 
 ## Unknown host
 
