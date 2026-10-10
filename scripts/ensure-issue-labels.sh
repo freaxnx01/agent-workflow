@@ -103,10 +103,12 @@ create turns:160 5319E7 'Override the agent turn budget to 160 (classify-turns.s
 
 create ai:review-blocked D73A4A 'Auto-review left the PR draft; human action required'
 
-# Three blocked states, deliberately distinct:
+# Four blocked states, deliberately distinct:
 #   ai:review-blocked  — the reviewer RAN and refused to promote the PR
+#   ai:review-failed   — the reviewer ran but produced no usable verdict (#490)
 #   ai:runner-blocked  — the reviewer NEVER STARTED; runner toolchain unmet (#384)
 #   ai:checks-blocked  — the PR is fine; its required checks cannot run (#364)
+create ai:review-failed D73A4A 'Review could not run to a verdict; human look needed'
 create ai:runner-blocked D73A4A 'Review never started — runner toolchain unmet'
 create ai:checks-blocked D73A4A 'Required checks cannot run on the pipeline PR'
 

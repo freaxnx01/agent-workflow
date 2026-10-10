@@ -1441,6 +1441,7 @@ jobs:
           PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
           FOUND: ${{ steps.find_pr.outputs.found }}
           VERDICT: ${{ steps.final.outputs.verdict }}
+          REVIEW_REASON: ${{ steps.review.outputs.reason }}
           SELF_FIX_OUTCOME: ${{ steps.self_fix.outcome }}
           ENVELOPE: ${{ steps.envelope.outputs.envelope }}
           ENVELOPE_REASON: ${{ steps.envelope.outputs.reason }}
@@ -1732,6 +1733,7 @@ jobs:
           PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
           FOUND: ${{ steps.find_pr.outputs.found }}
           VERDICT: ${{ steps.final.outputs.verdict }}
+          REVIEW_REASON: ${{ steps.review.outputs.reason }}
           SELF_FIX_OUTCOME: ${{ steps.self_fix.outcome }}
           SELF_FIX_ITERATIONS: ${{ steps.final.outputs.iterations-used }}
           SELF_FIX_MAX: ${{ inputs.self-fix-max-iterations }}

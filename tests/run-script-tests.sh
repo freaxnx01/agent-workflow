@@ -1640,6 +1640,47 @@ else
        "order check: create=$label_line add=$add_line"
 fi
 
+# #490: review_failed gets its own label and says the review could not complete.
+LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
+REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=100 FOUND=true VERDICT=review_failed \
+REVIEW_REASON='review failed after retry: agent produced non-JSON output (first attempt: agent produced non-JSON output)' \
+  bash "$POST_BLOCK" >/dev/null
+calls="$(cat "$LOG")"; rm -f "$LOG"
+assert_contains "$calls" 'pr comment 100 --repo o/r --body Auto-merge held: review could not complete — review failed after retry: agent produced non-JSON output' "review_failed → comment says the review could not complete (#490)"
+assert_contains "$calls" 'label create ai:review-failed --repo o/r' "review_failed → creates ai:review-failed (#490)"
+assert_contains "$calls" 'issue edit 42 --repo o/r --add-label ai:review-failed' "review_failed → labels ai:review-failed (#490)"
+assert_not_contains "$calls" '--add-label ai:review-blocked' "review_failed → not labelled ai:review-blocked (#490)"
+
+LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
+REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=100 FOUND=true VERDICT=block \
+  bash "$POST_BLOCK" >/dev/null
+calls="$(cat "$LOG")"; rm -f "$LOG"
+assert_contains "$calls" 'issue edit 42 --repo o/r --add-label ai:review-blocked' "block → still ai:review-blocked (#490)"
+
+# Review Focus: review_failed after self-fix iterations keeps the self-fix reason and the new label.
+LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
+REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=100 FOUND=true VERDICT=review_failed \
+SELF_FIX_ITERATIONS=2 SELF_FIX_MAX=2 \
+  bash "$POST_BLOCK" >/dev/null
+calls="$(cat "$LOG")"; rm -f "$LOG"
+assert_contains "$calls" 'self-fix exhausted after 2/2 iteration(s) — last verdict: review_failed' "review_failed after self-fix → self-fix reason (#490)"
+assert_contains "$calls" '--add-label ai:review-failed' "review_failed after self-fix → ai:review-failed (#490)"
+
+LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
+REPO=o/r ISSUE_NUMBER=42 PR_NUMBER=100 FOUND=true VERDICT=review_failed MODE=human-merge \
+  bash "$POST_BLOCK" >/dev/null
+calls="$(cat "$LOG")"; rm -f "$LOG"
+assert_contains "$calls" '--body Review held: review could not complete — no usable verdict from the reviewer' "human-merge + no REVIEW_REASON → default reason (#490)"
+
+# Both blocked steps hand the review reason to post-auto-review-block.sh (#490).
+# shellcheck disable=SC2016  # literal GitHub Actions expression, not shell
+assert_equals "$(grep -c 'REVIEW_REASON: ${{ steps.review.outputs.reason }}' "$ROOT/.github/workflows/agent-implement.yml")" "2" \
+  "both blocked steps pass REVIEW_REASON (#490)"
+
 # No PR found (FOUND=false, no PR_NUMBER) → comment on the issue, not the PR
 LOG="$(mktemp)"
 PATH="$MOCKS:$PATH" GH_MOCK_LOG="$LOG" \
@@ -3382,6 +3423,7 @@ assert_not_contains "$log" 'label create ai-pre-preview'  "does not create depre
 
 # Outcome label (auto-review epic #3 — ADR-002 §2)
 assert_contains "$log" 'label create ai:review-blocked --repo owner/repo' "creates ai:review-blocked"
+assert_contains "$log" 'label create ai:review-failed --repo owner/repo' "creates ai:review-failed (#490)"
 
 # Coordination labels (read/written by /enrich's concurrency lock; needs-human
 # written by the unattended /autopilot escalation lane)

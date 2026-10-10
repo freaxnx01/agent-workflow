@@ -31,6 +31,8 @@
 #                        "0" or unset → unchanged wording.
 #   SELF_FIX_MAX         The self-fix iteration cap, for the "exhausted"
 #                        wording. Only read when SELF_FIX_ITERATIONS != "0".
+#   REVIEW_REASON     review-pr.sh's reason output; used for the comment when
+#                     VERDICT=review_failed and no self-fix ran (#490).
 #   SELF_FIX_OUTCOME     The self-fix step's outcome (#474). "failure" means it
 #                        timed out or crashed — the step is continue-on-error
 #                        so this script still runs — and the reason says so.
@@ -59,6 +61,7 @@ SELF_FIX_ITERATIONS="${SELF_FIX_ITERATIONS:-0}"
 SELF_FIX_MAX="${SELF_FIX_MAX:-}"
 SELF_FIX_OUTCOME="${SELF_FIX_OUTCOME:-}"
 MODE="${MODE:-ai-merge}"
+REVIEW_REASON="${REVIEW_REASON:-}"
 
 # Comment-prefix wording differs by mode; reason text is identical.
 case "$MODE" in
@@ -79,6 +82,8 @@ elif [[ "$FOUND" != 'true' ]]; then
 elif [[ "$VERDICT" != 'approve' ]]; then
   if [[ "$SELF_FIX_ITERATIONS" != '0' ]]; then
     reason="self-fix exhausted after ${SELF_FIX_ITERATIONS}/${SELF_FIX_MAX} iteration(s) — last verdict: ${VERDICT:-<none>}"
+  elif [[ "$VERDICT" == 'review_failed' ]]; then
+    reason="review could not complete — ${REVIEW_REASON:-no usable verdict from the reviewer}"
   else
     reason="agent review verdict: ${VERDICT:-<none>} (gate 4)"
   fi
@@ -105,13 +110,23 @@ else
 fi
 
 # Label the issue so a watcher can filter for review-blocked work.
+# #490: a review that produced no usable verdict is a different signal from a
+# refusal, so it gets its own label — but only when that is why we are here
+# (self-mod guard and no-PR keep ai:review-blocked).
+label='ai:review-blocked'
+label_desc='Auto-review left the PR draft; human action required'
+if [[ "$SELF_MOD_BLOCKED" != 'true' && "$FOUND" == 'true' && "$VERDICT" == 'review_failed' ]]; then
+  label='ai:review-failed'
+  label_desc='Review could not run to a verdict; human look needed'
+fi
+
 # ensure-issue-labels.sh runs earlier in the implement job under
 # `always() && !dry-run`, so the label usually exists by the time we
 # get here. Belt-and-suspenders: idempotently create it first so a
 # manually-deleted label, or a future refactor that splits implement
 # and ai_review_ai_merge across separate workflows, doesn't break the
 # `--add-label` call.
-gh label create ai:review-blocked --repo "$REPO" --color D73A4A \
-  --description 'Auto-review left the PR draft; human action required' \
+gh label create "$label" --repo "$REPO" --color D73A4A \
+  --description "$label_desc" \
   >/dev/null 2>&1 || true
-gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label ai:review-blocked
+gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "$label"
