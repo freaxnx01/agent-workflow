@@ -258,6 +258,7 @@ complete and pushed, with nothing pointing at the PR.
 | Run burns its whole budget, no PR | dispatched with no plan → `UNPLANNED_MAX_TURNS`, spent rediscovering the decomposition | enrich, then redispatch |
 | Big plan, tiny budget | task headings are `## Task N`, not `### Task N` | fix the heading level; `/ai-funnel` names the affected issues |
 | `ai:review-blocked` | the review returned `request_changes` | read the verdict; if it faults the *plan*, correct the spec and re-enrich rather than redispatching |
+| `ai:review-failed` | the review *ran* but never reached a verdict — diff too large, nothing reviewable left after eliding minified/generated lines, or two unusable agent replies | nothing was reviewed, so there is no verdict to read: review the diff yourself. The held comment names which of the three it was |
 | `parked` after N runs | the attempt cap | re-enrich, **then** raise `max-attempts` by one in the consumer's `agent.yml` — the cap counts append-only run reports and cannot yet be told you re-enriched ([#321](https://github.com/freaxnx01/agent-workflow/issues/321)). Comment the bump with a revert-when-#321-lands note; it weakens the guard repo-wide |
 | Review "held", PR exists | the PR was opened ready-for-review, not draft | review by hand; [#322](https://github.com/freaxnx01/agent-workflow/issues/322) |
 | PR has no CI | agent-authored PRs don't start workflows | push an **empty commit** — it fires `push`, which the required workflows do listen to |

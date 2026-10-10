@@ -24,10 +24,15 @@
 #                the task-count heuristic; `gh issue edit --add-label` fails
 #                outright on a label that does not exist, so the documented
 #                override is unusable until these are created
-#   outcome    ai:review-blocked, ai:checks-blocked
+#   outcome    ai:review-blocked, ai:review-failed, ai:runner-blocked,
+#              ai:checks-blocked
 #              — ai:review-blocked is written by either review job (ADR-002,
 #                epic #3) when the safety envelope or verdict leaves the PR
-#                draft. ai:checks-blocked is written by post-run-report.sh when
+#                draft. ai:review-failed is written by the same job when the
+#                reviewer ran but produced no usable verdict (#490), so the PR
+#                has had no review at all. ai:runner-blocked is written when
+#                the reviewer never started because the runner toolchain was
+#                unmet (#384). ai:checks-blocked is written by post-run-report.sh when
 #                the PR's required status checks could not run at all (#364) —
 #                a repo misconfiguration, not a verdict, so it is additive and
 #                the run's outcome stays ai:done
@@ -103,10 +108,12 @@ create turns:160 5319E7 'Override the agent turn budget to 160 (classify-turns.s
 
 create ai:review-blocked D73A4A 'Auto-review left the PR draft; human action required'
 
-# Three blocked states, deliberately distinct:
+# Four blocked states, deliberately distinct:
 #   ai:review-blocked  — the reviewer RAN and refused to promote the PR
+#   ai:review-failed   — the reviewer ran but produced no usable verdict (#490)
 #   ai:runner-blocked  — the reviewer NEVER STARTED; runner toolchain unmet (#384)
 #   ai:checks-blocked  — the PR is fine; its required checks cannot run (#364)
+create ai:review-failed D73A4A 'Review could not run to a verdict; human look needed'
 create ai:runner-blocked D73A4A 'Review never started — runner toolchain unmet'
 create ai:checks-blocked D73A4A 'Required checks cannot run on the pipeline PR'
 

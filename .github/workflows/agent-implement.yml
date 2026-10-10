@@ -182,11 +182,13 @@ on:
           Test-only. When non-empty, the ai_review_ai_merge job skips installing
           the Claude CLI and skips the real review-pr.sh invocation; it
           synthesizes a verdict directly. Value must be one of
-          `approve | request_changes | block`. Also wires a PATH-shimmed
+          `approve | request_changes | block | review_failed`. Also wires a PATH-shimmed
           `gh` mock so `gh pr ready` / `gh pr merge` / `gh pr comment` /
-          `gh issue edit` calls are captured (not executed) and the new
+          `gh issue edit` calls are captured (not executed), the
           `ai-review-ai-merge-merge-attempted` output reflects whether
-          `gh pr merge` was invoked. Empty (default) runs the real path.
+          `gh pr merge` was invoked, and `ai-review-ai-merge-outcome-label`
+          reflects which outcome label was applied. Empty (default) runs the
+          real path.
         type: string
         default: ''
       stub-pr-files:
@@ -346,6 +348,14 @@ on:
           surface for "no real merge call is made under act"). Empty on
           real runs.
         value: ${{ jobs.ai_review_ai_merge.outputs.merge-attempted }}
+      ai-review-ai-merge-outcome-label:
+        description: |
+          The outcome label `post-auto-review-block.sh` stamped on the issue
+          (`ai:review-blocked` or, for a review that produced no usable
+          verdict, `ai:review-failed` — #490). Empty when the PR was promoted
+          or no refusal path ran. Populated only when `stub-review-verdict` is
+          set; it reads the gh mock's log, so it is empty on real runs.
+        value: ${{ jobs.ai_review_ai_merge.outputs.outcome-label }}
       ai-review-human-merge-merge-attempted:
         description: |
           "true" or "false" — whether `gh pr merge` was invoked by the
@@ -1059,7 +1069,12 @@ jobs:
       && needs.implement.outputs.ai-review-human-merge-enabled != 'true'
       && (inputs.dry-run || needs.implement.outputs.plan-coverage == 'complete')
     runs-on: ${{ fromJSON(inputs.runner-labels) }}
-    # Review (~7 min) + the self-fix step's own 30-minute cap + overhead (#474).
+    # Review (~7 min, hard-capped at review-pr.sh's AGENT_TIMEOUT_SECONDS budget
+    # of 10 min shared across its attempt + retry, #490) + the self-fix step's
+    # own 30-minute cap + overhead (#474). The review step carries no
+    # timeout-minutes of its own because that budget already bounds it, and a
+    # job cancelled on wall clock skips the success()-conditioned "Mark issue
+    # blocked" step below — the silent failure #384/#474 fixed.
     timeout-minutes: 45
     env:
       # Mirrors the implement job: the mint step's `if:` tests this, because
@@ -1072,6 +1087,7 @@ jobs:
       issues: write
     outputs:
       merge-attempted:         ${{ steps.verify_mock.outputs.merge-attempted }}
+      outcome-label:           ${{ steps.verify_mock.outputs.outcome-label }}
       self-fix-iterations-used: ${{ steps.final.outputs.iterations-used }}
     steps:
       - name: Mint pipeline App token (optional)
@@ -1441,6 +1457,7 @@ jobs:
           PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
           FOUND: ${{ steps.find_pr.outputs.found }}
           VERDICT: ${{ steps.final.outputs.verdict }}
+          REVIEW_REASON: ${{ steps.review.outputs.reason }}
           SELF_FIX_OUTCOME: ${{ steps.self_fix.outcome }}
           ENVELOPE: ${{ steps.envelope.outputs.envelope }}
           ENVELOPE_REASON: ${{ steps.envelope.outputs.reason }}
@@ -1479,7 +1496,12 @@ jobs:
       && needs.implement.outputs.outcome == 'success'
       && needs.implement.outputs.ai-review-human-merge-enabled == 'true'
     runs-on: ${{ fromJSON(inputs.runner-labels) }}
-    # Review (~7 min) + the self-fix step's own 30-minute cap + overhead (#474).
+    # Review (~7 min, hard-capped at review-pr.sh's AGENT_TIMEOUT_SECONDS budget
+    # of 10 min shared across its attempt + retry, #490) + the self-fix step's
+    # own 30-minute cap + overhead (#474). The review step carries no
+    # timeout-minutes of its own because that budget already bounds it, and a
+    # job cancelled on wall clock skips the success()-conditioned "Mark issue
+    # blocked" step below — the silent failure #384/#474 fixed.
     timeout-minutes: 45
     env:
       # Mirrors the implement job: the mint step's `if:` tests this, because
@@ -1732,6 +1754,7 @@ jobs:
           PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
           FOUND: ${{ steps.find_pr.outputs.found }}
           VERDICT: ${{ steps.final.outputs.verdict }}
+          REVIEW_REASON: ${{ steps.review.outputs.reason }}
           SELF_FIX_OUTCOME: ${{ steps.self_fix.outcome }}
           SELF_FIX_ITERATIONS: ${{ steps.final.outputs.iterations-used }}
           SELF_FIX_MAX: ${{ inputs.self-fix-max-iterations }}
