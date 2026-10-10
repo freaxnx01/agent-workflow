@@ -28,6 +28,9 @@
 #                      Tests set this to a mock that emits a fixture.
 #   MAX_DIFF_BYTES     Refuse to review diffs larger than this. Default
 #                      320000 (~80k tokens at ~4 chars/token).
+#   MAX_DIFF_LINE_CHARS  Diff lines longer than this are replaced with an
+#                      "[elided by review-pr.sh: …]" marker before the size
+#                      cap is measured (#490). Default 10000.
 #   PROMPT_TEMPLATE    Override path to the review prompt template.
 #                      Default: <script-dir>/lib/review-prompt.md
 #   DIFF_FILE          Pre-fetched diff path. If set, skips `gh pr diff`.
@@ -84,6 +87,7 @@ case "$AGENT" in
 esac
 
 MAX_DIFF_BYTES="${MAX_DIFF_BYTES:-320000}"
+MAX_DIFF_LINE_CHARS="${MAX_DIFF_LINE_CHARS:-10000}"
 PROMPT_TEMPLATE="${PROMPT_TEMPLATE:-$SCRIPT_DIR/lib/review-prompt.md}"
 
 if [[ ! -r "$PROMPT_TEMPLATE" ]]; then
@@ -189,11 +193,31 @@ else
   gh pr diff "$PR_NUMBER" --repo "$REPO" --patch > "$DIFF_FILE"
 fi
 
+# #490: one minified data line (e.g. a 2.6 MB JSON file) turns a small change
+# into a multi-MB diff. Elide over-long lines so the cap measures reviewable
+# content. File headers are read only between `diff --git` and the first `@@`,
+# so a removed content line that looks like `--- a/x` is not mistaken for one.
+ELIDED_DIFF="$WORK_DIR/pr.elided.diff"
+LC_ALL=C awk -v max="$MAX_DIFF_LINE_CHARS" '
+  /^diff --git / { in_header = 1; file = ""; old = "" }
+  /^@@/          { in_header = 0 }
+  in_header && /^--- a\// { old = substr($0, 7) }
+  in_header && /^\+\+\+ / { file = ($0 == "+++ /dev/null") ? old : substr($0, 7) }
+  {
+    if (length($0) > max) {
+      printf "[elided by review-pr.sh: a %d-character line in %s — too long to review]\n", length($0), (file == "" ? "<unknown file>" : file)
+    } else {
+      print
+    }
+  }
+' "$DIFF_FILE" > "$ELIDED_DIFF"
+DIFF_FILE="$ELIDED_DIFF"
+
 diff_bytes="$(wc -c < "$DIFF_FILE" | tr -d ' ')"
 if (( diff_bytes > MAX_DIFF_BYTES )); then
-  reason="diff size ${diff_bytes}B exceeds cap ${MAX_DIFF_BYTES}B — unreviewable"
-  printf '{"verdict":"block","summary":"%s","concerns":[]}' "$reason" > "$RESULT_FILE"
-  finish block "$reason" "$RESULT_FILE"
+  reason="diff size ${diff_bytes}B exceeds cap ${MAX_DIFF_BYTES}B after eliding long lines"
+  write_failed_result "$reason"
+  finish review_failed "$reason" "$RESULT_FILE"
 fi
 
 # --- 2) build prompt ------------------------------------------------------

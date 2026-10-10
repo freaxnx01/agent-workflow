@@ -12,6 +12,7 @@
 #   AGENT_FIXTURE_SEQUENCE  comma-separated fixture paths; call n copies entry n
 #                           (the last entry repeats). Overrides AGENT_FIXTURE.
 #   AGENT_FAIL_TIMES        the first N calls exit non-zero (needs AGENT_CALL_LOG).
+#   AGENT_PROMPT_COPY       if set, the prompt file is copied here on each call.
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -23,6 +24,10 @@ if [[ -n "${AGENT_CALL_LOG:-}" ]]; then
   nudge=no
   grep -q 'Reply with only the JSON object' "$1" && nudge=yes
   printf 'call %s nudge=%s\n' "$n" "$nudge" >> "$AGENT_CALL_LOG"
+fi
+
+if [[ -n "${AGENT_PROMPT_COPY:-}" ]]; then
+  cp "$1" "$AGENT_PROMPT_COPY"
 fi
 
 if [[ "${AGENT_FAIL:-0}" == "1" ]] || (( n <= ${AGENT_FAIL_TIMES:-0} )); then

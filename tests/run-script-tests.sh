@@ -1146,15 +1146,70 @@ assert_contains "$out" 'verdict=request_changes' "request_changes fixture → ve
 out="$(review_run review-block.json)"
 assert_contains "$out" 'verdict=block'           "block fixture → verdict=block"
 
-# Oversized diff → block regardless of agent output (agent is not invoked)
+# Oversized diff (no long lines to elide) → review_failed, agent not invoked (#490)
 BIG_DIFF="$(mktemp)"
 head -c 1024 /dev/urandom | base64 > "$BIG_DIFF"
+CALLS="$(mktemp)"; rm -f "$CALLS"
 out="$(MAX_DIFF_BYTES=10 \
        review_run review-approve.json \
-       env DIFF_FILE="$BIG_DIFF")"
-assert_contains "$out" 'verdict=block'           "diff exceeds MAX_DIFF_BYTES → verdict=block"
-assert_contains "$out" 'unreviewable'            "oversized reason mentions 'unreviewable'"
-rm -f "$BIG_DIFF"
+       env DIFF_FILE="$BIG_DIFF" AGENT_CALL_LOG="$CALLS")"
+assert_contains "$out" 'verdict=review_failed'   "diff exceeds MAX_DIFF_BYTES → verdict=review_failed (#490)"
+assert_contains "$out" 'after eliding long lines' "oversized reason says the cap applied after eliding (#490)"
+if [[ -e "$CALLS" ]]; then fail "oversized diff → agent not invoked (#490)" "$(cat "$CALLS")"; else pass "oversized diff → agent not invoked (#490)"; fi
+rm -f "$BIG_DIFF" "$CALLS"
+
+# #490: a minified one-line data file is elided; the rest is reviewed.
+long_line() { head -c "$1" /dev/zero | tr '\0' 'x'; }
+LONG_DIFF="$(mktemp)"
+{
+  printf 'diff --git a/data/world.json b/data/world.json\n--- a/data/world.json\n+++ b/data/world.json\n@@ -1 +1 @@\n'
+  printf -- '-%s\n' "$(long_line 20000)"
+  printf '+%s\n' "$(long_line 20000)"
+  printf 'diff --git a/src/game.js b/src/game.js\n--- a/src/game.js\n+++ b/src/game.js\n@@ -1 +1 @@\n-old\n+new\n'
+} > "$LONG_DIFF"
+PROMPT_COPY="$(mktemp)"
+out="$(MAX_DIFF_BYTES=4000 review_run review-approve.json env DIFF_FILE="$LONG_DIFF" AGENT_PROMPT_COPY="$PROMPT_COPY")"
+assert_contains "$out" 'verdict=approve'          "long minified line elided → review runs (#490)"
+assert_contains "$(cat "$PROMPT_COPY")" '[elided by review-pr.sh: a 20001-character line in data/world.json — too long to review]' "marker names length and file (#490)"
+assert_contains "$(cat "$PROMPT_COPY")" '+new'    "the reviewable rest of the diff is kept (#490)"
+assert_not_contains "$(cat "$PROMPT_COPY")" "$(long_line 200)" "the long line itself is gone (#490)"
+rm -f "$LONG_DIFF"
+
+# Review Focus: the threshold is strict (> MAX_DIFF_LINE_CHARS).
+EDGE_DIFF="$(mktemp)"
+{
+  printf 'diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n'
+  printf '+%s\n' "$(long_line 9)"   # 10 chars total
+  printf '+%s\n' "$(long_line 10)"  # 11 chars total
+} > "$EDGE_DIFF"
+out="$(MAX_DIFF_LINE_CHARS=10 review_run review-approve.json env DIFF_FILE="$EDGE_DIFF" AGENT_PROMPT_COPY="$PROMPT_COPY")"
+assert_contains "$(cat "$PROMPT_COPY")" "+$(long_line 9)" "a line of exactly MAX_DIFF_LINE_CHARS is kept (#490)"
+assert_contains "$(cat "$PROMPT_COPY")" 'a 11-character line in a' "one char over the threshold is elided (#490)"
+rm -f "$EDGE_DIFF"
+
+# Review Focus: a deleted file names the old path, not /dev/null.
+DEL_DIFF="$(mktemp)"
+{
+  printf 'diff --git a/data/old.json b/data/old.json\ndeleted file mode 100644\n--- a/data/old.json\n+++ /dev/null\n@@ -1 +0,0 @@\n'
+  printf -- '-%s\n' "$(long_line 20)"
+} > "$DEL_DIFF"
+out="$(MAX_DIFF_LINE_CHARS=10 review_run review-approve.json env DIFF_FILE="$DEL_DIFF" AGENT_PROMPT_COPY="$PROMPT_COPY")"
+assert_contains "$(cat "$PROMPT_COPY")" 'line in data/old.json' "deleted file → marker names the old path (#490)"
+rm -f "$DEL_DIFF"
+
+# Review Focus: a removed content line that looks like a header is not one.
+FAKE_DIFF="$(mktemp)"
+{
+  printf 'diff --git a/real.txt b/real.txt\n--- a/real.txt\n+++ b/real.txt\n@@ -1,2 +1 @@\n'
+  printf -- '--- a/not-a-header\n'
+  printf '+%s\n' "$(long_line 20)"
+} > "$FAKE_DIFF"
+out="$(MAX_DIFF_LINE_CHARS=10 review_run review-approve.json env DIFF_FILE="$FAKE_DIFF" AGENT_PROMPT_COPY="$PROMPT_COPY")"
+assert_contains "$(cat "$PROMPT_COPY")" 'line in real.txt' "a header-like content line does not change the file (#490)"
+rm -f "$FAKE_DIFF" "$PROMPT_COPY"
+
+# The prompt tells the reviewer elided lines are out of scope.
+assert_contains "$(cat "$ROOT/scripts/lib/review-prompt.md")" 'elided by review-pr.sh' "review prompt explains elided lines (#490)"
 
 # Malformed agent JSON → retried once, then review_failed (#490)
 out="$(review_run review-malformed.json)"
