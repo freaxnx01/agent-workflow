@@ -13,6 +13,8 @@
 #                           (the last entry repeats). Overrides AGENT_FIXTURE.
 #   AGENT_FAIL_TIMES        the first N calls exit non-zero (needs AGENT_CALL_LOG).
 #   AGENT_PROMPT_COPY       if set, the prompt file is copied here on each call.
+#   AGENT_SLEEP             seconds to hang before writing, so a test can drive
+#                           review-pr.sh's AGENT_TIMEOUT_SECONDS budget.
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -28,6 +30,10 @@ fi
 
 if [[ -n "${AGENT_PROMPT_COPY:-}" ]]; then
   cp "$1" "$AGENT_PROMPT_COPY"
+fi
+
+if [[ -n "${AGENT_SLEEP:-}" ]]; then
+  sleep "$AGENT_SLEEP"
 fi
 
 if [[ "${AGENT_FAIL:-0}" == "1" ]] || (( n <= ${AGENT_FAIL_TIMES:-0} )); then
