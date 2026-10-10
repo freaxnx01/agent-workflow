@@ -2016,6 +2016,23 @@ assert_contains "$out" 'verdict=block'      "re-review block → stops with verd
 assert_contains "$out" 'iterations-used=1'  "stops after 1 iteration on block"
 rm -f "$LOG"
 
+# #490: a re-review that could not produce a verdict ends the loop too.
+LOG="$(mktemp)"
+out="$(loop_run "$LOG" 'review_failed,approve')"
+assert_contains "$out" 'verdict=review_failed'  "re-review review_failed → stops with verdict=review_failed (#490)"
+assert_contains "$out" 'iterations-used=1'      "stops after 1 iteration on review_failed (#490)"
+rm -f "$LOG"
+
+go="$(mktemp)"
+GITHUB_OUTPUT="$go" \
+PR_NUMBER=42 REPO=o/r HEAD_SHA=initsha HEAD_REF=fix-branch \
+INITIAL_VERDICT=request_changes MAX_ITERATIONS=3 \
+STUB_VERDICT_SEQUENCE='request_changes,review_failed,approve' \
+  bash "$SELF_FIX_LOOP" >/dev/null
+out="$(cat "$go")"; rm -f "$go"
+assert_contains "$out" 'verdict=review_failed'  "stub sequence stops at review_failed (#490)"
+assert_contains "$out" 'iterations-used=2'      "stub sequence consumes 2 entries before review_failed (#490)"
+
 # FIX_CMD itself fails → loop aborts, keeps last known verdict, 0 completed iterations
 LOG="$(mktemp)"
 out="$(loop_run "$LOG" 'approve' env FIX_FAIL=1)"

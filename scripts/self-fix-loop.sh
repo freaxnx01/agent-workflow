@@ -6,8 +6,8 @@
 # a fix, then REVIEW_SCRIPT re-reviews the new HEAD. Stops early on
 # `approve` or `block`. Invoked by whichever review job runs
 # (ai_review_ai_merge or ai_review_human_merge) only when the first
-# verdict is `request_changes` and self-fix is enabled — a `block` or
-# `approve` first verdict never reaches here.
+# verdict is `request_changes` and self-fix is enabled — a `block`,
+# `review_failed` or `approve` first verdict never reaches here.
 #
 # Required environment variables:
 #   PR_NUMBER         PR number
@@ -116,7 +116,7 @@ if [[ -n "${STUB_VERDICT_SEQUENCE:-}" ]]; then
   for (( i = 1; i <= MAX_ITERATIONS && i <= ${#stub_verdicts[@]}; i++ )); do
     verdict="${stub_verdicts[$((i - 1))]}"
     iterations_used=$i
-    [[ "$verdict" == "approve" || "$verdict" == "block" ]] && break
+    [[ "$verdict" == "approve" || "$verdict" == "block" || "$verdict" == "review_failed" ]] && break
   done
 else
   FIX_CMD="${FIX_CMD:-$SCRIPT_DIR/self-fix-pr.sh}"
@@ -171,7 +171,9 @@ else
     rm -f "$review_go"
     [[ -n "$new_concerns" && -r "$new_concerns" ]] && concerns_file="$new_concerns"
 
-    if [[ "$verdict" == "approve" || "$verdict" == "block" ]]; then
+    # review_failed (#490): the re-review produced no usable verdict, so its
+    # concerns file says nothing a further fix could act on — stop.
+    if [[ "$verdict" == "approve" || "$verdict" == "block" || "$verdict" == "review_failed" ]]; then
       break
     fi
   done
