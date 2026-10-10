@@ -144,6 +144,15 @@ disk in a committed location** — not an ephemeral pasted image.
 - **Assets dir:** `docs/ai-notes/feedback/assets/<worklog-slug>/`. Name each file
   `entry-<NN>-<short>.<ext>` (e.g. `entry-08-tooltip.png`, `entry-12-double-submit.mp4`).
 - **Source is a file path** (a saved screenshot, a video file) → copy it into the assets dir.
+  Bare filenames in the notes (`2026-10-10_13h17_08.png`) usually live in `~/LocalSend/`.
+  Big PNG screenshots (1–7 MB each) are worth converting to JPEG with PIL before committing.
+- **Look at every attachment before classifying** — the media is the repro, and it often holds
+  the facts the note leaves out (debug-panel coordinates, the street name in the HUD, the exact
+  dialog text). Images: the Read tool. Videos: one frame per second as a contact sheet, then Read it:
+  `ffmpeg -v error -y -i <video> -vf "fps=1,scale=800:-1,tile=4x4" <scratch>/sheet-%02d.jpg`.
+  If `ffmpeg` is missing, say so before the triage table and ask to install it; a headless
+  Playwright Chromium cannot decode mp4, and an issue filed without watching the video is
+  filed blind (2026-10-10: "strange jump" turned out to be a named bridge, readable in the HUD).
 - **Source is an image pasted inline in chat** → it is visible to you but not yet on disk, and
   you generally cannot serialize it to a file yourself. Ask the human to save it and give you
   the path (or drop the file into the assets dir), then copy/record it. Do not pretend a
@@ -157,6 +166,10 @@ A batch may span sessions. State lives in a committed worklog, not just the chat
 
 - **On start**, scan `docs/ai-notes/feedback/` for a worklog with entries not yet `done`.
   If one exists, offer to **resume** it (show remaining entries) instead of starting fresh.
+  Before re-triaging, search **all** issues (closed too) for each pending entry's Source
+  text: the entry may have been filed and fixed without the worklog being updated (the
+  2026-10-02 stuck-car batch sat at `awaiting-approval` for a week after its only entry
+  had been filed as #36 and fixed). Then just mark it `done` with the link.
 - **Worklog path:** `docs/ai-notes/feedback/<YYYY-MM-DD>-<slug>.md` (get the date from
   `date +%F`; slug from the feedback theme).
 - **Worklog contents:**
