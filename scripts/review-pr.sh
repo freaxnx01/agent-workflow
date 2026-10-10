@@ -37,15 +37,19 @@
 #   DRY_RUN            "1" to render the comment body but skip posting.
 #
 # Output ($GITHUB_OUTPUT):
-#   verdict       approve | request_changes | block
+#   verdict       approve | request_changes | block | review_failed
+#                 (review_failed: no usable verdict — diff too large after
+#                 eliding long lines, or the agent's reply was unusable twice;
+#                 #490. block is reserved for a reviewer that refused.)
 #   reason        free-text explanation (always set)
 #   summary-file  path to the validated agent JSON (for #15)
 #   posted        true|false — whether a new comment was posted this run
 #
 # Exit codes:
-#   0   success (any verdict, including block — agent crashes and
-#       non-JSON output are normalized to verdict=block, not a non-zero
-#       exit, so #15's gating wiring sees a verdict either way)
+#   0   success (any verdict, including block and review_failed — agent
+#       crashes and unusable output are retried once, then normalized to
+#       verdict=review_failed, not a non-zero exit, so #15's gating wiring
+#       sees a verdict either way)
 #   2   required env missing or invalid
 #   64  template / fixture missing or unreadable
 set -euo pipefail
@@ -167,6 +171,12 @@ finish() {
   exit 0
 }
 
+# #490: the script's own "could not review" outcome. jq builds the JSON so a
+# reason containing quotes or backslashes stays valid.
+write_failed_result() {
+  jq -n --arg r "$1" '{verdict:"review_failed", summary:$r, concerns:[]}' > "$RESULT_FILE"
+}
+
 # --- 1) diff fetch + size guard ------------------------------------------
 
 if [[ -n "${DIFF_FILE:-}" ]]; then
@@ -242,21 +252,16 @@ EOF
   chmod +x "$AGENT_CMD"
 fi
 
-if ! "$AGENT_CMD" "$PROMPT_FILE" "$RESULT_FILE"; then
-  reason='agent invocation failed'
-  printf '{"verdict":"block","summary":"%s","concerns":[]}' "$reason" > "$RESULT_FILE"
-  finish block "$reason" "$RESULT_FILE"
-fi
-
-# --- 4) validate result ---------------------------------------------------
+# --- 4) run + validate, retrying an unusable reply once (#490) ------------
 
 # Agents often wrap the JSON verdict in a ```json fence or a sentence of prose
 # (#72). Try the output as-is; if it isn't valid JSON, salvage the object — the
 # span from the first line containing `{` to the last line containing `}`, which
-# also drops surrounding fences/prose — and re-validate. Only output with no
-# recoverable JSON object fail-safe blocks.
-if ! jq -e . "$RESULT_FILE" >/dev/null 2>&1; then
-  salvaged="$WORK_DIR/review-result.salvaged.json"
+# also drops surrounding fences/prose — and re-validate. Returns 0 when
+# $RESULT_FILE holds valid JSON; leaves the raw output in place otherwise.
+salvage_json() {
+  jq -e . "$RESULT_FILE" >/dev/null 2>&1 && return 0
+  local salvaged="$WORK_DIR/review-result.salvaged.json"
   awk '
     { lines[NR] = $0 }
     END {
@@ -269,24 +274,61 @@ if ! jq -e . "$RESULT_FILE" >/dev/null 2>&1; then
   ' "$RESULT_FILE" > "$salvaged"
   if [[ -s "$salvaged" ]] && jq -e . "$salvaged" >/dev/null 2>&1; then
     mv "$salvaged" "$RESULT_FILE"
+    return 0
+  fi
+  return 1
+}
+
+# One agent call against prompt $1. Returns 0 when $RESULT_FILE holds one of
+# the three agent verdicts; otherwise sets ATTEMPT_REASON and returns 1.
+run_review_attempt() {
+  local prompt="$1" verdict
+  : > "$RESULT_FILE"
+  if ! "$AGENT_CMD" "$prompt" "$RESULT_FILE"; then
+    ATTEMPT_REASON='agent invocation failed'
+    return 1
+  fi
+  if ! salvage_json; then
+    ATTEMPT_REASON='agent produced non-JSON output'
+    return 1
+  fi
+  verdict="$(jq -r '.verdict // ""' "$RESULT_FILE" 2>/dev/null || true)"
+  case "$verdict" in
+    approve|request_changes|block) return 0 ;;
+  esac
+  ATTEMPT_REASON="agent returned invalid verdict: ${verdict:-<empty>}"
+  return 1
+}
+
+# The raw reply is the only evidence of why a review failed (PR #122 left none).
+log_unusable_output() {
+  printf -- '--- review agent output (attempt %s, first 4096 bytes) ---\n' "$1" >&2
+  if [[ -s "$RESULT_FILE" ]]; then
+    head -c 4096 "$RESULT_FILE" >&2
+    printf '\n' >&2
   else
-    reason='agent produced non-JSON output'
-    printf '{"verdict":"block","summary":"%s","concerns":[]}' "$reason" > "$RESULT_FILE"
-    finish block "$reason" "$RESULT_FILE"
+    printf '<empty>\n' >&2
+  fi
+  printf -- '--- end ---\n' >&2
+}
+
+ATTEMPT_REASON=''
+if ! run_review_attempt "$PROMPT_FILE"; then
+  log_unusable_output 1
+  first_reason="$ATTEMPT_REASON"
+  RETRY_PROMPT_FILE="$WORK_DIR/review-prompt-retry.md"
+  {
+    cat "$PROMPT_FILE"
+    printf '\n%s\n' 'Your previous reply was not a single JSON object. Reply with only the JSON object.'
+  } > "$RETRY_PROMPT_FILE"
+  if ! run_review_attempt "$RETRY_PROMPT_FILE"; then
+    log_unusable_output 2
+    reason="review failed after retry: ${ATTEMPT_REASON} (first attempt: ${first_reason})"
+    write_failed_result "$reason"
+    finish review_failed "$reason" "$RESULT_FILE"
   fi
 fi
 
-verdict="$(jq -r '.verdict // ""' "$RESULT_FILE")"
-case "$verdict" in
-  approve|request_changes|block) ;;
-  *)
-    reason="agent returned invalid verdict: ${verdict:-<empty>}"
-    # Preserve the original JSON for #15 debugging, but force-block.
-    jq --arg r "$reason" '. + {verdict:"block", summary:$r}' "$RESULT_FILE" \
-      > "$RESULT_FILE.tmp" && mv "$RESULT_FILE.tmp" "$RESULT_FILE"
-    finish block "$reason" "$RESULT_FILE"
-    ;;
-esac
-
+verdict="$(jq -r '.verdict' "$RESULT_FILE")"
 reason="agent verdict: $verdict"
 finish "$verdict" "$reason" "$RESULT_FILE"

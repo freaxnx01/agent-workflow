@@ -1156,9 +1156,9 @@ assert_contains "$out" 'verdict=block'           "diff exceeds MAX_DIFF_BYTES �
 assert_contains "$out" 'unreviewable'            "oversized reason mentions 'unreviewable'"
 rm -f "$BIG_DIFF"
 
-# Malformed agent JSON → coerced to block
+# Malformed agent JSON → retried once, then review_failed (#490)
 out="$(review_run review-malformed.json)"
-assert_contains "$out" 'verdict=block'           "malformed agent output → verdict=block"
+assert_contains "$out" 'verdict=review_failed'   "malformed agent output → verdict=review_failed"
 
 # #72: agents wrap the JSON verdict in a code fence — salvage it, do not block.
 out="$(review_run review-fenced-approve.json)"
@@ -1168,16 +1168,66 @@ assert_contains "$out" 'verdict=approve'         "fenced json output salvaged to
 out="$(review_run review-prose-approve.json)"
 assert_contains "$out" 'verdict=approve'         "prose-wrapped json salvaged to approve"
 
-# Agent invocation failure → coerced to block
+# Agent invocation failure → retried once, then review_failed (#490)
 out="$(review_run review-approve.json env AGENT_FAIL=1)"
-assert_contains "$out" 'verdict=block'           "agent failure → verdict=block"
+assert_contains "$out" 'verdict=review_failed'   "agent failure → verdict=review_failed"
 
 # Invalid verdict string in agent JSON → coerced to block
 BAD_VERDICT="$(mktemp --suffix=.json)"
 printf '{"verdict":"lgtm","summary":"x","concerns":[]}\n' > "$BAD_VERDICT"
 out="$(AGENT_FIXTURE_OVERRIDE="$BAD_VERDICT" review_run review-approve.json env AGENT_FIXTURE="$BAD_VERDICT")"
 rm -f "$BAD_VERDICT"
-assert_contains "$out" 'verdict=block'           "unknown verdict string → verdict=block"
+assert_contains "$out" 'verdict=review_failed'   "unknown verdict string → verdict=review_failed"
+
+# #490: an unusable reply is retried once with a nudge, then review_failed.
+CALLS="$(mktemp)"; rm -f "$CALLS"
+out="$(review_run review-approve.json env AGENT_CALL_LOG="$CALLS" \
+        AGENT_FIXTURE_SEQUENCE="$FIXTURES/review-malformed.json,$FIXTURES/review-approve.json")"
+assert_contains "$out" 'verdict=approve'          "non-JSON then valid JSON → retry's verdict (#490)"
+assert_equals "$(grep -c . "$CALLS")" "2"          "non-JSON then valid → agent called twice (#490)"
+assert_contains "$(sed -n 2p "$CALLS")" 'nudge=yes' "retry prompt carries the JSON-only nudge (#490)"
+assert_contains "$(sed -n 1p "$CALLS")" 'nudge=no'  "first prompt has no nudge (#490)"
+rm -f "$CALLS"
+
+CALLS="$(mktemp)"; rm -f "$CALLS"
+err="$( { review_run review-malformed.json env AGENT_CALL_LOG="$CALLS"; } 2>&1 >/dev/null )"
+out="$(review_run review-malformed.json)"
+assert_contains "$out" 'verdict=review_failed'    "non-JSON twice → review_failed (#490)"
+assert_contains "$out" 'non-JSON'                  "review_failed reason names the cause (#490)"
+assert_equals "$(grep -c . "$CALLS")" "2"          "non-JSON twice → exactly two agent calls (#490)"
+assert_contains "$err" '--- review agent output (attempt 1, first 4096 bytes) ---' "attempt 1 raw output logged (#490)"
+assert_contains "$err" '--- review agent output (attempt 2, first 4096 bytes) ---' "attempt 2 raw output logged (#490)"
+assert_contains "$err" 'this is not JSON at all'   "raw agent text is in the log (#490)"
+rm -f "$CALLS"
+
+summary_file="$(review_run review-malformed.json | sed -n 's/^summary-file=//p')"
+assert_equals "$(jq -r .verdict "$summary_file")" "review_failed" "result JSON carries verdict review_failed (#490)"
+
+CALLS="$(mktemp)"; rm -f "$CALLS"
+out="$(review_run review-approve.json env AGENT_CALL_LOG="$CALLS" AGENT_FAIL_TIMES=1)"
+assert_contains "$out" 'verdict=approve'          "crash then valid → retry's verdict (#490)"
+assert_equals "$(grep -c . "$CALLS")" "2"          "crash then valid → two calls (#490)"
+rm -f "$CALLS"
+
+out="$(review_run review-agent-review-failed.json)"
+assert_contains "$out" 'verdict=review_failed'    "agent-emitted review_failed is invalid → review_failed (#490)"
+assert_contains "$out" 'invalid verdict: review_failed' "reason names the invalid agent verdict (#490)"
+
+CALLS="$(mktemp)"; rm -f "$CALLS"
+out="$(review_run review-approve.json env AGENT_CALL_LOG="$CALLS")"
+assert_equals "$(grep -c . "$CALLS")" "1"          "valid JSON first time → one agent call (#490)"
+rm -f "$CALLS"
+
+# Review Focus: a quote in the invalid verdict must not break the result JSON.
+QUOTE_VERDICT="$(mktemp --suffix=.json)"
+printf '{"verdict":"lg\\"tm","summary":"x","concerns":[]}\n' > "$QUOTE_VERDICT"
+summary_file="$(review_run review-approve.json env AGENT_FIXTURE="$QUOTE_VERDICT" | sed -n 's/^summary-file=//p')"
+if jq -e . "$summary_file" >/dev/null 2>&1; then
+  pass "quote in invalid verdict → result JSON still valid (#490)"
+else
+  fail "quote in invalid verdict → result JSON still valid (#490)" "$(cat "$summary_file")"
+fi
+rm -f "$QUOTE_VERDICT"
 
 # Idempotency: existing comment with the head-SHA marker → skip post
 GO="$(mktemp)"
