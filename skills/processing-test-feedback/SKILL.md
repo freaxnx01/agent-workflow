@@ -118,6 +118,28 @@ right channel, and mark each entry `done` in the worklog as you go:
 
 Carry each entry's attachments through to its disposition — never drop them on the floor.
 
+## Testhub exports
+
+Notes may arrive as a **Testhub export** (the playtest hub at `github.freaxnx01.ch/testhub/`).
+Recognise it by the header line, then handle each line by its shape:
+
+```text
+Testhub feedback — <game> v<version> — YYYY-MM-DD
+- [<block> · "<item>" · go:<tag>] <note> (📷 fb-<game>-<MMDD>-<n>.png)
+- ✓ tested: [<block> · "<item>"]
+```
+
+- **Header** → context for every entry, not an entry itself: game, date, and the **version** =
+  the build the tester saw (verify claims against that build, not blindly against HEAD).
+- **`- [block · "item" · go:tag] note`** → one raw note; its Source is the **whole line**. Block,
+  item and tag are repro context: the `go:` tag is how to reach the spot (a Testhub jump target).
+  `fb-…png` screenshots usually arrive via `~/LocalSend/` — handle like any other attachment.
+- **`- ✓ tested: [block · "item"]`** → **not triaged**. Tick the exactly matching `- [ ]` item in
+  that game repo's `test-todo.md` (match on block heading + item text, ignoring any `{go: …}` tag)
+  and commit. `test-todo.md` may go straight to main where the repo allows it, else a PR.
+  Show these in the triage table as their own rows, disposition **tick test-todo**. A ✓ line
+  with no exact match is never guessed: list it back to the human.
+
 ## Disposition rubric — decide in this order, first match wins
 
 Checking in order is what kills the waffling. Do not skip step 1.
