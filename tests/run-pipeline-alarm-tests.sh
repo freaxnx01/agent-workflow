@@ -449,6 +449,73 @@ assert_contains "$wf" 'NTFY_TOKEN' "the ntfy token is wired through"
 assert_contains "$(cat "$ROOT/.github/workflows/agent.yml")" 'NTFY_TOKEN' \
   "the dogfood consumer forwards the ntfy token"
 
+# --- Task 6: pipeline-resume.sh ---------------------------------------------
+
+section "pipeline-resume — clearing the alarm re-dispatches the queued issues"
+
+RESUME="$ROOT/scripts/pipeline-resume.sh"
+
+# resume_run <dir> <alarm-list-fixture> [extra env...]
+resume_run() {
+  local dir="$1" list="$2"; shift 2
+  {
+    printf '%s\t%s\n' 'issue list' "$FIXTURES/$list"
+    printf '%s\t%s\n' 'issue view 12' "$FIXTURES/resume-issue-open.json"
+    printf '%s\t%s\n' 'issue view 34' "$FIXTURES/resume-issue-closed.json"
+  } > "$dir/stdout-map"
+  env PATH="$MOCKS:$PATH" \
+    GH_MOCK_LOG="$dir/gh" \
+    GH_MOCK_BODY_LOG="$dir/body" \
+    GH_MOCK_STDOUT_MAP="$dir/stdout-map" \
+    REPO=freaxnx01/game-rhyflitzer \
+    "$@" bash "$RESUME" 2>&1
+}
+
+d="$(mktemp -d)"
+out="$(resume_run "$d" resume-alarm.json)"
+gh_log="$(cat "$d/gh")"
+assert_equals "$(grep -c 'workflow run' "$d/gh" || true)" 1 "only the still-queued issue is re-dispatched"
+assert_contains "$gh_log" 'issue-number=12'   "the open, still-labelled issue is re-dispatched"
+assert_not_contains "$gh_log" 'issue-number=34' "a closed issue is not re-dispatched"
+assert_not_contains "$gh_log" 'attempt='      "no attempt input -> the re-run is attempt 1"
+assert_contains "$gh_log" 'issue close 7'     "the alarm is closed"
+assert_contains "$out" 'resumed'              "reports the resume"
+rm -rf "$d"
+
+# The alarm has to be closed BEFORE the re-dispatch: a dispatch that races a
+# still-open alarm is stopped by the gate and the resume achieves nothing.
+d="$(mktemp -d)"
+resume_run "$d" resume-alarm.json >/dev/null
+close_line="$(grep -n 'issue close 7' "$d/gh" | head -1 | cut -d: -f1)"
+run_line="$(grep -n 'workflow run' "$d/gh" | head -1 | cut -d: -f1)"
+if [[ -n "$close_line" && -n "$run_line" ]] && (( close_line < run_line )); then
+  pass "the alarm is closed before the issues are re-dispatched"
+else
+  fail "the alarm is closed before the issues are re-dispatched" \
+    "close at ${close_line:-none}, dispatch at ${run_line:-none}"
+fi
+rm -rf "$d"
+
+d="$(mktemp -d)"
+ec=0
+out="$(resume_run "$d" alarm-list-empty.json)" || ec=$?
+assert_equals "$ec" 0 "no alarm -> exit 0"
+assert_contains "$out" 'nothing to resume' "no alarm -> says so"
+assert_equals "$(grep -c 'workflow run' "$d/gh" || true)" 0 "no alarm -> dispatches nothing"
+rm -rf "$d"
+
+d="$(mktemp -d)"
+out="$(resume_run "$d" resume-alarm.json AGENT_PAUSED_VAR='out_of_credits 2026-10-12T01:43Z')"
+assert_contains "$out" 'AGENT_PAUSED' "warns that the manual variable still pauses the repo"
+rm -rf "$d"
+
+d="$(mktemp -d)"
+out="$(resume_run "$d" resume-alarm.json DRY_RUN=1)"
+assert_equals "$(grep -c 'workflow run' "$d/gh" || true)" 0 "dry run -> no dispatch"
+assert_equals "$(grep -c 'issue close' "$d/gh" || true)" 0 "dry run -> the alarm stays open"
+assert_contains "$out" '#12' "dry run -> names what it would re-dispatch"
+rm -rf "$d"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"
