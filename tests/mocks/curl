@@ -9,6 +9,10 @@
 # Also drains stdin. azdo_set_tags passes credentials via `curl -K -`, and the
 # mock must consume that config rather than leave the writer blocked on a pipe.
 # Nothing read from stdin is ever logged: it carries the PAT.
+#
+# Seams:
+#   CURL_MOCK_FAIL   when "1", exit 22 (curl's HTTP-error exit under -f) with no
+#                    stdout, so a test can drive a caller's failure path.
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -19,6 +23,11 @@ argv="$( IFS=' '; printf '%s' "$*" )"
 
 # Consume the config on stdin when -K - was passed, and discard it.
 [[ "$argv" == *"-K -"* ]] && cat >/dev/null
+
+if [[ "${CURL_MOCK_FAIL:-}" == "1" ]]; then
+  printf 'curl: (22) The requested URL returned error: 500\n' >&2
+  exit 22
+fi
 
 if [[ -n "${CURL_MOCK_BODY_LOG:-}" ]]; then
   prev=""

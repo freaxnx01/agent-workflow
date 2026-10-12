@@ -15,6 +15,7 @@ IFS=$'\n\t'
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FIXTURES="$ROOT/tests/fixtures"
+MOCKS="$ROOT/tests/mocks"
 
 # Layer-1 tests are hermetic by contract, which has to include the *ambient*
 # environment: on a GitHub Actions runner GITHUB_REPOSITORY is always set and
@@ -192,6 +193,78 @@ section "classify-agent — after a pause the issue resumes as attempt 1"
 out="$(ISSUE_LABELS='' ISSUE_NUMBER=42 REPO=o/r DEFAULT_AGENT=opencode ATTEMPT=1 \
   HAS_OPENROUTER_KEY=true bash "$ROOT/scripts/classify-agent.sh")"
 assert_contains "$out" 'chosen: opencode' "attempt 1 stays on the default agent"
+
+# --- Task 3: notify-ntfy.sh -------------------------------------------------
+
+section "notify-ntfy — the push never fails the run"
+
+NTFY="$ROOT/scripts/notify-ntfy.sh"
+
+# ntfy_run <log dir> [extra env assignments...] — runs notify-ntfy.sh with the
+# curl mock on PATH, capturing stdout+stderr. argv goes to $dir/argv, the
+# request body to $dir/body.
+ntfy_run() {
+  local dir="$1"; shift
+  env PATH="$MOCKS:$PATH" \
+    CURL_MOCK_FIXTURE="$FIXTURES/ntfy-published.json" \
+    CURL_MOCK_LOG="$dir/argv" \
+    CURL_MOCK_BODY_LOG="$dir/body" \
+    "$@" bash "$NTFY" 2>&1
+}
+
+d="$(mktemp -d)"
+ec=0
+out="$(ntfy_run "$d" NTFY_TOPIC=pipeline-alerts NTFY_TITLE=t NTFY_MESSAGE=m)" || ec=$?
+assert_equals "$ec" 0 "unconfigured -> exit 0"
+assert_contains "$out" 'not configured' "unconfigured -> says so"
+assert_equals "$(cat "$d/argv" 2>/dev/null || printf '')" '' "unconfigured -> no curl call"
+rm -rf "$d"
+
+d="$(mktemp -d)"
+out="$(ntfy_run "$d" \
+  NTFY_URL=https://ntfy.home.freaxnx01.ch \
+  NTFY_TOPIC=pipeline-alerts \
+  NTFY_TITLE='Pipeline paused' \
+  NTFY_MESSAGE='out of credits' \
+  NTFY_PRIORITY=urgent \
+  NTFY_CLICK=https://github.com/o/r/issues/7 \
+  NTFY_TAGS=rotating_light,warning)"
+body="$(cat "$d/body")"
+assert_contains "$(cat "$d/argv")" 'ntfy.home.freaxnx01.ch' "configured -> posts to the server"
+assert_equals "$(jq -r .topic <<<"$body")"    pipeline-alerts  "body carries the topic"
+assert_equals "$(jq -r .priority <<<"$body")" 5                "urgent -> priority 5"
+assert_equals "$(jq -r .title <<<"$body")"    'Pipeline paused' "body carries the title"
+assert_equals "$(jq -r .click <<<"$body")"    'https://github.com/o/r/issues/7' "body carries the click URL"
+assert_equals "$(jq -r '.tags | join("+")' <<<"$body")" 'rotating_light+warning' "tags are split on comma"
+assert_contains "$out" 'sent' "configured -> reports the send"
+rm -rf "$d"
+
+d="$(mktemp -d)"
+out="$(ntfy_run "$d" NTFY_URL=https://ntfy.example NTFY_TOPIC=t NTFY_MESSAGE=m NTFY_PRIORITY=high)"
+assert_equals "$(jq -r .priority <<<"$(cat "$d/body")")" 4 "high -> priority 4"
+rm -rf "$d"
+
+d="$(mktemp -d)"
+out="$(ntfy_run "$d" NTFY_URL=https://ntfy.example NTFY_TOPIC=t NTFY_MESSAGE=m)"
+assert_equals "$(jq -r .priority <<<"$(cat "$d/body")")" 3 "no priority -> default 3"
+rm -rf "$d"
+
+d="$(mktemp -d)"
+out="$(ntfy_run "$d" NTFY_URL=https://ntfy.example NTFY_TOPIC=t NTFY_MESSAGE=m \
+  NTFY_TOKEN=s3cret-publisher-token)"
+assert_not_contains "$(cat "$d/argv")" 's3cret' "token never reaches curl's argv"
+assert_not_contains "$out" 's3cret' "token never reaches stdout or stderr"
+assert_not_contains "$(cat "$d/body")" 's3cret' "token never reaches the request body"
+rm -rf "$d"
+
+d="$(mktemp -d)"
+ec=0
+out="$(ntfy_run "$d" CURL_MOCK_FAIL=1 NTFY_URL=https://ntfy.example NTFY_TOPIC=t \
+  NTFY_MESSAGE=m NTFY_TOKEN=s3cret-publisher-token)" || ec=$?
+assert_equals "$ec" 0 "curl failure -> still exit 0"
+assert_contains "$out" 'warning:' "curl failure -> warns"
+assert_not_contains "$out" 's3cret' "curl failure -> no token in the warning"
+rm -rf "$d"
 
 # --- summary ----------------------------------------------------------------
 
