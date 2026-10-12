@@ -227,7 +227,11 @@ if [[ -n "${DIFF_FILE:-}" ]]; then
   fi
 else
   DIFF_FILE="$WORK_DIR/pr.diff"
-  gh pr diff "$PR_NUMBER" --repo "$REPO" --patch > "$DIFF_FILE"
+  # The unified diff, not `--patch`: format-patch output interleaves free-text
+  # commit messages with the diff, and a message carrying a forged
+  # `diff --git … @@ … +x` block would read as reviewable content to the
+  # elided-content guard below (#490 security review).
+  gh pr diff "$PR_NUMBER" --repo "$REPO" > "$DIFF_FILE"
 fi
 
 # #490: one minified data line (e.g. a 2.6 MB JSON file) turns a small change
@@ -239,10 +243,10 @@ ELIDE_COUNTS="$WORK_DIR/pr.elide-counts.txt"
 #
 # Reviewable content is an added/removed line INSIDE a hunk, and a hunk is
 # bounded by the line counts in its `@@ -a,b +c,d @@` header. Counting by those
-# numbers rather than by "starts with + or -" matters because production feeds
-# `gh pr diff --patch`: format-patch output carries a commit message (bullets
-# start with `-`), a `---` separator and a trailing `-- ` signature, none of
-# which is content — counting them let an asset-only PR through to the reviewer.
+# numbers rather than by "starts with + or -" keeps file headers and anything
+# between hunks out of the count. (Production fetches the unified diff; the
+# hunk bounds also keep format-patch trailers such as `-- ` out if a caller
+# passes `--patch` output via DIFF_FILE.)
 LC_ALL=C awk -v max="$MAX_DIFF_LINE_CHARS" -v counts="$ELIDE_COUNTS" '
   # Length of one side of a hunk header range: "-12,3" → 3, "-12" → 1.
   function hunk_len(line, re,   m) {

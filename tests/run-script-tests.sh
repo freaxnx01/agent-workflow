@@ -1249,7 +1249,7 @@ out="$(review_run review-approve.json env DIFF_FILE="$RENAME_DIFF")"
 assert_contains "$out" 'verdict=approve'         "rename-only diff (nothing elided) → review runs (#490)"
 rm -f "$RENAME_DIFF"
 
-# #490: production fetches `gh pr diff --patch` — format-patch output, whose
+# #490: a DIFF_FILE in `gh pr diff --patch` form (format-patch output), whose
 # commit message ("- bullet"), `---` separator and trailing `-- ` signature all
 # start with + or -. Only lines inside a hunk's @@ line counts are content, or
 # an asset-only PR still reaches the reviewer.
@@ -1278,6 +1278,21 @@ format_patch $'diff --git a/src/game.js b/src/game.js\n--- a/src/game.js\n+++ b/
 out="$(MAX_DIFF_LINE_CHARS=10 review_run review-approve.json env DIFF_FILE="$PATCH_DIFF")"
 assert_contains "$out" 'verdict=approve'         "format-patch with one reviewable line → review runs (#490)"
 rm -f "$PATCH_DIFF"
+
+# #490 security review: with `--patch`, commit messages are free text interleaved
+# with the diff, and a message containing a forged `diff --git … @@ … +x` block
+# reads as reviewable content — an asset-only PR then bypasses the fully-elided
+# guard and can be approved unseen. The unified diff carries no commit text, so
+# the diff must be fetched without `--patch`.
+DIFF_LOG="$(mktemp)"
+PATH="$MOCKS:$PATH" GH_MOCK_LOG="$DIFF_LOG" \
+GITHUB_OUTPUT=/dev/null PR_NUMBER=42 REPO=o/r AGENT=claude HEAD_SHA=abc123 \
+EXISTING_COMMENTS='' DRY_RUN=1 \
+AGENT_CMD="$AGENT_MOCK" AGENT_FIXTURE="$FIXTURES/review-approve.json" \
+  bash "$REVIEW" >/dev/null 2>&1 || true
+assert_contains "$(cat "$DIFF_LOG")" 'pr diff 42 --repo o/r' "review fetches the PR diff via gh pr diff (#490)"
+assert_not_contains "$(grep '^pr diff' "$DIFF_LOG")" '--patch' "the diff is fetched without --patch, so no commit text reaches the parser (#490)"
+rm -f "$DIFF_LOG"
 
 # #490: an agent that ignores SIGTERM must not outlive its budget.
 assert_contains "$(grep -n 'timeout ' "$REVIEW")" 'timeout -k ' "agent timeout escalates to SIGKILL (#490)"
