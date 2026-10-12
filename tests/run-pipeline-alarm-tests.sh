@@ -590,6 +590,34 @@ out="$(env -u OPENROUTER_API_KEY PATH="$MOCKS:$PATH" \
 assert_equals "$ec" 2 "no key -> exit 2"
 rm -rf "$d"
 
+# --- Task 8: the health and probe workflows ---------------------------------
+
+section "pipeline-health.yml — the daily check is wired to the scripts"
+
+health="$(cat "$ROOT/.github/workflows/pipeline-health.yml")"
+assert_contains "$health" 'workflow_call:' "callable by a consumer's own cron"
+assert_contains "$health" 'check-openrouter-budget.sh' "runs the budget check"
+assert_contains "$health" "verdict == 'warn'" "warn -> a push"
+assert_contains "$health" 'NTFY_PRIORITY: high' "the warning is high, not urgent"
+assert_contains "$health" "verdict == 'exhausted'" "exhausted -> the alarm"
+assert_contains "$health" 'pipeline-pause.sh' "raises the same alarm as a failed run"
+assert_contains "$health" 'Key healthy again' "a recovered key is reported on the open alarm"
+# The secrets context is not available in `if:`; testing it there evaluates
+# empty and the step is skipped on every repo.
+assert_contains "$health" "env.OPENROUTER_API_KEY != ''" "the no-key skip tests env, not secrets"
+assert_not_contains "$health" "secrets.OPENROUTER_API_KEY != ''" "no secrets context in an if:"
+assert_contains "$health" 'issues: write' "least privilege: issues write, nothing more"
+assert_not_contains "$health" 'contents: write' "the health check never writes code"
+
+section "pipeline-ntfy-probe.yml — reachability is measurable"
+
+probe="$(cat "$ROOT/.github/workflows/pipeline-ntfy-probe.yml")"
+assert_contains "$probe" 'workflow_dispatch:' "manual only"
+assert_not_contains "$probe" 'schedule:' "nothing pages on a schedule to prove the pager works"
+assert_contains "$probe" '/v1/health' "probes the server's health endpoint"
+assert_contains "$probe" 'notify-ntfy.sh' "and sends a real notification"
+assert_contains "$probe" 'ntfy.sh' "documents the fallback in its own summary"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"

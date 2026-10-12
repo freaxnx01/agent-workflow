@@ -326,6 +326,12 @@ build_agent_yml() {
   if [[ "$AGENT" == opencode ]]; then
     secrets_block+=$'\n      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}'
   fi
+  # Always emitted, like `agent:` above and for the same reason: this stub does
+  # not use `secrets: inherit`, so a token set on the repo but not listed here
+  # never reaches the reusable workflow. The pipeline-paused alarm would then
+  # raise its issue and silently never push (#517). Optional everywhere —
+  # unset, the push is skipped and nothing fails.
+  secrets_block+=$'\n      NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}'
 
   with_block=$'      issue-number: ${{ github.event.issue.number }}'
   with_block+=$'\n      runner-labels: '"'$RUNNER_LABELS'"
@@ -361,6 +367,35 @@ jobs:
 $secrets_block
     with:
 $with_block
+YAML
+}
+
+# The daily early warning (#517). A consumer gets it unconditionally: it costs
+# one scheduled job a day, it is a no-op when the repo has no
+# OPENROUTER_API_KEY, and the failure it prevents (a dry key burning every
+# dispatch unnoticed) is repo-wide.
+build_health_yml() {
+  cat <<YAML
+name: Pipeline health
+on:
+  schedule:
+    # 06:17 UTC — off the hour, so it is not queued behind every other repo's
+    # on-the-hour cron.
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write   # raises / comments on the pipeline-paused alarm
+
+jobs:
+  budget:
+    uses: $PIPELINE_REPO/.github/workflows/pipeline-health.yml@$REF
+    with:
+      pipeline-ref: $REF
+    secrets:
+      OPENROUTER_API_KEY: \${{ secrets.OPENROUTER_API_KEY }}
+      NTFY_TOKEN: \${{ secrets.NTFY_TOKEN }}
 YAML
 }
 
@@ -440,6 +475,8 @@ elif [[ "$DIRECT_TO_MAIN" == true ]]; then
   BRANCH="$DEFAULT_BRANCH"
   build_agent_yml | put_file ".github/workflows/agent.yml" \
     "ci(agent-workflow): add consumer stub"
+  build_health_yml | put_file ".github/workflows/pipeline-health.yml" \
+    "ci(agent-workflow): add pipeline health stub"
   if [[ "$CHAIN" == true ]]; then
     build_chain_yml | put_file ".github/workflows/chain-dispatch.yml" \
       "ci(agent-workflow): add chain-dispatch stub"
@@ -449,6 +486,8 @@ else
   ensure_branch
   build_agent_yml | put_file ".github/workflows/agent.yml" \
     "ci(agent-workflow): add consumer stub"
+  build_health_yml | put_file ".github/workflows/pipeline-health.yml" \
+    "ci(agent-workflow): add pipeline health stub"
   if [[ "$CHAIN" == true ]]; then
     build_chain_yml | put_file ".github/workflows/chain-dispatch.yml" \
       "ci(agent-workflow): add chain-dispatch stub"
