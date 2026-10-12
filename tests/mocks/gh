@@ -10,6 +10,12 @@
 #   GH_MOCK_AUTH_HOSTS            space-separated hosts 'gh auth token --hostname' succeeds for
 #   GH_MOCK_STDOUT_MAP            file of "<substring>\t<fixture>" lines; first
 #                                 substring found in argv is cat'd to stdout
+#   GH_MOCK_BODY_LOG              when argv carries `--body-file <path>`, the
+#                                 file's CONTENTS are appended here. The argv log
+#                                 only records the temp path, which the caller
+#                                 deletes on exit — so without this a test can
+#                                 see that a comment was posted but not what it
+#                                 said (#517).
 #   GH_MOCK_FAIL_MAP              file of substrings, one per line; a match in
 #                                 argv exits 1 with no stdout (checked first).
 #                                 A line may add a tab-separated stderr message
@@ -22,6 +28,14 @@ IFS=$'\n\t'
 ( IFS=' '; printf '%s\n' "$*" >> "$GH_MOCK_LOG" )
 
 argv="$(IFS=' '; printf '%s' "$*")"
+
+if [[ -n "${GH_MOCK_BODY_LOG:-}" ]]; then
+  prev=""
+  for a in "$@"; do
+    [[ "$prev" == "--body-file" && -r "$a" ]] && cat "$a" >> "$GH_MOCK_BODY_LOG"
+    prev="$a"
+  done
+fi
 
 # Response seams. These are generic on purpose: a new test adds a fixture and a
 # pattern line, never a branch here.

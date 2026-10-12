@@ -266,6 +266,119 @@ assert_contains "$out" 'warning:' "curl failure -> warns"
 assert_not_contains "$out" 's3cret' "curl failure -> no token in the warning"
 rm -rf "$d"
 
+# --- Task 4: pipeline-pause.sh ----------------------------------------------
+
+section "pipeline-pause — one alarm issue per pause"
+
+PAUSE="$ROOT/scripts/pipeline-pause.sh"
+
+# pause_run <dir> <first-list-fixture> <relist-fixture> [extra env...] — runs
+# pipeline-pause.sh with gh and curl mocked. Writes to $dir:
+#   gh    gh argv, one call per line
+#   body  the contents of every --body-file gh was handed
+#   ntfy  the JSON body notify-ntfy.sh pushed (absent when no push happened)
+pause_run() {
+  local dir="$1" list="$2" relist="$3"; shift 3
+  {
+    printf '%s\t%s\n' '--json number,body' "$FIXTURES/$list"
+    printf '%s\t%s\n' '--json number --limit' "$FIXTURES/$relist"
+    printf '%s\t%s\n' 'issue create' "$FIXTURES/alarm-create-url.txt"
+  } > "$dir/stdout-map"
+  env PATH="$MOCKS:$PATH" \
+    GH_MOCK_LOG="$dir/gh" \
+    GH_MOCK_BODY_LOG="$dir/body" \
+    GH_MOCK_STDOUT_MAP="$dir/stdout-map" \
+    CURL_MOCK_FIXTURE="$FIXTURES/ntfy-published.json" \
+    CURL_MOCK_BODY_LOG="$dir/ntfy" \
+    REPO=freaxnx01/game-rhyflitzer \
+    REASON=out_of_credits \
+    NTFY_URL=https://ntfy.home.freaxnx01.ch \
+    NTFY_TOPIC=pipeline-alerts \
+    "$@" bash "$PAUSE" 2>&1
+}
+
+# (a) no open alarm -> create one, push once
+d="$(mktemp -d)"
+# shellcheck disable=SC2016  # OpenRouter's literal error text again.
+out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json \
+  ISSUE_NUMBER=99 \
+  ERROR_TEXT='Key limit exceeded (monthly limit). $10.09 of $10.00 used; resets 2026-11-01')"
+gh_log="$(cat "$d/gh")"
+body="$(cat "$d/body")"
+assert_contains "$gh_log" 'issue create'      "no alarm -> creates one"
+assert_contains "$gh_log" 'Pipeline paused'   "created title names the pause"
+assert_contains "$gh_log" 'pipeline-paused'   "created with the alarm label"
+assert_contains "$body"   'Key limit exceeded' "alarm body carries the error text"
+assert_contains "$body"   'https://openrouter.ai/settings/keys' "alarm body links key management"
+assert_contains "$body"   '#99'                "alarm body lists the paused issue"
+assert_contains "$body"   'How to resume'      "alarm body says how to resume"
+assert_contains "$out"    'alarm-issue=9'      "emits the alarm issue number"
+assert_contains "$out"    'created=true'       "emits created=true"
+ntfy="$(cat "$d/ntfy")"
+# One push == one JSON body in the log. Counted by its `topic` key, not by
+# lines: jq renders the body pretty-printed across ten of them.
+assert_equals "$(grep -c '"topic"' "$d/ntfy")" 1 "exactly one ntfy push"
+assert_equals "$(jq -r .priority <<<"$ntfy")" 5 "push is urgent"
+assert_equals "$(jq -r .click <<<"$ntfy")" \
+  'https://github.com/freaxnx01/game-rhyflitzer/issues/9' "push links the alarm issue"
+rm -rf "$d"
+
+# (b) an open alarm exists -> update it, no second create, no second push
+d="$(mktemp -d)"
+out="$(pause_run "$d" alarm-list-existing.json alarm-list-own.json ISSUE_NUMBER=34)"
+gh_log="$(cat "$d/gh")"
+assert_not_contains "$gh_log" 'issue create'   "existing alarm -> no second issue"
+assert_contains "$gh_log" 'issue edit 7'       "existing alarm -> edited"
+assert_contains "$(cat "$d/body")" '#12 #34'   "new issue appended to the marker block"
+assert_contains "$out" 'alarm-issue=7'         "emits the existing alarm number"
+assert_contains "$out" 'created=false'         "emits created=false"
+assert_equals "$([[ -s "$d/ntfy" ]] && printf nonempty || printf empty)" empty \
+  "existing alarm -> no second push"
+rm -rf "$d"
+
+# (c) an already-listed issue is not duplicated
+d="$(mktemp -d)"
+out="$(pause_run "$d" alarm-list-existing.json alarm-list-own.json ISSUE_NUMBER=12)"
+assert_contains "$(cat "$d/body")" '<!-- paused-issues -->#12<!-- /paused-issues -->' \
+  "an already-listed issue is not appended twice"
+rm -rf "$d"
+
+# (d) race: a lower-numbered alarm appeared while we were creating ours
+d="$(mktemp -d)"
+out="$(pause_run "$d" alarm-list-empty.json alarm-list-race.json ISSUE_NUMBER=99)"
+gh_log="$(cat "$d/gh")"
+assert_contains "$gh_log" 'issue close 9'  "race -> our duplicate alarm is closed"
+assert_contains "$gh_log" 'duplicate of #5' "race -> closed as a duplicate of the winner"
+assert_contains "$out" 'alarm-issue=5'     "race -> the winner is reported"
+assert_contains "$out" 'created=false'     "race -> we did not create the alarm"
+assert_equals "$([[ -s "$d/ntfy" ]] && printf nonempty || printf empty)" empty \
+  "race -> the loser does not push"
+rm -rf "$d"
+
+# (e) ntfy unconfigured -> the alarm is still raised
+d="$(mktemp -d)"
+ec=0
+out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json ISSUE_NUMBER=99 \
+  NTFY_URL= NTFY_TOPIC=)" || ec=$?
+assert_equals "$ec" 0 "no ntfy config -> exit 0"
+assert_contains "$(cat "$d/gh")" 'issue create' "no ntfy config -> alarm still created"
+assert_contains "$out" 'not configured' "no ntfy config -> says the push was skipped"
+rm -rf "$d"
+
+# (f) a leaked key in the error text is redacted before it is posted
+d="$(mktemp -d)"
+out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json ISSUE_NUMBER=99 \
+  ERROR_TEXT='401 for key sk-or-v1-0a1b2c3d4e5f6071829304a5b6c7d8e9 — no credits')"
+assert_not_contains "$(cat "$d/body")" 'sk-or-v1-0a1b2c' "a leaked key is redacted"
+assert_contains "$(cat "$d/body")" 'sk-or-***' "the redaction is visible"
+assert_not_contains "$(cat "$d/ntfy")" 'sk-or-v1-0a1b2c' "no leaked key in the push"
+rm -rf "$d"
+
+section "ensure-issue-labels — the alarm label exists"
+
+assert_contains "$(cat "$ROOT/scripts/ensure-issue-labels.sh")" "create pipeline-paused" \
+  "pipeline-paused is created in consumer repos"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"
