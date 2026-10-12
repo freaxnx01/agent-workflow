@@ -961,7 +961,7 @@ jobs:
           NTFY_TOPIC: ${{ vars.NTFY_TOPIC }}
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
         run: |
-          ERROR_TEXT="$(jq -r '.result // ""' "$RESULT_FILE")" \
+          ERROR_TEXT="$(jq -r '.api_error // .result // ""' "$RESULT_FILE")" \
             bash .claude-pipeline/scripts/pipeline-pause.sh
 
       - name: Plan retry

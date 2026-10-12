@@ -38,6 +38,13 @@ jq -e . "$RESULT_FILE" >/dev/null 2>&1 || { printf 'error: RESULT_FILE not valid
 is_error="$(jq -r '.is_error // false' "$RESULT_FILE")"
 subtype="$(jq -r '.subtype // ""' "$RESULT_FILE")"
 result_text="$(jq -r '.result // ""' "$RESULT_FILE")"
+# The provider/agent ERROR CHANNEL, kept apart from the free agent text above:
+# `.api_error` (error events joined by adapt-opencode-result.sh) and
+# `.api_error_status` (HTTP status; also emitted by the Claude CLI). Only this
+# channel may classify out_of_credits — `.result` carries the agent's own words
+# and anything an issue author got it to echo, and a pause stops the whole repo.
+api_error="$(jq -r '.api_error // ""' "$RESULT_FILE")"
+api_status="$(jq -r '.api_error_status // ""' "$RESULT_FILE")"
 num_turns="$(jq -r '.num_turns // ""' "$RESULT_FILE")"
 
 # A terminal `subtype` of error_* is authoritative even when is_error is false:
@@ -48,7 +55,7 @@ num_turns="$(jq -r '.num_turns // ""' "$RESULT_FILE")"
 # which is the right default for an outcome we cannot name.
 if [[ "$is_error" != "true" && "$subtype" != error_* ]]; then
   class=success
-elif printf '%s' "$result_text" | grep -qiE 'key limit exceeded|exceeds? your available credits|insufficient credits|requires more credits, or fewer max_tokens'; then
+elif [[ "$api_status" == "402" ]] || printf '%s' "$api_error" | grep -qiE 'key limit exceeded|exceeds? your available credits|insufficient credits|requires more credits, or fewer max_tokens'; then
   # Only the provider's own full phrases: this text is the agent's whole result,
   # so loose patterns (`add.credits`, `payment required`) match task prose and
   # would pause a whole consumer repo.

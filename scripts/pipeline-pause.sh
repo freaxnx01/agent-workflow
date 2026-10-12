@@ -99,8 +99,19 @@ redact() {
     | head -c 2000
 }
 
-# Backticks are stripped so the error cannot close the alarm body's code fence.
-SAFE_ERROR="$(printf '%s' "$ERROR_TEXT" | redact | tr -d '`')"
+# Untrusted text is neutralised before it reaches the body: backticks (they
+# would close the code fence), HTML comment delimiters and the marker names (they
+# would inject or hide entries in the paused-issues list pipeline-resume reads).
+neutralise() {
+  tr -d '`' | sed -E 's/<!--//g; s/-->//g; s#/?paused-issues##g'
+}
+SAFE_ERROR="$(printf '%s' "$ERROR_TEXT" | redact | neutralise)"
+
+# ISSUE_NUMBER lands in the marker block: digits only.
+if [[ -n "$ISSUE_NUMBER" && ! "$ISSUE_NUMBER" =~ ^[0-9]+$ ]]; then
+  printf 'error: ISSUE_NUMBER must be digits only, got %q\n' "$ISSUE_NUMBER" >&2
+  exit 2
+fi
 
 # The link the operator needs is usually in the error itself ("add credits at
 # ...") and is more specific than any default we could hardcode.
@@ -114,9 +125,12 @@ KEY_LINK="${KEY_LINK:-https://openrouter.ai/settings/keys}"
 # with $ISSUE_NUMBER appended unless it is already there. Token comparison, not
 # substring: `#1` is a substring of `#12` and dedup on that would drop issues.
 paused_list() {
-  local existing="$1" token entry out=""
+  local existing="$1" token entry out="" entries=()
+  # IFS is newline/tab script-wide, so split on spaces explicitly.
+  IFS=' ' read -ra entries <<<"$existing"
   [[ -n "$ISSUE_NUMBER" ]] && token="#${ISSUE_NUMBER}" || token=""
-  for entry in $existing; do
+  for entry in "${entries[@]}"; do
+    [[ "$entry" =~ ^#[0-9]+$ ]] || continue
     [[ -n "$out" ]] && out+=' '
     out+="$entry"
     [[ "$entry" == "$token" ]] && token=""

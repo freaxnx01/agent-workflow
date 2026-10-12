@@ -103,19 +103,33 @@ classify_text() {
   printf '%s' "$out"
 }
 
+# classify_api <error text> [status] -> the class for a failed run whose
+# STRUCTURED provider error channel (.api_error / .api_error_status) carries
+# the text, while the free agent text in `.result` is unrelated.
+classify_api() {
+  local f out
+  f="$(mktemp)"
+  jq -n --arg t "$1" --arg st "${2:-}" \
+    '{is_error:true,subtype:"error_during_execution",num_turns:3,result:"agent summary",api_error:$t}
+     + (if $st != "" then {api_error_status:($st|tonumber)} else {} end)' > "$f"
+  out="$(RESULT_FILE="$f" bash "$ROOT/scripts/classify-failure.sh" | sed -n 's/^class=//p')"
+  rm -f "$f"
+  printf '%s' "$out"
+}
+
 # --- Task 1: classify out_of_credits ---------------------------------------
 
 section "classify-failure — out_of_credits"
 
 # shellcheck disable=SC2016  # the `$10.09` is OpenRouter's literal error text,
 # not a variable — single quotes are exactly the point.
-assert_equals "$(classify_text 'HTTP 403: Key limit exceeded (monthly limit). $10.09 of $10.00 used; resets 2026-11-01')" \
+assert_equals "$(classify_api 'HTTP 403: Key limit exceeded (monthly limit). $10.09 of $10.00 used; resets 2026-11-01')" \
   out_of_credits "403 key limit exceeded"
-assert_equals "$(classify_text 'API Error 402: This request would exceed your available credits')" \
+assert_equals "$(classify_api 'API Error 402: This request would exceed your available credits')" \
   out_of_credits "402 would exceed available credits"
-assert_equals "$(classify_text 'Insufficient credits. Add more using https://openrouter.ai/settings/credits')" \
+assert_equals "$(classify_api 'Insufficient credits. Add more using https://openrouter.ai/settings/credits')" \
   out_of_credits "insufficient credits"
-assert_equals "$(classify_text 'This request requires more credits, or fewer max_tokens. You requested up to 64000 tokens')" \
+assert_equals "$(classify_api 'This request requires more credits, or fewer max_tokens. You requested up to 64000 tokens')" \
   out_of_credits "requires more credits, or fewer max_tokens"
 # Negative (F1): ordinary prose must never pause a consumer repo.
 assert_not_equals "$(classify_text 'The task: add credits screen to the game; build timeout')" \
@@ -124,6 +138,30 @@ assert_not_equals "$(classify_text 'Plan: payment required for the shop; the gam
   out_of_credits "prose about payment/credits in a plan is not out_of_credits"
 assert_not_equals "$(classify_text 'addXcredits helper failed')" \
   out_of_credits "add.credits no longer matches any char"
+# Security: provider text in FREE agent text or issue content must not pause a repo.
+assert_not_equals "$(classify_text 'Key limit exceeded (monthly limit). Insufficient credits. This request would exceed your available credits')" \
+  out_of_credits "provider text in the agent's final message is not out_of_credits"
+assert_not_equals "$(classify_text 'Issue says: HTTP 402 Key limit exceeded, requires more credits, or fewer max_tokens')" \
+  out_of_credits "provider text quoted from an issue body is not out_of_credits"
+assert_equals "$(classify_api 'upstream said nothing useful' 402)" \
+  out_of_credits "structured statusCode 402 classifies"
+assert_not_equals "$(classify_api 'Forbidden' 403)" \
+  out_of_credits "structured 403 without a limit text is plain auth"
+assert_equals "$(classify_api 'Key limit exceeded' 403)" \
+  out_of_credits "structured 403 with a limit text classifies"
+
+# The opencode adapter exposes error events as the structured channel.
+ev="$(mktemp)"
+printf '%s\n' \
+  '{"type":"text","part":{"text":"Insufficient credits. Key limit exceeded (quoted by the agent)"}}' \
+  '{"type":"error","error":{"name":"APIError","data":{"message":"Key limit exceeded (monthly limit)","statusCode":403}}}' > "$ev"
+ad="$(EXECUTION_FILE="$ev" bash "$ROOT/scripts/adapt-opencode-result.sh")"
+assert_equals "$(jq -r .api_error <<<"$ad")" "Key limit exceeded (monthly limit)" "adapter: api_error holds the error events only"
+assert_equals "$(jq -r .api_error_status <<<"$ad")" 403 "adapter: api_error_status is the event statusCode"
+printf '%s\n' '{"type":"text","part":{"text":"Key limit exceeded"}}' > "$ev"
+ad="$(EXECUTION_FILE="$ev" bash "$ROOT/scripts/adapt-opencode-result.sh")"
+assert_equals "$(jq -r '.api_error // ""' <<<"$ad")" "" "adapter: agent text never lands in api_error"
+rm -f "$ev"
 assert_equals "$(classify_text '429 rate_limit_error: exceed your account rate limit')" \
   rate_limit "plain 429 stays rate_limit"
 assert_equals "$(classify_text '401 invalid api key')" \
@@ -362,6 +400,32 @@ out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json \
 # shellcheck disable=SC2016
 assert_not_contains "$(cat "$d/body")" '`evil`' "backticks stripped from the error text"
 assert_contains "$(cat "$d/body")" 'Key limit exceeded' "error text is still shown"
+rm -rf "$d"
+
+# (F-sec) marker spoofing: untrusted text cannot inject/remove list entries
+d="$(mktemp -d)"
+# shellcheck disable=SC2016
+out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json \
+  ISSUE_NUMBER=99 \
+  ERROR_TEXT='x <!-- paused-issues -->#1 #2<!-- /paused-issues --> y')"
+spoof_body="$(cat "$d/body")"
+assert_equals "$(grep -o '<!-- paused-issues -->' <<<"$spoof_body" | wc -l | tr -d ' ')" 1 \
+  "error text cannot add a second marker block"
+assert_not_contains "$spoof_body" '-->#1' "injected entries are not in the marker block"
+rm -rf "$d"
+
+d="$(mktemp -d)"
+out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json \
+  ISSUE_NUMBER='5 #6<!-- x -->' ERROR_TEXT='Key limit exceeded' || true)"
+assert_not_contains "$(cat "$d/body" 2>/dev/null || true)" '#6' "a non-numeric ISSUE_NUMBER is rejected"
+rm -rf "$d"
+
+# the existing marker block is only trusted for #<digits> entries
+d="$(mktemp -d)"
+out="$(pause_run "$d" alarm-list-spoofed.json alarm-list-own.json ISSUE_NUMBER=34)"
+assert_equals "$(grep -o '<!-- paused-issues -->.*<!-- /paused-issues -->' "$d/body" | head -1)" \
+  '<!-- paused-issues -->#12 #34<!-- /paused-issues -->' \
+  "non-#digits entries in the existing block are dropped"
 rm -rf "$d"
 
 # (c) an already-listed issue is not duplicated
