@@ -516,6 +516,80 @@ assert_equals "$(grep -c 'issue close' "$d/gh" || true)" 0 "dry run -> the alarm
 assert_contains "$out" '#12' "dry run -> names what it would re-dispatch"
 rm -rf "$d"
 
+# --- Task 7: check-openrouter-budget.sh -------------------------------------
+
+section "check-openrouter-budget — warn before the limit is reached"
+
+BUDGET="$ROOT/scripts/check-openrouter-budget.sh"
+
+# budget_run <dir> <key-fixture> <credits-fixture> [extra env...] — runs the
+# budget check with curl mocked per endpoint. $dir/argv holds the curl argv.
+budget_run() {
+  local dir="$1" key="$2" credits="$3"; shift 3
+  {
+    printf '%s\t%s\n' '/key' "$FIXTURES/$key"
+    printf '%s\t%s\n' '/credits' "$FIXTURES/$credits"
+  } > "$dir/fixture-map"
+  env PATH="$MOCKS:$PATH" \
+    CURL_MOCK_FIXTURE_MAP="$dir/fixture-map" \
+    CURL_MOCK_LOG="$dir/argv" \
+    OPENROUTER_API_KEY=sk-or-v1-0a1b2c3d4e5f6071829304a5b6c7d8e9 \
+    "$@" bash "$BUDGET" 2>&1
+}
+
+verdict_of() { sed -n 's/^verdict=//p' <<<"$1"; }
+
+d="$(mktemp -d)"
+out="$(budget_run "$d" openrouter-key-ok.json openrouter-credits-ok.json)"
+assert_equals "$(verdict_of "$out")" ok "8 of 10 USD left -> ok"
+assert_contains "$out" 'message=' "a one-line message is emitted"
+assert_not_contains "$out" '0a1b2c3d4e5f' "the key never reaches stdout"
+assert_not_contains "$(cat "$d/argv")" '0a1b2c3d4e5f' "the key never reaches curl's argv"
+rm -rf "$d"
+
+d="$(mktemp -d)"
+out="$(budget_run "$d" openrouter-key-low.json openrouter-credits-ok.json)"
+assert_equals "$(verdict_of "$out")" warn "1.50 of 10 left (15%) -> warn"
+rm -rf "$d"
+
+d="$(mktemp -d)"
+out="$(budget_run "$d" openrouter-key-floor.json openrouter-credits-ok.json)"
+assert_equals "$(verdict_of "$out")" warn "2.80 left of 50 -> warn on the absolute floor"
+rm -rf "$d"
+
+d="$(mktemp -d)"
+out="$(budget_run "$d" openrouter-key-nolimit.json openrouter-credits-ok.json)"
+assert_equals "$(verdict_of "$out")" ok "no limit set -> no key warning"
+rm -rf "$d"
+
+d="$(mktemp -d)"
+out="$(budget_run "$d" openrouter-key-exhausted.json openrouter-credits-ok.json)"
+assert_equals "$(verdict_of "$out")" exhausted "nothing left -> exhausted"
+rm -rf "$d"
+
+d="$(mktemp -d)"
+out="$(budget_run "$d" openrouter-key-ok.json openrouter-credits-low.json)"
+assert_equals "$(verdict_of "$out")" warn "healthy key, \$5 left on the account -> warn"
+assert_contains "$out" 'account' "the message says which budget is low"
+rm -rf "$d"
+
+# A key without management rights cannot read /credits. That is the normal
+# case for a pipeline key, so it must not degrade the key verdict.
+d="$(mktemp -d)"
+ec=0
+out="$(budget_run "$d" openrouter-key-low.json openrouter-credits-ok.json \
+  CURL_MOCK_FAIL_PATTERN=/credits)" || ec=$?
+assert_equals "$ec" 0 "a 403 on /credits is tolerated"
+assert_equals "$(verdict_of "$out")" warn "the verdict still comes from the key alone"
+rm -rf "$d"
+
+d="$(mktemp -d)"
+ec=0
+out="$(env -u OPENROUTER_API_KEY PATH="$MOCKS:$PATH" \
+  CURL_MOCK_FIXTURE="$FIXTURES/openrouter-key-ok.json" bash "$BUDGET" 2>&1)" || ec=$?
+assert_equals "$ec" 2 "no key -> exit 2"
+rm -rf "$d"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"

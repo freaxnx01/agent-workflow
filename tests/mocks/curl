@@ -13,10 +13,20 @@
 # Seams:
 #   CURL_MOCK_FAIL   when "1", exit 22 (curl's HTTP-error exit under -f) with no
 #                    stdout, so a test can drive a caller's failure path.
+#   CURL_MOCK_FAIL_PATTERN
+#                    same, but only when argv contains this substring — a script
+#                    that calls two endpoints needs one of them to fail (#517:
+#                    /credits 403s for a key without management rights).
+#   CURL_MOCK_FIXTURE_MAP
+#                    file of "<substring>\t<fixture>" lines; the first substring
+#                    found in argv selects the response. Falls back to
+#                    CURL_MOCK_FIXTURE, which is required when no map is set.
 set -euo pipefail
 IFS=$'\n\t'
 
-: "${CURL_MOCK_FIXTURE:?CURL_MOCK_FIXTURE must be set when using the curl mock}"
+if [[ -z "${CURL_MOCK_FIXTURE_MAP:-}" ]]; then
+  : "${CURL_MOCK_FIXTURE:?CURL_MOCK_FIXTURE must be set when using the curl mock}"
+fi
 
 argv="$( IFS=' '; printf '%s' "$*" )"
 [[ -n "${CURL_MOCK_LOG:-}" ]] && printf '%s\n' "$argv" >> "$CURL_MOCK_LOG"
@@ -24,8 +34,9 @@ argv="$( IFS=' '; printf '%s' "$*" )"
 # Consume the config on stdin when -K - was passed, and discard it.
 [[ "$argv" == *"-K -"* ]] && cat >/dev/null
 
-if [[ "${CURL_MOCK_FAIL:-}" == "1" ]]; then
-  printf 'curl: (22) The requested URL returned error: 500\n' >&2
+if [[ "${CURL_MOCK_FAIL:-}" == "1" ]] \
+   || [[ -n "${CURL_MOCK_FAIL_PATTERN:-}" && "$argv" == *"$CURL_MOCK_FAIL_PATTERN"* ]]; then
+  printf 'curl: (22) The requested URL returned error: 403\n' >&2
   exit 22
 fi
 
@@ -37,4 +48,14 @@ if [[ -n "${CURL_MOCK_BODY_LOG:-}" ]]; then
   done
 fi
 
-cat "$CURL_MOCK_FIXTURE"
+if [[ -n "${CURL_MOCK_FIXTURE_MAP:-}" && -r "${CURL_MOCK_FIXTURE_MAP}" ]]; then
+  while IFS=$'\t' read -r pattern fixture || [[ -n "$pattern" ]]; do
+    [[ -z "$pattern" ]] && continue
+    if [[ "$argv" == *"$pattern"* ]]; then
+      cat "$fixture"
+      exit 0
+    fi
+  done < "$CURL_MOCK_FIXTURE_MAP"
+fi
+
+cat "${CURL_MOCK_FIXTURE:?no CURL_MOCK_FIXTURE_MAP entry matched and no fallback fixture set}"
