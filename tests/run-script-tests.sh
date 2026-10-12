@@ -1249,6 +1249,39 @@ out="$(review_run review-approve.json env DIFF_FILE="$RENAME_DIFF")"
 assert_contains "$out" 'verdict=approve'         "rename-only diff (nothing elided) → review runs (#490)"
 rm -f "$RENAME_DIFF"
 
+# #490: production fetches `gh pr diff --patch` — format-patch output, whose
+# commit message ("- bullet"), `---` separator and trailing `-- ` signature all
+# start with + or -. Only lines inside a hunk's @@ line counts are content, or
+# an asset-only PR still reaches the reviewer.
+format_patch() {
+  # args: <extra-diff-after-world.json>
+  printf 'From 0123456789abcdef Mon Sep 17 00:00:00 2001\nFrom: Bot <bot@example.invalid>\n'
+  printf 'Subject: [PATCH] regen world\n\n- regen world from the source data\n---\n'
+  printf ' data/world.json | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)\n\n'
+  printf 'diff --git a/data/world.json b/data/world.json\nindex 1111111..2222222 100644\n'
+  printf -- '--- a/data/world.json\n+++ b/data/world.json\n@@ -1 +1 @@\n'
+  printf -- '-%s\n' "$(long_line 20)"
+  printf '+%s\n' "$(long_line 20)"
+  printf '%s' "$1"
+  printf -- '-- \n2.43.0\n\n'
+}
+PATCH_DIFF="$(mktemp)"
+format_patch '' > "$PATCH_DIFF"
+CALLS="$(mktemp)"; rm -f "$CALLS"
+out="$(MAX_DIFF_LINE_CHARS=10 review_run review-approve.json \
+       env DIFF_FILE="$PATCH_DIFF" AGENT_CALL_LOG="$CALLS")"
+assert_contains "$out" 'verdict=review_failed'   "asset-only format-patch diff → review_failed (#490)"
+if [[ -e "$CALLS" ]]; then fail "asset-only format-patch diff → agent not invoked (#490)" "$(cat "$CALLS")"; else pass "asset-only format-patch diff → agent not invoked (#490)"; fi
+rm -f "$CALLS"
+
+format_patch $'diff --git a/src/game.js b/src/game.js\n--- a/src/game.js\n+++ b/src/game.js\n@@ -1 +1 @@\n-old\n+new\n' > "$PATCH_DIFF"
+out="$(MAX_DIFF_LINE_CHARS=10 review_run review-approve.json env DIFF_FILE="$PATCH_DIFF")"
+assert_contains "$out" 'verdict=approve'         "format-patch with one reviewable line → review runs (#490)"
+rm -f "$PATCH_DIFF"
+
+# #490: an agent that ignores SIGTERM must not outlive its budget.
+assert_contains "$(grep -n 'timeout ' "$REVIEW")" 'timeout -k ' "agent timeout escalates to SIGKILL (#490)"
+
 # MAX_DIFF_LINE_CHARS drives an awk numeric compare and must be a positive
 # integer: a non-number silently elides nothing, 0 elides everything.
 for bad in abc 0 -5 '10 '; do

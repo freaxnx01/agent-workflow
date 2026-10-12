@@ -236,19 +236,42 @@ fi
 # so a removed content line that looks like `--- a/x` is not mistaken for one.
 ELIDED_DIFF="$WORK_DIR/pr.elided.diff"
 ELIDE_COUNTS="$WORK_DIR/pr.elide-counts.txt"
+#
+# Reviewable content is an added/removed line INSIDE a hunk, and a hunk is
+# bounded by the line counts in its `@@ -a,b +c,d @@` header. Counting by those
+# numbers rather than by "starts with + or -" matters because production feeds
+# `gh pr diff --patch`: format-patch output carries a commit message (bullets
+# start with `-`), a `---` separator and a trailing `-- ` signature, none of
+# which is content — counting them let an asset-only PR through to the reviewer.
 LC_ALL=C awk -v max="$MAX_DIFF_LINE_CHARS" -v counts="$ELIDE_COUNTS" '
-  /^diff --git / { in_header = 1; file = ""; old = "" }
-  /^@@/          { in_header = 0 }
+  # Length of one side of a hunk header range: "-12,3" → 3, "-12" → 1.
+  function hunk_len(line, re,   m) {
+    if (!match(line, re)) return 0
+    m = substr(line, RSTART + 1, RLENGTH - 1)
+    return index(m, ",") ? substr(m, index(m, ",") + 1) + 0 : 1
+  }
+  /^diff --git / { in_header = 1; in_hunk = 0; file = ""; old = "" }
   in_header && /^--- a\// { old = substr($0, 7) }
   in_header && /^\+\+\+ / { file = ($0 == "+++ /dev/null") ? old : substr($0, 7) }
   {
+    content = 0
+    if (in_hunk) {
+      c = substr($0, 1, 1)
+      if (c == "+")      { rn--; content = 1 }
+      else if (c == "-") { ro--; content = 1 }
+      else if (c == " ") { ro--; rn-- }
+      if (ro <= 0 && rn <= 0) in_hunk = 0
+    } else if (/^@@ -[0-9]/ && file != "") {
+      in_header = 0
+      ro = hunk_len($0, "-[0-9]+(,[0-9]+)?")
+      rn = hunk_len($0, "\\+[0-9]+(,[0-9]+)?")
+      in_hunk = (ro > 0 || rn > 0)
+    }
     if (length($0) > max) {
       elided++
       printf "[elided by review-pr.sh: a %d-character line in %s — too long to review]\n", length($0), (file == "" ? "<unknown file>" : file)
     } else {
-      # Reviewable content: an added/removed line inside a hunk. The in_header
-      # guard keeps the `---`/`+++` file headers out of the count.
-      if (!in_header && $0 ~ /^[+-]/) kept++
+      if (content) kept++
       print
     }
   }
@@ -380,8 +403,9 @@ run_review_attempt() {
     ATTEMPT_REASON="agent budget of ${AGENT_TIMEOUT_SECONDS}s exhausted"
     return 1
   fi
-  timeout "${budget}s" "$AGENT_CMD" "$prompt" "$RESULT_FILE" || rc=$?
-  if (( rc == 124 )); then
+  # -k: an agent that ignores SIGTERM is killed 30s later, so the budget is hard.
+  timeout -k 30s "${budget}s" "$AGENT_CMD" "$prompt" "$RESULT_FILE" || rc=$?
+  if (( rc == 124 || rc == 137 )); then  # 137: SIGKILL from -k after an ignored SIGTERM
     ATTEMPT_REASON="agent timed out after ${budget}s"
     return 1
   fi
