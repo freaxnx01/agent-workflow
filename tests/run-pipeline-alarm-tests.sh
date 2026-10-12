@@ -379,6 +379,76 @@ section "ensure-issue-labels — the alarm label exists"
 assert_contains "$(cat "$ROOT/scripts/ensure-issue-labels.sh")" "create pipeline-paused" \
   "pipeline-paused is created in consumer repos"
 
+# --- Task 5: check-pipeline-pause.sh ----------------------------------------
+
+section "check-pipeline-pause — a paused repo starts no agent"
+
+GATE="$ROOT/scripts/check-pipeline-pause.sh"
+
+# gate_run <dir> <alarm-list-fixture> [extra env...] — runs the dispatch gate
+# with gh mocked. $dir/gh holds the argv log, $dir/body the posted comment.
+gate_run() {
+  local dir="$1" list="$2"; shift 2
+  printf '%s\t%s\n' 'issue list' "$FIXTURES/$list" > "$dir/stdout-map"
+  env PATH="$MOCKS:$PATH" \
+    GH_MOCK_LOG="$dir/gh" \
+    GH_MOCK_BODY_LOG="$dir/body" \
+    GH_MOCK_STDOUT_MAP="$dir/stdout-map" \
+    REPO=freaxnx01/game-rhyflitzer \
+    ISSUE_NUMBER=99 \
+    "$@" bash "$GATE" 2>&1
+}
+
+d="$(mktemp -d)"
+out="$(gate_run "$d" paused-gate-alarm.json)"
+assert_contains "$out" 'paused=true'    "open alarm -> paused"
+assert_contains "$out" 'alarm-issue=9'  "open alarm -> names the alarm"
+assert_equals "$(grep -c 'issue comment' "$d/gh")" 1 "open alarm -> comments once"
+assert_contains "$(cat "$d/body")" 'pipeline paused' "the comment says the pipeline is paused"
+assert_contains "$(cat "$d/body")" 'see #9'          "the comment links the alarm"
+assert_contains "$(cat "$d/body")" 'out_of_credits'  "the comment names the reason"
+assert_not_contains "$(cat "$d/gh")" '--remove-label' "the issue keeps its ai-implement label"
+rm -rf "$d"
+
+# The same issue dispatched again while the pause holds: still blocked, but the
+# comment is not repeated — a paused repo would otherwise spam every issue.
+d="$(mktemp -d)"
+gate_run "$d" paused-gate-alarm.json >/dev/null
+notice="$(cat "$d/body")"
+rm -rf "$d"
+d="$(mktemp -d)"
+out="$(gate_run "$d" paused-gate-alarm.json \
+  ISSUE_COMMENTS_JSON="$(jq -n --arg b "$notice" '[{body: $b}]')")"
+assert_contains "$out" 'paused=true' "second dispatch -> still paused"
+assert_equals "$(grep -c 'issue comment' "$d/gh" || true)" 0 "second dispatch -> no duplicate comment"
+rm -rf "$d"
+
+d="$(mktemp -d)"
+out="$(gate_run "$d" alarm-list-empty.json)"
+assert_contains "$out" 'paused=false' "no alarm and no variable -> not paused"
+assert_equals "$(grep -c 'issue comment' "$d/gh" || true)" 0 "not paused -> no comment"
+rm -rf "$d"
+
+d="$(mktemp -d)"
+out="$(gate_run "$d" alarm-list-empty.json \
+  AGENT_PAUSED_VAR='out_of_credits 2026-10-12T01:43Z')"
+assert_contains "$out" 'paused=true' "the manual AGENT_PAUSED variable also pauses"
+assert_contains "$(cat "$d/body")" 'AGENT_PAUSED' "the comment names the variable"
+rm -rf "$d"
+
+section "agent-implement.yml — the gate is wired in front of every agent step"
+
+wf="$(cat "$ROOT/.github/workflows/agent-implement.yml")"
+assert_contains "$wf" 'id: pause_gate' "the gate step exists"
+assert_contains "$wf" "steps.pause_gate.outputs.paused != 'true'" "agent steps are gated on it"
+assert_equals "$(grep -c "steps.pause_gate.outputs.paused != 'true'" \
+  "$ROOT/.github/workflows/agent-implement.yml")" 3 \
+  "attempt cap, Claude and OpenCode are all gated"
+assert_contains "$wf" 'pipeline-pause.sh' "the alarm is raised from the implement job"
+assert_contains "$wf" 'NTFY_TOKEN' "the ntfy token is wired through"
+assert_contains "$(cat "$ROOT/.github/workflows/agent.yml")" 'NTFY_TOKEN' \
+  "the dogfood consumer forwards the ntfy token"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"
