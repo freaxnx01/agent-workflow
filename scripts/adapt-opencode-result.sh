@@ -40,7 +40,9 @@
 #     order, into the result: opencode may follow the meaningful error with a
 #     generic "Unexpected server error", so keeping only the last one threw away
 #     the only line the classifier can bucket (#439). step_start / tool_use are
-#     informational.
+#     informational. The same messages are also exposed as `.api_error` (with
+#     the first `.error.data.statusCode` as `.api_error_status`): the structured
+#     error channel classify-failure.sh trusts for out_of_credits, never `.result`.
 # On a parse failure (opencode errored before emitting events and wrote plain
 # text) we emit an error_during_execution result with the raw bytes inlined so
 # classify-failure.sh can bucket it and an operator can diagnose.
@@ -109,6 +111,10 @@ jq -s -c \
     duration_ms: (if ($ts | length) > 0 then (($ts | max) - ($ts | min)) else 0 end),
     num_turns: ($steps | length),
     total_cost_usd: ([ $steps[] | (.part.cost // 0) ] | add // 0),
+    api_error: (if ($errs | length) > 0
+                then [ $errs[] | (.error.data.message // .error.name // empty) ] | join("\n")
+                else "" end),
+    api_error_status: ([ $errs[] | (.error.data.statusCode // empty) ] | first // null),
     session_id: ((.[0].sessionID // null) // ("opencode-" + ($model | gsub("/"; "-")))),
     result: (
       ($texts | last | .part.text)

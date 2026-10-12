@@ -59,6 +59,7 @@ cat > "$tmp/issue.json" <<'JSON'
     {"body": "## TDD Required — Non-Negotiable\n\nCommit and push after every task.\nOpen the draft PR after the first task passes."},
     {"body": "## ai-implement run\n\n**Outcome:** :x: failed: error_during_execution\n**Cost:** $7.28"},
     {"body": "🔓 Enrichment lock released at 2026-09-22T17:00:00Z"},
+    {"body": "## ai-implement paused\n\nPipeline paused: out_of_credits."},
     {"body": "Review held: the review job could not find a pipeline-opened draft PR."}
   ]
 }
@@ -104,6 +105,7 @@ assert_not_contains "$p" "Enrichment lock acquired"   "enrichment lock is droppe
 assert_not_contains "$p" "Enrichment lock released"   "lock release is dropped"
 assert_not_contains "$p" "ai-implement run"           "run report is dropped"
 assert_not_contains "$p" "7.28"                       "run report metrics are dropped"
+assert_not_contains "$p" "ai-implement paused"        "paused notice is dropped"
 assert_not_contains "$p" "Review held"                "review-held notice is dropped"
 
 section "comments are labelled as instructions, not thread noise"

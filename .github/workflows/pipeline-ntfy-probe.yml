@@ -1,0 +1,68 @@
+# ntfy reachability probe (#517).
+#
+# The maintainer's ntfy server is behind a home line with public DNS, so
+# "GitHub-hosted runners can reach it" is an assumption, not a fact — and the
+# alarm push is the one part of the pause path with no second chance. Run this
+# once per environment and record the verdict in docs/ALARMS.md. If the server
+# is unreachable, switch NTFY_URL to https://ntfy.sh with a private topic.
+#
+# Manual only: nothing should page the maintainer on a schedule just to prove
+# the pager works.
+name: ntfy probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Probe the ntfy server
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Check the server answers at all
+        id: reach
+        env:
+          NTFY_URL: ${{ vars.NTFY_URL }}
+        run: |
+          if [[ -z "$NTFY_URL" ]]; then
+            echo "code=unset" >> "$GITHUB_OUTPUT"
+            echo "::warning::NTFY_URL is not set on this repo — nothing to probe"
+            exit 0
+          fi
+          code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+            "${NTFY_URL%/}/v1/health" || printf '000')"
+          printf 'code=%s\n' "$code" >> "$GITHUB_OUTPUT"
+          printf 'GET %s/v1/health -> %s\n' "${NTFY_URL%/}" "$code"
+
+      - name: Send a min-priority probe notification
+        env:
+          NTFY_URL: ${{ vars.NTFY_URL }}
+          NTFY_TOPIC: ${{ vars.NTFY_TOPIC }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          NTFY_TITLE: ntfy probe (${{ github.repository }})
+          NTFY_MESSAGE: Reachability probe from a GitHub-hosted runner. No action needed.
+          NTFY_PRIORITY: min
+          NTFY_TAGS: satellite
+        run: bash scripts/notify-ntfy.sh
+
+      - name: Record the verdict
+        if: always()
+        env:
+          CODE: ${{ steps.reach.outputs.code }}
+        run: |
+          # shellcheck disable=SC2016  # literal backticks for Markdown, not command substitution
+          {
+            printf '## ntfy reachability\n\n'
+            printf -- '- `/v1/health` HTTP status: `%s`\n\n' "${CODE:-none}"
+            case "$CODE" in
+              200) printf 'Reachable from GitHub-hosted runners. Record this in `docs/ALARMS.md`.\n' ;;
+              unset) printf 'No `NTFY_URL` repo variable — set it, then re-run.\n' ;;
+              *) printf 'NOT reachable (`%s`). Use the documented fallback: `NTFY_URL=https://ntfy.sh` with a private topic (`docs/ALARMS.md`).\n' \
+                   "${CODE:-no response}" ;;
+            esac
+          } >> "$GITHUB_STEP_SUMMARY"

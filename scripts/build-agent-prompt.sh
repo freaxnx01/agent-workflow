@@ -82,10 +82,11 @@ body="$(printf '%s' "$issue_json" | jq -r '.body // ""')"
 # human quoting one of these phrases mid-discussion is not silently dropped.
 #   ## ai-implement run     — a prior run's metrics report
 #   ## ai-implement parked  — the attempt-cap notice
+#   ## ai-implement paused  — the pipeline-pause notice
 #   🔒 / 🔓 Enrichment lock — /enrich's mutual-exclusion bookkeeping
 #   Review held / Auto-*    — post-auto-review-block.sh refusals
 #   **Review did not run**  — post-runner-block.sh toolchain blocks
-DROP_RE='^(## ai-implement (run|parked)|🔒|🔓|Review held|Auto-merge held|Auto-review held|\*\*Review did not run\*\*)'
+DROP_RE='^(## ai-implement (run|parked|paused)|🔒|🔓|Review held|Auto-merge held|Auto-review held|\*\*Review did not run\*\*)'
 
 comments="$(printf '%s' "$issue_json" \
   | jq -r --arg re "$DROP_RE" '

@@ -50,6 +50,9 @@ jobs:
       # anywhere. See docs/PIPELINE-APP-SETUP.md step 7.
       PIPELINE_APP_ID: ${{ secrets.PIPELINE_APP_ID }}
       PIPELINE_APP_PRIVATE_KEY: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
+      # The ntfy publisher token for the pipeline-paused alarm push (#517).
+      # Optional everywhere: without it the alarm issue is still raised.
+      NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
     with:
       issue-number: ${{ github.event.issue.number }}
       runner-labels: '["ubuntu-latest"]'

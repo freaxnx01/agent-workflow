@@ -79,8 +79,11 @@ case "$CLASS" in
       delay=10
     fi
     ;;
-  api_auth|bug)
-    decision=stop                # operator intervention
+  out_of_credits|api_auth|bug)
+    # operator intervention. out_of_credits is a pause class
+    # (scripts/lib/pause-reasons.sh): retrying it cannot succeed until the key
+    # is topped up, and pipeline-pause.sh re-dispatches the issue on resume.
+    decision=stop
     ;;
   *)
     printf 'warn: unknown CLASS "%s" — defaulting to stop\n' "$CLASS" >&2
