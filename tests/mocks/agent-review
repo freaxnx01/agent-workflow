@@ -5,14 +5,49 @@
 # Contract: AGENT_CMD <prompt-file> <result-file>
 # We ignore the prompt and copy $AGENT_FIXTURE to $result-file. If
 # $AGENT_FAIL is "1" we exit non-zero to simulate a runner crash.
+#
+# Optional seams (#490):
+#   AGENT_CALL_LOG          file; one line per call: "call <n> nudge=<yes|no>".
+#                           It is also the call counter the two seams below use.
+#   AGENT_FIXTURE_SEQUENCE  comma-separated fixture paths; call n copies entry n
+#                           (the last entry repeats). Overrides AGENT_FIXTURE.
+#   AGENT_FAIL_TIMES        the first N calls exit non-zero (needs AGENT_CALL_LOG).
+#   AGENT_PROMPT_COPY       if set, the prompt file is copied here on each call.
+#   AGENT_SLEEP             seconds to hang before writing, so a test can drive
+#                           review-pr.sh's AGENT_TIMEOUT_SECONDS budget.
 set -euo pipefail
 IFS=$'\n\t'
 
-: "${AGENT_FIXTURE:?AGENT_FIXTURE must point at a review-*.json fixture}"
+n=1
+if [[ -n "${AGENT_CALL_LOG:-}" ]]; then
+  if [[ -f "$AGENT_CALL_LOG" ]]; then
+    n=$(( $(wc -l < "$AGENT_CALL_LOG") + 1 ))
+  fi
+  nudge=no
+  grep -q 'Reply with only the JSON object' "$1" && nudge=yes
+  printf 'call %s nudge=%s\n' "$n" "$nudge" >> "$AGENT_CALL_LOG"
+fi
 
-if [[ "${AGENT_FAIL:-0}" == "1" ]]; then
+if [[ -n "${AGENT_PROMPT_COPY:-}" ]]; then
+  cp "$1" "$AGENT_PROMPT_COPY"
+fi
+
+if [[ -n "${AGENT_SLEEP:-}" ]]; then
+  sleep "$AGENT_SLEEP"
+fi
+
+if [[ "${AGENT_FAIL:-0}" == "1" ]] || (( n <= ${AGENT_FAIL_TIMES:-0} )); then
   printf 'agent-review mock: simulated failure\n' >&2
   exit 1
 fi
 
+if [[ -n "${AGENT_FIXTURE_SEQUENCE:-}" ]]; then
+  IFS=',' read -ra seq <<< "$AGENT_FIXTURE_SEQUENCE"
+  idx=$(( n - 1 ))
+  (( idx < ${#seq[@]} )) || idx=$(( ${#seq[@]} - 1 ))
+  cp "${seq[$idx]}" "$2"
+  exit 0
+fi
+
+: "${AGENT_FIXTURE:?AGENT_FIXTURE must point at a review-*.json fixture}"
 cp "$AGENT_FIXTURE" "$2"

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # verify-gh-mock-merge.sh — Inspect the gh-mock invocation log and emit
-# `merge-attempted=true|false` and `ready-attempted=true|false` to
+# `merge-attempted=true|false`, `ready-attempted=true|false` and
+# `outcome-label=<label>` to
 # $GITHUB_OUTPUT. Called by the `ai_review_ai_merge` job's final step under
 # stub-review-verdict mode (the issue-#16 act test's assertion surface).
 # The ai_review_human_merge job uses `ready-attempted` to distinguish the
@@ -17,7 +18,8 @@
 #   GH_MOCK_LOG  Path to the mock log file.
 #
 # Exit codes:
-#   0  evaluated cleanly (merge-attempted and ready-attempted reflect the log)
+#   0  evaluated cleanly (merge-attempted, ready-attempted and outcome-label
+#      reflect the log)
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -46,6 +48,19 @@ fi
 printf 'ready-attempted=%s\n' "$ready"
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
   printf 'ready-attempted=%s\n' "$ready" >> "$GITHUB_OUTPUT"
+fi
+
+# post-auto-review-block.sh picks one of ai:review-blocked / ai:review-failed
+# depending on WHY the refusal happened (#490). Report which one it applied so
+# an act scenario can assert the distinction instead of only "no merge".
+outcome_label=''
+if [[ -n "$log" && -r "$log" ]]; then
+  outcome_label="$(sed -n 's/^issue edit .* --add-label \([^ ]*\).*/\1/p' "$log" | tail -n1)"
+fi
+
+printf 'outcome-label=%s\n' "$outcome_label"
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+  printf 'outcome-label=%s\n' "$outcome_label" >> "$GITHUB_OUTPUT"
 fi
 
 printf 'gh-mock log contents:\n'

@@ -22,7 +22,11 @@ manual pass again is redundant unless the user explicitly wants a second
 opinion. If the linked issue instead carries `ai:review-blocked`, that flow
 ran and found problems (left the PR draft) — still worth this manual pass, and
 say so, since its own verdict/reason is useful context to fold in
-rather than re-derive from scratch.
+rather than re-derive from scratch. `ai:review-failed` is different: the
+reviewer never reached a verdict (oversized diff, nothing reviewable left after
+eliding minified/generated lines, or two unusable replies), so this PR has had
+**no** review at all. Treat it as unreviewed — there is no prior verdict to
+fold in, and the held comment's reason is the only context.
 
 ## Reviewing (one reviewer per PR, in parallel)
 

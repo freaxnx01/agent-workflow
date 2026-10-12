@@ -306,6 +306,27 @@ jobs:
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
 
+  call-ai-merge-review-failed:
+    # #490: the reviewer ran but produced no usable verdict. Must behave like
+    # any other non-approve (no merge) AND carry its own outcome label, so a
+    # human can tell "the review refused" from "the review never concluded".
+    name: Reusable workflow — ai-merge review_failed
+    uses: ./.github/workflows/agent-implement.yml
+    with:
+      issue-number: 9022
+      timeout-minutes: 10
+      local-scripts: true
+      stub-claude: true
+      stub-fixture: success
+      ai-review-ai-merge: true
+      dry-run: true
+      stub-ai-merge-enabled: true
+      stub-review-verdict: review_failed
+      stub-pr-files: |
+        src/foo.ts
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
+
   # ─── Pre-preview path (issue #77 / ADR-004) ───────────────────────────────
   # Pre-preview reviews the draft PR and, on approve, runs `gh pr ready`
   # (promote) but never `gh pr merge`. The gh mock captures both so the
@@ -514,6 +535,27 @@ jobs:
           [[ "$ATTEMPTED" == "false" ]] \
             || { echo "::error::merge-attempted=$ATTEMPTED (want false — block verdict must block)"; exit 1; }
           echo "block OK: merge-attempted=$ATTEMPTED"
+
+  verify-ai-merge-review-failed:
+    name: Assert review_failed → no merge, ai:review-failed label
+    needs: call-ai-merge-review-failed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      ATTEMPTED: ${{ needs.call-ai-merge-review-failed.outputs.ai-review-ai-merge-merge-attempted }}
+      LABEL:     ${{ needs.call-ai-merge-review-failed.outputs.ai-review-ai-merge-outcome-label }}
+    steps:
+      - name: Assert no merge and the issue carries ai:review-failed
+        run: |
+          fail=0
+          [[ "$ATTEMPTED" == "false" ]] \
+            || { echo "::error::merge-attempted=$ATTEMPTED (want false — review_failed must never merge)"; fail=1; }
+          [[ "$LABEL" == "ai:review-failed" ]] \
+            || { echo "::error::outcome-label=$LABEL (want ai:review-failed — #490 distinguishes it from ai:review-blocked)"; fail=1; }
+          (( fail == 0 )) || exit 1
+          echo "review_failed OK: merge-attempted=$ATTEMPTED label=$LABEL"
 
   verify-human-merge-approve:
     name: Assert human-merge approve → promoted, no merge

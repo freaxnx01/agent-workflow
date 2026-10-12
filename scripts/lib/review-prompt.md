@@ -80,6 +80,10 @@ Verdict semantics:
   branch is in a broken state, or the change is fundamentally the wrong
   approach). Use sparingly.
 
+Lines replaced by `[elided by review-pr.sh: …]` were too long to include
+(typically minified data or generated files). They are out of scope: do not
+flag them, and do not count them against the change.
+
 ---
 
 {{DIFF}}
