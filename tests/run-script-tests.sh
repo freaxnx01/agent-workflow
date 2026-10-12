@@ -4495,8 +4495,8 @@ assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'PIPELINE_APP_ID: ..{ secre
   "all three jobs declare PIPELINE_APP_ID at job level"
 
 # self-fix pushes; it must not be handed the ambient token.
-assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'GH_TOKEN: ..{ steps.app_token' || true)" "11" \
-  "App token consumers: 7 implement-job callers + 2 self-fix + 2 AI-merge checks readers (#482)"
+assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'GH_TOKEN: ..{ steps.app_token' || true)" "13" \
+  "App token consumers: 9 implement-job callers + 2 self-fix + 2 AI-merge checks readers (#482)"
 
 section "agent-implement.test.yml — caller permissions cover the callee (#435)"
 

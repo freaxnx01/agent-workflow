@@ -1,0 +1,6 @@
+[
+  {
+    "number": 7,
+    "body": "The pipeline is **paused**.\n\n### Paused issues\n\n<!-- paused-issues -->#12 #34<!-- /paused-issues -->\n\nRaised by `pipeline-pause.sh` (reason `out_of_credits`).\n"
+  }
+]

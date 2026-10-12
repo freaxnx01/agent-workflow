@@ -62,6 +62,19 @@ stub() {
   )
 }
 
+# health_stub — echoes the generated pipeline-health.yml. Same extraction trick
+# as stub(), for the same reason.
+health_stub() {
+  # shellcheck disable=SC2034
+  (
+    REF='v2'
+    PIPELINE_REPO='freaxnx01/agent-workflow'
+    # shellcheck disable=SC1090
+    source <(sed -n '/^build_health_yml()/,/^}/p' "$SRC")
+    build_health_yml
+  )
+}
+
 # --- cases -------------------------------------------------------------
 
 section "consumer stub — permissions"
@@ -88,6 +101,38 @@ out_oc="$(stub opencode z-ai/glm-5.2)"
 assert_contains 'agent: opencode' "$out_oc" "opencode is written out"
 assert_contains 'OPENROUTER_API_KEY' "$out_oc" "opencode stub passes the OpenRouter key"
 assert_not_contains 'OPENROUTER_API_KEY' "$out" "claude stub does not pass it"
+
+section "consumer stub — the ntfy token is forwarded (#517)"
+
+# This stub does not use `secrets: inherit`, so a secret set on the repo but not
+# listed here never reaches the reusable workflow — the pause alarm would then
+# raise its issue and silently never push.
+# shellcheck disable=SC2016  # `${{ }}` is GitHub Actions expression syntax in
+# the generated YAML, not shell expansion.
+assert_contains 'NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}' "$out" \
+  "the alarm's ntfy token reaches the reusable workflow"
+
+section "health stub — the daily budget check (#517)"
+
+health="$(health_stub)"
+assert_contains 'uses: freaxnx01/agent-workflow/.github/workflows/pipeline-health.yml@v2' \
+  "$health" "calls the health workflow at the pinned ref"
+assert_contains 'schedule:' "$health" "runs on a schedule"
+assert_contains 'workflow_dispatch:' "$health" "can also be run by hand"
+# shellcheck disable=SC2016  # Actions expression syntax, as above.
+assert_contains 'OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}' "$health" \
+  "forwards the key whose budget is checked"
+# shellcheck disable=SC2016  # Actions expression syntax, as above.
+assert_contains 'NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}' "$health" "forwards the ntfy token"
+assert_contains 'issues: write' "$health" "may raise and comment on the alarm"
+
+if command -v yamllint >/dev/null 2>&1; then
+  if printf '%s\n' "$health" | yamllint -d '{extends: relaxed, rules: {line-length: disable, truthy: disable}}' - >/dev/null 2>&1; then
+    pass "generated health stub is valid YAML"
+  else
+    fail "generated health stub is valid YAML" "yamllint rejected it"
+  fi
+fi
 
 section "consumer stub — still well-formed"
 

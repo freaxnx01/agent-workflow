@@ -306,6 +306,13 @@ on:
           PEM private key for the GitHub App named by PIPELINE_APP_ID (#55).
           Optional; required only when PIPELINE_APP_ID is set.
         required: false
+      NTFY_TOKEN:
+        description: |
+          Bearer token for a write-restricted ntfy topic (#517). Used only to
+          push the pipeline-paused alarm. Optional: with no token (or no
+          `NTFY_URL` / `NTFY_TOPIC` variable) the push is skipped and the alarm
+          issue is still raised — the push never fails a run.
+        required: false
     outputs:
       outcome:
         description: '"success" or "failed".'
@@ -565,8 +572,24 @@ jobs:
         # comments, minus pipeline-generated chatter, and is fixture-tested.
         run: bash .claude-pipeline/scripts/build-agent-prompt.sh
 
+      # The circuit breaker (#517). An open `pipeline-paused` alarm means the
+      # key behind the agent is empty, so every step below would fail the same
+      # way — five runs did exactly that before anyone noticed. Placed after
+      # `Fetch issue context` (it reuses the job-wide ISSUE_COMMENTS_JSON for
+      # notice dedup) and before `Check attempt cap`, so a paused dispatch
+      # never touches the attempt counter.
+      - name: Check pipeline pause
+        if: ${{ !inputs.stub-claude }}
+        id: pause_gate
+        env:
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+          AGENT_PAUSED_VAR: ${{ vars.AGENT_PAUSED }}
+        run: bash .claude-pipeline/scripts/check-pipeline-pause.sh
+
       - name: Check attempt cap
-        if: ${{ !inputs.stub-claude && inputs.max-attempts > 0 }}
+        if: ${{ !inputs.stub-claude && inputs.max-attempts > 0 && steps.pause_gate.outputs.paused != 'true' }}
         id: attempt_cap
         env:
           ISSUE_NUMBER: ${{ inputs.issue-number }}
@@ -680,7 +703,7 @@ jobs:
         run: printf 'enabled=%s\n' "$ENABLED" >> "$GITHUB_OUTPUT"
 
       - name: Run Claude Code
-        if: ${{ !inputs.stub-claude && steps.classify_agent.outputs.agent == 'claude' && steps.attempt_cap.outputs.proceed != 'false' }}
+        if: ${{ !inputs.stub-claude && steps.classify_agent.outputs.agent == 'claude' && steps.attempt_cap.outputs.proceed != 'false' && steps.pause_gate.outputs.paused != 'true' }}
         id: claude_run
         # Step-level env propagates to the action's process.env, which the
         # action then spreads into the spawned `claude` subprocess. This is now
@@ -772,6 +795,7 @@ jobs:
           !inputs.stub-claude
           && steps.classify_agent.outputs.agent == 'opencode'
           && steps.attempt_cap.outputs.proceed != 'false'
+          && steps.pause_gate.outputs.paused != 'true'
         id: opencode_run
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
@@ -928,6 +952,28 @@ jobs:
           RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.opencode_adapt.outputs.result-file || steps.stub_run.outputs.result-file }}
         run: bash .claude-pipeline/scripts/classify-failure.sh
 
+      # #517: the classes in this list pause the whole repo instead of failing
+      # the issue (scripts/lib/pause-reasons.sh). One list, so #518's second
+      # reason is added here and nowhere else in this file. continue-on-error
+      # because an alarm that cannot be raised must not also lose the run
+      # report below it.
+      - name: Raise pipeline alarm
+        id: pipeline_alarm
+        continue-on-error: true
+        if: always() && contains(fromJSON('["out_of_credits"]'), steps.classify_failure.outputs.class)
+        env:
+          REASON: ${{ steps.classify_failure.outputs.class }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.opencode_adapt.outputs.result-file || steps.stub_run.outputs.result-file }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+          NTFY_URL: ${{ vars.NTFY_URL }}
+          NTFY_TOPIC: ${{ vars.NTFY_TOPIC }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+        run: |
+          ERROR_TEXT="$(jq -r '.api_error // .result // ""' "$RESULT_FILE")" \
+            bash .claude-pipeline/scripts/pipeline-pause.sh
+
       - name: Plan retry
         id: retry
         if: always() && steps.classify_failure.outputs.class != '' && steps.classify_failure.outputs.class != 'success'
@@ -1029,6 +1075,10 @@ jobs:
           PLAN_COVERAGE: ${{ steps.plan_coverage.outputs.coverage }}
           MISSING_TASKS: ${{ steps.plan_coverage.outputs.missing-tasks }}
           PLAN_COVERAGE_REASON: ${{ steps.plan_coverage.outputs.reason }}
+          # #517: a pause class heads the report `## ai-implement paused` and
+          # stamps no status label, so the run counts as neither an attempt nor
+          # a non-start and the issue stays queued for the resume.
+          FAILURE_CLASS: ${{ steps.classify_failure.outputs.class }}
         run: bash .claude-pipeline/scripts/post-run-report.sh
 
       - name: Fail the job when the agent run failed
@@ -1046,8 +1096,17 @@ jobs:
           FAILURE_CLASS: ${{ steps.classify_failure.outputs.class }}
           RETRY_DECISION: ${{ steps.retry.outputs.decision }}
         run: |
-          printf '::error title=Implement failed::agent run failed (class=%s, retry=%s); see the run report on the issue\n' \
-            "$FAILURE_CLASS" "${RETRY_DECISION:-none}"
+          # A pause class is not a failure of this issue (#517) — the run is
+          # still red, because the dispatch did not do the work, but an
+          # ::error would read as "this issue broke" in the annotation list
+          # while the actual cause is one alarm issue away.
+          if [[ "$FAILURE_CLASS" == "out_of_credits" ]]; then
+            printf '::warning title=Pipeline paused::%s — the issue stays queued; see the pipeline-paused alarm\n' \
+              "$FAILURE_CLASS"
+          else
+            printf '::error title=Implement failed::agent run failed (class=%s, retry=%s); see the run report on the issue\n' \
+              "$FAILURE_CLASS" "${RETRY_DECISION:-none}"
+          fi
           exit 1
 
   ai_review_ai_merge:

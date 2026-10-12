@@ -1,0 +1,168 @@
+# Pipeline health (reusable) — the early warning half of the credit alarm (#517).
+#
+# pipeline-pause.sh is reactive: by the time it raises the alarm, runs have
+# already failed. This workflow is the other half — scheduled daily by the
+# consumer, it reads the OpenRouter key's own budget and pushes a `high`
+# notification while there is still time to top it up. An already-exhausted key
+# raises the alarm preemptively, before the next dispatch burns on it.
+#
+# Consumers call it from their own repo (scripts/onboard-consumer.sh generates
+# the stub): a reusable workflow cannot add a `schedule:` trigger to a consumer,
+# the cron has to live there.
+name: Pipeline health (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      pipeline-repo:
+        description: Repo holding the shared scripts.
+        type: string
+        default: freaxnx01/agent-workflow
+      pipeline-ref:
+        description: |
+          Ref of `pipeline-repo` to check out. Pin the same moving major tag
+          the caller pinned in `uses:` — see docs/CONSUMER-SETUP.md.
+        type: string
+        default: main
+      local-scripts:
+        description: |
+          Use the caller repo's own scripts/ instead of a cross-repo checkout.
+          For agent-workflow dogfooding itself.
+        type: boolean
+        default: false
+      warn-key-pct:
+        description: Warn below this percentage of the key's monthly limit.
+        type: number
+        default: 20
+      warn-key-usd:
+        description: Warn below this many USD left on the key.
+        type: number
+        default: 3
+      warn-account-usd:
+        description: Warn below this many USD left on the account.
+        type: number
+        default: 10
+      timeout-minutes:
+        type: number
+        default: 10
+    secrets:
+      OPENROUTER_API_KEY:
+        description: |
+          The key whose budget is checked. Absent or empty → the whole job is
+          skipped green: a repo on Claude only has no OpenRouter budget to
+          report on.
+        required: false
+      NTFY_TOKEN:
+        description: Bearer token for a write-restricted ntfy topic. Optional.
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipeline-health-${{ github.repository }}
+  cancel-in-progress: true
+
+jobs:
+  budget:
+    name: OpenRouter budget
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    # The alarm and the "key healthy again" comment are issue writes. Nothing
+    # here needs more.
+    permissions:
+      contents: read
+      issues: write
+    env:
+      # Exposed job-wide so the budget step's `if:` can test it — the `secrets`
+      # context is not available in `if:`, so testing it there would evaluate
+      # empty and skip the step on every repo (same reason as PIPELINE_APP_ID in
+      # agent-implement.yml).
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+    steps:
+      - name: Checkout caller repo (local-scripts mode)
+        if: ${{ inputs.local-scripts }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Checkout agent-workflow scripts
+        if: ${{ !inputs.local-scripts }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ inputs.pipeline-ref }}
+          path: .claude-pipeline
+          sparse-checkout: scripts
+
+      - name: Mirror local scripts to .claude-pipeline (self-test mode)
+        if: ${{ inputs.local-scripts }}
+        run: |
+          mkdir -p .claude-pipeline/scripts
+          cp -r scripts/. .claude-pipeline/scripts/
+
+      - name: Check the OpenRouter budget
+        id: budget
+        # Skipped, not failed, when the repo has no OpenRouter key: a Claude-only
+        # consumer would otherwise get a red cron mail every morning.
+        if: ${{ env.OPENROUTER_API_KEY != '' }}
+        env:
+          WARN_KEY_PCT: ${{ inputs.warn-key-pct }}
+          WARN_KEY_USD: ${{ inputs.warn-key-usd }}
+          WARN_ACCOUNT_USD: ${{ inputs.warn-account-usd }}
+        run: bash .claude-pipeline/scripts/check-openrouter-budget.sh
+
+      - name: Push the budget warning
+        if: ${{ steps.budget.outputs.verdict == 'warn' }}
+        env:
+          NTFY_URL: ${{ vars.NTFY_URL }}
+          NTFY_TOPIC: ${{ vars.NTFY_TOPIC }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          NTFY_TITLE: OpenRouter budget low (${{ github.repository }})
+          NTFY_MESSAGE: ${{ steps.budget.outputs.message }}
+          NTFY_PRIORITY: high
+          NTFY_TAGS: warning
+          NTFY_CLICK: https://openrouter.ai/settings/keys
+        run: bash .claude-pipeline/scripts/notify-ntfy.sh
+
+      # An exhausted key is a pause whether or not a run has hit it yet. Raising
+      # the alarm here means the next dispatch is stopped by the gate instead of
+      # spending a run to discover the same thing.
+      - name: Raise the alarm when the key is already exhausted
+        if: ${{ steps.budget.outputs.verdict == 'exhausted' }}
+        env:
+          REASON: out_of_credits
+          REPO: ${{ github.repository }}
+          ERROR_TEXT: ${{ steps.budget.outputs.message }}
+          GH_TOKEN: ${{ github.token }}
+          NTFY_URL: ${{ vars.NTFY_URL }}
+          NTFY_TOPIC: ${{ vars.NTFY_TOPIC }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+        run: bash .claude-pipeline/scripts/pipeline-pause.sh
+
+      # The resume is manual by design (a reusable workflow cannot add triggers
+      # to a consumer), so the one thing this check can usefully do on a healthy
+      # key is tell the operator the pause is ready to be lifted.
+      - name: Tell an open alarm that the key recovered
+        if: ${{ steps.budget.outputs.verdict == 'ok' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          MESSAGE: ${{ steps.budget.outputs.message }}
+        run: |
+          alarm="$(gh issue list --repo "$REPO" --label pipeline-paused --state open \
+            --json number --limit 20 | jq -r 'sort_by(.number) | .[0].number // empty')"
+          [[ -n "$alarm" ]] || { echo "no open alarm — nothing to report"; exit 0; }
+          gh issue comment "$alarm" --repo "$REPO" --body \
+            "Key healthy again — ${MESSAGE}. Close this issue to clear the pause, then run \`REPO=${REPO} bash scripts/pipeline-resume.sh\`."
+
+      - name: Summarise
+        if: always()
+        env:
+          VERDICT: ${{ steps.budget.outputs.verdict }}
+          MESSAGE: ${{ steps.budget.outputs.message }}
+        run: |
+          {
+            printf '## OpenRouter budget\n\n'
+            # shellcheck disable=SC2016  # literal backticks for Markdown, not command substitution
+            printf -- '- **Verdict:** `%s`\n' "${VERDICT:-skipped (no OPENROUTER_API_KEY)}"
+            printf -- '- %s\n' "${MESSAGE:-no budget was read}"
+          } >> "$GITHUB_STEP_SUMMARY"

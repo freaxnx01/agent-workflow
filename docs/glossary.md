@@ -114,6 +114,28 @@ block the session.
 Everything else is a two-way door — reversible, so the agent decides and records
 it in the [assumptions block](#assumptions-block).
 
+## Pause class
+
+A failure class that stops the whole pipeline instead of failing one issue —
+currently `out_of_credits`, listed in `scripts/lib/pause-reasons.sh`. The
+failure is repo-wide (an empty API key fails every dispatch), so the run does
+not retry, does not count as an attempt, and stamps no `ai:*` grade; it reports
+`## ai-implement paused` and raises one alarm issue, which is itself the pause
+state (ADR-018). While that issue is open no new agent run starts in the repo,
+and the queued issues keep their `ai-implement` label. See
+[ALARMS.md](ALARMS.md).
+
+Distinct from [parked](#parked-issue) — which is about one issue's attempt
+budget, not the repo.
+
+## Parked issue
+
+An issue that hit `MAX_ATTEMPTS` dispatches without shipping, or
+`MAX_NON_STARTS` runs that never reached the agent. It loses the `ai-implement`
+label and gains `parked`: measured across the fleet, extra attempts do not
+improve the odds, so it waits for a human. Other issues in the repo are
+unaffected — contrast a [pause class](#pause-class).
+
 ## Quick-mode
 
 An `/enrich` variant that asks the human nothing. At each decision point the

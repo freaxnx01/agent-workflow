@@ -36,6 +36,14 @@
 #                the PR's required status checks could not run at all (#364) —
 #                a repo misconfiguration, not a verdict, so it is additive and
 #                the run's outcome stays ai:done
+#   alarm      pipeline-paused
+#              — written by pipeline-pause.sh and read by
+#                check-pipeline-pause.sh. An OPEN issue carrying this label is
+#                the pause state itself (ADR-018): while one exists, no new
+#                agent run starts in the repo. The label must exist before the
+#                first alarm — `gh issue create --label` fails outright on a
+#                missing label, and a failed alarm means a dry key keeps
+#                burning dispatches silently (#517)
 #   coordination enrichment-ongoing, needs-human
 #              — enrichment-ongoing is read/written by /enrich (Step 1.5 / 2.5 / 6)
 #                to prevent two sessions from concurrently enriching the same issue.
@@ -100,6 +108,8 @@ create ai-chain        0E8A16 'Eligible for chain-dispatch when blockers resolve
 create ai:chain-paused D73A4A 'Repo-wide kill switch for chain-dispatch'
 
 create 'parked' BFD4F2 'Parked for a human — agent attempt cap reached'
+
+create pipeline-paused B60205 'Pipeline paused — an open issue with this label stops new dispatches'
 
 create turns:50  5319E7 'Override the agent turn budget to 50 (classify-turns.sh stage 1)'
 create turns:80  5319E7 'Override the agent turn budget to 80 (classify-turns.sh stage 1)'
