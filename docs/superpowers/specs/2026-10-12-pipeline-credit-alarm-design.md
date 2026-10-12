@@ -119,9 +119,7 @@ no token), set via the same vars. Never fails a run either way.
 - **A3** [high] `out_of_credits` is matched before `rate_limit`/`api_auth`.
   Evidence `classify-failure.sh:55-77` (first-match chain; `403` and `insufficient.credits`
   are already claimed there).
-- **A4** [med] The existing test asserting `insufficient credits → rate_limit` is
-  changed to `out_of_credits`. This is a deliberate spec change (#517 supersedes it),
-  not making a test green.
+- **A4** [med] No existing test pins `insufficient credits -> rate_limit` (`grep -n insufficient tests/` is empty); the comment at `classify-failure.sh:56-58` is rewritten instead.
 - **A5** [med] Resume is a script plus closing the alarm issue, not an automatic
   event. A reusable workflow cannot add triggers to consumers, and auto-resume on
   `issues: closed` would need a new consumer stub. The daily health workflow
