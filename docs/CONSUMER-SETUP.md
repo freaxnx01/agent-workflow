@@ -417,6 +417,73 @@ Claude-path labels (`model:opus` / `model:sonnet` / `model:haiku` / `model:fable
 
 Wiring the secret is just the first piece. The OpenCode CLI install (#8), classifier (#9), runner step (#10), and act fixtures (#11) land next. Until #10 merges, setting `agent: opencode` produces a no-op job per the workflow input docstring.
 
+## 3b. Credit alarm + daily budget check (recommended for OpenCode consumers)
+
+An exhausted OpenRouter key fails every dispatch in the repo within minutes.
+The pipeline recognises that as the `out_of_credits` **pause class**: it raises
+one alarm issue, pushes one ntfy notification, and stops new dispatches until
+the alarm is closed. Full operator guide: [ALARMS.md](ALARMS.md).
+
+Nothing here is required — with none of it configured, the alarm issue is still
+raised and read; only the push is skipped.
+
+### Secrets and variables
+
+| Name | Kind | Scope | Purpose |
+|---|---|---|---|
+| `NTFY_TOKEN` | secret | repo or org | Bearer token for a write-restricted ntfy topic. Optional. |
+| `NTFY_URL` | variable | repo or org | ntfy server base URL, e.g. `https://ntfy.home.freaxnx01.ch`. |
+| `NTFY_TOPIC` | variable | repo or org | Topic to publish to, e.g. `pipeline-alerts`. |
+| `AGENT_PAUSED` | variable | repo | **Manual** kill switch. Non-empty → every dispatch stops at the gate. Nothing in the pipeline can set or clear it (ADR-018). |
+
+```bash
+gh secret   set NTFY_TOKEN --repo <owner>/<repo>          # value from your secrets manager
+gh variable set NTFY_URL   --repo <owner>/<repo> --body 'https://ntfy.home.freaxnx01.ch'
+gh variable set NTFY_TOPIC --repo <owner>/<repo> --body 'pipeline-alerts'
+```
+
+Org-level is the better default for a fleet: one key, one topic, one place to
+rotate them.
+
+> **Gotcha — a secret you don't list never arrives.** The consumer stub does not
+> use `secrets: inherit`, so `NTFY_TOKEN` must appear in its `secrets:` block.
+> Set on the repo but missing from the stub, the alarm raises its issue and
+> silently never pushes — with no error anywhere. Same failure mode as
+> `PIPELINE_APP_ID` (see PIPELINE-APP-SETUP.md step 7).
+
+### Daily budget check stub
+
+Catches the problem *before* a run hits it: warns via ntfy when the key is below
+20 % of its limit (or below $3), and raises the alarm preemptively when it is
+already empty. The cron lives here because a reusable workflow cannot add a
+trigger to the repo that calls it.
+
+```yaml
+# .github/workflows/pipeline-health.yml
+name: Pipeline health
+on:
+  schedule:
+    - cron: '17 6 * * *'   # off the hour, so it isn't queued behind every other repo
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  budget:
+    uses: freaxnx01/agent-workflow/.github/workflows/pipeline-health.yml@v2
+    with:
+      pipeline-ref: v2
+    secrets:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+```
+
+`scripts/onboard-consumer.sh` generates this stub automatically. A repo with no
+`OPENROUTER_API_KEY` skips the job green — there is no OpenRouter budget to
+report on.
+
 ## 4. Issue chaining (optional, requires ai-review-ai-merge)
 
 When an auto-merged PR closes an issue, the pipeline can dispatch a follow-up issue that was `Blocked by:` it. Conventions live in [ADR-003](DECISIONS.md#adr-003--issue-chain-dispatch-on-auto-merge); this section is just the wiring.

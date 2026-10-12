@@ -1632,3 +1632,42 @@ dependency the guardrails forbid adding unasked, and makes the write lossy.
 
 **Consequence.** `/enrich` reports the paths and stops; it never claims the item
 is dispatchable, because nothing dispatches it.
+
+## ADR-018 — The pause state is an open labelled issue, not a repo variable (2026-10-12)
+
+**Status:** accepted
+
+**Context.** A failure class like `out_of_credits` is repo-wide: the key behind
+the agent is empty, so every dispatch fails the same way within minutes (#517 —
+five runs, five `bug` verdicts, one dry key, noticed 15 hours later). Stopping
+the next dispatch needs state that every job in every consumer repo can both
+read and write.
+
+**Decision.** The pause state is an **open issue carrying the
+`pipeline-paused` label**. `pipeline-pause.sh` opens it, `check-pipeline-pause.sh`
+reads it before the attempt cap and before either agent step, and closing it
+clears the pause.
+
+**Rejected: an `AGENT_PAUSED` repo variable written by the job.** The implement
+job grants `issues: write` and `actions: write`; `GITHUB_TOKEN` has no variables
+write scope at all, in any configuration. The variable survives as a *manual*,
+read-only switch an operator sets with `gh variable set` — the gate honours it,
+nothing in the pipeline can set or clear it.
+
+**Rejected: cross-repo dedup.** Several repos sharing one key each raise their
+own alarm and push once. Deduplicating would need a store none of them share.
+
+**Consequence.** A pause is visible where the work is — in the issue list,
+assignable, commentable, with the error text and the resume steps in the body.
+"One alarm per pause" has to be enforced in the script instead of by the
+storage: an existing alarm is updated in place, and a creation that loses a
+race closes itself as a duplicate of the lowest-numbered winner. Every racer
+reaches the same verdict from the same data, which is the closest thing to a
+lock available here. A stale alarm pauses the repo until someone closes it.
+
+**Corollary — a paused run reports a different heading.** `post-run-report.sh`
+heads a pause class's report `## ai-implement paused` and stamps no status
+label. `check-attempt-cap.sh` counts by `startswith("## ai-implement run")`, so
+the paused run drops out of both the attempt and the non-start counters by
+construction rather than by a filter that could drift. `/ai-stats` likewise
+stops counting paused runs as runs — correct, since they did no work.
