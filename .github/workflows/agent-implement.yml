@@ -1019,6 +1019,10 @@ jobs:
           PLAN_COVERAGE: ${{ steps.plan_coverage.outputs.coverage }}
           MISSING_TASKS: ${{ steps.plan_coverage.outputs.missing-tasks }}
           PLAN_COVERAGE_REASON: ${{ steps.plan_coverage.outputs.reason }}
+          # #517: a pause class heads the report `## ai-implement paused` and
+          # stamps no status label, so the run counts as neither an attempt nor
+          # a non-start and the issue stays queued for the resume.
+          FAILURE_CLASS: ${{ steps.classify_failure.outputs.class }}
         run: bash .claude-pipeline/scripts/post-run-report.sh
 
       - name: Fail the job when the agent run failed

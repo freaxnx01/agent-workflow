@@ -14,6 +14,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+FIXTURES="$ROOT/tests/fixtures"
 
 # Layer-1 tests are hermetic by contract, which has to include the *ambient*
 # environment: on a GitHub Actions runner GITHUB_REPOSITORY is always set and
@@ -142,6 +143,55 @@ out="$(CLASS=out_of_credits ATTEMPT=1 ISSUE_NUMBER=1 REPO=o/r DRY_RUN=1 \
 assert_contains "$out" 'decision=stop'   "out_of_credits -> stop"
 assert_contains "$out" 'delay-seconds=0' "out_of_credits -> no delay"
 assert_not_contains "$out" 'unknown CLASS' "out_of_credits is a known class"
+
+# --- Task 2: a paused run is not an attempt --------------------------------
+
+# render_report [FAILURE_CLASS] — the run report post-run-report.sh renders for
+# a failed run, optionally with a failure class attached.
+render_report() {
+  RENDER_ONLY=1 \
+  FAILURE_CLASS="${1:-}" \
+  RESULT_FILE="$FIXTURES/result-rate-limit.json" \
+  ISSUE_NUMBER=42 \
+  WORKFLOW_RUN_URL=https://example/run/test \
+    bash "$ROOT/scripts/post-run-report.sh"
+}
+
+section "post-run-report — a paused run reports as paused"
+
+out="$(render_report out_of_credits)"
+assert_contains "$out" '## ai-implement paused' "pause class -> paused heading"
+assert_not_contains "$out" '## ai-implement run' "pause class -> not a run report"
+assert_not_contains "$out" 'ai:failed'           "pause class -> no ai:failed label"
+assert_contains "$out" 'LABELS: '                "pause class -> label list still emitted"
+assert_contains "$out" 'paused:'                 "pause class -> outcome says paused"
+assert_contains "$out" 'credits'                 "pause class -> outcome names the reason"
+assert_contains "$out" '**Turns:**'              "pause class -> metrics kept for the cap regexes"
+
+out="$(render_report)"
+assert_contains "$out" '## ai-implement run'  "no failure class -> heading unchanged"
+assert_contains "$out" 'LABELS: ai:failed'    "no failure class -> ai:failed unchanged"
+
+out="$(render_report bug)"
+assert_contains "$out" '## ai-implement run'  "non-pause class -> heading unchanged"
+assert_contains "$out" 'LABELS: ai:failed'    "non-pause class -> ai:failed unchanged"
+
+section "check-attempt-cap — a paused report is neither attempt nor non-start"
+
+# shellcheck disable=SC2016  # `$0.03` is the report's literal Cost field, which
+# is what count_reports parses — expanding it would break the fixture.
+paused_report='[{"body":"## ai-implement paused\n\n**Outcome:** :warning: paused: OpenRouter key limit / credits exhausted\n**Duration:** 0s · **Turns:** 7 · **Cost:** $0.03"}]'
+out="$(ISSUE_COMMENTS_JSON="$paused_report" ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 \
+  bash "$ROOT/scripts/check-attempt-cap.sh")"
+assert_contains "$out" 'attempt=1'    "paused report is not a prior attempt"
+assert_contains "$out" 'non-starts=0' "paused report is not a non-start"
+assert_contains "$out" 'proceed=true' "the issue still proceeds"
+
+section "classify-agent — after a pause the issue resumes as attempt 1"
+
+out="$(ISSUE_LABELS='' ISSUE_NUMBER=42 REPO=o/r DEFAULT_AGENT=opencode ATTEMPT=1 \
+  HAS_OPENROUTER_KEY=true bash "$ROOT/scripts/classify-agent.sh")"
+assert_contains "$out" 'chosen: opencode' "attempt 1 stays on the default agent"
 
 # --- summary ----------------------------------------------------------------
 

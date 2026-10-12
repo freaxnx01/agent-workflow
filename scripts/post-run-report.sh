@@ -41,6 +41,12 @@
 #                       ai:partial with :warning: — below an agent error and a
 #                       missing PR, above salvaged. "unverifiable" keeps the
 #                       grade and adds a "Plan coverage: not checked" line.
+#   FAILURE_CLASS       From classify-failure.sh. When it names a class that
+#                       pauses the whole pipeline (scripts/lib/pause-reasons.sh),
+#                       the report is headed `## ai-implement paused` and no
+#                       status label is stamped: the run did no work and the
+#                       issue is still queued, so counting it as an attempt
+#                       would spend the issue's budget on an empty key (#517).
 #   MISSING_TASKS       Comma-separated plan task numbers; read when partial.
 #   PLAN_COVERAGE_REASON
 #                       Why coverage could not be checked; read when unverifiable.
@@ -60,6 +66,9 @@ _PRR_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$_PRR_HERE/lib/detect-forge.sh"
 # shellcheck source=scripts/lib/forge.sh
 source "$_PRR_HERE/lib/forge.sh"
+# The classes that pause the pipeline instead of failing the issue (#517).
+# shellcheck source=scripts/lib/pause-reasons.sh
+source "$_PRR_HERE/lib/pause-reasons.sh"
 
 require_env() {
   local var="$1"
@@ -87,6 +96,7 @@ MISSING_TASKS="${MISSING_TASKS:-}"                # comma-separated plan task nu
 PLAN_COVERAGE_REASON="${PLAN_COVERAGE_REASON:-}"  # why coverage was unverifiable
 CHECKS_RUNNABLE="${CHECKS_RUNNABLE:-}"              # "false" → checks cannot run (#364)
 CHECKS_BLOCKED_REASON="${CHECKS_BLOCKED_REASON:-}"  # no-app-token | rollup-empty
+FAILURE_CLASS="${FAILURE_CLASS:-}"                  # classify-failure.sh class (#517)
 
 # Rendered into the comment, and gates the ai:checks-blocked label. Built here
 # rather than inside render_comment so labels_csv can test one variable.
@@ -291,7 +301,19 @@ TURNS_TEXT="$NUM_TURNS"
 # flag alone drops the one field that names the cause and falls through to the
 # generic no-PR branch below (flowhub#20 run 32883249971 — three dispatches were
 # spent reading raw logs for a reason the result JSON already carried).
-if [[ "$IS_ERROR" == "true" || "$SUBTYPE" == error_* ]]; then
+#
+# A pause class is checked first and outranks every grade below (#517): the run
+# hit a repo-wide show-stopper — an exhausted API key — so it is not a verdict
+# on this issue at all. Heading, outcome and the absent status label all say so,
+# and check-attempt-cap.sh's `startswith("## ai-implement run")` then excludes
+# the report from both the attempt and the non-start counters by construction.
+HEADING='## ai-implement run'
+if is_pause_class "$FAILURE_CLASS"; then
+  HEADING='## ai-implement paused'
+  STATUS_EMOJI=':warning:'
+  STATUS_TEXT="paused: $(pause_title "$FAILURE_CLASS") — the issue stays queued"
+  STATUS_LABEL=''
+elif [[ "$IS_ERROR" == "true" || "$SUBTYPE" == error_* ]]; then
   STATUS_EMOJI=':x:'
   STATUS_TEXT="failed: ${SUBTYPE}"
   STATUS_LABEL='ai:failed'
@@ -338,7 +360,7 @@ fi
 
 render_comment() {
   cat <<EOF
-## ai-implement run
+${HEADING}
 
 **Outcome:** ${STATUS_EMOJI} ${STATUS_TEXT}
 **Duration:** $(format_duration_ms "$DURATION_MS") · **Turns:** ${TURNS_TEXT} · **Cost:** $(format_usd "$COST_USD")
@@ -358,11 +380,20 @@ EOF
 }
 
 labels_csv() {
-  local out="$STATUS_LABEL"
-  [[ -n "$CTX_LABEL" ]] && out="${out},${CTX_LABEL}"
+  # Built from a list, not by appending to $STATUS_LABEL: a paused run has no
+  # status label, and appending would emit a leading comma — `gh issue edit
+  # --add-label ,ctx:high` is a 422 (#517).
+  local labels=() label
+  [[ -n "$STATUS_LABEL" ]] && labels+=("$STATUS_LABEL")
+  [[ -n "$CTX_LABEL" ]] && labels+=("$CTX_LABEL")
   # Additive only. A blocked run is still ai:done — the agent did its job and
   # the PR is reviewable; it is the repo that is misconfigured (#364).
-  [[ -n "$CHECKS_BLOCKED_BLOCK" ]] && out="${out},ai:checks-blocked"
+  [[ -n "$CHECKS_BLOCKED_BLOCK" ]] && labels+=('ai:checks-blocked')
+  local out=''
+  for label in ${labels[@]+"${labels[@]}"}; do
+    [[ -n "$out" ]] && out+=','
+    out+="$label"
+  done
   printf '%s' "$out"
 }
 
@@ -384,13 +415,20 @@ trap 'rm -f "$tmpfile"' EXIT
 render_comment > "$tmpfile"
 
 forge_issue_comment "$ISSUE_NUMBER" "$tmpfile"
-forge_issue_label_add "$ISSUE_NUMBER" "$(labels_csv)"
+
+LABELS="$(labels_csv)"
+[[ -n "$LABELS" ]] && forge_issue_label_add "$ISSUE_NUMBER" "$LABELS"
 # Best-effort cleanup of stale lifecycle labels from prior runs. Each call
 # errors when the label isn't present; that's expected and ignored.
 forge_issue_label_remove "$ISSUE_NUMBER" 'ai:running'         2>/dev/null || true
+
 # Exactly one status label survives: a re-run that changes the grade must not
-# leave two grades on the issue (#457 added a third).
-for stale_label in ai:done ai:failed ai:partial; do
-  [[ "$stale_label" == "$STATUS_LABEL" ]] && continue
-  forge_issue_label_remove "$ISSUE_NUMBER" "$stale_label" 2>/dev/null || true
-done
+# leave two grades on the issue (#457 added a third). A paused run has no grade
+# to stamp and must not clear the previous one either — it did no work, so the
+# last real run's verdict is still the truth about this issue (#517).
+if [[ -n "$STATUS_LABEL" ]]; then
+  for stale_label in ai:done ai:failed ai:partial; do
+    [[ "$stale_label" == "$STATUS_LABEL" ]] && continue
+    forge_issue_label_remove "$ISSUE_NUMBER" "$stale_label" 2>/dev/null || true
+  done
+fi
