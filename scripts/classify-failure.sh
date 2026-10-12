@@ -8,9 +8,12 @@
 #   RESULT_FILE  Path to result.json from the Claude run.
 #
 # Output (stdout one line; GITHUB_OUTPUT key=value when set):
-#   class=success | rate_limit | api_auth | transient | task_failure | bug
+#   class=success | out_of_credits | rate_limit | api_auth | transient |
+#         task_failure | bug
 #
 #   - success      → no retry, post-run-report handles it
+#   - out_of_credits → key limit / credit balance exhausted — pauses the whole
+#                    pipeline (scripts/lib/pause-reasons.sh), no retry
 #   - rate_limit   → 429 / quota exceeded — retry after delay
 #   - api_auth     → 401 / invalid token — operator intervention, no retry
 #   - transient    → 5xx / network / timeout / 0-turn model-not-found — retry with exponential backoff
@@ -45,10 +48,15 @@ num_turns="$(jq -r '.num_turns // ""' "$RESULT_FILE")"
 # which is the right default for an outcome we cannot name.
 if [[ "$is_error" != "true" && "$subtype" != error_* ]]; then
   class=success
-elif printf '%s' "$result_text" | grep -qiE 'rate.?limit|"?429"?|too many requests|quota.?exceed|insufficient.credits'; then
-  # `insufficient.credits` covers OpenRouter's account-balance error;
-  # bucketed as rate_limit because operator action (top up + wait) is
-  # the same shape as wait-and-retry, just on a longer cadence.
+elif printf '%s' "$result_text" | grep -qiE 'key.limit.exceeded|exceeds? your available credits|insufficient.credits|add.credits|requires more credits|payment.required'; then
+  # Matched BEFORE rate_limit and api_auth, both of which would otherwise claim
+  # these texts — OpenRouter reports a monthly key limit as HTTP 403 and an
+  # empty balance as 402. Neither is retryable and neither is about this issue:
+  # the money ran out, so every dispatch in the repo fails the same way until
+  # an operator tops up. That is a pipeline pause, not a per-issue failure
+  # (#517, superseding the rate_limit bucketing from #514).
+  class=out_of_credits
+elif printf '%s' "$result_text" | grep -qiE 'rate.?limit|"?429"?|too many requests|quota.?exceed'; then
   class=rate_limit
 elif printf '%s' "$result_text" | grep -qiE '"?401"?|"?403"?|invalid.bearer|authentication.error|unauthorized|invalid.api.key|forbidden|api.key.is.not.set'; then
   # `403` / `forbidden` / `invalid api key` cover OpenRouter auth-fail
