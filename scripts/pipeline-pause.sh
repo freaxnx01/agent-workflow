@@ -99,7 +99,8 @@ redact() {
     | head -c 2000
 }
 
-SAFE_ERROR="$(printf '%s' "$ERROR_TEXT" | redact)"
+# Backticks are stripped so the error cannot close the alarm body's code fence.
+SAFE_ERROR="$(printf '%s' "$ERROR_TEXT" | redact | tr -d '`')"
 
 # The link the operator needs is usually in the error itself ("add credits at
 # ...") and is more specific than any default we could hardcode.

@@ -162,6 +162,7 @@ jobs:
         run: |
           {
             printf '## OpenRouter budget\n\n'
+            # shellcheck disable=SC2016  # literal backticks for Markdown, not command substitution
             printf -- '- **Verdict:** `%s`\n' "${VERDICT:-skipped (no OPENROUTER_API_KEY)}"
             printf -- '- %s\n' "${MESSAGE:-no budget was read}"
           } >> "$GITHUB_STEP_SUMMARY"

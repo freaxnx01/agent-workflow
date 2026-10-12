@@ -81,6 +81,14 @@ assert_equals() {
   fi
 }
 
+assert_not_equals() {
+  if [[ "$1" != "$2" ]]; then
+    pass "$3"
+  else
+    fail "$3" "did not expect '$2'"
+  fi
+}
+
 # --- driver helpers ---------------------------------------------------------
 
 # classify_text <result text> -> the class classify-failure.sh assigns to a
@@ -107,6 +115,15 @@ assert_equals "$(classify_text 'API Error 402: This request would exceed your av
   out_of_credits "402 would exceed available credits"
 assert_equals "$(classify_text 'Insufficient credits. Add more using https://openrouter.ai/settings/credits')" \
   out_of_credits "insufficient credits"
+assert_equals "$(classify_text 'This request requires more credits, or fewer max_tokens. You requested up to 64000 tokens')" \
+  out_of_credits "requires more credits, or fewer max_tokens"
+# Negative (F1): ordinary prose must never pause a consumer repo.
+assert_not_equals "$(classify_text 'The task: add credits screen to the game; build timeout')" \
+  out_of_credits "prose 'add credits screen' is not out_of_credits"
+assert_not_equals "$(classify_text 'Plan: payment required for the shop; the game requires more credits UI')" \
+  out_of_credits "prose about payment/credits in a plan is not out_of_credits"
+assert_not_equals "$(classify_text 'addXcredits helper failed')" \
+  out_of_credits "add.credits no longer matches any char"
 assert_equals "$(classify_text '429 rate_limit_error: exceed your account rate limit')" \
   rate_limit "plain 429 stays rate_limit"
 assert_equals "$(classify_text '401 invalid api key')" \
@@ -334,6 +351,16 @@ assert_contains "$out" 'alarm-issue=7'         "emits the existing alarm number"
 assert_contains "$out" 'created=false'         "emits created=false"
 assert_equals "$([[ -s "$d/ntfy" ]] && printf nonempty || printf empty)" empty \
   "existing alarm -> no second push"
+rm -rf "$d"
+
+# (F5) backticks in the error text must not break the alarm body's code fence
+d="$(mktemp -d)"
+out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json \
+  ISSUE_NUMBER=99 \
+  ERROR_TEXT='Key limit exceeded ```evil``` `x`')"
+# shellcheck disable=SC2016  # literal backticks are the thing under test
+assert_not_contains "$(cat "$d/body")" '`evil`' "backticks stripped from the error text"
+assert_contains "$(cat "$d/body")" 'Key limit exceeded' "error text is still shown"
 rm -rf "$d"
 
 # (c) an already-listed issue is not duplicated

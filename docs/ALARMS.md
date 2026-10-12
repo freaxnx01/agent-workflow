@@ -140,3 +140,11 @@ Four states, deliberately distinct:
 
 A stale alarm pauses the repo until it is closed. Every pause notice names the
 alarm it is waiting on, so an issue that looks stuck says why in its own thread.
+
+## Known limitation
+
+Two pauses landing at the same moment each read the alarm body, add their issue
+to the marker block and write it back. The later write wins, so one paused issue
+can be missing from the list. The pause itself still holds, but `pipeline-resume.sh` re-dispatches only the
+issues the alarm lists, so a dropped issue must be re-dispatched by hand
+(re-apply `ai-implement`). Accepted for now; no code change.

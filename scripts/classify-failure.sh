@@ -48,7 +48,10 @@ num_turns="$(jq -r '.num_turns // ""' "$RESULT_FILE")"
 # which is the right default for an outcome we cannot name.
 if [[ "$is_error" != "true" && "$subtype" != error_* ]]; then
   class=success
-elif printf '%s' "$result_text" | grep -qiE 'key.limit.exceeded|exceeds? your available credits|insufficient.credits|add.credits|requires more credits|payment.required'; then
+elif printf '%s' "$result_text" | grep -qiE 'key limit exceeded|exceeds? your available credits|insufficient credits|requires more credits, or fewer max_tokens'; then
+  # Only the provider's own full phrases: this text is the agent's whole result,
+  # so loose patterns (`add.credits`, `payment required`) match task prose and
+  # would pause a whole consumer repo.
   # Matched BEFORE rate_limit and api_auth, both of which would otherwise claim
   # these texts — OpenRouter reports a monthly key limit as HTTP 403 and an
   # empty balance as 402. Neither is retryable and neither is about this issue:
