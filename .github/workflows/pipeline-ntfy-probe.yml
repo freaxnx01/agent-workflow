@@ -55,6 +55,7 @@ jobs:
         env:
           CODE: ${{ steps.reach.outputs.code }}
         run: |
+          # shellcheck disable=SC2016  # literal backticks for Markdown, not command substitution
           {
             printf '## ntfy reachability\n\n'
             printf -- '- `/v1/health` HTTP status: `%s`\n\n' "${CODE:-none}"

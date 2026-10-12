@@ -355,10 +355,11 @@ rm -rf "$d"
 
 # (F5) backticks in the error text must not break the alarm body's code fence
 d="$(mktemp -d)"
+# shellcheck disable=SC2016  # literal backticks are the thing under test
 out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json \
   ISSUE_NUMBER=99 \
   ERROR_TEXT='Key limit exceeded ```evil``` `x`')"
-# shellcheck disable=SC2016  # literal backticks are the thing under test
+# shellcheck disable=SC2016
 assert_not_contains "$(cat "$d/body")" '`evil`' "backticks stripped from the error text"
 assert_contains "$(cat "$d/body")" 'Key limit exceeded' "error text is still shown"
 rm -rf "$d"
