@@ -97,7 +97,7 @@ In `classify-failure.sh` insert a new first branch after the success branch:
 **Interfaces:**
 - Produces: `notify-ntfy.sh` reading env `NTFY_URL`, `NTFY_TOPIC`, `NTFY_TOKEN` (optional), `NTFY_TITLE`, `NTFY_MESSAGE`, `NTFY_PRIORITY` (default `default`; `urgent|high|default|low|min`), `NTFY_CLICK`, `NTFY_TAGS`. Always exit 0.
 
-- [ ] **Step 1: Write the failing tests** with `PATH="$MOCKS:$PATH"` (curl mock): (a) no `NTFY_URL` -> exit 0, `CURL_MOCK_LOG` empty/absent; (b) full config -> the logged argv contains `ntfy.home.freaxnx01.ch`, the `-d`/`--data` body (`CURL_MOCK_BODY_LOG` or stdin-capture) parses with `jq` to `topic=pipeline-alerts, priority=5`... use ntfy JSON `priority` ints (urgent=5, high=4, default=3, low=2, min=1); (c) `NTFY_TOKEN=s3cret`: the string `s3cret` appears in no argv line and not in stdout (token only via stdin config); (d) a curl mock failing (`CURL_MOCK_FAIL=1`, add this seam to `tests/mocks/curl`: exit 22) -> script still exits 0 and prints a `warning:` line on stderr.
+- [ ] **Step 1: Write the failing tests** with `PATH="$MOCKS:$PATH"` (curl mock): (a) no `NTFY_URL` -> exit 0, `CURL_MOCK_LOG` empty/absent; (b) full config -> the logged argv contains `ntfy.example.com`, the `-d`/`--data` body (`CURL_MOCK_BODY_LOG` or stdin-capture) parses with `jq` to `topic=pipeline-alerts, priority=5`... use ntfy JSON `priority` ints (urgent=5, high=4, default=3, low=2, min=1); (c) `NTFY_TOKEN=s3cret`: the string `s3cret` appears in no argv line and not in stdout (token only via stdin config); (d) a curl mock failing (`CURL_MOCK_FAIL=1`, add this seam to `tests/mocks/curl`: exit 22) -> script still exits 0 and prints a `warning:` line on stderr.
 - [ ] **Step 2:** Run; expect FAIL (script missing).
 - [ ] **Step 3: Implement.**
 
@@ -161,7 +161,7 @@ exit 0
 - [ ] **Step 3: Implement the script**, then wire the workflow:
   - new step `Check pipeline pause` (id `pause_gate`, `if: ${{ !inputs.stub-claude }}`) right after `Fetch issue context`, before `Check attempt cap`; env `AGENT_PAUSED_VAR: ${{ vars.AGENT_PAUSED }}`.
   - add `&& steps.pause_gate.outputs.paused != 'true'` to the `if:` of `Check attempt cap`, `Run Claude Code`, `Run OpenCode`.
-  - new step `Raise pipeline alarm` after `Classify failure`: `if: always() && steps.classify_failure.outputs.class == 'out_of_credits'` (generic: use `contains(fromJSON('["out_of_credits"]'), ...)` so #518 extends one list), `continue-on-error: true`, running `scripts/pipeline-pause.sh` with `REASON`, `ERROR_TEXT=$(jq -r .result "$RESULT_FILE")`, `GH_TOKEN`, `NTFY_URL: ${{ vars.NTFY_URL }}`, `NTFY_TOPIC: ${{ vars.NTFY_TOPIC }}`, `NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}`.
+  - new step `Raise pipeline alarm` after `Classify failure`: `if: always() && steps.classify_failure.outputs.class == 'out_of_credits'` (generic: use `contains(fromJSON('["out_of_credits"]'), ...)` so #518 extends one list), `continue-on-error: true`, running `scripts/pipeline-pause.sh` with `REASON`, `ERROR_TEXT=$(jq -r .result "$RESULT_FILE")`, `GH_TOKEN`, `NTFY_URL: ${{ secrets.NTFY_URL }}`, `NTFY_TOPIC: ${{ vars.NTFY_TOPIC }}`, `NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}`.
   - `on.workflow_call.secrets`: add optional `NTFY_TOKEN`.
   - `Fail the job...` step: when the class is a pause class print `::warning::` (pipeline paused) instead of `::error`; keep `exit 1` (run stays red, no `ai:failed`).
   - `agent.yml` (dogfood stub): forward `NTFY_TOKEN`.

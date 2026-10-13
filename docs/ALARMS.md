@@ -97,12 +97,16 @@ left".
 
 | Name | Kind | Value |
 |---|---|---|
-| `NTFY_URL` | repo/org **variable** | `https://ntfy.home.freaxnx01.ch` |
+| `NTFY_URL` | repo/org **secret** | the ntfy server's base URL (Passbolt, next to the token) |
 | `NTFY_TOPIC` | repo/org **variable** | `pipeline-alerts` |
 | `NTFY_TOKEN` | repo/org **secret** | the `pipeline` publisher token (Passbolt: "ntfy – pipeline publisher token (topic pipeline-alerts)") |
 
 The publisher user `pipeline` has write-only access to `pipeline-alerts`, so a
 leaked token can publish noise and read nothing.
+
+`NTFY_URL` is a secret, not a variable, so the server address never appears
+in a public repo's run logs: GitHub masks it as `***`. Don't write it into a
+committed file either.
 
 Missing any of the three → the push is skipped and the alarm issue is still
 raised. A failed push never fails a run: `notify-ntfy.sh` always exits 0.
@@ -112,7 +116,7 @@ argv — argv is world-readable in `/proc` and shows up in `ps`.
 
 ### Is the server reachable from GitHub's runners?
 
-The home server is behind a residential line with public DNS, so this has to be
+The home server is behind a residential line, so this has to be
 measured rather than assumed:
 
 ```bash
@@ -123,9 +127,9 @@ The run's step summary reports the `/v1/health` status and names the verdict.
 
 > **Status: not yet measured.** The probe ships with this change; the live run
 > is a post-merge step for the maintainer (the variables and the secret have to
-> be set first). Record the result here.
+> be set first). Record the result here, without the address.
 
-**Fallback if it is unreachable:** set `NTFY_URL` to `https://ntfy.sh` and use
+**Fallback if it is unreachable:** set the `NTFY_URL` secret to `https://ntfy.sh` and use
 a long, unguessable topic name (`ntfy.sh` has no accounts on the free tier —
 the topic name *is* the credential). Keep `NTFY_TOPIC` out of anything public.
 

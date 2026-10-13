@@ -61,9 +61,8 @@ cfgfile="$(mktemp)"
 trap 'rm -f "$errfile" "$cfgfile"' EXIT
 chmod 600 "$cfgfile"
 
-# Only the token goes through the config. The URL stays on argv: it is not a
-# secret, and keeping it visible is what makes "which server did we page?"
-# answerable from a run log.
+# Only the token goes through the config. The URL stays on argv: argv is local
+# to the runner, and NTFY_URL is a GitHub secret, so a run log masks it anyway.
 if [[ -n "${NTFY_TOKEN:-}" ]]; then
   printf 'header = "Authorization: Bearer %s"\n' "$NTFY_TOKEN" > "$cfgfile"
 fi

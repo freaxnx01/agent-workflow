@@ -277,7 +277,7 @@ rm -rf "$d"
 
 d="$(mktemp -d)"
 out="$(ntfy_run "$d" \
-  NTFY_URL=https://ntfy.home.freaxnx01.ch \
+  NTFY_URL=https://ntfy.example.com \
   NTFY_TOPIC=pipeline-alerts \
   NTFY_TITLE='Pipeline paused' \
   NTFY_MESSAGE='out of credits' \
@@ -285,7 +285,7 @@ out="$(ntfy_run "$d" \
   NTFY_CLICK=https://github.com/o/r/issues/7 \
   NTFY_TAGS=rotating_light,warning)"
 body="$(cat "$d/body")"
-assert_contains "$(cat "$d/argv")" 'ntfy.home.freaxnx01.ch' "configured -> posts to the server"
+assert_contains "$(cat "$d/argv")" 'ntfy.example.com' "configured -> posts to the server"
 assert_equals "$(jq -r .topic <<<"$body")"    pipeline-alerts  "body carries the topic"
 assert_equals "$(jq -r .priority <<<"$body")" 5                "urgent -> priority 5"
 assert_equals "$(jq -r .title <<<"$body")"    'Pipeline paused' "body carries the title"
@@ -347,7 +347,7 @@ pause_run() {
     CURL_MOCK_BODY_LOG="$dir/ntfy" \
     REPO=freaxnx01/game-rhyflitzer \
     REASON=out_of_credits \
-    NTFY_URL=https://ntfy.home.freaxnx01.ch \
+    NTFY_URL=https://ntfy.example.com \
     NTFY_TOPIC=pipeline-alerts \
     "$@" bash "$PAUSE" 2>&1
 }
