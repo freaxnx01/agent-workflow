@@ -321,6 +321,16 @@ assert_contains "$out" 'warning:' "curl failure -> warns"
 assert_not_contains "$out" 's3cret' "curl failure -> no token in the warning"
 rm -rf "$d"
 
+# GitHub masks only the exact secret value (the full URL); curl's own error
+# names the bare host, which would slip through into a public run log.
+d="$(mktemp -d)"
+out="$(ntfy_run "$d" CURL_MOCK_FAIL=1 \
+  CURL_MOCK_FAIL_MSG='curl: (6) Could not resolve host: ntfy.example.com' \
+  NTFY_URL=https://ntfy.example.com/ NTFY_TOPIC=t NTFY_MESSAGE=m)" || true
+assert_contains "$out" 'warning:' "unresolvable host -> warns"
+assert_not_contains "$out" 'ntfy.example.com' "curl failure -> no server host in the warning"
+rm -rf "$d"
+
 # --- Task 4: pipeline-pause.sh ----------------------------------------------
 
 section "pipeline-pause — one alarm issue per pause"

@@ -74,8 +74,14 @@ if curl -sS -f --max-time 10 -K - -X POST \
   exit 0
 fi
 
-# curl's own diagnostics never echo a request header, but truncate anyway: the
-# warning is the one thing from this script that reaches a public run log.
+# curl's own diagnostics never echo a request header, but they do name the
+# bare host ("Could not resolve host: <host>"), which GitHub's masking of the
+# full NTFY_URL secret does not catch. Redact it before truncating: the warning
+# is the one thing from this script that reaches a public run log.
+host="${NTFY_URL#*://}"
+host="${host%%/*}"
+detail="$(tr -d '\n' < "$errfile")"
+detail="${detail//"$host"/<ntfy-host>}"
 printf 'warning: ntfy push to topic %s failed (%s) — continuing\n' \
-  "$NTFY_TOPIC" "$(head -c 200 "$errfile" | tr -d '\n')" >&2
+  "$NTFY_TOPIC" "${detail:0:200}" >&2
 exit 0
