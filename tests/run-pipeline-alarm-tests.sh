@@ -277,7 +277,7 @@ rm -rf "$d"
 
 d="$(mktemp -d)"
 out="$(ntfy_run "$d" \
-  NTFY_URL=https://ntfy.home.freaxnx01.ch \
+  NTFY_URL=https://ntfy.example.com \
   NTFY_TOPIC=pipeline-alerts \
   NTFY_TITLE='Pipeline paused' \
   NTFY_MESSAGE='out of credits' \
@@ -285,7 +285,7 @@ out="$(ntfy_run "$d" \
   NTFY_CLICK=https://github.com/o/r/issues/7 \
   NTFY_TAGS=rotating_light,warning)"
 body="$(cat "$d/body")"
-assert_contains "$(cat "$d/argv")" 'ntfy.home.freaxnx01.ch' "configured -> posts to the server"
+assert_contains "$(cat "$d/argv")" 'ntfy.example.com' "configured -> posts to the server"
 assert_equals "$(jq -r .topic <<<"$body")"    pipeline-alerts  "body carries the topic"
 assert_equals "$(jq -r .priority <<<"$body")" 5                "urgent -> priority 5"
 assert_equals "$(jq -r .title <<<"$body")"    'Pipeline paused' "body carries the title"
@@ -321,6 +321,26 @@ assert_contains "$out" 'warning:' "curl failure -> warns"
 assert_not_contains "$out" 's3cret' "curl failure -> no token in the warning"
 rm -rf "$d"
 
+# GitHub masks only the exact secret value (the full URL); curl's own error
+# names the bare host, which would slip through into a public run log.
+d="$(mktemp -d)"
+out="$(ntfy_run "$d" CURL_MOCK_FAIL=1 \
+  CURL_MOCK_FAIL_MSG='curl: (6) Could not resolve host: ntfy.example.com' \
+  NTFY_URL=https://ntfy.example.com/ NTFY_TOPIC=t NTFY_MESSAGE=m)" || true
+assert_contains "$out" 'warning:' "unresolvable host -> warns"
+assert_not_contains "$out" 'ntfy.example.com' "curl failure -> no server host in the warning"
+rm -rf "$d"
+
+# A port or userinfo changes how curl spells the host; no parsing of NTFY_URL
+# may be trusted to catch every form, so none of curl's text is printed.
+d="$(mktemp -d)"
+out="$(ntfy_run "$d" CURL_MOCK_FAIL=1 \
+  CURL_MOCK_FAIL_MSG='curl: (7) Failed to connect to ntfy.example.com port 8443' \
+  NTFY_URL=https://u:p@ntfy.example.com:8443 NTFY_TOPIC=t NTFY_MESSAGE=m)" || true
+assert_not_contains "$out" 'ntfy.example.com' "port/userinfo URL -> no server host in the warning"
+assert_contains "$out" 'curl exit 22' "curl failure -> reports curl's exit code"
+rm -rf "$d"
+
 # --- Task 4: pipeline-pause.sh ----------------------------------------------
 
 section "pipeline-pause — one alarm issue per pause"
@@ -347,7 +367,7 @@ pause_run() {
     CURL_MOCK_BODY_LOG="$dir/ntfy" \
     REPO=freaxnx01/game-rhyflitzer \
     REASON=out_of_credits \
-    NTFY_URL=https://ntfy.home.freaxnx01.ch \
+    NTFY_URL=https://ntfy.example.com \
     NTFY_TOPIC=pipeline-alerts \
     "$@" bash "$PAUSE" 2>&1
 }

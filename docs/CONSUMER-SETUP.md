@@ -432,13 +432,13 @@ raised and read; only the push is skipped.
 | Name | Kind | Scope | Purpose |
 |---|---|---|---|
 | `NTFY_TOKEN` | secret | repo or org | Bearer token for a write-restricted ntfy topic. Optional. |
-| `NTFY_URL` | variable | repo or org | ntfy server base URL, e.g. `https://ntfy.home.freaxnx01.ch`. |
+| `NTFY_URL` | secret | repo or org | ntfy server base URL, e.g. `https://ntfy.example.com`. A secret so public run logs mask it. |
 | `NTFY_TOPIC` | variable | repo or org | Topic to publish to, e.g. `pipeline-alerts`. |
 | `AGENT_PAUSED` | variable | repo | **Manual** kill switch. Non-empty → every dispatch stops at the gate. Nothing in the pipeline can set or clear it (ADR-018). |
 
 ```bash
 gh secret   set NTFY_TOKEN --repo <owner>/<repo>          # value from your secrets manager
-gh variable set NTFY_URL   --repo <owner>/<repo> --body 'https://ntfy.home.freaxnx01.ch'
+gh secret   set NTFY_URL   --repo <owner>/<repo>          # your ntfy server's base URL
 gh variable set NTFY_TOPIC --repo <owner>/<repo> --body 'pipeline-alerts'
 ```
 
@@ -446,7 +446,8 @@ Org-level is the better default for a fleet: one key, one topic, one place to
 rotate them.
 
 > **Gotcha — a secret you don't list never arrives.** The consumer stub does not
-> use `secrets: inherit`, so `NTFY_TOKEN` must appear in its `secrets:` block.
+> use `secrets: inherit`, so `NTFY_TOKEN` and `NTFY_URL` must appear in its
+> `secrets:` block.
 > Set on the repo but missing from the stub, the alarm raises its issue and
 > silently never pushes — with no error anywhere. Same failure mode as
 > `PIPELINE_APP_ID` (see PIPELINE-APP-SETUP.md step 7).
@@ -478,6 +479,7 @@ jobs:
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+      NTFY_URL: ${{ secrets.NTFY_URL }}
 ```
 
 `scripts/onboard-consumer.sh` generates this stub automatically. A repo with no
