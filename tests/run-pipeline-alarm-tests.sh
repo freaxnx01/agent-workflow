@@ -331,6 +331,16 @@ assert_contains "$out" 'warning:' "unresolvable host -> warns"
 assert_not_contains "$out" 'ntfy.example.com' "curl failure -> no server host in the warning"
 rm -rf "$d"
 
+# A port or userinfo changes how curl spells the host; no parsing of NTFY_URL
+# may be trusted to catch every form, so none of curl's text is printed.
+d="$(mktemp -d)"
+out="$(ntfy_run "$d" CURL_MOCK_FAIL=1 \
+  CURL_MOCK_FAIL_MSG='curl: (7) Failed to connect to ntfy.example.com port 8443' \
+  NTFY_URL=https://u:p@ntfy.example.com:8443 NTFY_TOPIC=t NTFY_MESSAGE=m)" || true
+assert_not_contains "$out" 'ntfy.example.com' "port/userinfo URL -> no server host in the warning"
+assert_contains "$out" 'curl exit 22' "curl failure -> reports curl's exit code"
+rm -rf "$d"
+
 # --- Task 4: pipeline-pause.sh ----------------------------------------------
 
 section "pipeline-pause — one alarm issue per pause"

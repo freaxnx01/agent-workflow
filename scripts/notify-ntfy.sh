@@ -56,9 +56,8 @@ body="$(jq -n \
    + (if $click != "" then {click: $click} else {} end)
    + (if $tags  != "" then {tags: ($tags | split(","))} else {} end)')"
 
-errfile="$(mktemp)"
 cfgfile="$(mktemp)"
-trap 'rm -f "$errfile" "$cfgfile"' EXIT
+trap 'rm -f "$cfgfile"' EXIT
 chmod 600 "$cfgfile"
 
 # Only the token goes through the config. The URL stays on argv: argv is local
@@ -67,21 +66,19 @@ if [[ -n "${NTFY_TOKEN:-}" ]]; then
   printf 'header = "Authorization: Bearer %s"\n' "$NTFY_TOKEN" > "$cfgfile"
 fi
 
-if curl -sS -f --max-time 10 -K - -X POST \
-     -H 'Content-Type: application/json' -d "$body" "${NTFY_URL%/}/" \
-     < "$cfgfile" >/dev/null 2>"$errfile"; then
+code=0
+curl -sS -f --max-time 10 -K - -X POST \
+  -H 'Content-Type: application/json' -d "$body" "${NTFY_URL%/}/" \
+  < "$cfgfile" >/dev/null 2>/dev/null || code=$?
+if (( code == 0 )); then
   printf 'ntfy: sent %s to topic %s\n' "${NTFY_PRIORITY:-default}" "$NTFY_TOPIC"
   exit 0
 fi
 
-# curl's own diagnostics never echo a request header, but they do name the
-# bare host ("Could not resolve host: <host>"), which GitHub's masking of the
-# full NTFY_URL secret does not catch. Redact it before truncating: the warning
-# is the one thing from this script that reaches a public run log.
-host="${NTFY_URL#*://}"
-host="${host%%/*}"
-detail="$(tr -d '\n' < "$errfile")"
-detail="${detail//"$host"/<ntfy-host>}"
-printf 'warning: ntfy push to topic %s failed (%s) — continuing\n' \
-  "$NTFY_TOPIC" "${detail:0:200}" >&2
+# Only curl's exit code goes into the warning, never its text: curl names the
+# server host in its errors, spelled however the URL's port or userinfo make
+# it, and GitHub masks only the exact NTFY_URL secret. The warning is the one
+# thing from this script that reaches a public run log.
+printf 'warning: ntfy push to topic %s failed (curl exit %s) — continuing\n' \
+  "$NTFY_TOPIC" "$code" >&2
 exit 0
