@@ -161,6 +161,43 @@ assert_equals "$(jq -r .api_error_status <<<"$ad")" 403 "adapter: api_error_stat
 printf '%s\n' '{"type":"text","part":{"text":"Key limit exceeded"}}' > "$ev"
 ad="$(EXECUTION_FILE="$ev" bash "$ROOT/scripts/adapt-opencode-result.sh")"
 assert_equals "$(jq -r '.api_error // ""' <<<"$ad")" "" "adapter: agent text never lands in api_error"
+
+# adapt_events <ndjson line>... -> the adapter's result for that event stream.
+adapt_events() {
+  local ev out
+  ev="$(mktemp)"
+  printf '%s\n' "$@" > "$ev"
+  out="$(EXECUTION_FILE="$ev" bash "$ROOT/scripts/adapt-opencode-result.sh")"
+  rm -f "$ev"
+  printf '%s' "$out"
+}
+
+# The provider-call evidence is structural: event name, HTTP status, request host.
+ad="$(adapt_events '{"type":"error","error":{"name":"APIError","data":{"message":"Key limit exceeded","statusCode":403,"isRetryable":false,"metadata":{"url":"https://openrouter.ai/api/v1/chat/completions"}}}}')"
+assert_equals "$(jq -r .api_error_status <<<"$ad")" 403 "adapter: APIError status is exposed"
+assert_equals "$(jq -r .api_error_host <<<"$ad")" openrouter.ai "adapter: the request host is exposed"
+
+ad="$(adapt_events '{"type":"error","error":{"name":"APIError","data":{"message":"x","statusCode":402,"metadata":{"url":"https://OpenRouter.AI/api/v1/chat/completions"}}}}')"
+assert_equals "$(jq -r .api_error_host <<<"$ad")" openrouter.ai "adapter: the host is lower-cased"
+
+# Forged: an error event that is not a provider call carries no evidence.
+ad="$(adapt_events '{"type":"error","error":{"name":"UnknownError","data":{"message":"Key limit exceeded","statusCode":402,"metadata":{"url":"https://openrouter.ai/api/v1/chat/completions"}}}}')"
+assert_equals "$(jq -r .api_error_status <<<"$ad")" null "adapter: a non-APIError event gives no status"
+assert_equals "$(jq -r .api_error_host <<<"$ad")" "" "adapter: a non-APIError event gives no host"
+
+# Forged: a tool result that looks like an error event is not one.
+ad="$(adapt_events '{"type":"tool_use","part":{"state":{"output":"{\"type\":\"error\",\"error\":{\"name\":\"APIError\",\"data\":{\"statusCode\":402}}}"}},"error":{"name":"APIError","data":{"statusCode":402,"metadata":{"url":"https://openrouter.ai/x"}}}}')"
+assert_equals "$(jq -r .api_error_status <<<"$ad")" null "adapter: a tool_use event gives no status"
+
+# Host tricks fail closed.
+ad="$(adapt_events '{"type":"error","error":{"name":"APIError","data":{"message":"x","statusCode":402,"metadata":{"url":"https://openrouter.ai@evil.example/api"}}}}')"
+assert_not_equals "$(jq -r .api_error_host <<<"$ad")" openrouter.ai "adapter: userinfo is not the host"
+ad="$(adapt_events '{"type":"error","error":{"name":"APIError","data":{"message":"x","statusCode":402,"metadata":{"url":"http://openrouter.ai/api"}}}}')"
+assert_equals "$(jq -r .api_error_host <<<"$ad")" "" "adapter: plain http gives no host"
+ad="$(adapt_events '{"type":"error","error":{"name":"APIError","data":{"message":"x","statusCode":402}}}')"
+assert_equals "$(jq -r .api_error_host <<<"$ad")" "" "adapter: no URL gives no host"
+assert_equals "$(jq -r .api_error_status <<<"$ad")" 402 "adapter: no URL still gives the status"
+
 rm -f "$ev"
 assert_equals "$(classify_text '429 rate_limit_error: exceed your account rate limit')" \
   rate_limit "plain 429 stays rate_limit"

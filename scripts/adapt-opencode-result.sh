@@ -40,9 +40,13 @@
 #     order, into the result: opencode may follow the meaningful error with a
 #     generic "Unexpected server error", so keeping only the last one threw away
 #     the only line the classifier can bucket (#439). step_start / tool_use are
-#     informational. The same messages are also exposed as `.api_error` (with
-#     the first `.error.data.statusCode` as `.api_error_status`): the structured
-#     error channel classify-failure.sh trusts for out_of_credits, never `.result`.
+#     informational. The same messages are also exposed as `.api_error` —
+#     display text for the alarm, never a classifier input. The provider-call
+#     EVIDENCE is separate and structural (#521): `.api_error_status` and
+#     `.api_error_host` come from the first error event named `APIError` (how
+#     opencode surfaces the AI SDK's APICallError) — its `.error.data.statusCode`
+#     and the host of `.error.data.metadata.url`. classify-failure.sh trusts
+#     only those two for out_of_credits.
 # On a parse failure (opencode errored before emitting events and wrote plain
 # text) we emit an error_during_execution result with the raw bytes inlined so
 # classify-failure.sh can bucket it and an operator can diagnose.
@@ -104,6 +108,9 @@ jq -s -c \
   (map(select(.type == "step_finish"))) as $steps |
   (map(select(.type == "text")))        as $texts |
   (map(.timestamp // empty))            as $ts    |
+  ([ $errs[] | .error
+     | select(.name? == "APIError")
+     | select((.data.statusCode? | type) == "number") ] | first) as $call |
   {
     type: "result",
     subtype: (if ($errs | length) > 0 then "error_during_execution" else "success" end),
@@ -114,7 +121,12 @@ jq -s -c \
     api_error: (if ($errs | length) > 0
                 then [ $errs[] | (.error.data.message // .error.name // empty) ] | join("\n")
                 else "" end),
-    api_error_status: ([ $errs[] | (.error.data.statusCode // empty) ] | first // null),
+    api_error_status: ($call.data.statusCode // null),
+    api_error_host: (($call.data.metadata.url? // "")
+                     | if type == "string"
+                       then (capture("^https://(?<authority>[^/?#]+)").authority // "")
+                       else "" end
+                     | ascii_downcase),
     session_id: ((.[0].sessionID // null) // ("opencode-" + ($model | gsub("/"; "-")))),
     result: (
       ($texts | last | .part.text)
