@@ -4,7 +4,7 @@
 
 **Landing order.** Lands after #518: both change scripts/classify-failure.sh; rebase on it. #518 adds a `model_not_found` class (matched before rate_limit/api_auth/transient) and removes the 0-turn `model not found` → transient branch; keep that branch order intact.
 
-**Amended 2026-10-14** with the maintainer's answers C3 and C4 (key-check confirmation, 403 handling) and the landing order above.
+**Amended 2026-10-14** with the maintainer's answers C3 and C4 (key-check confirmation, 403 handling) and the landing order above, and again with C5 (a 403 needs `exhausted`; replaces A11).
 
 ## Problem
 
@@ -82,12 +82,17 @@ Two conditions, both required:
    `openrouter.ai` and the status is 402 or 403. No message text is read.
 2. **The budget's own state.** For a candidate, `classify-failure.sh` runs
    `check-openrouter-budget.sh`, which reads the key limit (`GET /api/v1/key`)
-   and, when the key may, the account balance (`GET /api/v1/credits`). Verdict
-   `exhausted` or `warn` — on either budget — confirms, and gives
-   `out_of_credits` (C3). Any other outcome — no key in the environment, an
-   unreachable API, `ok`, `unknown` — does not confirm: an unconfirmed **402**
-   is `rate_limit` and retries after the delay (C2); an unconfirmed **403** is
-   `api_auth`, no retry, operator ping, as before #517 (C4).
+   and, when the key may, the account balance (`GET /api/v1/credits`). The
+   threshold depends on the status. A **402** is confirmed by verdict
+   `exhausted` or `warn`, on either budget (C3). A **403** is confirmed by
+   `exhausted` only — the key limit truly used up, OpenRouter's monthly
+   key-limit 403 (C5); the account balance never reads `exhausted`
+   (`scripts/check-openrouter-budget.sh:101-104`), so only the key can confirm
+   a 403. Confirmed gives `out_of_credits`. Anything else — no key in the
+   environment, an unreachable API, `ok`, `unknown`, or `warn` for a 403 —
+   does not confirm: an unconfirmed **402** is `rate_limit` and retries after
+   the delay (C2); an unconfirmed **403** is `api_auth`, no retry, operator
+   ping, as before #517 (C4).
 
 The implement job passes `OPENROUTER_API_KEY` to the `Classify failure` step.
 `.api_error` stays in the result as display text for the alarm.
@@ -100,7 +105,7 @@ a forged marker block in an alarm body; forged error events (wrong event name,
 wrong host, userinfo host trick, text-only) against an exhausted key; a real
 provider 402 and 403 against an exhausted key, a low key, a key with no limit
 over an empty or a healthy account, a healthy key, an unreadable API and no
-key.
+key — a 403 against a low key stays `api_auth` (C5).
 `tests/mocks/gh` gains a generic "first call / later calls" fixture seam,
 because the pause script now asks the same question twice.
 
@@ -138,7 +143,13 @@ because the pause script now asks the same question twice.
   rate_limit?" Answer: "403 stays api_auth: only an unconfirmed 402 becomes
   rate_limit. An unconfirmed 403 keeps today's behaviour: no retry, operator
   ping." A 403 the key check does confirm (OpenRouter's key-limit 403) is still
-  `out_of_credits`.
+  `out_of_credits`; C5 sets that threshold.
+- **C5** [confirmed] A 403 is confirmed only by `exhausted`. Question: "Should
+  a provider 403 pause the repo under the same rule as a 402 (budget check
+  reads exhausted or low)?" Answer: "403 needs exhausted: a 403 pauses only
+  when the key is truly used up (OpenRouter's monthly key-limit 403); a 402
+  keeps exhausted-or-low. A moderation 403 in a low repo stays api_auth, so
+  issue text can no longer trigger a pause." Replaces A11.
 - **A1** [high] The label is named `ai:paused`. Rejected: `pipeline-paused-issue`.
   The pipeline's per-issue state labels all use the `ai:` prefix
   (`scripts/ensure-issue-labels.sh:95-98`), and `pipeline-paused` is already
@@ -186,22 +197,23 @@ because the pause script now asks the same question twice.
   deriving it from `OPENROUTER_API_BASE`
   (`scripts/check-openrouter-budget.sh:47`). No consumer sets another base, and
   an env-derived allowlist is one more thing to get wrong.
-- **A11** [med] A 403 is confirmed by the same rule as a 402 (`exhausted` or
-  `warn`). Rejected: requiring `exhausted` for a 403. C3 was asked about a 402
-  and C4 says a confirmed 403 is `out_of_credits` without naming the threshold;
-  one rule keeps the classifier to one budget question, and its rationale holds
-  for a 403 too — a forged one can only pause a repo whose money is nearly gone.
+- **A11** — withdrawn, replaced by C5.
 
 ## Consequences
 
 - A repo whose budget reads `warn` (key below 20 % or $3, or account below
-  $10) pauses on any provider 402 or 403, while some money is still left. A
-  moderation 403 an issue author provokes can therefore pause such a repo.
+  $10) pauses on any provider 402, while some money is still left. A 403 in
+  such a repo is `api_auth`: a moderation 403 an issue author provokes cannot
+  pause it. A 403 pauses only once the key limit is used up.
+- A key-limit 403 that arrives while the key still reads `warn` (some limit
+  left, but not enough for the request) is `api_auth`: an operator ping, not a
+  pause. It pauses once the limit reads used up.
 - A key with no monthly limit over an empty account is confirmed only when the
   key may read `/credits` (a management key). With a plain inference key the
   account is not checked, so its 402 stays `rate_limit` and retries.
 - An unconfirmed 402 now retries (`rate_limit`) and counts as an attempt; an
-  unconfirmed 403 is `api_auth` as before #517. A 401 is unchanged.
+  unconfirmed 403 (including a 403 in a `warn` repo) is `api_auth` as before
+  #517. A 401 is unchanged.
 - An alarm raised before this lands lists its issues only in the body. The
   resume no longer reads that list: label those issues `ai:paused` by hand, or
   re-dispatch them by hand.
