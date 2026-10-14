@@ -62,7 +62,9 @@ result_text="$(jq -r '.result // ""' "$RESULT_FILE")"
 # repo (#521).
 api_status="$(jq -r '.api_error_status // ""' "$RESULT_FILE")"
 api_host="$(jq -r '.api_error_host // ""' "$RESULT_FILE")"
-PROVIDER_HOST='openrouter.ai'
+# Derive the expected host from OPENROUTER_API_BASE (which may be a proxy or gateway)
+OPENROUTER_API_BASE="${OPENROUTER_API_BASE:-https://openrouter.ai/api/v1}"
+PROVIDER_HOST="$(printf '%s' "$OPENROUTER_API_BASE" | sed -E 's|^https?://([^:/]+).*|\1|')"
 num_turns="$(jq -r '.num_turns // ""' "$RESULT_FILE")"
 
 # provider_refused_payment — the provider's own call came back 402 or 403.

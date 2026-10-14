@@ -979,9 +979,13 @@ jobs:
         if: always() && (steps.claude.outputs.result-file != '' || steps.opencode_adapt.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
         env:
           RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.opencode_adapt.outputs.result-file || steps.stub_run.outputs.result-file }}
-          # #521: lets the classifier confirm a provider refusal against the
-          # budget's own state before a run may pause the repo. Empty for a
-          # Claude-only consumer, which then never classifies out_of_credits.
+          # #521: Structural evidence from the provider's own call (api_error_status,
+          # api_error_host) is only set by adapt-opencode-result.sh, so the Claude
+          # path (steps.claude) cannot ever reach out_of_credits — a 402 there
+          # classifies as rate_limit and retries. The OpenCode path sets
+          # OPENROUTER_API_KEY to confirm the refusal against the budget's own state
+          # before pausing. For a Claude-only consumer, the key is unset and pause is
+          # never triggered (by design: pausing avoids uncontrolled billing).
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: bash .claude-pipeline/scripts/classify-failure.sh
 

@@ -598,20 +598,22 @@ rm -rf "$d"
 d="$(mktemp -d)"
 out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json)"
 gh_log="$(cat "$d/gh")"
-assert_not_contains "$gh_log" 'label create' "no issue -> no label creation"
+assert_not_contains "$gh_log" 'label create ai:paused' "no issue -> no label creation"
 assert_not_contains "$gh_log" 'issue edit' "no issue -> no issue edit"
 assert_contains "$gh_log" 'issue create' "alarm still created"
 assert_contains "$out" 'raised alarm' "output confirms alarm raised"
 rm -rf "$d"
 
-# (i) label creation fails: alarm still raised, warning printed, exit 0
+# (i) label write fails: alarm still raised, warning printed, exit 0
 d="$(mktemp -d)"
-# Create a fail map that makes label create fail
+# Create a fail map that makes label write fail (the issue edit, not the label create)
 {
   printf '%s\t%s\n' '--json number --limit' "$FIXTURES/alarm-list-empty.json|$FIXTURES/alarm-list-own.json"
   printf '%s\t%s\n' 'issue create' "$FIXTURES/alarm-create-url.txt"
-  printf '%s\n' 'label create ai:paused' >> "$d/fail-map"
 } > "$d/stdout-map"
+{
+  printf '%s\n' '--add-label ai:paused'
+} > "$d/fail-map"
 env PATH="$MOCKS:$PATH" \
   GH_MOCK_LOG="$d/gh" \
   GH_MOCK_BODY_LOG="$d/body" \
@@ -633,12 +635,24 @@ rm -rf "$d"
 
 section "ensure-issue-labels — the ai:paused label is defined"
 
-assert_contains "$(cat "$ROOT/scripts/ensure-issue-labels.sh")" "create pipeline-paused" \
-  "pipeline-paused is created in consumer repos"
-assert_contains "$(cat "$ROOT/scripts/ensure-issue-labels.sh")" "create ai:paused" \
-  "ai:paused is created in consumer repos"
-assert_contains "$(cat "$ROOT/scripts/ensure-issue-labels.sh")" "FBCA04" \
-  "ai:paused has the correct color"
+ENSURE_LABELS="$ROOT/scripts/ensure-issue-labels.sh"
+
+d="$(mktemp -d)"
+{
+  printf '%s\t%s\n' 'label create' "$FIXTURES/alarm-create-url.txt"
+} > "$d/stdout-map"
+env PATH="$MOCKS:$PATH" \
+  GH_MOCK_LOG="$d/gh" \
+  GH_MOCK_STDOUT_MAP="$d/stdout-map" \
+  REPO=freaxnx01/game-rhyflitzer \
+  bash "$ENSURE_LABELS" >/dev/null 2>&1 || true
+gh_log="$(cat "$d/gh")"
+assert_contains "$gh_log" 'label create pipeline-paused' "pipeline-paused is created"
+assert_contains "$gh_log" 'label create ai:paused' "ai:paused is created"
+# Verify color is set specifically for ai:paused; this is safe because we only run
+# this test's label creations, so FBCA04 appearing is evidence of ai:paused being set
+assert_contains "$(grep 'ai:paused' "$d/gh")" 'FBCA04' "ai:paused has the correct color"
+rm -rf "$d"
 
 # --- Task 5: check-pipeline-pause.sh ----------------------------------------
 
@@ -720,7 +734,8 @@ RESUME="$ROOT/scripts/pipeline-resume.sh"
 resume_run() {
   local dir="$1" list="$2"; shift 2
   {
-    printf '%s\t%s\n' 'issue list' "$FIXTURES/$list"
+    printf '%s\t%s\n' '--label ai:paused' "$FIXTURES/resume-paused-issues.json"
+    printf '%s\t%s\n' '--label pipeline-paused' "$FIXTURES/$list"
     printf '%s\t%s\n' 'issue view 12' "$FIXTURES/resume-issue-open.json"
     printf '%s\t%s\n' 'issue view 34' "$FIXTURES/resume-issue-closed.json"
   } > "$dir/stdout-map"

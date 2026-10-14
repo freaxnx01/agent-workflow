@@ -141,10 +141,34 @@ Four states, deliberately distinct:
 A stale alarm pauses the repo until it is closed. Every pause notice names the
 alarm it is waiting on, so an issue that looks stuck says why in its own thread.
 
-## Known limitation
+## Resume mechanics
 
-Two pauses landing at the same moment each read the alarm body, add their issue
-to the marker block and write it back. The later write wins, so one paused issue
-can be missing from the list. The pause itself still holds, but `pipeline-resume.sh` re-dispatches only the
-issues the alarm lists, so a dropped issue must be re-dispatched by hand
-(re-apply `ai-implement`). Accepted for now; no code change.
+`pipeline-resume.sh` discovers paused issues by reading the `ai:paused` label, not
+by parsing the alarm body. This means concurrent pauses do not race on a
+read-modify-write (eliminated in #521). The alarm closes **before** re-dispatch, so
+a dispatch sent while the alarm is still open is stopped by the gate.
+
+Issues are re-dispatched as attempt 1 on the default agent, with no `-f attempt=`:
+a paused run did no work, and nothing was learned that would justify escalating.
+
+## Upgrade migration
+
+The `ai:paused` label-based tracking was introduced in a later release. If you are
+resuming a pause that occurred *before* this change, the paused issues are listed
+only in the existing alarm issue's body, not via labels. `pipeline-resume.sh`
+will not find them and will resume 0 issues.
+
+**Workaround:** manually re-apply the `ai-implement` label to the paused issues,
+or edit the alarm body to extract the issue numbers and set them manually:
+
+```bash
+REPO=owner/repo bash -c '
+  mapfile -t issues < <(grep -oE "#[0-9]+" <<< "$(gh issue view <alarm-number> --json body -q .body)" | tr -d "#")
+  for i in "${issues[@]}"; do
+    gh label create ai:paused --color FBCA04 --repo "$REPO" 2>/dev/null || true
+    gh issue edit "$i" --repo "$REPO" --add-label ai:paused
+  done
+'
+```
+
+Then run `pipeline-resume.sh` normally.
