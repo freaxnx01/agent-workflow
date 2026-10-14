@@ -111,6 +111,22 @@ jobs:
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
 
+  call-opencode-model-not-found:
+    name: Reusable workflow — opencode model not found (#518)
+    uses: ./.github/workflows/agent-implement.yml
+    with:
+      issue-number: 9014
+      default-model: z-ai/glm-9
+      timeout-minutes: 10
+      dry-run: true
+      local-scripts: true
+      stub-claude: true
+      stub-fixture: opencode_model_not_found
+      agent: opencode
+      attempt: 1
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
+
   verify-success:
     name: Assert success path
     needs: call-success
@@ -226,6 +242,29 @@ jobs:
           # don't pin the retry decision since #6 may change defaults
           (( fail == 0 )) || exit 1
           echo "opencode-task-failure OK: failure=$FAILURE retry=$RETRY"
+
+  verify-opencode-model-not-found:
+    name: Assert opencode model-not-found path
+    needs: call-opencode-model-not-found
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      OUTCOME:   ${{ needs.call-opencode-model-not-found.outputs.outcome }}
+      NUM_TURNS: ${{ needs.call-opencode-model-not-found.outputs.num-turns }}
+      FAILURE:   ${{ needs.call-opencode-model-not-found.outputs.failure-class }}
+      RETRY:     ${{ needs.call-opencode-model-not-found.outputs.retry-decision }}
+    steps:
+      - name: Assert a wrong model id is model_not_found and is not retried
+        run: |
+          fail=0
+          [[ "$OUTCOME" == "failed" ]]            || { echo "::error::outcome=$OUTCOME (want failed)"; fail=1; }
+          [[ "$NUM_TURNS" == "0" ]]               || { echo "::error::num-turns=$NUM_TURNS (want 0)"; fail=1; }
+          [[ "$FAILURE" == "model_not_found" ]]   || { echo "::error::failure-class=$FAILURE (want model_not_found)"; fail=1; }
+          [[ "$RETRY" == "stop" ]]                || { echo "::error::retry-decision=$RETRY (want stop)"; fail=1; }
+          (( fail == 0 )) || exit 1
+          echo "opencode-model-not-found OK: failure=$FAILURE retry=$RETRY"
 
   # ─── Auto-review path (issue #16) ─────────────────────────────────────────
   # Four calls drive the ai_review_ai_merge job through every verdict/envelope

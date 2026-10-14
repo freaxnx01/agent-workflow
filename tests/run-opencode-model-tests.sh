@@ -295,6 +295,57 @@ assert_contains "$cap" 'attempt=1' "a model_not_found report does not consume an
 assert_contains "$cap" 'non-starts=1' "it is counted as a non-start"
 assert_contains "$cap" 'proceed=true' "and the next dispatch proceeds"
 
+section "agent-implement.yml — model preflight, injection and alert are wired (#518)"
+
+WF="$ROOT/.github/workflows/agent-implement.yml"
+wf="$(cat "$WF")"
+line_of() { grep -nF -- "$1" "$WF" | head -1 | cut -d: -f1; }
+
+assert_contains "$wf" 'bash .claude-pipeline/scripts/check-opencode-model.sh' "Run OpenCode calls the model preflight"
+assert_contains "$wf" "printf 'exit_code=65\\n'" "a failed model preflight publishes exit_code 65"
+assert_contains "$wf" 'opencode models openrouter --refresh' "the catalog is warmed before the run"
+# shellcheck disable=SC2016  # the `$(...)` is the workflow's own shell text
+# being searched for, not an expansion this test wants.
+assert_contains "$wf" 'OPENCODE_CONFIG_CONTENT="$(bash .claude-pipeline/scripts/opencode-model-config.sh)"' \
+  "the model entry is injected"
+assert_contains "$wf" 'export OPENCODE_CONFIG_CONTENT' "and exported to opencode"
+
+# shellcheck disable=SC1003  # the trailing backslash is the workflow's line
+# continuation after `opencode run`, which is what pins the ordering checks.
+run_line="$(line_of 'opencode run \')"
+for needle in 'scripts/check-opencode-auth.sh' 'scripts/check-opencode-model.sh' \
+              'opencode models openrouter --refresh' 'export OPENCODE_CONFIG_CONTENT'; do
+  if (( $(line_of "$needle") < run_line )); then
+    pass "'$needle' comes before 'opencode run'"
+  else
+    fail "'$needle' comes before 'opencode run'" "line $(line_of "$needle") vs $run_line"
+  fi
+done
+if (( $(line_of 'scripts/check-opencode-auth.sh') < $(line_of 'scripts/check-opencode-model.sh') )); then
+  pass "the key preflight runs before the model preflight"
+else
+  fail "the key preflight runs before the model preflight"
+fi
+
+assert_contains "$wf" "steps.classify_failure.outputs.class == 'model_not_found'" \
+  "an alert step is gated on the class"
+assert_contains "$wf" "contains(fromJSON('[\"out_of_credits\"]'), steps.classify_failure.outputs.class)" \
+  "the pause list is still out_of_credits only"
+assert_contains "$wf" 'opencode_model_not_found)' "the stub knows the model_not_found fixture"
+assert_not_contains "$wf" "#518's second" "the stale 'second pause reason' note is gone"
+assert_not_contains "$(cat "$ROOT/scripts/lib/pause-reasons.sh")" 'model_unavailable' \
+  "pause-reasons.sh no longer promises a model pause reason"
+
+test_wf="$(cat "$ROOT/.github/workflows/agent-implement.test.yml")"
+assert_contains "$test_wf" 'stub-fixture: opencode_model_not_found' "act: a call job exercises the class"
+assert_contains "$test_wf" 'want model_not_found' "act: a verify job asserts the class"
+
+setup_doc="$(cat "$ROOT/docs/CONSUMER-SETUP.md")"
+assert_contains "$setup_doc" '### Adding a new OpenRouter model' "CONSUMER-SETUP documents adding a model"
+assert_contains "$setup_doc" 'model_not_found' "CONSUMER-SETUP names the class"
+# shellcheck disable=SC2016  # markdown code span in the doc text, not expansion
+assert_not_contains "$setup_doc" 'classifies that as `transient`' "CONSUMER-SETUP drops the #439 retry advice"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"
