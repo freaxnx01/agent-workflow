@@ -310,10 +310,11 @@ on:
         required: false
       NTFY_TOKEN:
         description: |
-          Bearer token for a write-restricted ntfy topic (#517). Used only to
-          push the pipeline-paused alarm. Optional: with no token (or no
-          `NTFY_URL` / `NTFY_TOPIC` variable) the push is skipped and the alarm
-          issue is still raised — the push never fails a run.
+          Bearer token for a write-restricted ntfy topic. Used to push the
+          pipeline-paused alarm (#517) and the model-not-found alert (#518).
+          Optional: with no token (or no `NTFY_URL` / `NTFY_TOPIC` variable) the
+          push is skipped and the alarm issue is still raised — the push never
+          fails a run.
         required: false
     outputs:
       outcome:
@@ -1011,7 +1012,12 @@ jobs:
       - name: Alert on model not found
         id: model_alert
         continue-on-error: true
-        if: always() && steps.classify_failure.outputs.class == 'model_not_found'
+        # `!inputs.stub-claude` for the same reason as `Fail the job when the
+        # agent run failed`: agent-implement.test.yml drives the classifier to
+        # exactly this class on every PR touching scripts/, and NTFY_URL /
+        # NTFY_TOPIC are read here from the callee's own `vars` — without the
+        # carve-out each self-test run sends a real priority-high push.
+        if: always() && !inputs.stub-claude && steps.classify_failure.outputs.class == 'model_not_found'
         env:
           NTFY_URL: ${{ vars.NTFY_URL }}
           NTFY_TOPIC: ${{ vars.NTFY_TOPIC }}
@@ -1019,7 +1025,10 @@ jobs:
           # Both quoted: the rendered text contains ": ", which YAML reads as a
           # mapping separator in an unquoted scalar.
           NTFY_TITLE: "${{ format('{0}: model not found', github.repository) }}"
-          NTFY_MESSAGE: "${{ format('Issue #{0}: OpenRouter does not list model {1}. Fix default-model or the model: label, then re-dispatch.', inputs.issue-number, steps.triage.outputs.model || inputs.default-model) }}"
+          # The class covers an unlisted id and a listed id opencode could not
+          # resolve, which take opposite fixes, so the push names neither — the
+          # report block post-run-report.sh writes tells them apart.
+          NTFY_MESSAGE: "${{ format('Issue #{0}: model {1} not found, so the run did no work. The run report on the issue names the cause and the fix.', inputs.issue-number, steps.triage.outputs.model || inputs.default-model) }}"
           NTFY_PRIORITY: high
           NTFY_TAGS: warning
           NTFY_CLICK: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

@@ -130,21 +130,6 @@ if [[ "$CHECKS_RUNNABLE" == "false" ]]; then
   fi
 fi
 
-# #518: a run that stopped because OpenRouter does not list its model gets the
-# fix spelled out — the outcome line alone would send the reader to the logs.
-# Same shape as CHECKS_BLOCKED_BLOCK (leading and trailing newline) so the two
-# can share one line of the comment template and an empty one renders nothing.
-MODEL_FIX_BLOCK=''
-if [[ "$FAILURE_CLASS" == "model_not_found" ]]; then
-  MODEL_FIX_BLOCK="
-> [!WARNING]
-> **Model \`${MODEL:-unknown}\` is not on OpenRouter's model list.**
-> Set the \`default-model\` input in the consumer workflow, or the \`model:\` label
-> on this issue, to an id from <https://openrouter.ai/models>, then re-dispatch.
-> The run stopped before the agent started, so it does not count as an attempt.
-"
-fi
-
 [[ -r "$RESULT_FILE" ]] || {
   printf 'error: RESULT_FILE not readable: %s\n' "$RESULT_FILE" >&2
   exit 64
@@ -153,6 +138,40 @@ jq -e . "$RESULT_FILE" >/dev/null 2>&1 || {
   printf 'error: RESULT_FILE is not valid JSON: %s\n' "$RESULT_FILE" >&2
   exit 65
 }
+
+# #518: a run that stopped on its model gets the fix spelled out — the outcome
+# line alone would send the reader to the logs. Same shape as
+# CHECKS_BLOCKED_BLOCK (leading and trailing newline) so the two can share one
+# line of the comment template and an empty one renders nothing. Reads
+# RESULT_FILE, so it is built after the file is known to be valid JSON.
+#
+# The class has two origins and they need opposite advice: the model-list
+# preflight (`check-opencode-model.sh`, session id `opencode-preflight`) means
+# the id does not exist and the operator fixes the input or the label; opencode's
+# own 0-turn error after that preflight passed means the id IS listed, so the
+# injected config entry did not reach opencode and the input is already correct.
+MODEL_FIX_BLOCK=''
+if [[ "$FAILURE_CLASS" == "model_not_found" ]]; then
+  if [[ "$(jq -r '.session_id // ""' "$RESULT_FILE")" == "opencode-preflight" ]]; then
+    MODEL_FIX_BLOCK="
+> [!WARNING]
+> **Model \`${MODEL:-unknown}\` is not on OpenRouter's model list.**
+> Set the \`default-model\` input in the consumer workflow, or the \`model:\` label
+> on this issue, to an id from <https://openrouter.ai/models>, then re-dispatch.
+> The run stopped before the agent started, so it does not count as an attempt.
+"
+  else
+    MODEL_FIX_BLOCK="
+> [!WARNING]
+> **Model \`${MODEL:-unknown}\` could not be resolved by the agent.**
+> The model-list preflight did not reject the id, so the \`default-model\` input
+> and the \`model:\` label are likely fine — on the OpenCode path this means the
+> model entry the pipeline declares in opencode's config did not take effect.
+> Check the \`pipeline-ref\` the consumer workflow pins, then re-dispatch.
+> The run did no turns and cost \$0.00, so it does not count as an attempt.
+"
+  fi
+fi
 
 # --- formatters -------------------------------------------------------------
 

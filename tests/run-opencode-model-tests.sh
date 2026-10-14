@@ -281,6 +281,24 @@ assert_contains "$report" 'default-model' "report names the input to fix"
 assert_contains "$report" 'https://openrouter.ai/models' "report links the id list"
 assert_contains "$report" 'LABELS: ai:failed' "report stamps ai:failed"
 
+# The class also covers opencode's own 0-turn error after the preflight passed
+# (design §4), where the id demonstrably IS listed — telling the operator to fix
+# a correct `default-model` would send them the wrong way. `.session_id` tells
+# the origins apart: only the preflight's event carries `opencode-preflight`.
+own_err="$(mktemp --suffix=.json)"
+EXECUTION_FILE="$FIXTURES/opencode-model-not-found.json" MODEL=z-ai/glm-5.2 bash "$ADAPT_OC" > "$own_err"
+own_report="$(RENDER_ONLY=1 RESULT_FILE="$own_err" \
+              ISSUE_NUMBER=42 WORKFLOW_RUN_URL=https://example/run/test \
+              FAILURE_CLASS=model_not_found MODEL=z-ai/glm-5.2 AGENT=opencode \
+              bash "$ROOT/scripts/post-run-report.sh")"
+assert_not_contains "$own_report" 'is not on OpenRouter' \
+  "a post-preflight model error does not claim the id is unlisted"
+# shellcheck disable=SC2016  # markdown code span around the model id
+assert_contains "$own_report" 'Model `z-ai/glm-5.2` could not be resolved' \
+  "  → it names the model and the resolution failure"
+assert_contains "$own_report" 'pipeline-ref' "  → and points at the pinned ref to fix"
+rm -f "$own_err"
+
 # Every other class renders exactly as before: no fix block.
 other="$(RENDER_ONLY=1 RESULT_FILE="$FIXTURES/result-opencode-model-not-found.json" \
          ISSUE_NUMBER=42 WORKFLOW_RUN_URL=https://example/run/test \
@@ -329,6 +347,17 @@ fi
 
 assert_contains "$wf" "steps.classify_failure.outputs.class == 'model_not_found'" \
   "an alert step is gated on the class"
+# agent-implement.test.yml drives the classifier to exactly this class on every
+# PR touching scripts/, and NTFY_URL/NTFY_TOPIC come from the callee's `vars` —
+# without the carve-out each CI run pushes a real priority-high alert.
+assert_contains "$wf" "always() && !inputs.stub-claude && steps.classify_failure.outputs.class == 'model_not_found'" \
+  "and excluded on stub runs, like every other side-effecting step"
+assert_not_contains "$wf" 'OpenRouter does not list model' \
+  "the push does not claim the id is unlisted — the class covers both origins"
+assert_contains "$wf" 'The run report on the issue names the cause and the fix.' \
+  "  → it points at the report, which distinguishes them"
+assert_contains "$wf" 'the model-not-found alert (#518)' \
+  "the NTFY_TOKEN description names both pushes"
 assert_contains "$wf" "contains(fromJSON('[\"out_of_credits\"]'), steps.classify_failure.outputs.class)" \
   "the pause list is still out_of_credits only"
 assert_contains "$wf" 'opencode_model_not_found)' "the stub knows the model_not_found fixture"
@@ -345,6 +374,16 @@ assert_contains "$setup_doc" '### Adding a new OpenRouter model' "CONSUMER-SETUP
 assert_contains "$setup_doc" 'model_not_found' "CONSUMER-SETUP names the class"
 # shellcheck disable=SC2016  # markdown code span in the doc text, not expansion
 assert_not_contains "$setup_doc" 'classifies that as `transient`' "CONSUMER-SETUP drops the #439 retry advice"
+
+section "both #518 scripts are executable like every other script in scripts/"
+
+for script in check-opencode-model.sh opencode-model-config.sh; do
+  if [[ -x "$ROOT/scripts/$script" ]]; then
+    pass "scripts/$script is executable"
+  else
+    fail "scripts/$script is executable" "committed mode is not 100755"
+  fi
+done
 
 # --- summary ----------------------------------------------------------------
 
