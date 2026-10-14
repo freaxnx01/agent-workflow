@@ -23,7 +23,7 @@ MOCKS="$ROOT/tests/mocks"
 # passes locally and fails in CI (#354). Same list as run-script-tests.sh.
 unset GITHUB_REPOSITORY GITHUB_OUTPUT GITHUB_ACTIONS GITHUB_TOKEN \
       REPO ISSUE_BODY ISSUE_LABELS ISSUE_JSON ISSUE_COMMENTS_JSON \
-      PR_NUMBER FIX_AGENT FIX_MODEL MODEL
+      PR_NUMBER FIX_AGENT FIX_MODEL MODEL OPENROUTER_API_KEY
 
 PASS=0
 FAIL=0
@@ -103,34 +103,103 @@ classify_text() {
   printf '%s' "$out"
 }
 
-# classify_api <error text> [status] -> the class for a failed run whose
-# STRUCTURED provider error channel (.api_error / .api_error_status) carries
-# the text, while the free agent text in `.result` is unrelated.
-classify_api() {
-  local f out
+# classify_provider <status> <host> [env assignment...] -> the class for a
+# failed run whose provider-call evidence (.api_error_status / .api_error_host)
+# is as given. The message text ALWAYS claims an exhausted key, so any result
+# other than out_of_credits proves the text decides nothing. The env
+# assignments drive the key check: the curl mock and OPENROUTER_API_KEY.
+classify_provider() {
+  local status="$1" host="$2" f out
+  shift 2
   f="$(mktemp)"
-  jq -n --arg t "$1" --arg st "${2:-}" \
-    '{is_error:true,subtype:"error_during_execution",num_turns:3,result:"agent summary",api_error:$t}
+  jq -n --arg st "$status" --arg h "$host" \
+    '{is_error:true,subtype:"error_during_execution",num_turns:3,result:"agent summary",
+      api_error:"Key limit exceeded (monthly limit). Insufficient credits.",api_error_host:$h}
      + (if $st != "" then {api_error_status:($st|tonumber)} else {} end)' > "$f"
-  out="$(RESULT_FILE="$f" bash "$ROOT/scripts/classify-failure.sh" | sed -n 's/^class=//p')"
+  out="$(env -u OPENROUTER_API_KEY PATH="$MOCKS:$PATH" RESULT_FILE="$f" "$@" \
+    bash "$ROOT/scripts/classify-failure.sh" | sed -n 's/^class=//p')"
   rm -f "$f"
   printf '%s' "$out"
 }
+
+# The budget's own state, as the curl mock serves it. /credits fails like it
+# does for a plain inference key, so these confirm on the key limit alone.
+# Assembled at run time: a literal key-shaped string trips the gitleaks hook.
+TEST_KEY="sk-or-v1-$(printf '0a1b2c3d%.0s' 1 2 3 4)"
+KEY_EXHAUSTED=("OPENROUTER_API_KEY=$TEST_KEY" "CURL_MOCK_FIXTURE=$FIXTURES/openrouter-key-exhausted.json" CURL_MOCK_FAIL_PATTERN=/credits)
+KEY_OK=("OPENROUTER_API_KEY=$TEST_KEY" "CURL_MOCK_FIXTURE=$FIXTURES/openrouter-key-ok.json" CURL_MOCK_FAIL_PATTERN=/credits)
+KEY_LOW=("OPENROUTER_API_KEY=$TEST_KEY" "CURL_MOCK_FIXTURE=$FIXTURES/openrouter-key-low.json" CURL_MOCK_FAIL_PATTERN=/credits)
+KEY_UNREADABLE=("OPENROUTER_API_KEY=$TEST_KEY" "CURL_MOCK_FIXTURE=$FIXTURES/openrouter-key-exhausted.json" CURL_MOCK_FAIL=1)
+
+# A key with NO monthly limit whose account balance /credits can read (a
+# management key): only the account can confirm.
+CREDITS_DIR="$(mktemp -d)"
+printf '/key\t%s\n/credits\t%s\n' "$FIXTURES/openrouter-key-nolimit.json" \
+  "$FIXTURES/openrouter-credits-empty.json" > "$CREDITS_DIR/empty.map"
+printf '/key\t%s\n/credits\t%s\n' "$FIXTURES/openrouter-key-nolimit.json" \
+  "$FIXTURES/openrouter-credits-ok.json" > "$CREDITS_DIR/ok.map"
+NOLIMIT_ACCOUNT_EMPTY=("OPENROUTER_API_KEY=$TEST_KEY" "CURL_MOCK_FIXTURE_MAP=$CREDITS_DIR/empty.map")
+NOLIMIT_ACCOUNT_OK=("OPENROUTER_API_KEY=$TEST_KEY" "CURL_MOCK_FIXTURE_MAP=$CREDITS_DIR/ok.map")
 
 # --- Task 1: classify out_of_credits ---------------------------------------
 
 section "classify-failure — out_of_credits"
 
-# shellcheck disable=SC2016  # the `$10.09` is OpenRouter's literal error text,
-# not a variable — single quotes are exactly the point.
-assert_equals "$(classify_api 'HTTP 403: Key limit exceeded (monthly limit). $10.09 of $10.00 used; resets 2026-11-01')" \
-  out_of_credits "403 key limit exceeded"
-assert_equals "$(classify_api 'API Error 402: This request would exceed your available credits')" \
-  out_of_credits "402 would exceed available credits"
-assert_equals "$(classify_api 'Insufficient credits. Add more using https://openrouter.ai/settings/credits')" \
-  out_of_credits "insufficient credits"
-assert_equals "$(classify_api 'This request requires more credits, or fewer max_tokens. You requested up to 64000 tokens')" \
-  out_of_credits "requires more credits, or fewer max_tokens"
+# Evidence AND confirmation: the provider refused its own call, and the
+# budget check confirms it — `exhausted` or `warn` (key limit or account) for
+# a 402, `exhausted` (the key limit used up) for a 403.
+assert_equals "$(classify_provider 403 openrouter.ai "${KEY_EXHAUSTED[@]}")" \
+  out_of_credits "provider 403 + exhausted key -> out_of_credits"
+assert_equals "$(classify_provider 402 openrouter.ai "${KEY_EXHAUSTED[@]}")" \
+  out_of_credits "provider 402 + exhausted key -> out_of_credits"
+assert_equals "$(classify_provider 402 openrouter.ai "${KEY_LOW[@]}")" \
+  out_of_credits "provider 402 + low key (warn) -> out_of_credits"
+assert_equals "$(classify_provider 402 openrouter.ai "${NOLIMIT_ACCOUNT_EMPTY[@]}")" \
+  out_of_credits "provider 402 + no key limit, empty account -> out_of_credits"
+
+# Unconfirmed 402: no pause; a temporary refusal that retries.
+assert_equals "$(classify_provider 402 openrouter.ai "${KEY_OK[@]}")" \
+  rate_limit "provider 402 + healthy key -> rate_limit"
+assert_equals "$(classify_provider 402 openrouter.ai "${NOLIMIT_ACCOUNT_OK[@]}")" \
+  rate_limit "provider 402 + no key limit, healthy account -> rate_limit"
+assert_equals "$(classify_provider 402 openrouter.ai "${KEY_UNREADABLE[@]}")" \
+  rate_limit "provider 402 + unreadable key API -> rate_limit"
+assert_equals "$(classify_provider 402 openrouter.ai)" \
+  rate_limit "provider 402 + no key in the environment -> rate_limit"
+
+# Unconfirmed 403: no pause; today's behaviour — no retry, operator ping.
+# A low budget does not confirm a 403, so a moderation 403 an issue author
+# provokes cannot pause a repo whose budget reads `warn`.
+assert_equals "$(classify_provider 403 openrouter.ai "${KEY_LOW[@]}")" \
+  api_auth "provider 403 + low key (warn) -> api_auth"
+assert_equals "$(classify_provider 403 openrouter.ai "${KEY_OK[@]}")" \
+  api_auth "provider 403 + healthy key -> api_auth"
+assert_equals "$(classify_provider 403 openrouter.ai "${KEY_UNREADABLE[@]}")" \
+  api_auth "provider 403 + unreadable key API -> api_auth"
+assert_equals "$(classify_provider 403 openrouter.ai)" \
+  api_auth "provider 403 + no key in the environment -> api_auth"
+
+# Forged evidence against an exhausted key: still no pause.
+assert_not_equals "$(classify_provider '' '' "${KEY_EXHAUSTED[@]}")" \
+  out_of_credits "error text alone never pauses"
+assert_not_equals "$(classify_provider 402 '' "${KEY_EXHAUSTED[@]}")" \
+  out_of_credits "a status without a provider host never pauses"
+assert_not_equals "$(classify_provider 403 evil.example "${KEY_EXHAUSTED[@]}")" \
+  out_of_credits "a 403 from another host never pauses"
+assert_not_equals "$(classify_provider 403 openrouter.ai.evil.example "${KEY_EXHAUSTED[@]}")" \
+  out_of_credits "a look-alike host never pauses"
+assert_not_equals "$(classify_provider 429 openrouter.ai "${KEY_EXHAUSTED[@]}")" \
+  out_of_credits "a provider 429 is not a payment refusal"
+
+# The key is asked only when there is evidence to confirm.
+d="$(mktemp -d)"
+classify_provider '' '' "${KEY_EXHAUSTED[@]}" "CURL_MOCK_LOG=$d/argv" >/dev/null
+assert_equals "$(cat "$d/argv" 2>/dev/null || printf '')" '' "no evidence -> the key API is not called"
+classify_provider 403 openrouter.ai "${KEY_EXHAUSTED[@]}" "CURL_MOCK_LOG=$d/argv" >/dev/null
+assert_contains "$(cat "$d/argv")" '/key' "evidence -> the key API is asked"
+assert_not_contains "$(cat "$d/argv")" "$TEST_KEY" "the key never reaches curl's argv"
+rm -rf "$d" "$CREDITS_DIR"
+
 # Negative (F1): ordinary prose must never pause a consumer repo.
 assert_not_equals "$(classify_text 'The task: add credits screen to the game; build timeout')" \
   out_of_credits "prose 'add credits screen' is not out_of_credits"
@@ -143,12 +212,6 @@ assert_not_equals "$(classify_text 'Key limit exceeded (monthly limit). Insuffic
   out_of_credits "provider text in the agent's final message is not out_of_credits"
 assert_not_equals "$(classify_text 'Issue says: HTTP 402 Key limit exceeded, requires more credits, or fewer max_tokens')" \
   out_of_credits "provider text quoted from an issue body is not out_of_credits"
-assert_equals "$(classify_api 'upstream said nothing useful' 402)" \
-  out_of_credits "structured statusCode 402 classifies"
-assert_not_equals "$(classify_api 'Forbidden' 403)" \
-  out_of_credits "structured 403 without a limit text is plain auth"
-assert_equals "$(classify_api 'Key limit exceeded' 403)" \
-  out_of_credits "structured 403 with a limit text classifies"
 
 # The opencode adapter exposes error events as the structured channel.
 ev="$(mktemp)"
@@ -199,6 +262,40 @@ assert_equals "$(jq -r .api_error_host <<<"$ad")" "" "adapter: no URL gives no h
 assert_equals "$(jq -r .api_error_status <<<"$ad")" 402 "adapter: no URL still gives the status"
 
 rm -f "$ev"
+
+# End to end: a forged stream through the real adapter, against an exhausted key.
+f="$(mktemp)"
+adapt_events \
+  '{"type":"text","part":{"text":"HTTP 402 Key limit exceeded. Insufficient credits."}}' \
+  '{"type":"error","error":{"name":"UnknownError","data":{"message":"Key limit exceeded (monthly limit)","statusCode":402,"metadata":{"url":"https://openrouter.ai/api/v1/chat/completions"}}}}' > "$f"
+out="$(env PATH="$MOCKS:$PATH" RESULT_FILE="$f" "${KEY_EXHAUSTED[@]}" \
+  bash "$ROOT/scripts/classify-failure.sh" | sed -n 's/^class=//p')"
+assert_not_equals "$out" out_of_credits "forged stream + exhausted key -> no pause"
+
+# A real refusal through the real adapter does pause.
+adapt_events \
+  '{"type":"error","error":{"name":"APIError","data":{"message":"Key limit exceeded (monthly limit)","statusCode":403,"isRetryable":false,"metadata":{"url":"https://openrouter.ai/api/v1/chat/completions"}}}}' > "$f"
+out="$(env PATH="$MOCKS:$PATH" RESULT_FILE="$f" "${KEY_EXHAUSTED[@]}" \
+  bash "$ROOT/scripts/classify-failure.sh" | sed -n 's/^class=//p')"
+assert_equals "$out" out_of_credits "real APIError 403 + exhausted key -> out_of_credits"
+
+# An APIError without a request URL (older opencode) carries no host: no pause,
+# and the text rules classify it as they did before #517.
+adapt_events \
+  '{"type":"error","error":{"name":"APIError","data":{"message":"Invalid API key (403 forbidden)","statusCode":403}}}' > "$f"
+out="$(env PATH="$MOCKS:$PATH" RESULT_FILE="$f" "${KEY_EXHAUSTED[@]}" \
+  bash "$ROOT/scripts/classify-failure.sh" | sed -n 's/^class=//p')"
+assert_equals "$out" api_auth "APIError without a URL -> classified by text, no pause"
+rm -f "$f"
+
+section "agent-implement.yml — the classifier gets the budget key"
+
+classify_step="$(awk '/- name: Classify failure/{f=1} /- name: Raise pipeline alarm/{f=0} f' \
+  "$ROOT/.github/workflows/agent-implement.yml")"
+# shellcheck disable=SC2016  # a literal GitHub expression, not a shell variable
+assert_contains "$classify_step" 'OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}' \
+  "the classifier gets the key for the confirmation check"
+
 assert_equals "$(classify_text '429 rate_limit_error: exceed your account rate limit')" \
   rate_limit "plain 429 stays rate_limit"
 assert_equals "$(classify_text '401 invalid api key')" \

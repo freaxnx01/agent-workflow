@@ -979,6 +979,10 @@ jobs:
         if: always() && (steps.claude.outputs.result-file != '' || steps.opencode_adapt.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
         env:
           RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.opencode_adapt.outputs.result-file || steps.stub_run.outputs.result-file }}
+          # #521: lets the classifier confirm a provider refusal against the
+          # budget's own state before a run may pause the repo. Empty for a
+          # Claude-only consumer, which then never classifies out_of_credits.
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: bash .claude-pipeline/scripts/classify-failure.sh
 
       # #517: the classes in this list pause the whole repo instead of failing

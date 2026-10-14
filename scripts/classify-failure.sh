@@ -7,17 +7,29 @@
 # Required environment variables:
 #   RESULT_FILE  Path to result.json from the Claude run.
 #
+# Optional environment variables:
+#   OPENROUTER_API_KEY  Lets the classifier confirm a provider refusal
+#                       against the budget's own state
+#                       (check-openrouter-budget.sh). Unset means "not
+#                       confirmed": never out_of_credits.
+#
 # Output (stdout one line; GITHUB_OUTPUT key=value when set):
 #   class=success | out_of_credits | model_not_found | rate_limit | api_auth |
 #         transient | task_failure | bug
 #
 #   - success      → no retry, post-run-report handles it
-#   - out_of_credits → key limit / credit balance exhausted — pauses the whole
-#                    pipeline (scripts/lib/pause-reasons.sh), no retry
+#   - out_of_credits → the provider refused its OWN call AND the budget check
+#                    confirms it: a 402 when it reads exhausted or warn (key
+#                    limit or account balance), a 403 only when it reads
+#                    exhausted — pauses the whole pipeline
+#                    (scripts/lib/pause-reasons.sh), no retry
 #   - model_not_found → the model id is not on OpenRouter's list — operator
 #                    fixes the id; no retry, not an attempt, one ntfy push
-#   - rate_limit   → 429 / quota exceeded — retry after delay
-#   - api_auth     → 401 / invalid token — operator intervention, no retry
+#   - rate_limit   → 429 / quota exceeded, or a provider 402 the budget check
+#                    did not confirm — retry after delay
+#   - api_auth     → 401 / invalid token, or a provider 403 the budget check
+#                    did not confirm (a low budget does not) — operator
+#                    intervention, no retry
 #   - transient    → 5xx / network / timeout — retry with exponential backoff
 #   - task_failure → max-turns or similar Claude-side failure — at most one retry
 #   - bug          → unclassified is_error=true — no retry, ping operator
@@ -30,6 +42,8 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+_CF_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 if [[ -z "${RESULT_FILE:-}" ]]; then
   printf 'error: RESULT_FILE must be set\n' >&2
   exit 2
@@ -40,14 +54,42 @@ jq -e . "$RESULT_FILE" >/dev/null 2>&1 || { printf 'error: RESULT_FILE not valid
 is_error="$(jq -r '.is_error // false' "$RESULT_FILE")"
 subtype="$(jq -r '.subtype // ""' "$RESULT_FILE")"
 result_text="$(jq -r '.result // ""' "$RESULT_FILE")"
-# The provider/agent ERROR CHANNEL, kept apart from the free agent text above:
-# `.api_error` (error events joined by adapt-opencode-result.sh) and
-# `.api_error_status` (HTTP status; also emitted by the Claude CLI). Only this
-# channel may classify out_of_credits — `.result` carries the agent's own words
-# and anything an issue author got it to echo, and a pause stops the whole repo.
-api_error="$(jq -r '.api_error // ""' "$RESULT_FILE")"
+# The PROVIDER-CALL EVIDENCE, kept apart from every text channel: the HTTP
+# status and the request host of the provider's own failed call, lifted by
+# adapt-opencode-result.sh from opencode's `APIError` event. No message text is
+# read for out_of_credits — `.result` and `.api_error` both carry words an
+# issue author or a tool output can put there, and a pause stops the whole
+# repo (#521).
 api_status="$(jq -r '.api_error_status // ""' "$RESULT_FILE")"
+api_host="$(jq -r '.api_error_host // ""' "$RESULT_FILE")"
+PROVIDER_HOST='openrouter.ai'
 num_turns="$(jq -r '.num_turns // ""' "$RESULT_FILE")"
+
+# provider_refused_payment — the provider's own call came back 402 or 403.
+# OpenRouter reports an empty balance as 402 and a monthly key limit as 403.
+provider_refused_payment() {
+  [[ "$api_host" == "$PROVIDER_HOST" ]] || return 1
+  [[ "$api_status" == "402" || "$api_status" == "403" ]]
+}
+
+# budget_confirms_refusal — the budget's own state backs the refusal
+# (#521). One run's error is a claim; this is the check no run can reach.
+#   402 → check-openrouter-budget.sh reads `exhausted` or `warn`, on the key
+#         limit or the account balance: a forged 402 can only pause a repo
+#         whose money is in fact nearly gone.
+#   403 → it reads `exhausted`: the key limit is used up (only the key can
+#         read `exhausted`). A moderation 403 in a low repo is not a pause.
+# Fail safe: no key, an unreadable API, `ok` and `unknown` are all "not
+# confirmed". GITHUB_OUTPUT is blanked so the budget script's outputs do not
+# become this step's outputs.
+budget_confirms_refusal() {
+  [[ -n "${OPENROUTER_API_KEY:-}" ]] || return 1
+  local verdict
+  verdict="$(GITHUB_OUTPUT='' bash "$_CF_HERE/check-openrouter-budget.sh" 2>/dev/null \
+    | sed -n 's/^verdict=//p' | head -1)" || return 1
+  [[ "$verdict" == "exhausted" ]] && return 0
+  [[ "$api_status" == "402" && "$verdict" == "warn" ]]
+}
 
 # A terminal `subtype` of error_* is authoritative even when is_error is false:
 # the CLI reports `error_max_turns` with `"is_error": false`, so keying off
@@ -57,16 +99,25 @@ num_turns="$(jq -r '.num_turns // ""' "$RESULT_FILE")"
 # which is the right default for an outcome we cannot name.
 if [[ "$is_error" != "true" && "$subtype" != error_* ]]; then
   class=success
-elif [[ "$api_status" == "402" ]] || printf '%s' "$api_error" | grep -qiE 'key limit exceeded|exceeds? your available credits|insufficient credits|requires more credits, or fewer max_tokens'; then
-  # Only the provider's own full phrases: this text is the agent's whole result,
-  # so loose patterns (`add.credits`, `payment required`) match task prose and
-  # would pause a whole consumer repo.
-  # Matched BEFORE rate_limit and api_auth, both of which would otherwise claim
-  # these texts — OpenRouter reports a monthly key limit as HTTP 403 and an
-  # empty balance as 402. Neither is retryable and neither is about this issue:
-  # the money ran out, so every dispatch in the repo fails the same way until
-  # an operator tops up. That is a pipeline pause, not a per-issue failure
-  # (#517, superseding the rate_limit bucketing from #514).
+elif provider_refused_payment && ! budget_confirms_refusal; then
+  # The provider refused its own call, but the budget does not confirm it.
+  # Matched BEFORE rate_limit and api_auth, which would otherwise claim these
+  # by their text. A 402 is a temporary refusal and retries, as before #517
+  # (#514); a real exhaustion is confirmed by the check on the next run. A 403
+  # — also one in a repo whose budget only reads low — keeps the pre-#517
+  # behaviour: no retry, operator ping (#521).
+  if [[ "$api_status" == "402" ]]; then
+    class=rate_limit
+  else
+    class=api_auth
+  fi
+elif provider_refused_payment; then
+  # Evidence AND confirmation: the provider refused its own call and the
+  # budget backs it (a 402: exhausted or low; a 403: exhausted). The money
+  # ran out (or nearly), so every
+  # dispatch in the repo fails the same way until an operator tops up — a
+  # pipeline pause, not a per-issue failure (#517, #521). The budget check ran
+  # once, in the branch above.
   class=out_of_credits
 elif [[ "$num_turns" == "0" ]] && printf '%s' "$result_text" | grep -qiE 'model not found|ProviderModelNotFoundError'; then
   # The model id is not one OpenRouter lists (check-opencode-model.sh's
