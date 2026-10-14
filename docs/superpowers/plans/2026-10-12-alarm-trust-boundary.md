@@ -4,7 +4,7 @@
 
 **Goal:** Untrusted text can no longer change which issues a resume dispatches, and no single run can pause a repo unless the provider's own HTTP status and the budget's own state both say the money is gone or nearly gone.
 
-**Architecture:** The paused list moves out of the alarm body into a per-issue label, `ai:paused`, owned by a new `scripts/lib/paused-issues.sh`; the alarm body becomes display-only. `out_of_credits` is decided from structural provider evidence (event name, HTTP status, request host) emitted by the opencode adapter, then confirmed by `check-openrouter-budget.sh` (verdict `exhausted` or `warn`); an unconfirmed 402 is `rate_limit`, an unconfirmed 403 is `api_auth`.
+**Architecture:** The paused list moves out of the alarm body into a per-issue label, `ai:paused`, owned by a new `scripts/lib/paused-issues.sh`; the alarm body becomes display-only. `out_of_credits` is decided from structural provider evidence (event name, HTTP status, request host) emitted by the opencode adapter, then confirmed by `check-openrouter-budget.sh` — verdict `exhausted` or `warn` for a 402, `exhausted` only for a 403; an unconfirmed 402 is `rate_limit`, an unconfirmed 403 is `api_auth`.
 
 **Tech Stack:** Bash 5 (`set -euo pipefail`, `IFS=$'\n\t'`), `jq`, `gh`, `curl`; Layer-1 fixture tests with `tests/mocks/gh` and `tests/mocks/curl`.
 
@@ -15,7 +15,7 @@
 - Lands after #518: both change scripts/classify-failure.sh; rebase on it. #518 adds a `model_not_found` class (matched before rate_limit/api_auth/transient) and removes the 0-turn `model not found` → transient branch; keep that branch order intact. Start from current `origin/main` and locate every edit in `classify-failure.sh` by the anchor text named below, never by line number; do not touch the `model_not_found` branch, its header bullet, or the `transient` branch.
 - The label name is exactly `ai:paused`, defined once, in `scripts/lib/paused-issues.sh`.
 - The provider host is exactly `openrouter.ai`; the trusted event name is exactly `APIError`; the candidate statuses are exactly `402` and `403`.
-- Budget verdict `exhausted` or `warn` (key limit or account balance) confirms, for 402 and 403 alike → `out_of_credits`. Unconfirmed (any other verdict, no key, unreadable API): a 402 is `rate_limit`, a 403 is `api_auth`.
+- The confirming verdict depends on the status (spec C3, C5): a 402 is confirmed by `exhausted` or `warn` (key limit or account balance); a 403 only by `exhausted` (the key limit used up — the account never reads `exhausted`). Confirmed → `out_of_credits`. Unconfirmed (any other verdict, `warn` for a 403, no key, unreadable API): a 402 is `rate_limit`, a 403 is `api_auth`.
 - No message text (`.result`, `.api_error`) may decide `out_of_credits`.
 - Nothing may be parsed out of an alarm body except the gate's cosmetic reason id, and that only when `is_pause_class` accepts it.
 - Tests are hermetic: `tests/mocks/gh` and `tests/mocks/curl` only. No network.
@@ -251,7 +251,7 @@ git commit -m "fix(security): take provider evidence from APIError events only (
 
 **Interfaces:**
 - Consumes: `.api_error_status`, `.api_error_host` (Task 2); `scripts/check-openrouter-budget.sh` (prints `verdict=ok|warn|exhausted|unknown`).
-- Produces: `class=out_of_credits` only when host is `openrouter.ai`, status is 402 or 403, and the budget verdict is `exhausted` or `warn`; for the same evidence without that verdict, `class=rate_limit` for a 402 and `class=api_auth` for a 403. New optional env `OPENROUTER_API_KEY`.
+- Produces: `class=out_of_credits` only when host is `openrouter.ai`, status is 402 or 403, and the budget verdict confirms it — `exhausted` or `warn` for a 402, `exhausted` for a 403; for the same evidence without that verdict, `class=rate_limit` for a 402 and `class=api_auth` for a 403. New optional env `OPENROUTER_API_KEY`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -315,15 +315,14 @@ Create `tests/fixtures/openrouter-credits-empty.json` (an account with nothing l
 
 ```bash
 # Evidence AND confirmation: the provider refused its own call, and the
-# budget check reads `exhausted` or `warn` on the key limit or the account.
+# budget check confirms it — `exhausted` or `warn` (key limit or account) for
+# a 402, `exhausted` (the key limit used up) for a 403.
 assert_equals "$(classify_provider 403 openrouter.ai "${KEY_EXHAUSTED[@]}")" \
   out_of_credits "provider 403 + exhausted key -> out_of_credits"
 assert_equals "$(classify_provider 402 openrouter.ai "${KEY_EXHAUSTED[@]}")" \
   out_of_credits "provider 402 + exhausted key -> out_of_credits"
 assert_equals "$(classify_provider 402 openrouter.ai "${KEY_LOW[@]}")" \
   out_of_credits "provider 402 + low key (warn) -> out_of_credits"
-assert_equals "$(classify_provider 403 openrouter.ai "${KEY_LOW[@]}")" \
-  out_of_credits "provider 403 + low key (warn) -> out_of_credits"
 assert_equals "$(classify_provider 402 openrouter.ai "${NOLIMIT_ACCOUNT_EMPTY[@]}")" \
   out_of_credits "provider 402 + no key limit, empty account -> out_of_credits"
 
@@ -338,6 +337,10 @@ assert_equals "$(classify_provider 402 openrouter.ai)" \
   rate_limit "provider 402 + no key in the environment -> rate_limit"
 
 # Unconfirmed 403: no pause; today's behaviour — no retry, operator ping.
+# A low budget does not confirm a 403, so a moderation 403 an issue author
+# provokes cannot pause a repo whose budget reads `warn`.
+assert_equals "$(classify_provider 403 openrouter.ai "${KEY_LOW[@]}")" \
+  api_auth "provider 403 + low key (warn) -> api_auth"
 assert_equals "$(classify_provider 403 openrouter.ai "${KEY_OK[@]}")" \
   api_auth "provider 403 + healthy key -> api_auth"
 assert_equals "$(classify_provider 403 openrouter.ai "${KEY_UNREADABLE[@]}")" \
@@ -409,7 +412,7 @@ assert_contains "$classify_step" 'OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API
 - [ ] **Step 2: Run it and see it fail**
 
 Run: `bash tests/run-pipeline-alarm-tests.sh`
-Expected: FAIL — "provider 403 + healthy key -> api_auth" and "provider 402 + healthy key -> rate_limit" get `out_of_credits` (the message text and the bare 402 still decide), "error text alone never pauses" gets `out_of_credits`, and the workflow assertion fails.
+Expected: FAIL — "provider 403 + low key (warn) -> api_auth", "provider 403 + healthy key -> api_auth" and "provider 402 + healthy key -> rate_limit" get `out_of_credits` (the message text and the bare 402 still decide), "error text alone never pauses" gets `out_of_credits`, and the workflow assertion fails.
 
 - [ ] **Step 3: Implement the classifier**
 
@@ -429,9 +432,10 @@ Add after the `RESULT_FILE` line of the header's "Required environment variables
 Replace the header's `out_of_credits` bullet with the first block, and its `rate_limit` and `api_auth` bullets with the second. Leave #518's `model_not_found` bullet, which sits between them, untouched:
 
 ```bash
-#   - out_of_credits → the provider refused its OWN call with 402/403 AND the
-#                    budget check reads exhausted or warn (key limit or
-#                    account balance) — pauses the whole pipeline
+#   - out_of_credits → the provider refused its OWN call AND the budget check
+#                    confirms it: a 402 when it reads exhausted or warn (key
+#                    limit or account balance), a 403 only when it reads
+#                    exhausted — pauses the whole pipeline
 #                    (scripts/lib/pause-reasons.sh), no retry
 ```
 
@@ -439,7 +443,8 @@ Replace the header's `out_of_credits` bullet with the first block, and its `rate
 #   - rate_limit   → 429 / quota exceeded, or a provider 402 the budget check
 #                    did not confirm — retry after delay
 #   - api_auth     → 401 / invalid token, or a provider 403 the budget check
-#                    did not confirm — operator intervention, no retry
+#                    did not confirm (a low budget does not) — operator
+#                    intervention, no retry
 ```
 
 Add after `IFS=$'\n\t'`:
@@ -468,19 +473,23 @@ provider_refused_payment() {
   [[ "$api_status" == "402" || "$api_status" == "403" ]]
 }
 
-# budget_confirms_refusal — the budget's own state says the money is gone or
-# nearly gone: check-openrouter-budget.sh reads `exhausted` or `warn` on the
-# key limit or the account balance (#521). One run's error is a claim; this is
-# the check no run can reach, so a forged refusal can only pause a repo whose
-# money is in fact nearly gone. Fail safe: no key, an unreadable API, `ok` and
-# `unknown` are all "not confirmed". GITHUB_OUTPUT is blanked so the budget
-# script's outputs do not become this step's outputs.
+# budget_confirms_refusal — the budget's own state backs the refusal
+# (#521). One run's error is a claim; this is the check no run can reach.
+#   402 → check-openrouter-budget.sh reads `exhausted` or `warn`, on the key
+#         limit or the account balance: a forged 402 can only pause a repo
+#         whose money is in fact nearly gone.
+#   403 → it reads `exhausted`: the key limit is used up (only the key can
+#         read `exhausted`). A moderation 403 in a low repo is not a pause.
+# Fail safe: no key, an unreadable API, `ok` and `unknown` are all "not
+# confirmed". GITHUB_OUTPUT is blanked so the budget script's outputs do not
+# become this step's outputs.
 budget_confirms_refusal() {
   [[ -n "${OPENROUTER_API_KEY:-}" ]] || return 1
   local verdict
   verdict="$(GITHUB_OUTPUT='' bash "$_CF_HERE/check-openrouter-budget.sh" 2>/dev/null \
     | sed -n 's/^verdict=//p' | head -1)" || return 1
-  [[ "$verdict" == "exhausted" || "$verdict" == "warn" ]]
+  [[ "$verdict" == "exhausted" ]] && return 0
+  [[ "$api_status" == "402" && "$verdict" == "warn" ]]
 }
 ```
 
@@ -492,7 +501,8 @@ elif provider_refused_payment && ! budget_confirms_refusal; then
   # Matched BEFORE rate_limit and api_auth, which would otherwise claim these
   # by their text. A 402 is a temporary refusal and retries, as before #517
   # (#514); a real exhaustion is confirmed by the check on the next run. A 403
-  # keeps the pre-#517 behaviour: no retry, operator ping (#521).
+  # — also one in a repo whose budget only reads low — keeps the pre-#517
+  # behaviour: no retry, operator ping (#521).
   if [[ "$api_status" == "402" ]]; then
     class=rate_limit
   else
@@ -500,7 +510,8 @@ elif provider_refused_payment && ! budget_confirms_refusal; then
   fi
 elif provider_refused_payment; then
   # Evidence AND confirmation: the provider refused its own call and the
-  # budget reads exhausted or low. The money ran out (or nearly), so every
+  # budget backs it (a 402: exhausted or low; a 403: exhausted). The money
+  # ran out (or nearly), so every
   # dispatch in the repo fails the same way until an operator tops up — a
   # pipeline pause, not a per-issue failure (#517, #521). The budget check ran
   # once, in the branch above.
@@ -1380,15 +1391,16 @@ Expected: the four new assertions FAIL.
 Replace the table row under "What pauses the pipeline" with:
 
 ```markdown
-| `out_of_credits` | The provider refuses its own call with HTTP 402 or 403 (status and request host from opencode's `APIError` event — never message text) **and** the budget check confirms it: the key limit (`GET /api/v1/key`) or the account balance (`GET /api/v1/credits`) reads exhausted or low (`warn`) | `classify-failure.sh`, or `pipeline-health.yml` when the daily check finds the key already exhausted |
+| `out_of_credits` | The provider refuses its own call with HTTP 402 or 403 (status and request host from opencode's `APIError` event — never message text) **and** the budget check confirms it: for a 402 the key limit (`GET /api/v1/key`) or the account balance (`GET /api/v1/credits`) reads exhausted or low (`warn`); for a 403 the key limit reads exhausted | `classify-failure.sh`, or `pipeline-health.yml` when the daily check finds the key already exhausted |
 ```
 
 Add directly under the paragraph that follows the table ("The table of record is …"):
 
 ```markdown
 A provider refusal the budget check does **not** confirm (healthy budget,
-unreadable API, no key in the job) pauses nothing: a 402 is a `rate_limit` and
-retries after the delay; a 403 is `api_auth` — no retry, operator ping.
+unreadable API, no key in the job — and, for a 403, a budget that is only low)
+pauses nothing: a 402 is a `rate_limit` and retries after the delay; a 403 is
+`api_auth` — no retry, operator ping.
 ```
 
 Replace item 2 of "What happens on a pause" with:
@@ -1437,8 +1449,9 @@ Two rules keep it from steering the pipeline (#521, ADR-019):
   is parsed out of the alarm except the reason id, and that is accepted only
   when it is a known reason.
 - **It cannot pause a repo.** `out_of_credits` needs the provider's own HTTP
-  status on the provider's own host, and then the budget's own state (key
-  limit or account balance exhausted or low).
+  status on the provider's own host, and then the budget's own state: for a
+  402 the key limit or account balance exhausted or low, for a 403 the key
+  limit exhausted.
 
 An alarm raised before this change lists its issues only in its body. The
 resume no longer reads that list: add `ai:paused` to those issues by hand
@@ -1470,10 +1483,11 @@ whole repo (#521).
    end.
 2. **A pause needs evidence and a confirmation.** The evidence is structural:
    opencode's `APIError` event, HTTP status 402 or 403, request host
-   `openrouter.ai`. The confirmation is the budget's own state —
-   `check-openrouter-budget.sh` reading `exhausted` or `warn` on the key limit
-   or the account balance. Without it a 402 is a `rate_limit` (retry) and a
-   403 is `api_auth` (no retry).
+   `openrouter.ai`. The confirmation is the budget's own state,
+   `check-openrouter-budget.sh`: a 402 is confirmed by `exhausted` or `warn`
+   on the key limit or the account balance, a 403 only by `exhausted` (the
+   key limit used up). Without it a 402 is a `rate_limit` (retry) and a 403
+   is `api_auth` (no retry).
 
 **Rejected: a bot-authored comment holding the list.** It is still text to
 parse, and identifying "the bot" differs between a GitHub App token and the
@@ -1484,9 +1498,10 @@ complete until the next encoding; removing the parser removes the question.
 
 **Consequence.** The "two pauses at once drop an issue" race is gone, because
 adding a label is not a read-modify-write. A repo whose budget already reads
-`warn` pauses on any provider 402 or 403, so a forged or provoked refusal can
-only pause a repo whose money is in fact nearly gone. Only the opencode path
-can raise `out_of_credits`.
+`warn` pauses on any provider 402, so a forged 402 can only pause a repo whose
+money is in fact nearly gone; a 403 there — a moderation 403 an issue author
+provokes included — stays `api_auth`. Only the opencode path can raise
+`out_of_credits`.
 ```
 
 - [ ] **Step 5: Update `docs/glossary.md`**
