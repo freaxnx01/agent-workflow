@@ -115,7 +115,7 @@ jobs:
     name: Reusable workflow — opencode model not found (#518)
     uses: ./.github/workflows/agent-implement.yml
     with:
-      issue-number: 9014
+      issue-number: 9015
       default-model: z-ai/glm-9
       timeout-minutes: 10
       dry-run: true
