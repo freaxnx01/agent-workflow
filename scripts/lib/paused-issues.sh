@@ -14,6 +14,8 @@ set -euo pipefail
 IFS=$'\n\t'
 
 PAUSED_ISSUE_LABEL='ai:paused'
+PAUSED_ISSUE_LABEL_COLOR='FBCA04'
+PAUSED_ISSUE_LABEL_DESC='Stopped by a pipeline pause — pipeline-resume.sh re-dispatches it'
 
 # paused_issue_mark <issue> — adds the paused label to the issue. Creates the
 # label if it doesn't exist (fails safe: warns and returns 0 if the label
@@ -24,8 +26,8 @@ paused_issue_mark() {
   [[ -n "$issue" ]] || return 0
 
   gh label create "$PAUSED_ISSUE_LABEL" \
-    --color FBCA04 \
-    --description 'Stopped by a pipeline pause — pipeline-resume.sh re-dispatches it' \
+    --color "$PAUSED_ISSUE_LABEL_COLOR" \
+    --description "$PAUSED_ISSUE_LABEL_DESC" \
     --repo "$REPO" 2>/dev/null || true
 
   gh issue edit "$issue" --repo "$REPO" \

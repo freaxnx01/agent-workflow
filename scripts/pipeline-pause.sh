@@ -105,24 +105,17 @@ redact() {
 }
 
 # Untrusted text is neutralised before it reaches the body: backticks (they
-# would close the code fence), HTML comment delimiters and the marker names (they
-# would inject or hide entries in the paused-issues list pipeline-resume reads).
+# would close the code fence) and HTML comment delimiters.
 neutralise() {
-  tr -d '`' | sed -E 's/<!--//g; s/-->//g; s#/?paused-issues##g'
+  tr -d '`' | sed -E 's/<!--//g; s/-->//g'
 }
 SAFE_ERROR="$(printf '%s' "$ERROR_TEXT" | redact | neutralise)"
 
-# ISSUE_NUMBER lands in the marker block: digits only.
+# ISSUE_NUMBER is validated before label operations.
 if [[ -n "$ISSUE_NUMBER" && ! "$ISSUE_NUMBER" =~ ^[0-9]+$ ]]; then
   printf 'error: ISSUE_NUMBER must be digits only, got %q\n' "$ISSUE_NUMBER" >&2
   exit 2
 fi
-
-# The link the operator needs is usually in the error itself ("add credits at
-# ...") and is more specific than any default we could hardcode.
-KEY_LINK="$(printf '%s' "$SAFE_ERROR" \
-  | grep -oE 'https://openrouter\.ai/[^ )"]+' | head -1 || true)"
-KEY_LINK="${KEY_LINK:-https://openrouter.ai/settings/keys}"
 
 # --- alarm body -------------------------------------------------------------
 

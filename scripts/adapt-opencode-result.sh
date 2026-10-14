@@ -124,7 +124,8 @@ jq -s -c \
     api_error_status: ($call.data.statusCode // null),
     api_error_host: (($call.data.metadata.url? // "")
                      | if type == "string"
-                       then (capture("^https://(?<authority>[^/?#]+)").authority // "")
+                       then (capture("^https://(?<authority>[^/?#]+)").authority // ""
+                             | sub(":[0-9]+$"; ""))
                        else "" end
                      | ascii_downcase),
     session_id: ((.[0].sessionID // null) // ("opencode-" + ($model | gsub("/"; "-")))),

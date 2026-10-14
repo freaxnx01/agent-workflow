@@ -107,8 +107,10 @@ MODEL="${MODEL:-claude-sonnet-5}" MAX_TURNS="${turns:-80}" \
   bash "$HERE/lib/agent-cmd-claude-implement.sh" "$PROMPT_FILE" "$RESULT_FILE" || agent_rc=$?
 
 # --- classify the outcome ---------------------------------------------------
-# classify-failure.sh is the one pipeline script that was already forge-agnostic.
-class="$(RESULT_FILE="$RESULT_FILE" IS_ERROR=false bash "$HERE/classify-failure.sh" 2>/dev/null \
+# classify-failure.sh can confirm out_of_credits only with the API key.
+class="$(RESULT_FILE="$RESULT_FILE" IS_ERROR=false \
+  OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}" \
+  bash "$HERE/classify-failure.sh" 2>/dev/null \
          | sed -n 's/^class=//p' | tail -1)"
 printf '\noutcome: %s (agent rc=%s)\n' "${class:-unknown}" "$agent_rc"
 

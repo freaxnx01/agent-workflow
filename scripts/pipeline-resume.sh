@@ -41,8 +41,8 @@ CONSUMER_WORKFLOW="${CONSUMER_WORKFLOW:-agent.yml}"
 ALARM_LABEL="${ALARM_LABEL:-pipeline-paused}"
 DISPATCH_LABEL="${DISPATCH_LABEL:-ai-implement}"
 DRY_RUN="${DRY_RUN:-0}"
-MARKER_OPEN='<!-- paused-issues -->'
-MARKER_CLOSE='<!-- /paused-issues -->'
+# shellcheck source=scripts/lib/paused-issues.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/paused-issues.sh"
 
 if [[ "$(detect_forge | awk '{print $1}')" != "github" ]]; then
   printf 'pipeline-resume: no alarm adapter for this forge — nothing to resume\n'
@@ -50,7 +50,7 @@ if [[ "$(detect_forge | awk '{print $1}')" != "github" ]]; then
 fi
 
 alarms="$(gh issue list --repo "$REPO" --label "$ALARM_LABEL" --state open \
-  --json number,body --limit 20 2>/dev/null || printf '[]')"
+  --json number --limit 20 2>/dev/null || printf '[]')"
 
 if [[ "$(jq -r 'length' <<<"$alarms")" == "0" ]]; then
   printf 'pipeline-resume: no open %s alarm in %s — nothing to resume\n' "$ALARM_LABEL" "$REPO"
@@ -59,13 +59,8 @@ fi
 
 mapfile -t alarm_numbers < <(jq -r 'sort_by(.number) | .[].number' <<<"$alarms")
 
-# Every alarm's marker block, deduped: several alarms can list the same issue
-# when one key serves several repos and the operator merged them by hand.
-mapfile -t paused_issues < <(
-  jq -r '.[].body // ""' <<<"$alarms" \
-    | sed -n "s|.*${MARKER_OPEN}\(.*\)${MARKER_CLOSE}.*|\1|p" \
-    | tr ' ' '\n' | sed -n 's/^#\([0-9][0-9]*\)$/\1/p' | sort -un
-)
+paused_issues_json="$(paused_issues_open)"
+mapfile -t paused_issues < <(jq -r '.[].number' <<<"$paused_issues_json" | sort -un)
 
 printf 'pipeline-resume: alarm(s) %s list issue(s) %s\n' \
   "${alarm_numbers[*]}" "${paused_issues[*]:-none}"
@@ -101,16 +96,19 @@ for issue in ${paused_issues[@]+"${paused_issues[@]}"}; do
     '[(.labels // [])[].name] | index($l) != null' <<<"$state_json")"
   if [[ "$state" != "OPEN" ]]; then
     printf 'skipping #%s: no longer open (%s)\n' "$issue" "${state:-unknown}"
+    paused_issue_clear "$issue"
     continue
   fi
   if [[ "$has_label" != "true" ]]; then
     printf 'skipping #%s: no %s label — parked or handled by hand\n' "$issue" "$DISPATCH_LABEL"
+    paused_issue_clear "$issue"
     continue
   fi
   # No `-f attempt=` on purpose: the paused run never reached the agent, so the
   # re-run is attempt 1 and classify-agent.sh's escalation does not fire.
   if gh workflow run "$CONSUMER_WORKFLOW" --repo "$REPO" -f issue-number="$issue" >/dev/null 2>&1; then
     printf 're-dispatched #%s as attempt 1\n' "$issue"
+    paused_issue_clear "$issue"
     resumed=$((resumed + 1))
   else
     printf 'warning: could not re-dispatch #%s — dispatch it by hand\n' "$issue" >&2
