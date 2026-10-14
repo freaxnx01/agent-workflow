@@ -154,7 +154,9 @@ on:
       stub-fixture:
         description: |
           When `stub-claude: true`, picks which canned outcome the stub should
-          synthesize: success | rate_limit | task_failure. Used to exercise the
+          synthesize: success | rate_limit | task_failure | opencode_success |
+          opencode_rate_limit | opencode_task_failure | opencode_model_not_found.
+          Used to exercise the
           classify-failure + retry-dispatch branch under act without burning
           real Claude API calls or waiting for real rate limits.
         type: string
@@ -308,10 +310,11 @@ on:
         required: false
       NTFY_TOKEN:
         description: |
-          Bearer token for a write-restricted ntfy topic (#517). Used only to
-          push the pipeline-paused alarm. Optional: with no token (or no
-          `NTFY_URL` / `NTFY_TOPIC` variable) the push is skipped and the alarm
-          issue is still raised — the push never fails a run.
+          Bearer token for a write-restricted ntfy topic. Used to push the
+          pipeline-paused alarm (#517) and the model-not-found alert (#518).
+          Optional: with no token (or no `NTFY_URL` / `NTFY_TOPIC` variable) the
+          push is skipped and the alarm issue is still raised — the push never
+          fails a run.
         required: false
     outputs:
       outcome:
@@ -324,7 +327,7 @@ on:
         description: Number of conversation turns the run took.
         value: ${{ jobs.implement.outputs.num-turns }}
       failure-class:
-        description: 'Failure bucket from classify-failure.sh (success | rate_limit | api_auth | transient | task_failure | bug).'
+        description: 'Failure bucket from classify-failure.sh (success | out_of_credits | model_not_found | rate_limit | api_auth | transient | task_failure | bug).'
         value: ${{ jobs.implement.outputs.failure-class }}
       retry-decision:
         description: '"retry" or "stop" from retry-dispatch.sh. Empty when class=success (retry-dispatch is skipped).'
@@ -816,6 +819,16 @@ jobs:
             printf 'exit_code=64\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          # Preflight (#518): the model is declared to opencode below, so
+          # opencode accepts any id and cannot tell a new model from a wrong
+          # one. Ask OpenRouter's public model list instead, and stop here —
+          # as `model_not_found`, through the same degradation path — when the
+          # id is not on it. Fails open when the list cannot be read.
+          if ! OUTPUT_FILE="$out_file" bash .claude-pipeline/scripts/check-opencode-model.sh; then
+            printf 'execution_file=%s\n' "$out_file" >> "$GITHUB_OUTPUT"
+            printf 'exit_code=65\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           # opencode 1.x CLI (verified against opencode-ai@1.15.13 --help):
           #   opencode run [message..] -m <provider/model> --format json
           # The message is a POSITIONAL arg (no --prompt-file); --format json
@@ -838,6 +851,19 @@ jobs:
             openrouter/*) : ;;
             *) oc_model="openrouter/${oc_model}" ;;
           esac
+          # Model resolution (#518). opencode never waits for its catalog
+          # (models.dev): on a cold cache — every GitHub-hosted runner — it
+          # starts from a snapshot compiled into the binary and refreshes in
+          # the background, so an id newer than the pinned opencode resolved
+          # only when a 5.4 MB download won a race against startup (four of
+          # five parallel runs lost it). Two steps, in this order:
+          #   1. `models --refresh` is the one call that waits for the catalog,
+          #      so cost and context limits are real. Best-effort.
+          #   2. Declaring the id in config makes it resolve even when the
+          #      catalog is unreachable — the part that must not fail.
+          timeout 60 opencode models openrouter --refresh >/dev/null 2>&1 || true
+          OPENCODE_CONFIG_CONTENT="$(bash .claude-pipeline/scripts/opencode-model-config.sh)"
+          export OPENCODE_CONFIG_CONTENT
           # `--` ends option parsing so a prompt starting with `-` isn't read
           # as a flag. The message is passed as a single quoted positional arg
           # (no shell interpolation of issue content).
@@ -922,6 +948,9 @@ jobs:
             opencode_task_failure)
               cp .claude-pipeline/tests/fixtures/result-opencode-task-failure.json "$out"
               ;;
+            opencode_model_not_found)
+              cp .claude-pipeline/tests/fixtures/result-opencode-model-not-found.json "$out"
+              ;;
             *)
               echo "::error::unknown stub-fixture: $STUB_FIXTURE"; exit 2
               ;;
@@ -953,7 +982,7 @@ jobs:
         run: bash .claude-pipeline/scripts/classify-failure.sh
 
       # #517: the classes in this list pause the whole repo instead of failing
-      # the issue (scripts/lib/pause-reasons.sh). One list, so #518's second
+      # the issue (scripts/lib/pause-reasons.sh). One list, so a further pause
       # reason is added here and nowhere else in this file. continue-on-error
       # because an alarm that cannot be raised must not also lose the run
       # report below it.
@@ -973,6 +1002,37 @@ jobs:
         run: |
           ERROR_TEXT="$(jq -r '.api_error // .result // ""' "$RESULT_FILE")" \
             bash .claude-pipeline/scripts/pipeline-pause.sh
+
+      # #518: a model id OpenRouter does not list is a configuration error on
+      # one input or one label — the issue's run fails with the fix in its
+      # report, and this pushes it to the operator. Deliberately NOT a pause
+      # class: other issues may carry a working `model:` label, so dispatches
+      # continue. One push per failing run. continue-on-error for the same
+      # reason as the alarm above; notify-ntfy.sh exits 0 on every path anyway.
+      - name: Alert on model not found
+        id: model_alert
+        continue-on-error: true
+        # `!inputs.stub-claude` for the same reason as `Fail the job when the
+        # agent run failed`: agent-implement.test.yml drives the classifier to
+        # exactly this class on every PR touching scripts/, and NTFY_URL /
+        # NTFY_TOPIC are read here from the callee's own `vars` — without the
+        # carve-out each self-test run sends a real priority-high push.
+        if: always() && !inputs.stub-claude && steps.classify_failure.outputs.class == 'model_not_found'
+        env:
+          NTFY_URL: ${{ vars.NTFY_URL }}
+          NTFY_TOPIC: ${{ vars.NTFY_TOPIC }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          # Both quoted: the rendered text contains ": ", which YAML reads as a
+          # mapping separator in an unquoted scalar.
+          NTFY_TITLE: "${{ format('{0}: model not found', github.repository) }}"
+          # The class covers an unlisted id and a listed id opencode could not
+          # resolve, which take opposite fixes, so the push names neither — the
+          # report block post-run-report.sh writes tells them apart.
+          NTFY_MESSAGE: "${{ format('Issue #{0}: model {1} not found, so the run did no work. The run report on the issue names the cause and the fix.', inputs.issue-number, steps.triage.outputs.model || inputs.default-model) }}"
+          NTFY_PRIORITY: high
+          NTFY_TAGS: warning
+          NTFY_CLICK: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bash .claude-pipeline/scripts/notify-ntfy.sh
 
       - name: Plan retry
         id: retry

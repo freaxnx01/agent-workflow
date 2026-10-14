@@ -1,0 +1,18 @@
+{
+  "type": "result",
+  "subtype": "error_during_execution",
+  "is_error": true,
+  "duration_ms": 0,
+  "num_turns": 0,
+  "total_cost_usd": 0,
+  "api_error": "Model not found: `z-ai/glm-9` is not on OpenRouter's model list (https://openrouter.ai/models), so the run was stopped before the agent started. Fix the `default-model` input in the consumer workflow or the `model:` label on this issue, then re-dispatch.",
+  "api_error_status": null,
+  "session_id": "opencode-preflight",
+  "result": "Model not found: `z-ai/glm-9` is not on OpenRouter's model list (https://openrouter.ai/models), so the run was stopped before the agent started. Fix the `default-model` input in the consumer workflow or the `model:` label on this issue, then re-dispatch.",
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  }
+}

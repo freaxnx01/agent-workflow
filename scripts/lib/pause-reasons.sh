@@ -13,7 +13,9 @@
 #   class|reason-id|alarm title|operator hint
 #
 # Adding a reason is one row here plus a branch in classify-failure.sh — that
-# is the whole contract (#518 adds `model_unavailable` this way).
+# is the whole contract. Not every operator-fixable class belongs here:
+# `model_not_found` (#518) is alert-only, because a wrong model id on one
+# issue's label says nothing about the other issues in the repo.
 #
 # Sourced, not executed. Exposes:
 #   is_pause_class <class>           0 when the class pauses the pipeline

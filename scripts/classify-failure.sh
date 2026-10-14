@@ -8,15 +8,17 @@
 #   RESULT_FILE  Path to result.json from the Claude run.
 #
 # Output (stdout one line; GITHUB_OUTPUT key=value when set):
-#   class=success | out_of_credits | rate_limit | api_auth | transient |
-#         task_failure | bug
+#   class=success | out_of_credits | model_not_found | rate_limit | api_auth |
+#         transient | task_failure | bug
 #
 #   - success      → no retry, post-run-report handles it
 #   - out_of_credits → key limit / credit balance exhausted — pauses the whole
 #                    pipeline (scripts/lib/pause-reasons.sh), no retry
+#   - model_not_found → the model id is not on OpenRouter's list — operator
+#                    fixes the id; no retry, not an attempt, one ntfy push
 #   - rate_limit   → 429 / quota exceeded — retry after delay
 #   - api_auth     → 401 / invalid token — operator intervention, no retry
-#   - transient    → 5xx / network / timeout / 0-turn model-not-found — retry with exponential backoff
+#   - transient    → 5xx / network / timeout — retry with exponential backoff
 #   - task_failure → max-turns or similar Claude-side failure — at most one retry
 #   - bug          → unclassified is_error=true — no retry, ping operator
 #
@@ -66,6 +68,19 @@ elif [[ "$api_status" == "402" ]] || printf '%s' "$api_error" | grep -qiE 'key l
   # an operator tops up. That is a pipeline pause, not a per-issue failure
   # (#517, superseding the rate_limit bucketing from #514).
   class=out_of_credits
+elif [[ "$num_turns" == "0" ]] && printf '%s' "$result_text" | grep -qiE 'model not found|ProviderModelNotFoundError'; then
+  # The model id is not one OpenRouter lists (check-opencode-model.sh's
+  # preflight event), or opencode itself could not resolve it. A configuration
+  # error on the workflow input or the issue's `model:` label — no retry can
+  # fix it and it is not a verdict on the issue (#518, replacing the
+  # `transient` bucket from #439: the pipeline now declares the model to
+  # opencode, so the catalog miss that bucket retried cannot occur).
+  # Matched BEFORE rate_limit, api_auth and transient: those match bare digit
+  # runs and this message carries the model id — `mistral-small-2503` contains
+  # `503`. The 0-turn guard keeps a mid-run model error in `bug`. The #164
+  # missing-key preflight says nothing about a model not being found, so it
+  # still reaches api_auth.
+  class=model_not_found
 elif printf '%s' "$result_text" | grep -qiE 'rate.?limit|"?429"?|too many requests|quota.?exceed'; then
   class=rate_limit
 elif printf '%s' "$result_text" | grep -qiE '"?401"?|"?403"?|invalid.bearer|authentication.error|unauthorized|invalid.api.key|forbidden|api.key.is.not.set'; then
@@ -77,14 +92,6 @@ elif printf '%s' "$result_text" | grep -qiE '"?401"?|"?403"?|invalid.bearer|auth
 elif printf '%s' "$result_text" | grep -qiE '"?5[0-9]{2}"?|service.unavailable|timeout|econn|network|upstream.error|provider.error'; then
   # `upstream.error` / `provider.error` cover OpenRouter's pass-through
   # failures from the underlying model provider.
-  class=transient
-elif [[ "$num_turns" == "0" ]] && printf '%s' "$result_text" | grep -qiE 'model not found|ProviderModelNotFoundError'; then
-  # opencode resolves the model against a catalog it fetches at startup; when
-  # that fetch fails it falls back to a bundled snapshot that may not know a
-  # newer model, and dies before the first step (#439). Transient: retry, and
-  # escalate-on-retry moves attempt 2 to Claude. The 0-turn guard keeps a
-  # mid-run model error in `bug`; api_auth is matched first, so the #164
-  # missing-key preflight never lands here.
   class=transient
 elif [[ "$subtype" == "error_max_turns" ]]; then
   class=task_failure

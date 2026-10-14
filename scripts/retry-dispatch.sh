@@ -79,10 +79,13 @@ case "$CLASS" in
       delay=10
     fi
     ;;
-  out_of_credits|api_auth|bug)
+  out_of_credits|model_not_found|api_auth|bug)
     # operator intervention. out_of_credits is a pause class
     # (scripts/lib/pause-reasons.sh): retrying it cannot succeed until the key
     # is topped up, and pipeline-pause.sh re-dispatches the issue on resume.
+    # model_not_found is a wrong model id (#518): the operator corrects
+    # `default-model` or the `model:` label and re-dispatches. Not retrying is
+    # also what keeps escalate-on-retry from moving the issue to Claude.
     decision=stop
     ;;
   *)
