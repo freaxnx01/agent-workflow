@@ -13,6 +13,7 @@ set -euo pipefail
 IFS=$'\n\t'
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+FIXTURES="$ROOT/tests/fixtures"
 MOCKS="$ROOT/tests/mocks"
 
 # Layer-1 tests are hermetic by contract, which has to include the *ambient*
@@ -52,6 +53,24 @@ fail() {
 }
 
 # --- assertion helpers ------------------------------------------------------
+
+assert_contains() {
+  local hay="$1" needle="$2" name="$3"
+  if [[ "$hay" == *"$needle"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected substring not found: $needle"
+  fi
+}
+
+assert_not_contains() {
+  local hay="$1" needle="$2" name="$3"
+  if [[ "$hay" != *"$needle"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "unexpected substring present: $needle"
+  fi
+}
 
 assert_equals() {
   if [[ "$1" == "$2" ]]; then
@@ -106,6 +125,73 @@ assert_equals "$(opencode_fix_env 'openrouter/z-ai/glm-5.3')" "$WANT_CONFIG" \
   "self-fix with a prefixed model → same entry"
 assert_equals "$(opencode_fix_env '')" "" \
   "self-fix without a model → nothing injected"
+
+section "check-opencode-model — OpenRouter model-list preflight (#518)"
+
+OC_MODEL="$ROOT/scripts/check-opencode-model.sh"
+OC_MODEL_OUT="$(mktemp)"
+
+# model_check <model> [extra env assignments...] → exit code; OUTPUT_FILE is
+# reset first, stdout+stderr land in $OC_MODEL_LOG.
+OC_MODEL_LOG="$(mktemp)"
+model_check() {
+  local model="$1"; shift
+  local ec=0
+  : > "$OC_MODEL_OUT"
+  env PATH="$MOCKS:$PATH" CURL_MOCK_FIXTURE="$FIXTURES/openrouter-models.json" \
+    OUTPUT_FILE="$OC_MODEL_OUT" MODEL="$model" "$@" bash "$OC_MODEL" >"$OC_MODEL_LOG" 2>&1 || ec=$?
+  printf '%s' "$ec"
+}
+out_bytes() { wc -c < "$OC_MODEL_OUT" | tr -d ' '; }
+
+assert_equals "$(model_check z-ai/glm-5.3)" "0" "listed id → exit 0"
+assert_equals "$(out_bytes)" "0" "listed id → OUTPUT_FILE untouched"
+assert_equals "$(model_check openrouter/z-ai/glm-5.3)" "0" "openrouter/-prefixed listed id → exit 0"
+assert_equals "$(model_check meta-llama/llama-4-maverick:free)" "0" "listed :free variant → exit 0"
+assert_equals "$(model_check z-ai/glm-5.3:nitro)" "0" "unlisted routing suffix on a listed base id → exit 0"
+
+assert_equals "$(model_check z-ai/glm-5.33)" "65" "unlisted id → exit 65"
+event="$(cat "$OC_MODEL_OUT")"
+assert_equals "$(printf '%s' "$event" | jq -r '.type')" "error" "unlisted id → an opencode error event"
+assert_equals "$(printf '%s' "$event" | jq -r '.error.name')" "ModelNotFoundError" "unlisted id → error.name"
+msg="$(printf '%s' "$event" | jq -r '.error.data.message')"
+# shellcheck disable=SC2016  # the backticks are the message's markdown code
+# span around the id, not command substitution — single quotes are the point.
+assert_contains "$msg" 'Model not found: `z-ai/glm-5.33`' "unlisted id → message starts with the classifier's phrase and names the id"
+assert_contains "$msg" 'default-model' "unlisted id → message names the input to fix"
+assert_contains "$msg" 'model:' "unlisted id → message names the label to fix"
+assert_contains "$msg" 'https://openrouter.ai/models' "unlisted id → message links the id list"
+assert_contains "$(cat "$OC_MODEL_LOG")" '::error::' "unlisted id → an error annotation"
+
+# Exact line match, never substring: glm-5 is a prefix of the listed glm-5.3.
+assert_equals "$(model_check z-ai/glm-5)" "65" "prefix of a listed id → exit 65"
+assert_equals "$(model_check z-ai/glm-9:free)" "65" "suffix on an unlisted base id → exit 65"
+
+# Fail open: an unreadable list must not stop a run injection lets start.
+curl_log="$(mktemp)"
+assert_equals "$(model_check z-ai/glm-5.33 CURL_MOCK_FAIL=1 CURL_MOCK_LOG="$curl_log")" "0" \
+  "model list unreachable → exit 0 (fail open)"
+assert_equals "$(out_bytes)" "0" "model list unreachable → OUTPUT_FILE untouched"
+assert_contains "$(cat "$OC_MODEL_LOG")" '::warning::' "model list unreachable → a warning annotation"
+assert_equals "$(wc -l < "$curl_log" | tr -d ' ')" "2" "model list unreachable → fetched twice (one retry)"
+
+assert_equals "$(model_check z-ai/glm-5.33 CURL_MOCK_FIXTURE="$FIXTURES/openrouter-models-malformed.json")" "0" \
+  "body that is not a model list → exit 0 (fail open)"
+assert_contains "$(cat "$OC_MODEL_LOG")" '::warning::' "body that is not a model list → a warning annotation"
+
+# The list is public: no credential on the request, none in the output.
+: > "$curl_log"
+model_check z-ai/glm-5.33 OPENROUTER_API_KEY=sk-or-supersecret CURL_MOCK_LOG="$curl_log" >/dev/null
+assert_not_contains "$(cat "$curl_log")" 'Authorization' "request carries no Authorization header"
+assert_not_contains "$(cat "$curl_log" "$OC_MODEL_LOG" "$OC_MODEL_OUT")" 'sk-or-supersecret' "key value never appears"
+assert_contains "$(cat "$curl_log")" 'https://openrouter.ai/api/v1/models' "default URL is OpenRouter's public model list"
+
+ec="$(run_capture_ec env MODEL=z-ai/glm-5.3 bash "$OC_MODEL")"
+assert_equals "$ec" "2" "missing OUTPUT_FILE → exit 2"
+ec="$(run_capture_ec env OUTPUT_FILE="$OC_MODEL_OUT" bash "$OC_MODEL")"
+assert_equals "$ec" "2" "missing MODEL → exit 2"
+
+rm -f "$OC_MODEL_OUT" "$OC_MODEL_LOG" "$curl_log"
 
 # --- summary ----------------------------------------------------------------
 
