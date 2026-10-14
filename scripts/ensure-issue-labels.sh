@@ -110,6 +110,7 @@ create ai:chain-paused D73A4A 'Repo-wide kill switch for chain-dispatch'
 create 'parked' BFD4F2 'Parked for a human — agent attempt cap reached'
 
 create pipeline-paused B60205 'Pipeline paused — an open issue with this label stops new dispatches'
+create ai:paused FBCA04 'Stopped by a pipeline pause — pipeline-resume.sh re-dispatches it'
 
 create turns:50  5319E7 'Override the agent turn budget to 50 (classify-turns.sh stage 1)'
 create turns:80  5319E7 'Override the agent turn budget to 80 (classify-turns.sh stage 1)'

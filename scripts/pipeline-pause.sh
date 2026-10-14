@@ -10,6 +10,11 @@
 # both read and write (ADR-018). check-pipeline-pause.sh gates new dispatches
 # on it; closing it resumes the pipeline.
 #
+# The paused issues are tracked by label, not in the alarm body — the body is
+# display-only, so untrusted error text cannot inject or alter the paused list
+# (#521). Each paused issue gets the `ai:paused` label, and pipeline-resume.sh
+# re-dispatches exactly the open issues carrying it.
+#
 # "One per pause" is enforced twice: an existing open alarm is updated rather
 # than duplicated, and a creation that loses a race against a concurrent run
 # closes its own issue as a duplicate of the lower-numbered winner. Only the
@@ -22,7 +27,7 @@
 #   GH_TOKEN  (or ambient gh auth) with `issues: write`.
 #
 # Optional environment variables:
-#   ISSUE_NUMBER  The issue whose run hit the pause. Listed in the alarm so the
+#   ISSUE_NUMBER  The issue whose run hit the pause. Labelled `ai:paused` so the
 #                 resume knows what to re-dispatch. Empty when the pause comes
 #                 from the scheduled health check rather than a run.
 #   ERROR_TEXT    The agent's error text. Redacted and quoted in the alarm.
@@ -48,6 +53,8 @@ source "$_PP_HERE/lib/detect-forge.sh"
 source "$_PP_HERE/lib/forge.sh"
 # shellcheck source=scripts/lib/pause-reasons.sh
 source "$_PP_HERE/lib/pause-reasons.sh"
+# shellcheck source=scripts/lib/paused-issues.sh
+source "$_PP_HERE/lib/paused-issues.sh"
 
 require_env() {
   if [[ -z "${!1:-}" ]]; then
@@ -69,8 +76,6 @@ fi
 ALARM_LABEL="${ALARM_LABEL:-pipeline-paused}"
 ISSUE_NUMBER="${ISSUE_NUMBER:-}"
 ERROR_TEXT="${ERROR_TEXT:-}"
-MARKER_OPEN='<!-- paused-issues -->'
-MARKER_CLOSE='<!-- /paused-issues -->'
 
 emit() {
   printf '%s=%s\n' "$1" "$2"
@@ -119,42 +124,14 @@ KEY_LINK="$(printf '%s' "$SAFE_ERROR" \
   | grep -oE 'https://openrouter\.ai/[^ )"]+' | head -1 || true)"
 KEY_LINK="${KEY_LINK:-https://openrouter.ai/settings/keys}"
 
-# --- the paused-issues marker block -----------------------------------------
-
-# paused_list <existing-list> — the existing space-separated "#12 #34" list
-# with $ISSUE_NUMBER appended unless it is already there. Token comparison, not
-# substring: `#1` is a substring of `#12` and dedup on that would drop issues.
-paused_list() {
-  local existing="$1" token entry out="" entries=()
-  # IFS is newline/tab script-wide, so split on spaces explicitly.
-  IFS=' ' read -ra entries <<<"$existing"
-  [[ -n "$ISSUE_NUMBER" ]] && token="#${ISSUE_NUMBER}" || token=""
-  for entry in "${entries[@]}"; do
-    [[ "$entry" =~ ^#[0-9]+$ ]] || continue
-    [[ -n "$out" ]] && out+=' '
-    out+="$entry"
-    [[ "$entry" == "$token" ]] && token=""
-  done
-  if [[ -n "$token" ]]; then
-    [[ -n "$out" ]] && out+=' '
-    out+="$token"
-  fi
-  printf '%s' "$out"
-}
-
-extract_list() {
-  sed -n "s|.*${MARKER_OPEN}\(.*\)${MARKER_CLOSE}.*|\1|p" <<<"$1" | head -1
-}
-
 # --- alarm body -------------------------------------------------------------
 
 render_alarm_body() {
-  local list="$1"
   cat <<EOF
 The pipeline is **paused** in \`${REPO}\`: $(pause_title "$REASON").
 
 No new agent run will start in this repository while this issue is open. The
-issues below keep their \`ai-implement\` label and are re-dispatched on resume —
+paused issues keep their \`ai-implement\` label and are re-dispatched on resume —
 nothing was lost and nothing counted as an attempt.
 
 ### Error
@@ -163,19 +140,13 @@ nothing was lost and nothing counted as an attempt.
 ${SAFE_ERROR:-(no error text captured)}
 \`\`\`
 
-### Key management
-
-${KEY_LINK}
-
-### Paused issues
-
-${MARKER_OPEN}${list}${MARKER_CLOSE}
-
 ### How to resume
 
 1. $(pause_hint "$REASON")
 2. **Close this issue** — that is what clears the pause.
 3. Re-dispatch the paused issues: \`REPO=${REPO} bash scripts/pipeline-resume.sh\`
+
+[View paused issues](https://github.com/${REPO}/issues?q=is%3Aissue+is%3Aopen+label%3Aai%3Apaused)
 
 Raised by \`pipeline-pause.sh\` (reason \`${REASON}\`). See \`docs/ALARMS.md\`.
 EOF
@@ -189,27 +160,14 @@ trap 'rm -f "$bodyfile"' EXIT
 # --limit caps a pathological repo; sort_by(.number) makes "the oldest open
 # alarm wins" deterministic rather than dependent on gh's ordering.
 open_alarms="$(gh issue list --repo "$REPO" --label "$ALARM_LABEL" --state open \
-  --json number,body --limit 20 2>/dev/null || printf '[]')"
+  --json number --limit 20 2>/dev/null || printf '[]')"
 alarm="$(jq -r 'sort_by(.number) | .[0].number // empty' <<<"$open_alarms")"
 
 if [[ -n "$alarm" ]]; then
-  old_body="$(jq -r --argjson n "$alarm" \
-    'map(select(.number == $n)) | .[0].body // ""' <<<"$open_alarms")"
-  new_list="$(paused_list "$(extract_list "$old_body")")"
-  if [[ "$old_body" == *"$MARKER_OPEN"* ]]; then
-    # Only the marker block changes: the rest of the body may carry an
-    # operator's own notes, and overwriting those would lose them.
-    printf '%s\n' "$old_body" \
-      | sed "s|${MARKER_OPEN}.*${MARKER_CLOSE}|${MARKER_OPEN}${new_list}${MARKER_CLOSE}|" \
-      > "$bodyfile"
-  else
-    # A hand-written alarm, or one from an older version: give it a block so
-    # pipeline-resume.sh can read the list back.
-    { printf '%s\n\n### Paused issues\n\n%s%s%s\n' \
-        "$old_body" "$MARKER_OPEN" "$new_list" "$MARKER_CLOSE"; } > "$bodyfile"
-  fi
-  gh issue edit "$alarm" --repo "$REPO" --body-file "$bodyfile" >/dev/null
-  printf 'pipeline-pause: alarm #%s already open — added issue(s) %s\n' "$alarm" "$new_list"
+  # An existing alarm is not edited: the body belongs to the first racer and
+  # may carry operator notes. The paused list is now label-based, not body-based.
+  paused_issue_mark "$ISSUE_NUMBER"
+  printf 'pipeline-pause: alarm #%s already open — labelled issue #%s\n' "$alarm" "$ISSUE_NUMBER"
   emit alarm-issue "$alarm"
   emit created false
   exit 0
@@ -220,11 +178,14 @@ fi
 forge_label_ensure "$ALARM_LABEL" B60205 \
   'Pipeline paused — an open issue with this label stops new dispatches' >/dev/null 2>&1 || true
 
-render_alarm_body "$(paused_list '')" > "$bodyfile"
+render_alarm_body > "$bodyfile"
 alarm_url="$(gh issue create --repo "$REPO" \
   --title "🚨 Pipeline paused: $(pause_title "$REASON")" \
   --label "$ALARM_LABEL" --body-file "$bodyfile")"
 alarm="${alarm_url##*/}"
+
+# Mark the paused issue with a label so pipeline-resume.sh can find it.
+paused_issue_mark "$ISSUE_NUMBER"
 
 # Two runs that fail in the same second both see no open alarm and both create
 # one. Re-read and keep the lowest number: every racer reaches the same verdict
