@@ -3306,11 +3306,11 @@ assert_contains "$out" 'class=api_auth'   "opencode 403 / forbidden → class=ap
 out="$(adapter_to_classifier opencode-missing-key.json)"
 assert_contains "$out" 'class=api_auth' "missing OPENROUTER_API_KEY → api_auth (no retry)"
 
-# Transient opencode catalog miss (#439): 0 turns + "Model not found" is an
-# infrastructure blip, not a bug. Retrying it (and escalating to Claude on
-# attempt 2) is what the operator ended up doing by hand.
+# 0 turns + "Model not found" is its own class since #518: the pipeline now
+# declares the model to opencode, so the catalog miss #439 retried cannot
+# happen and what is left is a wrong id — which a retry cannot fix.
 out="$(adapter_to_classifier opencode-model-not-found.json)"
-assert_contains "$out" 'class=transient' "opencode 0-turn model-not-found → transient (retried)"
+assert_contains "$out" 'class=model_not_found' "opencode 0-turn model-not-found → model_not_found"
 
 # Error paths
 ec="$(run_capture_ec env bash "$ADAPT_OC")"
@@ -3364,11 +3364,11 @@ assert_contains "$out" 'success'     "post-run-report shows success outcome"
 
 # The model-not-found branch is guarded by num_turns == 0: a catalog miss can only
 # happen before the first step. The same text after real turns is something else
-# and must still reach the operator as a bug (#439).
+# and must still reach the operator as a bug (#439, #518).
 mnf_tmp="$(mktemp --suffix=.json)"
 jq -nc '{type:"result",subtype:"error_during_execution",is_error:true,duration_ms:0,num_turns:0,total_cost_usd:0,session_id:"s",result:"Model not found: openrouter/z-ai/glm-5.2. Did you mean: z-ai/glm-4.5?",usage:{input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0}}' > "$mnf_tmp"
 out="$(RESULT_FILE="$mnf_tmp" bash "$CLASSIFY_FAIL")"
-assert_contains "$out" 'class=transient' "model-not-found at 0 turns → transient"
+assert_contains "$out" 'class=model_not_found' "model-not-found at 0 turns → model_not_found"
 jq -c '.num_turns = 3' "$mnf_tmp" > "$mnf_tmp.3" && mv "$mnf_tmp.3" "$mnf_tmp"
 out="$(RESULT_FILE="$mnf_tmp" bash "$CLASSIFY_FAIL")"
 assert_contains "$out" 'class=bug' "model-not-found after real turns → still bug"

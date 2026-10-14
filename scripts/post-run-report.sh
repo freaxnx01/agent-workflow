@@ -47,6 +47,8 @@
 #                       status label is stamped: the run did no work and the
 #                       issue is still queued, so counting it as an attempt
 #                       would spend the issue's budget on an empty key (#517).
+#                       `model_not_found` (#518) renders `failed: model_not_found`
+#                       plus a block naming the model and the fix.
 #   MISSING_TASKS       Comma-separated plan task numbers; read when partial.
 #   PLAN_COVERAGE_REASON
 #                       Why coverage could not be checked; read when unverifiable.
@@ -126,6 +128,21 @@ if [[ "$CHECKS_RUNNABLE" == "false" ]]; then
 > The implementation itself is unaffected. Fix: `docs/PIPELINE-APP-SETUP.md`.
 '
   fi
+fi
+
+# #518: a run that stopped because OpenRouter does not list its model gets the
+# fix spelled out — the outcome line alone would send the reader to the logs.
+# Same shape as CHECKS_BLOCKED_BLOCK (leading and trailing newline) so the two
+# can share one line of the comment template and an empty one renders nothing.
+MODEL_FIX_BLOCK=''
+if [[ "$FAILURE_CLASS" == "model_not_found" ]]; then
+  MODEL_FIX_BLOCK="
+> [!WARNING]
+> **Model \`${MODEL:-unknown}\` is not on OpenRouter's model list.**
+> Set the \`default-model\` input in the consumer workflow, or the \`model:\` label
+> on this issue, to an id from <https://openrouter.ai/models>, then re-dispatch.
+> The run stopped before the agent started, so it does not count as an attempt.
+"
 fi
 
 [[ -r "$RESULT_FILE" ]] || {
@@ -313,6 +330,13 @@ if is_pause_class "$FAILURE_CLASS"; then
   STATUS_EMOJI=':warning:'
   STATUS_TEXT="paused: $(pause_title "$FAILURE_CLASS") — the issue stays queued"
   STATUS_LABEL=''
+elif [[ "$FAILURE_CLASS" == "model_not_found" ]]; then
+  # #518: a wrong model id. Still `## ai-implement run` + ai:failed — the run
+  # did fail — but it has 0 turns and $0.00, so check-attempt-cap.sh counts it
+  # as a non-start, never as an attempt.
+  STATUS_EMOJI=':x:'
+  STATUS_TEXT='failed: model_not_found'
+  STATUS_LABEL='ai:failed'
 elif [[ "$IS_ERROR" == "true" || "$SUBTYPE" == error_* ]]; then
   STATUS_EMOJI=':x:'
   STATUS_TEXT="failed: ${SUBTYPE}"
@@ -374,7 +398,7 @@ ${META_LINES}
 | Cache create | $(format_int "$CACHE_CREATE") |
 | Total tokens | $(format_int "$TOTAL_TOKENS") |
 | Max context per turn | ${CONTEXT_ROW} |
-${CHECKS_BLOCKED_BLOCK}
+${CHECKS_BLOCKED_BLOCK}${MODEL_FIX_BLOCK}
 [View workflow run](${WORKFLOW_RUN_URL})
 EOF
 }

@@ -193,6 +193,108 @@ assert_equals "$ec" "2" "missing MODEL → exit 2"
 
 rm -f "$OC_MODEL_OUT" "$OC_MODEL_LOG" "$curl_log"
 
+section "classify-failure — model_not_found (#518)"
+
+CLASSIFY_FAIL="$ROOT/scripts/classify-failure.sh"
+ADAPT_OC="$ROOT/scripts/adapt-opencode-result.sh"
+
+# classify_result_text <num_turns> <result text> → the class line
+classify_result_text() {
+  local tmp out
+  tmp="$(mktemp --suffix=.json)"
+  jq -nc --argjson turns "$1" --arg text "$2" \
+    '{type:"result",subtype:"error_during_execution",is_error:true,duration_ms:0,
+      num_turns:$turns,total_cost_usd:0,session_id:"s",result:$text,
+      usage:{input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0}}' > "$tmp"
+  out="$(RESULT_FILE="$tmp" bash "$CLASSIFY_FAIL")"
+  rm -f "$tmp"
+  printf '%s' "$out"
+}
+
+assert_equals "$(RESULT_FILE="$FIXTURES/result-opencode-model-not-found.json" bash "$CLASSIFY_FAIL")" \
+  'class=model_not_found' "preflight result fixture → model_not_found"
+
+assert_equals "$(classify_result_text 0 'Model not found: openrouter/z-ai/glm-5.3. Did you mean: z-ai/glm-4-32b, z-ai/glm-4.5, z-ai/glm-4.5-air?')" \
+  'class=model_not_found' "opencode's own 0-turn error → model_not_found"
+assert_equals "$(classify_result_text 0 'ProviderModelNotFoundError')" \
+  'class=model_not_found' "bare error name at 0 turns → model_not_found"
+
+# The message carries the model id, and the buckets below match bare digit
+# runs. An id must never choose the class.
+# shellcheck disable=SC2016  # the backticks are the message's markdown code
+# spans around the id, not command substitution.
+assert_equals "$(classify_result_text 0 'Model not found: `mistralai/mistral-small-2503` is not on the list')" \
+  'class=model_not_found' "id containing 503 → model_not_found, not transient"
+# shellcheck disable=SC2016
+assert_equals "$(classify_result_text 0 'Model not found: `foo/bar-429` is not on the list')" \
+  'class=model_not_found' "id containing 429 → model_not_found, not rate_limit"
+# shellcheck disable=SC2016
+assert_equals "$(classify_result_text 0 'Model not found: `foo/bar-401` is not on the list')" \
+  'class=model_not_found' "id containing 401 → model_not_found, not api_auth"
+
+assert_equals "$(classify_result_text 3 'Model not found: openrouter/z-ai/glm-5.3.')" \
+  'class=bug' "same text after real turns → still bug"
+
+# The whole chain: preflight event → adapter → classifier.
+chain_out="$(mktemp)"; chain_result="$(mktemp --suffix=.json)"
+env PATH="$MOCKS:$PATH" CURL_MOCK_FIXTURE="$FIXTURES/openrouter-models.json" \
+  OUTPUT_FILE="$chain_out" MODEL=z-ai/glm-5.33 bash "$ROOT/scripts/check-opencode-model.sh" >/dev/null 2>&1 || true
+EXECUTION_FILE="$chain_out" MODEL=z-ai/glm-5.33 bash "$ADAPT_OC" > "$chain_result"
+assert_equals "$(jq -r '.num_turns' "$chain_result")" "0" "preflight event → adapter → 0 turns"
+assert_equals "$(RESULT_FILE="$chain_result" bash "$CLASSIFY_FAIL")" 'class=model_not_found' \
+  "preflight event → adapter → classifier → model_not_found"
+rm -f "$chain_out" "$chain_result"
+
+# The #164 missing-key preflight must keep its own class.
+missing_key="$(mktemp --suffix=.json)"
+EXECUTION_FILE="$FIXTURES/opencode-missing-key.json" MODEL=z-ai/glm-5.3 bash "$ADAPT_OC" > "$missing_key"
+assert_equals "$(RESULT_FILE="$missing_key" bash "$CLASSIFY_FAIL")" 'class=api_auth' \
+  "missing OPENROUTER_API_KEY → still api_auth"
+rm -f "$missing_key"
+
+section "model_not_found is alert-only: no retry, no pause, not an attempt (#518)"
+
+retry_err="$(mktemp)"
+out="$(CLASS=model_not_found ATTEMPT=1 ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 \
+        bash "$ROOT/scripts/retry-dispatch.sh" 2>"$retry_err")"
+assert_contains "$out" 'decision=stop' "retry-dispatch: model_not_found → stop"
+assert_not_contains "$(cat "$retry_err")" 'unknown CLASS' "retry-dispatch knows the class"
+rm -f "$retry_err"
+
+# shellcheck source=scripts/lib/pause-reasons.sh
+source "$ROOT/scripts/lib/pause-reasons.sh"
+if is_pause_class model_not_found; then
+  fail "model_not_found is not a pause class" "pause-reasons.sh lists it"
+else
+  pass "model_not_found is not a pause class"
+fi
+
+report="$(RENDER_ONLY=1 RESULT_FILE="$FIXTURES/result-opencode-model-not-found.json" \
+          ISSUE_NUMBER=42 WORKFLOW_RUN_URL=https://example/run/test \
+          FAILURE_CLASS=model_not_found MODEL=z-ai/glm-9 AGENT=opencode \
+          bash "$ROOT/scripts/post-run-report.sh")"
+assert_contains "$report" '## ai-implement run' "report keeps the run heading"
+assert_contains "$report" ':x: failed: model_not_found' "report names the class as the outcome"
+# shellcheck disable=SC2016  # markdown code span around the model id again
+assert_contains "$report" 'Model `z-ai/glm-9` is not on OpenRouter' "report names the model"
+assert_contains "$report" 'default-model' "report names the input to fix"
+assert_contains "$report" 'https://openrouter.ai/models' "report links the id list"
+assert_contains "$report" 'LABELS: ai:failed' "report stamps ai:failed"
+
+# Every other class renders exactly as before: no fix block.
+other="$(RENDER_ONLY=1 RESULT_FILE="$FIXTURES/result-opencode-model-not-found.json" \
+         ISSUE_NUMBER=42 WORKFLOW_RUN_URL=https://example/run/test \
+         FAILURE_CLASS=bug MODEL=z-ai/glm-9 bash "$ROOT/scripts/post-run-report.sh")"
+assert_not_contains "$other" 'is not on OpenRouter' "another class → no model fix block"
+
+# "Not an attempt" is check-attempt-cap's non-start rule: 0 turns AND $0.00.
+comment="${report%%$'\n---\nLABELS:'*}"
+cap="$(ISSUE_COMMENTS_JSON="$(jq -nc --arg b "$comment" '[{body:$b}]')" \
+       ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 bash "$ROOT/scripts/check-attempt-cap.sh")"
+assert_contains "$cap" 'attempt=1' "a model_not_found report does not consume an attempt"
+assert_contains "$cap" 'non-starts=1' "it is counted as a non-start"
+assert_contains "$cap" 'proceed=true' "and the next dispatch proceeds"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"
