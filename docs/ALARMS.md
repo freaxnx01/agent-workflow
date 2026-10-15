@@ -14,11 +14,17 @@ not stamp `ai:failed`.
 
 | Class | Recognised from | Raised by |
 |---|---|---|
-| `out_of_credits` | HTTP 403 `Key limit exceeded`, HTTP 402 `would exceed your available credits`, `Insufficient credits. Add more…` | `classify-failure.sh`, or `pipeline-health.yml` when the daily check finds the key already exhausted |
+| `out_of_credits` | The provider refuses its own call with HTTP 402 or 403 (status and request host from opencode's `APIError` event — never message text) **and** the budget check confirms it: for a 402 the key limit (`GET /api/v1/key`) or the account balance (`GET /api/v1/credits`) reads exhausted or low (`warn`); for a 403 the key limit reads exhausted | `classify-failure.sh`, or `pipeline-health.yml` when the daily check finds the key already exhausted |
 
 The table of record is [`scripts/lib/pause-reasons.sh`](../scripts/lib/pause-reasons.sh)
 — one row per reason. Adding a reason is that row plus a branch in
 `classify-failure.sh` and an entry in the implement job's class list.
+
+A provider refusal the budget check does **not** confirm (healthy budget,
+unreadable API, no key in the job — and, for a 403, a budget that is only low)
+pauses nothing: a 402 is a `rate_limit` and retries after the delay; a 403 is
+`api_auth` — no retry, operator ping. Only the opencode path can raise
+`out_of_credits`: a Claude result carries no provider request host.
 
 ## What happens on a pause
 
@@ -26,14 +32,19 @@ The table of record is [`scripts/lib/pause-reasons.sh`](../scripts/lib/pause-rea
    `check-attempt-cap.sh` counts it as neither an attempt nor a non-start —
    its counters key on `## ai-implement run`. The previous run's verdict stands.
 2. **One alarm issue is raised** — `🚨 Pipeline paused: …`, labelled
-   `pipeline-paused`, carrying the error text, the key-management link, the list
-   of paused issues and the resume steps. A second pause in the same repo
-   updates that issue instead of opening another; a creation that loses a race
-   closes itself as a duplicate of the lower-numbered winner.
+   `pipeline-paused`, carrying the key-management link, a link to the paused
+   issues, the resume steps and — last, in a fenced block — the error text. A
+   second pause in the same repo leaves that issue as it is; a creation that
+   loses a race closes itself as a duplicate of the lower-numbered winner.
 3. **One ntfy push goes out** — priority `urgent`, tapping it opens the alarm.
 4. **Every later dispatch stops at the gate.** `check-pipeline-pause.sh` runs
    before the attempt cap and before either agent step: no agent is invoked, the
    issue keeps its `ai-implement` label, and it gets one notice comment.
+5. **Every stopped issue is labelled `ai:paused`** — the run that raised the
+   alarm and each dispatch the gate stopped. That label is the paused list. A
+   dispatch the gate lets through removes it again. If the label cannot be
+   written, the issue is named in the job's step summary and, on a new alarm,
+   in the alarm itself — re-dispatch that one by hand.
 
 The open alarm issue *is* the pause state — see ADR-018 in
 [`DECISIONS.md`](DECISIONS.md). There is no variable to read; closing the issue
@@ -55,10 +66,14 @@ REPO=<owner>/<repo> bash scripts/pipeline-resume.sh
 `pipeline-resume.sh` closes the alarm **before** it re-dispatches: a dispatch
 sent while the alarm is still open is stopped by the gate.
 
-Issues that were closed or lost their `ai-implement` label in the meantime are
-skipped. Nothing is dispatched with `-f attempt=`, so each one runs as attempt 1
-on the default agent — a paused run did no work, and nothing was learned that
-would justify escalating the next one.
+The script re-dispatches the **open issues labelled `ai:paused`** and removes
+the label from each. One that lost its `ai-implement` label in the meantime is
+not dispatched and only loses `ai:paused`; one whose dispatch fails keeps
+`ai:paused`, so running the script again retries it. Closing the alarm by hand
+first is fine — the script still finds the labelled issues. Nothing is
+dispatched with `-f attempt=`, so each one runs as attempt 1 on the default
+agent — a paused run did no work, and nothing was learned that would justify
+escalating the next one.
 
 ### The manual switch
 
@@ -141,34 +156,20 @@ Four states, deliberately distinct:
 A stale alarm pauses the repo until it is closed. Every pause notice names the
 alarm it is waiting on, so an issue that looks stuck says why in its own thread.
 
-## Resume mechanics
+## Trust boundary
 
-`pipeline-resume.sh` discovers paused issues by reading the `ai:paused` label, not
-by parsing the alarm body. This means concurrent pauses do not race on a
-read-modify-write (eliminated in #521). The alarm closes **before** re-dispatch, so
-a dispatch sent while the alarm is still open is stopped by the gate.
+The error text in the alarm comes from the agent's run and is **untrusted**.
+Two rules keep it from steering the pipeline (#521, ADR-019):
 
-Issues are re-dispatched as attempt 1 on the default agent, with no `-f attempt=`:
-a paused run did no work, and nothing was learned that would justify escalating.
+- **It is shown, never read.** It appears once, in the fenced block that ends
+  the alarm body. The paused list is the `ai:paused` label, not text; nothing
+  is parsed out of the alarm except the reason id, and that is accepted only
+  when it is a known reason.
+- **It cannot pause a repo.** `out_of_credits` needs the provider's own HTTP
+  status on the provider's own host, and then the budget's own state: for a
+  402 the key limit or account balance exhausted or low, for a 403 the key
+  limit exhausted.
 
-## Upgrade migration
-
-The `ai:paused` label-based tracking was introduced in a later release. If you are
-resuming a pause that occurred *before* this change, the paused issues are listed
-only in the existing alarm issue's body, not via labels. `pipeline-resume.sh`
-will not find them and will resume 0 issues.
-
-**Workaround:** manually re-apply the `ai-implement` label to the paused issues,
-or edit the alarm body to extract the issue numbers and set them manually:
-
-```bash
-REPO=owner/repo bash -c '
-  mapfile -t issues < <(grep -oE "#[0-9]+" <<< "$(gh issue view <alarm-number> --json body -q .body)" | tr -d "#")
-  for i in "${issues[@]}"; do
-    gh label create ai:paused --color FBCA04 --repo "$REPO" 2>/dev/null || true
-    gh issue edit "$i" --repo "$REPO" --add-label ai:paused
-  done
-'
-```
-
-Then run `pipeline-resume.sh` normally.
+An alarm raised before this change lists its issues only in its body. The
+resume no longer reads that list: add `ai:paused` to those issues by hand
+before running `pipeline-resume.sh`, or re-dispatch them by hand.

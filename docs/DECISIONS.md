@@ -1671,3 +1671,44 @@ label. `check-attempt-cap.sh` counts by `startswith("## ai-implement run")`, so
 the paused run drops out of both the attempt and the non-start counters by
 construction rather than by a filter that could drift. `/ai-stats` likewise
 stops counting paused runs as runs — correct, since they did no work.
+
+## ADR-019 — Untrusted run text is displayed, never state and never a trigger (2026-10-12)
+
+**Status:** accepted
+
+**Context.** ADR-018 made an open alarm issue the pause state. The first
+implementation also kept the list of paused issues inside that issue's body,
+next to the agent's error text, and classified `out_of_credits` from the error
+message. Both let text an issue author or a tool output can influence steer
+shared infrastructure: rewrite which issues a resume dispatches, or pause a
+whole repo (#521).
+
+**Decision.**
+
+1. **The paused list is a label.** Every issue a pause stops carries
+   `ai:paused`; `pipeline-resume.sh` lists open issues by that label. The alarm
+   body is display-only, and the error text sits in one fenced block at its
+   end.
+2. **A pause needs evidence and a confirmation.** The evidence is structural:
+   opencode's `APIError` event, HTTP status 402 or 403, request host
+   `openrouter.ai` (a constant, not derived from configuration). The
+   confirmation is the budget's own state, `check-openrouter-budget.sh`: a 402
+   is confirmed by `exhausted` or `warn` on the key limit or the account
+   balance, a 403 only by `exhausted` (the key limit used up). Without it a
+   402 is a `rate_limit` (retry) and a 403 is `api_auth` (no retry).
+
+**Rejected: a bot-authored comment holding the list.** It is still text to
+parse, and identifying "the bot" differs between a GitHub App token and the
+ambient `GITHUB_TOKEN`.
+
+**Rejected: stricter sanitising of the marker block.** A strip list is only
+complete until the next encoding; removing the parser removes the question.
+
+**Consequence.** The "two pauses at once drop an issue" race is gone, because
+adding a label is not a read-modify-write. A repo whose budget already reads
+`warn` pauses on any provider 402, so a forged 402 can only pause a repo whose
+money is in fact nearly gone; a 403 there — a moderation 403 an issue author
+provokes included — stays `api_auth`. Only the opencode path can raise
+`out_of_credits`. A label write can fail (a token without triage rights); the
+issue is then named in the step summary and, on a new alarm, in the alarm
+body, and must be re-dispatched by hand.

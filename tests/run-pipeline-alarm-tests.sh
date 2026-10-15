@@ -986,6 +986,17 @@ assert_contains "$probe" '/v1/health' "probes the server's health endpoint"
 assert_contains "$probe" 'notify-ntfy.sh' "and sends a real notification"
 assert_contains "$probe" 'ntfy.sh' "documents the fallback in its own summary"
 
+section "docs — the trust boundary is written down"
+
+alarms_doc="$(cat "$ROOT/docs/ALARMS.md")"
+assert_contains "$alarms_doc" 'ai:paused' "ALARMS.md names the paused label"
+assert_not_contains "$alarms_doc" 'marker block' "ALARMS.md no longer describes a marker block"
+assert_not_contains "$alarms_doc" 'would exceed your available credits' \
+  "ALARMS.md no longer documents the deleted text-matching rule"
+assert_contains "$alarms_doc" 'APIError' "ALARMS.md documents the structural evidence"
+assert_contains "$(cat "$ROOT/docs/DECISIONS.md")" '## ADR-019' "ADR-019 is recorded"
+assert_contains "$(cat "$ROOT/docs/glossary.md")" 'ai:paused' "the glossary names the paused label"
+
 # --- summary ----------------------------------------------------------------
 
 END_TS="$(date +%s%N 2>/dev/null || date +%s)"
