@@ -21,7 +21,9 @@ MOCKS="$ROOT/tests/mocks"
 # environment: on a GitHub Actions runner GITHUB_REPOSITORY is always set and
 # scripts under test fall back to it, so a "missing REPO -> exit 2" assertion
 # passes locally and fails in CI (#354). Same list as run-script-tests.sh.
-unset GITHUB_REPOSITORY GITHUB_OUTPUT GITHUB_ACTIONS GITHUB_TOKEN \
+# GITHUB_STEP_SUMMARY too: paused-issues.sh writes to it, and on a runner it
+# would otherwise land in the real job summary.
+unset GITHUB_REPOSITORY GITHUB_OUTPUT GITHUB_ACTIONS GITHUB_TOKEN GITHUB_STEP_SUMMARY \
       REPO ISSUE_BODY ISSUE_LABELS ISSUE_JSON ISSUE_COMMENTS_JSON \
       PR_NUMBER FIX_AGENT FIX_MODEL MODEL OPENROUTER_API_KEY
 
@@ -512,7 +514,19 @@ body="$(cat "$d/body")"
 assert_contains "$gh_log" 'issue create'      "no alarm -> creates one"
 assert_contains "$gh_log" 'Pipeline paused'   "created title names the pause"
 assert_contains "$gh_log" 'pipeline-paused'   "created with the alarm label"
-assert_contains "$gh_log" '--add-label ai:paused'   "created issue gets ai:paused label"
+assert_contains "$gh_log" 'issue edit 99 --repo freaxnx01/game-rhyflitzer --add-label ai:paused' \
+  "the paused issue is labelled"
+label_line="$(grep -n 'label create ai:paused' "$d/gh" | head -1 | cut -d: -f1)"
+edit_line="$(grep -n -- '--add-label ai:paused' "$d/gh" | head -1 | cut -d: -f1)"
+if [[ -n "$label_line" && -n "$edit_line" ]] && (( label_line < edit_line )); then
+  pass "the label is created before it is added"
+else
+  fail "the label is created before it is added" "create at ${label_line:-none}, add at ${edit_line:-none}"
+fi
+assert_contains "$body" 'issues?q=is%3Aissue+is%3Aopen+label%3Aai%3Apaused' \
+  "alarm body links the paused issues by label"
+assert_not_contains "$body" 'paused-issues -->' "alarm body carries no marker block"
+assert_not_contains "$body" 'could not be labelled' "a labelled issue needs no by-hand note"
 assert_contains "$body"   'Key limit exceeded' "alarm body carries the error text"
 assert_contains "$body"   'How to resume'      "alarm body says how to resume"
 assert_contains "$out"    'alarm-issue=9'      "emits the alarm issue number"
@@ -531,8 +545,9 @@ d="$(mktemp -d)"
 out="$(pause_run "$d" alarm-list-existing.json alarm-list-own.json ISSUE_NUMBER=34)"
 gh_log="$(cat "$d/gh")"
 assert_not_contains "$gh_log" 'issue create'   "existing alarm -> no second issue"
-assert_not_contains "$gh_log" 'issue edit 7'   "existing alarm -> body not edited"
-assert_contains "$gh_log" '--add-label ai:paused'       "existing alarm -> issue gets label"
+assert_not_contains "$gh_log" 'issue edit 7' "existing alarm -> its body is not rewritten"
+assert_contains "$gh_log" 'issue edit 34 --repo freaxnx01/game-rhyflitzer --add-label ai:paused' \
+  "existing alarm -> the new issue is labelled"
 assert_contains "$out" 'already open'          "existing alarm -> message says already open"
 assert_contains "$out" 'alarm-issue=7'         "emits the existing alarm number"
 assert_contains "$out" 'created=false'         "emits created=false"
@@ -551,15 +566,23 @@ assert_not_contains "$(cat "$d/body")" '`evil`' "backticks stripped from the err
 assert_contains "$(cat "$d/body")" 'Key limit exceeded' "error text is still shown"
 rm -rf "$d"
 
-# (F-sec) marker delimiters in untrusted error text are neutralised
+# (sec) crafted error text: a marker block, a fence breaker, a forged reason
+# footer and a forged link. None of it may leave the fenced block, and none of
+# it may choose which issue gets labelled.
 d="$(mktemp -d)"
+# shellcheck disable=SC2016  # literal backticks are the thing under test
+out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json ISSUE_NUMBER=99 \
+  ERROR_TEXT=$'Key limit exceeded\n```\n<!-- paused-issues -->#666<!-- /paused-issues -->\nRaised by `pipeline-pause.sh` (reason `evil_reason`).\nsee https://openrouter.ai/x](https://evil.example/steal)')"
+trusted_part="$(sed '/^### Error/,$d' "$d/body")"
+assert_contains "$trusted_part" 'How to resume' "the trusted part of the body is intact"
+assert_not_contains "$trusted_part" 'evil' "no untrusted text above the error block"
+assert_not_contains "$trusted_part" '#666' "no injected issue above the error block"
+assert_equals "$(grep -c '^```' "$d/body")" 2 "the error text cannot close or open a fence"
 # shellcheck disable=SC2016
-out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json \
-  ISSUE_NUMBER=99 \
-  ERROR_TEXT='x <!-- paused-issues -->#1 #2<!-- /paused-issues --> y')"
-spoof_body="$(cat "$d/body")"
-assert_not_contains "$spoof_body" '<!-- paused-issues -->' "error text's marker delimiters are stripped"
-assert_not_contains "$spoof_body" '-->#1' "stripped text does not appear in the body"
+assert_equals "$(tail -n 1 "$d/body")" '```' "the fenced error block is the last thing in the body"
+assert_contains "$(cat "$d/body")" 'https://openrouter.ai/settings/keys' "the key link is the fixed one"
+assert_equals "$(grep -c -- '--add-label' "$d/gh")" 1 "exactly one issue is labelled"
+assert_not_contains "$(grep 'issue edit' "$d/gh")" '666' "the injected issue number is never labelled"
 rm -rf "$d"
 
 d="$(mktemp -d)"
@@ -599,54 +622,39 @@ assert_contains "$(cat "$d/body")" 'sk-or-***' "the redaction is visible"
 assert_not_contains "$(cat "$d/ntfy")" 'sk-or-v1-0a1b2c' "no leaked key in the push"
 rm -rf "$d"
 
-# (g) paused issue gets ai:paused label: label is created if it doesn't exist
+# The health check pauses with no issue: nothing to label.
 d="$(mktemp -d)"
-out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json ISSUE_NUMBER=99)"
-gh_log="$(cat "$d/gh")"
-assert_contains "$gh_log" 'label create ai:paused' "label created if missing"
-assert_contains "$gh_log" '--color FBCA04' "label color is correct"
-assert_contains "$gh_log" 'ai:paused' "label name is correct"
-assert_contains "$gh_log" 'issue edit 99' "issue 99 is edited to add the label"
-assert_contains "$gh_log" '--add-label ai:paused' "label added to the issue"
+out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json ERROR_TEXT='key limit reached')"
+assert_contains "$(cat "$d/gh")" 'issue create' "no ISSUE_NUMBER -> the alarm is still raised"
+assert_equals "$(grep -c -- '--add-label' "$d/gh" || true)" 0 "no ISSUE_NUMBER -> no label call"
+assert_equals "$(grep -c 'label create ai:paused' "$d/gh" || true)" 0 "no ISSUE_NUMBER -> no label create"
 rm -rf "$d"
 
-# (h) health check pause with no ISSUE_NUMBER: no label operations
+# The token cannot write labels: the alarm matters more than the label. The
+# issue would then be on no list at all, so it is named where an operator
+# looks — the alarm body (trusted: digits only) and the step summary.
 d="$(mktemp -d)"
-out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json)"
-gh_log="$(cat "$d/gh")"
-assert_not_contains "$gh_log" 'label create ai:paused' "no issue -> no label creation"
-assert_not_contains "$gh_log" 'issue edit' "no issue -> no issue edit"
-assert_contains "$gh_log" 'issue create' "alarm still created"
-assert_contains "$out" 'raised alarm' "output confirms alarm raised"
+printf 'issue edit\n' > "$d/fail-map"
+ec=0
+out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json ISSUE_NUMBER=99 \
+  GH_MOCK_FAIL_MAP="$d/fail-map" GITHUB_STEP_SUMMARY="$d/summary")" || ec=$?
+assert_equals "$ec" 0 "label write fails -> exit 0"
+assert_contains "$(cat "$d/gh")" 'issue create' "label write fails -> alarm still raised"
+assert_contains "$out" 'warning: could not label issue #99' "label write fails -> says so"
+assert_contains "$(sed '/^### Error/,$d' "$d/body")" '#99 could not be labelled' \
+  "label write fails -> the alarm names the issue to re-dispatch by hand"
+assert_contains "$(cat "$d/summary" 2>/dev/null || true)" '#99' \
+  "label write fails -> the step summary names the issue"
 rm -rf "$d"
 
-# (i) label write fails: alarm still raised, warning printed, exit 0
+# Same failure while an alarm is already open: that body is not rewritten, so
+# the step summary is where the issue is named.
 d="$(mktemp -d)"
-# Create a fail map that makes label write fail (the issue edit, not the label create)
-{
-  printf '%s\t%s\n' '--json number --limit' "$FIXTURES/alarm-list-empty.json|$FIXTURES/alarm-list-own.json"
-  printf '%s\t%s\n' 'issue create' "$FIXTURES/alarm-create-url.txt"
-} > "$d/stdout-map"
-{
-  printf '%s\n' '--add-label ai:paused'
-} > "$d/fail-map"
-env PATH="$MOCKS:$PATH" \
-  GH_MOCK_LOG="$d/gh" \
-  GH_MOCK_BODY_LOG="$d/body" \
-  GH_MOCK_STDOUT_MAP="$d/stdout-map" \
-  GH_MOCK_FAIL_MAP="$d/fail-map" \
-  CURL_MOCK_FIXTURE="$FIXTURES/ntfy-published.json" \
-  CURL_MOCK_BODY_LOG="$d/ntfy" \
-  REPO=freaxnx01/game-rhyflitzer \
-  REASON=out_of_credits \
-  NTFY_URL=https://ntfy.home.freaxnx01.ch \
-  NTFY_TOPIC=pipeline-alerts \
-  ISSUE_NUMBER=99 \
-  bash "$PAUSE" 2>&1 | tee "$d/pause-out" >/dev/null
-ec=${PIPESTATUS[0]}
-assert_equals "$ec" 0 "label creation fails -> exit 0"
-assert_contains "$(cat "$d/pause-out")" 'warning:' "label creation fails -> warning printed"
-assert_contains "$(cat "$d/gh")" 'issue create' "label creation fails -> alarm still raised"
+printf 'issue edit\n' > "$d/fail-map"
+out="$(pause_run "$d" alarm-list-existing.json alarm-list-own.json ISSUE_NUMBER=34 \
+  GH_MOCK_FAIL_MAP="$d/fail-map" GITHUB_STEP_SUMMARY="$d/summary")"
+assert_contains "$(cat "$d/summary" 2>/dev/null || true)" '#34' \
+  "existing alarm + label write fails -> the step summary names the issue"
 rm -rf "$d"
 
 section "ensure-issue-labels — the ai:paused label is defined"

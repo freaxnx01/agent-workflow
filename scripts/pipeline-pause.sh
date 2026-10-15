@@ -10,15 +10,14 @@
 # both read and write (ADR-018). check-pipeline-pause.sh gates new dispatches
 # on it; closing it resumes the pipeline.
 #
-# The paused issues are tracked by label, not in the alarm body — the body is
-# display-only, so untrusted error text cannot inject or alter the paused list
-# (#521). Each paused issue gets the `ai:paused` label, and pipeline-resume.sh
-# re-dispatches exactly the open issues carrying it.
+# The alarm body is DISPLAY ONLY (ADR-019). Which issues are paused is a label
+# on each of them (scripts/lib/paused-issues.sh), never text in this body: the
+# body quotes the agent's error, and that text is untrusted.
 #
-# "One per pause" is enforced twice: an existing open alarm is updated rather
-# than duplicated, and a creation that loses a race against a concurrent run
-# closes its own issue as a duplicate of the lower-numbered winner. Only the
-# run that actually created the surviving alarm pushes, so a repo with five
+# "One per pause" is enforced twice: an existing open alarm is left as it is
+# rather than duplicated, and a creation that loses a race against a concurrent
+# run closes its own issue as a duplicate of the lower-numbered winner. Only
+# the run that actually created the surviving alarm pushes, so a repo with five
 # issues failing in the same minute pages the maintainer once.
 #
 # Required environment variables:
@@ -27,10 +26,11 @@
 #   GH_TOKEN  (or ambient gh auth) with `issues: write`.
 #
 # Optional environment variables:
-#   ISSUE_NUMBER  The issue whose run hit the pause. Labelled `ai:paused` so the
+#   ISSUE_NUMBER  The issue whose run hit the pause. It is labelled so the
 #                 resume knows what to re-dispatch. Empty when the pause comes
 #                 from the scheduled health check rather than a run.
-#   ERROR_TEXT    The agent's error text. Redacted and quoted in the alarm.
+#   ERROR_TEXT    The agent's error text. Untrusted: redacted, truncated and
+#                 shown inside one fenced block at the end of the alarm.
 #   ALARM_LABEL   Default "pipeline-paused".
 #   NTFY_*        Passed through to notify-ntfy.sh. Missing config skips the
 #                 push; a failed push never fails this script.
@@ -40,9 +40,10 @@
 #   created=true|false
 #
 # Exit codes:
-#   0   an alarm is open for this pause (created, updated, or already there);
-#       also when the forge has no adapter and the alarm is skipped
-#   2   required env missing, or REASON is not a known pause reason
+#   0   an alarm is open for this pause (created or already there); also when
+#       the forge has no adapter and the alarm is skipped
+#   2   required env missing, REASON is not a known pause reason, or
+#       ISSUE_NUMBER is not a number
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -93,45 +94,68 @@ if [[ "$forge" != "github" ]]; then
   exit 0
 fi
 
-# --- redaction --------------------------------------------------------------
-
-# The error text is pasted verbatim into a public issue and a push body. A
-# provider that echoes the offending key in its own error message — and some do
-# — would publish it. Truncated too: an agent's error can be the whole
-# transcript, and an alarm nobody reads is not an alarm.
-redact() {
-  sed -E 's/sk-or-[A-Za-z0-9_-]+/sk-or-***/g; s/sk-ant-[A-Za-z0-9_-]+/sk-ant-***/g' \
-    | head -c 2000
-}
-
-# Untrusted text is neutralised before it reaches the body: backticks (they
-# would close the code fence) and HTML comment delimiters.
-neutralise() {
-  tr -d '`' | sed -E 's/<!--//g; s/-->//g'
-}
-SAFE_ERROR="$(printf '%s' "$ERROR_TEXT" | redact | neutralise)"
-
-# ISSUE_NUMBER is validated before label operations.
+# ISSUE_NUMBER is handed to gh as an argument and named in the body: digits only.
 if [[ -n "$ISSUE_NUMBER" && ! "$ISSUE_NUMBER" =~ ^[0-9]+$ ]]; then
   printf 'error: ISSUE_NUMBER must be digits only, got %q\n' "$ISSUE_NUMBER" >&2
   exit 2
 fi
 
+# --- the error text ---------------------------------------------------------
+
+# The error text is pasted into a public issue. A provider that echoes the
+# offending key in its own error message — and some do — would publish it.
+# Truncated too: an agent's error can be the whole transcript, and an alarm
+# nobody reads is not an alarm.
+redact() {
+  sed -E 's/sk-or-[A-Za-z0-9_-]+/sk-or-***/g; s/sk-ant-[A-Za-z0-9_-]+/sk-ant-***/g' \
+    | head -c 2000
+}
+
+# Untrusted, and rendered in exactly one place: the fenced block that ends the
+# body. Backticks are the only characters that can close that fence, so they
+# are dropped. Nothing is extracted from this text and nothing after it exists
+# for it to imitate.
+SAFE_ERROR="$(printf '%s' "$ERROR_TEXT" | redact | tr -d '`')"
+
+# --- the paused issue -------------------------------------------------------
+
+# Before anything else, so the issue is on the paused list on every path below.
+# A failed write leaves it on no list at all; UNLABELLED then names it in the
+# alarm body (digits only, validated above — trusted).
+UNLABELLED=''
+if [[ -n "$ISSUE_NUMBER" ]]; then
+  paused_issue_mark "$ISSUE_NUMBER" || UNLABELLED="$ISSUE_NUMBER"
+fi
+
 # --- alarm body -------------------------------------------------------------
 
+# unlabelled_note — one line for an issue that could not be labelled, or nothing.
+unlabelled_note() {
+  [[ -n "$UNLABELLED" ]] || return 0
+  # shellcheck disable=SC2016  # markdown code spans, not command substitution
+  printf '\n**Issue #%s could not be labelled `%s`** — the resume will not find it; re-dispatch it by hand.\n' \
+    "$UNLABELLED" "$PAUSED_ISSUE_LABEL"
+}
+
+# Every value above the error block is trusted: the repo, the reason table,
+# a validated issue number and fixed URLs.
 render_alarm_body() {
   cat <<EOF
 The pipeline is **paused** in \`${REPO}\`: $(pause_title "$REASON").
 
-No new agent run will start in this repository while this issue is open. The
-paused issues keep their \`ai-implement\` label and are re-dispatched on resume —
+No new agent run will start in this repository while this issue is open. Every
+issue a run or a dispatch was stopped on carries the \`${PAUSED_ISSUE_LABEL}\`
+label, keeps its \`ai-implement\` label and is re-dispatched on resume —
 nothing was lost and nothing counted as an attempt.
 
-### Error
+### Paused issues
 
-\`\`\`text
-${SAFE_ERROR:-(no error text captured)}
-\`\`\`
+https://github.com/${REPO}/issues?q=is%3Aissue+is%3Aopen+label%3A${PAUSED_ISSUE_LABEL/:/%3A}
+$(unlabelled_note)
+
+### Key management
+
+https://openrouter.ai/settings/keys
 
 ### How to resume
 
@@ -139,28 +163,30 @@ ${SAFE_ERROR:-(no error text captured)}
 2. **Close this issue** — that is what clears the pause.
 3. Re-dispatch the paused issues: \`REPO=${REPO} bash scripts/pipeline-resume.sh\`
 
-[View paused issues](https://github.com/${REPO}/issues?q=is%3Aissue+is%3Aopen+label%3Aai%3Apaused)
-
 Raised by \`pipeline-pause.sh\` (reason \`${REASON}\`). See \`docs/ALARMS.md\`.
+
+### Error (as reported — untrusted text, shown for diagnosis only)
+
+\`\`\`text
+${SAFE_ERROR:-(no error text captured)}
+\`\`\`
 EOF
 }
 
-bodyfile="$(mktemp)"
-trap 'rm -f "$bodyfile"' EXIT
+# lowest_open_alarm — the number of the oldest open alarm, or nothing.
+# --limit caps a pathological repo; sort_by(.number) makes "the oldest open
+# alarm wins" deterministic rather than dependent on gh's ordering.
+lowest_open_alarm() {
+  gh issue list --repo "$REPO" --label "$ALARM_LABEL" --state open \
+    --json number --limit 20 2>/dev/null \
+    | jq -r 'sort_by(.number) | .[0].number // empty' || printf ''
+}
 
 # --- an alarm may already be open -------------------------------------------
 
-# --limit caps a pathological repo; sort_by(.number) makes "the oldest open
-# alarm wins" deterministic rather than dependent on gh's ordering.
-open_alarms="$(gh issue list --repo "$REPO" --label "$ALARM_LABEL" --state open \
-  --json number --limit 20 2>/dev/null || printf '[]')"
-alarm="$(jq -r 'sort_by(.number) | .[0].number // empty' <<<"$open_alarms")"
-
+alarm="$(lowest_open_alarm)"
 if [[ -n "$alarm" ]]; then
-  # An existing alarm is not edited: the body belongs to the first racer and
-  # may carry operator notes. The paused list is now label-based, not body-based.
-  paused_issue_mark "$ISSUE_NUMBER"
-  printf 'pipeline-pause: alarm #%s already open — labelled issue #%s\n' "$alarm" "$ISSUE_NUMBER"
+  printf 'pipeline-pause: alarm #%s already open — not raising another\n' "$alarm"
   emit alarm-issue "$alarm"
   emit created false
   exit 0
@@ -171,22 +197,19 @@ fi
 forge_label_ensure "$ALARM_LABEL" B60205 \
   'Pipeline paused — an open issue with this label stops new dispatches' >/dev/null 2>&1 || true
 
+bodyfile="$(mktemp)"
+trap 'rm -f "$bodyfile"' EXIT
 render_alarm_body > "$bodyfile"
 alarm_url="$(gh issue create --repo "$REPO" \
   --title "🚨 Pipeline paused: $(pause_title "$REASON")" \
   --label "$ALARM_LABEL" --body-file "$bodyfile")"
 alarm="${alarm_url##*/}"
 
-# Mark the paused issue with a label so pipeline-resume.sh can find it.
-paused_issue_mark "$ISSUE_NUMBER"
-
 # Two runs that fail in the same second both see no open alarm and both create
 # one. Re-read and keep the lowest number: every racer reaches the same verdict
 # from the same data, so exactly one alarm survives and exactly one push goes
 # out — without a lock neither of them could take.
-winner="$(gh issue list --repo "$REPO" --label "$ALARM_LABEL" --state open \
-  --json number --limit 20 2>/dev/null \
-  | jq -r 'sort_by(.number) | .[0].number // empty' || printf '')"
+winner="$(lowest_open_alarm)"
 if [[ -n "$winner" && "$winner" != "$alarm" ]] && (( winner < alarm )); then
   gh issue close "$alarm" --repo "$REPO" --comment "duplicate of #${winner}" >/dev/null 2>&1 || true
   printf 'pipeline-pause: lost the race — closed #%s as a duplicate of #%s\n' "$alarm" "$winner"
