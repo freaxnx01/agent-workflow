@@ -884,6 +884,18 @@ assert_not_contains "$(cat "$d/gh")" 'issue edit 12' "failed dispatch -> the iss
 assert_contains "$out" 'could not re-dispatch #12' "failed dispatch -> says so"
 rm -rf "$d"
 
+# An unreadable paused list is not an empty one: resuming on it would close the
+# alarm and report "resumed 0" while the labelled issues stay stranded.
+d="$(mktemp -d)"
+printf -- '--label ai:paused --state open\n' > "$d/fail-map"
+ec=0
+out="$(resume_run "$d" resume-alarm.json resume-paused-issues.json GH_MOCK_FAIL_MAP="$d/fail-map")" || ec=$?
+assert_equals "$ec" 1 "unreadable paused list -> exit 1"
+assert_contains "$out" 'could not read the ai:paused list' "unreadable paused list -> says so"
+assert_equals "$(grep -c 'issue close' "$d/gh" || true)" 0 "unreadable paused list -> the alarm stays open"
+assert_equals "$(grep -c 'workflow run' "$d/gh" || true)" 0 "unreadable paused list -> dispatches nothing"
+rm -rf "$d"
+
 # --- Task 7: check-openrouter-budget.sh -------------------------------------
 
 section "check-openrouter-budget — warn before the limit is reached"

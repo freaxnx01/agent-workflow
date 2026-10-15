@@ -30,6 +30,7 @@
 #
 # Exit codes:
 #   0  resumed, or nothing to resume
+#   1  the ai:paused list could not be read — nothing was closed or dispatched
 #   2  required env missing
 set -euo pipefail
 IFS=$'\n\t'
@@ -57,7 +58,13 @@ alarms="$(gh issue list --repo "$REPO" --label "$ALARM_LABEL" --state open \
   --json number --limit 20 2>/dev/null || printf '[]')"
 mapfile -t alarm_numbers < <(jq -r 'sort_by(.number) | .[].number' <<<"$alarms")
 
-paused="$(paused_issues_open)"
+# Stop before closing anything: treating an unreadable list as empty would close
+# the alarm and report "resumed 0" while the labelled issues stay stranded.
+if ! paused="$(paused_issues_open)"; then
+  printf 'error: could not read the %s list in %s — nothing was closed or re-dispatched; run the resume again\n' \
+    "$PAUSED_ISSUE_LABEL" "$REPO" >&2
+  exit 1
+fi
 mapfile -t paused_issues < <(jq -r 'sort_by(.number) | .[].number' <<<"$paused")
 
 # An operator may have closed the alarm by hand already — the alarm's own

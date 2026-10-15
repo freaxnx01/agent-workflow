@@ -21,7 +21,8 @@
 #                                 Callers that cannot add anything use `|| true`.
 #   paused_issue_clear <issue>    remove the label; a silent no-op when absent
 #   paused_issues_open            JSON array of {number, labels[].name} for the
-#                                 open labelled issues; [] when it cannot read
+#                                 open labelled issues; returns 1 when it cannot
+#                                 read — an unreadable list is not an empty one
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -53,5 +54,5 @@ paused_issue_clear() {
 
 paused_issues_open() {
   gh issue list --repo "$REPO" --label "$PAUSED_ISSUE_LABEL" --state open \
-    --json number,labels --limit 200 2>/dev/null || printf '[]'
+    --json number,labels --limit 200 2>/dev/null
 }
