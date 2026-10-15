@@ -32,7 +32,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # depends on one of these being absent, present and future.
 unset GITHUB_REPOSITORY GITHUB_OUTPUT GITHUB_ACTIONS GITHUB_TOKEN \
       REPO ISSUE_BODY ISSUE_LABELS ISSUE_JSON ISSUE_COMMENTS_JSON \
-      PR_NUMBER FIX_AGENT FIX_MODEL MODEL
+      PR_NUMBER FIX_AGENT FIX_MODEL MODEL OPENROUTER_API_KEY
 SCRIPT="$ROOT/scripts/post-run-report.sh"
 FIXTURES="$ROOT/tests/fixtures"
 MOCKS="$ROOT/tests/mocks"
