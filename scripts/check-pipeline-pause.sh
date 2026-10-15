@@ -6,8 +6,9 @@
 # A pause is repo-wide: the key behind the agent is empty, so every dispatch
 # fails the same way within minutes of the first (#517 — five runs, five
 # "bug" verdicts, one dry key). While an alarm is open this step stops the run
-# BEFORE the agent is invoked, comments once on the issue, and leaves the
-# dispatch label in place so the issue is still queued. Nothing is parked,
+# BEFORE the agent is invoked, labels the issue `ai:paused`, comments once on
+# it, and leaves the dispatch label in place so the issue is still queued (the
+# label is the list pipeline-resume.sh re-dispatches). Nothing is parked,
 # nothing is graded, nothing counts as an attempt.
 #
 # Pause state, in precedence order:
@@ -33,7 +34,7 @@
 # Output (stdout + GITHUB_OUTPUT when set):
 #   paused=true|false
 #   alarm-issue=<n>   empty when the pause comes from the variable
-#   reason=<id>       empty when it cannot be read off the alarm
+#   reason=<id>       empty unless the alarm names a known reason id
 #
 # Exit codes:
 #   0  decision produced (paused or not)
@@ -44,6 +45,10 @@ IFS=$'\n\t'
 _CPP_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/detect-forge.sh
 source "$_CPP_HERE/lib/detect-forge.sh"
+# shellcheck source=scripts/lib/pause-reasons.sh
+source "$_CPP_HERE/lib/pause-reasons.sh"
+# shellcheck source=scripts/lib/paused-issues.sh
+source "$_CPP_HERE/lib/paused-issues.sh"
 
 require_env() {
   if [[ -z "${!1:-}" ]]; then
@@ -95,6 +100,9 @@ if [[ -n "$alarm" ]]; then
   # code span in the alarm body, not command substitution.
   reason="$(jq -r 'sort_by(.number) | .[0].body // ""' <<<"$alarms" \
     | sed -n 's/.*reason `\([a-z_]*\)`.*/\1/p' | head -1 || true)"
+  # The alarm body also quotes untrusted error text, so what was read is
+  # accepted only when it is a reason id this pipeline knows (#521).
+  is_pause_class "$reason" || reason=''
   notice="$(printf 'pipeline paused: %s, see #%s' "${reason:-see the alarm}" "$alarm")"
 elif [[ -n "$AGENT_PAUSED_VAR" ]]; then
   alarm=''
@@ -102,6 +110,9 @@ elif [[ -n "$AGENT_PAUSED_VAR" ]]; then
   notice="pipeline paused: the AGENT_PAUSED repo variable is set to \`${AGENT_PAUSED_VAR}\`"
 else
   printf 'check-pipeline-pause: no open %s alarm and AGENT_PAUSED unset — proceeding\n' "$ALARM_LABEL"
+  # A run that starts is not paused. Clears a label left behind when the alarm
+  # was closed and the issue re-dispatched by hand, without pipeline-resume.sh.
+  [[ "$DRY_RUN" == "1" ]] || paused_issue_clear "$ISSUE_NUMBER"
   not_paused
 fi
 
@@ -112,6 +123,12 @@ printf 'check-pipeline-pause: %s — no agent will be started for issue #%s\n' \
   "$notice" "$ISSUE_NUMBER"
 
 [[ "$DRY_RUN" == "1" ]] && exit 0
+
+# The paused list is this label. pipeline-resume.sh re-dispatches exactly the
+# open issues that carry it, so a dispatch stopped here is not forgotten. A
+# failed write is warned about and named in the step summary by the library;
+# the gate's verdict stands either way.
+paused_issue_mark "$ISSUE_NUMBER" || true
 
 # --- notify the issue, once -------------------------------------------------
 

@@ -9,7 +9,13 @@
 #   GH_MOCK_PR_CREATE_CTR         counter file path (required if FAIL_TIMES set)
 #   GH_MOCK_AUTH_HOSTS            space-separated hosts 'gh auth token --hostname' succeeds for
 #   GH_MOCK_STDOUT_MAP            file of "<substring>\t<fixture>" lines; first
-#                                 substring found in argv is cat'd to stdout
+#                                 substring found in argv is cat'd to stdout.
+#                                 A fixture column of "first.json|later.json"
+#                                 answers the first matching call with the
+#                                 first file and every later one with the
+#                                 second — for a script that asks the same
+#                                 question twice (#521). State is kept in
+#                                 "$GH_MOCK_STDOUT_MAP.seen".
 #   GH_MOCK_BODY_LOG              when argv carries `--body-file <path>`, the
 #                                 file's CONTENTS are appended here. The argv log
 #                                 only records the temp path, which the caller
@@ -53,6 +59,15 @@ if [[ -n "${GH_MOCK_STDOUT_MAP:-}" && -r "${GH_MOCK_STDOUT_MAP}" ]]; then
   while IFS=$'\t' read -r pattern fixture || [[ -n "$pattern" ]]; do
     [[ -z "$pattern" ]] && continue
     if [[ "$argv" == *"$pattern"* ]]; then
+      if [[ "$fixture" == *'|'* ]]; then
+        seen="${GH_MOCK_STDOUT_MAP}.seen"
+        if grep -qxF -- "$pattern" "$seen" 2>/dev/null; then
+          fixture="${fixture#*|}"
+        else
+          printf '%s\n' "$pattern" >> "$seen"
+          fixture="${fixture%%|*}"
+        fi
+      fi
       cat "$fixture"
       exit 0
     fi

@@ -21,9 +21,11 @@ MOCKS="$ROOT/tests/mocks"
 # environment: on a GitHub Actions runner GITHUB_REPOSITORY is always set and
 # scripts under test fall back to it, so a "missing REPO -> exit 2" assertion
 # passes locally and fails in CI (#354). Same list as run-script-tests.sh.
-unset GITHUB_REPOSITORY GITHUB_OUTPUT GITHUB_ACTIONS GITHUB_TOKEN \
+# GITHUB_STEP_SUMMARY too: paused-issues.sh writes to it, and on a runner it
+# would otherwise land in the real job summary.
+unset GITHUB_REPOSITORY GITHUB_OUTPUT GITHUB_ACTIONS GITHUB_TOKEN GITHUB_STEP_SUMMARY \
       REPO ISSUE_BODY ISSUE_LABELS ISSUE_JSON ISSUE_COMMENTS_JSON \
-      PR_NUMBER FIX_AGENT FIX_MODEL MODEL
+      PR_NUMBER FIX_AGENT FIX_MODEL MODEL OPENROUTER_API_KEY
 
 PASS=0
 FAIL=0
@@ -103,34 +105,112 @@ classify_text() {
   printf '%s' "$out"
 }
 
-# classify_api <error text> [status] -> the class for a failed run whose
-# STRUCTURED provider error channel (.api_error / .api_error_status) carries
-# the text, while the free agent text in `.result` is unrelated.
-classify_api() {
-  local f out
+# classify_provider <status> <host> [env assignment...] -> the class for a
+# failed run whose provider-call evidence (.api_error_status / .api_error_host)
+# is as given. The message text ALWAYS claims an exhausted key, so any result
+# other than out_of_credits proves the text decides nothing. The env
+# assignments drive the key check: the curl mock and OPENROUTER_API_KEY.
+classify_provider() {
+  local status="$1" host="$2" f out
+  shift 2
   f="$(mktemp)"
-  jq -n --arg t "$1" --arg st "${2:-}" \
-    '{is_error:true,subtype:"error_during_execution",num_turns:3,result:"agent summary",api_error:$t}
+  jq -n --arg st "$status" --arg h "$host" \
+    '{is_error:true,subtype:"error_during_execution",num_turns:3,result:"agent summary",
+      api_error:"Key limit exceeded (monthly limit). Insufficient credits.",api_error_host:$h}
      + (if $st != "" then {api_error_status:($st|tonumber)} else {} end)' > "$f"
-  out="$(RESULT_FILE="$f" bash "$ROOT/scripts/classify-failure.sh" | sed -n 's/^class=//p')"
+  out="$(env -u OPENROUTER_API_KEY PATH="$MOCKS:$PATH" RESULT_FILE="$f" "$@" \
+    bash "$ROOT/scripts/classify-failure.sh" | sed -n 's/^class=//p')"
   rm -f "$f"
   printf '%s' "$out"
 }
+
+# The budget's own state, as the curl mock serves it. /credits fails like it
+# does for a plain inference key, so these confirm on the key limit alone.
+# Assembled at run time: a literal key-shaped string trips the gitleaks hook.
+TEST_KEY="sk-or-v1-$(printf '0a1b2c3d%.0s' 1 2 3 4)"
+KEY_EXHAUSTED=("OPENROUTER_API_KEY=$TEST_KEY" "CURL_MOCK_FIXTURE=$FIXTURES/openrouter-key-exhausted.json" CURL_MOCK_FAIL_PATTERN=/credits)
+KEY_OK=("OPENROUTER_API_KEY=$TEST_KEY" "CURL_MOCK_FIXTURE=$FIXTURES/openrouter-key-ok.json" CURL_MOCK_FAIL_PATTERN=/credits)
+KEY_LOW=("OPENROUTER_API_KEY=$TEST_KEY" "CURL_MOCK_FIXTURE=$FIXTURES/openrouter-key-low.json" CURL_MOCK_FAIL_PATTERN=/credits)
+KEY_UNREADABLE=("OPENROUTER_API_KEY=$TEST_KEY" "CURL_MOCK_FIXTURE=$FIXTURES/openrouter-key-exhausted.json" CURL_MOCK_FAIL=1)
+
+# A key with NO monthly limit whose account balance /credits can read (a
+# management key): only the account can confirm.
+CREDITS_DIR="$(mktemp -d)"
+printf '/key\t%s\n/credits\t%s\n' "$FIXTURES/openrouter-key-nolimit.json" \
+  "$FIXTURES/openrouter-credits-empty.json" > "$CREDITS_DIR/empty.map"
+printf '/key\t%s\n/credits\t%s\n' "$FIXTURES/openrouter-key-nolimit.json" \
+  "$FIXTURES/openrouter-credits-ok.json" > "$CREDITS_DIR/ok.map"
+NOLIMIT_ACCOUNT_EMPTY=("OPENROUTER_API_KEY=$TEST_KEY" "CURL_MOCK_FIXTURE_MAP=$CREDITS_DIR/empty.map")
+NOLIMIT_ACCOUNT_OK=("OPENROUTER_API_KEY=$TEST_KEY" "CURL_MOCK_FIXTURE_MAP=$CREDITS_DIR/ok.map")
 
 # --- Task 1: classify out_of_credits ---------------------------------------
 
 section "classify-failure — out_of_credits"
 
-# shellcheck disable=SC2016  # the `$10.09` is OpenRouter's literal error text,
-# not a variable — single quotes are exactly the point.
-assert_equals "$(classify_api 'HTTP 403: Key limit exceeded (monthly limit). $10.09 of $10.00 used; resets 2026-11-01')" \
-  out_of_credits "403 key limit exceeded"
-assert_equals "$(classify_api 'API Error 402: This request would exceed your available credits')" \
-  out_of_credits "402 would exceed available credits"
-assert_equals "$(classify_api 'Insufficient credits. Add more using https://openrouter.ai/settings/credits')" \
-  out_of_credits "insufficient credits"
-assert_equals "$(classify_api 'This request requires more credits, or fewer max_tokens. You requested up to 64000 tokens')" \
-  out_of_credits "requires more credits, or fewer max_tokens"
+# Evidence AND confirmation: the provider refused its own call, and the
+# budget check confirms it — `exhausted` or `warn` (key limit or account) for
+# a 402, `exhausted` (the key limit used up) for a 403.
+assert_equals "$(classify_provider 403 openrouter.ai "${KEY_EXHAUSTED[@]}")" \
+  out_of_credits "provider 403 + exhausted key -> out_of_credits"
+assert_equals "$(classify_provider 402 openrouter.ai "${KEY_EXHAUSTED[@]}")" \
+  out_of_credits "provider 402 + exhausted key -> out_of_credits"
+assert_equals "$(classify_provider 402 openrouter.ai "${KEY_LOW[@]}")" \
+  out_of_credits "provider 402 + low key (warn) -> out_of_credits"
+assert_equals "$(classify_provider 402 openrouter.ai "${NOLIMIT_ACCOUNT_EMPTY[@]}")" \
+  out_of_credits "provider 402 + no key limit, empty account -> out_of_credits"
+
+# Unconfirmed 402: no pause; a temporary refusal that retries.
+assert_equals "$(classify_provider 402 openrouter.ai "${KEY_OK[@]}")" \
+  rate_limit "provider 402 + healthy key -> rate_limit"
+assert_equals "$(classify_provider 402 openrouter.ai "${NOLIMIT_ACCOUNT_OK[@]}")" \
+  rate_limit "provider 402 + no key limit, healthy account -> rate_limit"
+assert_equals "$(classify_provider 402 openrouter.ai "${KEY_UNREADABLE[@]}")" \
+  rate_limit "provider 402 + unreadable key API -> rate_limit"
+assert_equals "$(classify_provider 402 openrouter.ai)" \
+  rate_limit "provider 402 + no key in the environment -> rate_limit"
+
+# Unconfirmed 403: no pause; today's behaviour — no retry, operator ping.
+# A low budget does not confirm a 403, so a moderation 403 an issue author
+# provokes cannot pause a repo whose budget reads `warn`.
+assert_equals "$(classify_provider 403 openrouter.ai "${KEY_LOW[@]}")" \
+  api_auth "provider 403 + low key (warn) -> api_auth"
+assert_equals "$(classify_provider 403 openrouter.ai "${KEY_OK[@]}")" \
+  api_auth "provider 403 + healthy key -> api_auth"
+assert_equals "$(classify_provider 403 openrouter.ai "${KEY_UNREADABLE[@]}")" \
+  api_auth "provider 403 + unreadable key API -> api_auth"
+assert_equals "$(classify_provider 403 openrouter.ai)" \
+  api_auth "provider 403 + no key in the environment -> api_auth"
+
+# Forged evidence against an exhausted key: still no pause.
+assert_not_equals "$(classify_provider '' '' "${KEY_EXHAUSTED[@]}")" \
+  out_of_credits "error text alone never pauses"
+assert_not_equals "$(classify_provider 402 '' "${KEY_EXHAUSTED[@]}")" \
+  out_of_credits "a status without a provider host never pauses"
+assert_not_equals "$(classify_provider 403 evil.example "${KEY_EXHAUSTED[@]}")" \
+  out_of_credits "a 403 from another host never pauses"
+assert_not_equals "$(classify_provider 403 openrouter.ai.evil.example "${KEY_EXHAUSTED[@]}")" \
+  out_of_credits "a look-alike host never pauses"
+assert_not_equals "$(classify_provider 429 openrouter.ai "${KEY_EXHAUSTED[@]}")" \
+  out_of_credits "a provider 429 is not a payment refusal"
+
+# The provider host is the constant openrouter.ai, not derived from the
+# environment (spec A10): moving the budget API base moves no trust.
+assert_not_equals "$(classify_provider 403 evil.example "${KEY_EXHAUSTED[@]}" \
+  OPENROUTER_API_BASE=https://evil.example/api/v1)" \
+  out_of_credits "OPENROUTER_API_BASE does not widen the trusted host"
+assert_equals "$(classify_provider 403 openrouter.ai "${KEY_EXHAUSTED[@]}" \
+  OPENROUTER_API_BASE=https://gateway.example/api/v1)" \
+  out_of_credits "OPENROUTER_API_BASE does not narrow it either"
+
+# The key is asked only when there is evidence to confirm.
+d="$(mktemp -d)"
+classify_provider '' '' "${KEY_EXHAUSTED[@]}" "CURL_MOCK_LOG=$d/argv" >/dev/null
+assert_equals "$(cat "$d/argv" 2>/dev/null || printf '')" '' "no evidence -> the key API is not called"
+classify_provider 403 openrouter.ai "${KEY_EXHAUSTED[@]}" "CURL_MOCK_LOG=$d/argv" >/dev/null
+assert_contains "$(cat "$d/argv")" '/key' "evidence -> the key API is asked"
+assert_not_contains "$(cat "$d/argv")" "$TEST_KEY" "the key never reaches curl's argv"
+rm -rf "$d" "$CREDITS_DIR"
+
 # Negative (F1): ordinary prose must never pause a consumer repo.
 assert_not_equals "$(classify_text 'The task: add credits screen to the game; build timeout')" \
   out_of_credits "prose 'add credits screen' is not out_of_credits"
@@ -143,12 +223,6 @@ assert_not_equals "$(classify_text 'Key limit exceeded (monthly limit). Insuffic
   out_of_credits "provider text in the agent's final message is not out_of_credits"
 assert_not_equals "$(classify_text 'Issue says: HTTP 402 Key limit exceeded, requires more credits, or fewer max_tokens')" \
   out_of_credits "provider text quoted from an issue body is not out_of_credits"
-assert_equals "$(classify_api 'upstream said nothing useful' 402)" \
-  out_of_credits "structured statusCode 402 classifies"
-assert_not_equals "$(classify_api 'Forbidden' 403)" \
-  out_of_credits "structured 403 without a limit text is plain auth"
-assert_equals "$(classify_api 'Key limit exceeded' 403)" \
-  out_of_credits "structured 403 with a limit text classifies"
 
 # The opencode adapter exposes error events as the structured channel.
 ev="$(mktemp)"
@@ -161,7 +235,85 @@ assert_equals "$(jq -r .api_error_status <<<"$ad")" 403 "adapter: api_error_stat
 printf '%s\n' '{"type":"text","part":{"text":"Key limit exceeded"}}' > "$ev"
 ad="$(EXECUTION_FILE="$ev" bash "$ROOT/scripts/adapt-opencode-result.sh")"
 assert_equals "$(jq -r '.api_error // ""' <<<"$ad")" "" "adapter: agent text never lands in api_error"
+
+# adapt_events <ndjson line>... -> the adapter's result for that event stream.
+adapt_events() {
+  local ev out
+  ev="$(mktemp)"
+  printf '%s\n' "$@" > "$ev"
+  out="$(EXECUTION_FILE="$ev" bash "$ROOT/scripts/adapt-opencode-result.sh")"
+  rm -f "$ev"
+  printf '%s' "$out"
+}
+
+# The provider-call evidence is structural: event name, HTTP status, request host.
+ad="$(adapt_events '{"type":"error","error":{"name":"APIError","data":{"message":"Key limit exceeded","statusCode":403,"isRetryable":false,"metadata":{"url":"https://openrouter.ai/api/v1/chat/completions"}}}}')"
+assert_equals "$(jq -r .api_error_status <<<"$ad")" 403 "adapter: APIError status is exposed"
+assert_equals "$(jq -r .api_error_host <<<"$ad")" openrouter.ai "adapter: the request host is exposed"
+
+ad="$(adapt_events '{"type":"error","error":{"name":"APIError","data":{"message":"x","statusCode":402,"metadata":{"url":"https://OpenRouter.AI/api/v1/chat/completions"}}}}')"
+assert_equals "$(jq -r .api_error_host <<<"$ad")" openrouter.ai "adapter: the host is lower-cased"
+
+# An explicit port is not part of the host: https://openrouter.ai:443 is still
+# openrouter.ai, so a URL that spells out the default port keeps the pause alive.
+ad="$(adapt_events '{"type":"error","error":{"name":"APIError","data":{"message":"x","statusCode":402,"metadata":{"url":"https://openrouter.ai:443/api/v1/chat/completions"}}}}')"
+assert_equals "$(jq -r .api_error_host <<<"$ad")" openrouter.ai "adapter: an explicit port is dropped"
+ad="$(adapt_events '{"type":"error","error":{"name":"APIError","data":{"message":"x","statusCode":402,"metadata":{"url":"https://openrouter.ai@evil.example:443/api"}}}}')"
+assert_not_equals "$(jq -r .api_error_host <<<"$ad")" openrouter.ai "adapter: dropping the port does not unmask userinfo"
+
+# Forged: an error event that is not a provider call carries no evidence.
+ad="$(adapt_events '{"type":"error","error":{"name":"UnknownError","data":{"message":"Key limit exceeded","statusCode":402,"metadata":{"url":"https://openrouter.ai/api/v1/chat/completions"}}}}')"
+assert_equals "$(jq -r .api_error_status <<<"$ad")" null "adapter: a non-APIError event gives no status"
+assert_equals "$(jq -r .api_error_host <<<"$ad")" "" "adapter: a non-APIError event gives no host"
+
+# Forged: a tool result that looks like an error event is not one.
+ad="$(adapt_events '{"type":"tool_use","part":{"state":{"output":"{\"type\":\"error\",\"error\":{\"name\":\"APIError\",\"data\":{\"statusCode\":402}}}"}},"error":{"name":"APIError","data":{"statusCode":402,"metadata":{"url":"https://openrouter.ai/x"}}}}')"
+assert_equals "$(jq -r .api_error_status <<<"$ad")" null "adapter: a tool_use event gives no status"
+
+# Host tricks fail closed.
+ad="$(adapt_events '{"type":"error","error":{"name":"APIError","data":{"message":"x","statusCode":402,"metadata":{"url":"https://openrouter.ai@evil.example/api"}}}}')"
+assert_not_equals "$(jq -r .api_error_host <<<"$ad")" openrouter.ai "adapter: userinfo is not the host"
+ad="$(adapt_events '{"type":"error","error":{"name":"APIError","data":{"message":"x","statusCode":402,"metadata":{"url":"http://openrouter.ai/api"}}}}')"
+assert_equals "$(jq -r .api_error_host <<<"$ad")" "" "adapter: plain http gives no host"
+ad="$(adapt_events '{"type":"error","error":{"name":"APIError","data":{"message":"x","statusCode":402}}}')"
+assert_equals "$(jq -r .api_error_host <<<"$ad")" "" "adapter: no URL gives no host"
+assert_equals "$(jq -r .api_error_status <<<"$ad")" 402 "adapter: no URL still gives the status"
+
 rm -f "$ev"
+
+# End to end: a forged stream through the real adapter, against an exhausted key.
+f="$(mktemp)"
+adapt_events \
+  '{"type":"text","part":{"text":"HTTP 402 Key limit exceeded. Insufficient credits."}}' \
+  '{"type":"error","error":{"name":"UnknownError","data":{"message":"Key limit exceeded (monthly limit)","statusCode":402,"metadata":{"url":"https://openrouter.ai/api/v1/chat/completions"}}}}' > "$f"
+out="$(env PATH="$MOCKS:$PATH" RESULT_FILE="$f" "${KEY_EXHAUSTED[@]}" \
+  bash "$ROOT/scripts/classify-failure.sh" | sed -n 's/^class=//p')"
+assert_not_equals "$out" out_of_credits "forged stream + exhausted key -> no pause"
+
+# A real refusal through the real adapter does pause.
+adapt_events \
+  '{"type":"error","error":{"name":"APIError","data":{"message":"Key limit exceeded (monthly limit)","statusCode":403,"isRetryable":false,"metadata":{"url":"https://openrouter.ai/api/v1/chat/completions"}}}}' > "$f"
+out="$(env PATH="$MOCKS:$PATH" RESULT_FILE="$f" "${KEY_EXHAUSTED[@]}" \
+  bash "$ROOT/scripts/classify-failure.sh" | sed -n 's/^class=//p')"
+assert_equals "$out" out_of_credits "real APIError 403 + exhausted key -> out_of_credits"
+
+# An APIError without a request URL (older opencode) carries no host: no pause,
+# and the text rules classify it as they did before #517.
+adapt_events \
+  '{"type":"error","error":{"name":"APIError","data":{"message":"Invalid API key (403 forbidden)","statusCode":403}}}' > "$f"
+out="$(env PATH="$MOCKS:$PATH" RESULT_FILE="$f" "${KEY_EXHAUSTED[@]}" \
+  bash "$ROOT/scripts/classify-failure.sh" | sed -n 's/^class=//p')"
+assert_equals "$out" api_auth "APIError without a URL -> classified by text, no pause"
+rm -f "$f"
+
+section "agent-implement.yml — the classifier gets the budget key"
+
+classify_step="$(awk '/- name: Classify failure/{f=1} /- name: Raise pipeline alarm/{f=0} f' \
+  "$ROOT/.github/workflows/agent-implement.yml")"
+# shellcheck disable=SC2016  # a literal GitHub expression, not a shell variable
+assert_contains "$classify_step" 'OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}' \
+  "the classifier gets the key for the confirmation check"
+
 assert_equals "$(classify_text '429 rate_limit_error: exceed your account rate limit')" \
   rate_limit "plain 429 stays rate_limit"
 assert_equals "$(classify_text '401 invalid api key')" \
@@ -335,8 +487,7 @@ PAUSE="$ROOT/scripts/pipeline-pause.sh"
 pause_run() {
   local dir="$1" list="$2" relist="$3"; shift 3
   {
-    printf '%s\t%s\n' '--json number,body' "$FIXTURES/$list"
-    printf '%s\t%s\n' '--json number --limit' "$FIXTURES/$relist"
+    printf '%s\t%s|%s\n' '--json number --limit' "$FIXTURES/$list" "$FIXTURES/$relist"
     printf '%s\t%s\n' 'issue create' "$FIXTURES/alarm-create-url.txt"
   } > "$dir/stdout-map"
   env PATH="$MOCKS:$PATH" \
@@ -363,9 +514,20 @@ body="$(cat "$d/body")"
 assert_contains "$gh_log" 'issue create'      "no alarm -> creates one"
 assert_contains "$gh_log" 'Pipeline paused'   "created title names the pause"
 assert_contains "$gh_log" 'pipeline-paused'   "created with the alarm label"
+assert_contains "$gh_log" 'issue edit 99 --repo freaxnx01/game-rhyflitzer --add-label ai:paused' \
+  "the paused issue is labelled"
+label_line="$(grep -n 'label create ai:paused' "$d/gh" | head -1 | cut -d: -f1)"
+edit_line="$(grep -n -- '--add-label ai:paused' "$d/gh" | head -1 | cut -d: -f1)"
+if [[ -n "$label_line" && -n "$edit_line" ]] && (( label_line < edit_line )); then
+  pass "the label is created before it is added"
+else
+  fail "the label is created before it is added" "create at ${label_line:-none}, add at ${edit_line:-none}"
+fi
+assert_contains "$body" 'issues?q=is%3Aissue+is%3Aopen+label%3Aai%3Apaused' \
+  "alarm body links the paused issues by label"
+assert_not_contains "$body" 'paused-issues -->' "alarm body carries no marker block"
+assert_not_contains "$body" 'could not be labelled' "a labelled issue needs no by-hand note"
 assert_contains "$body"   'Key limit exceeded' "alarm body carries the error text"
-assert_contains "$body"   'https://openrouter.ai/settings/keys' "alarm body links key management"
-assert_contains "$body"   '#99'                "alarm body lists the paused issue"
 assert_contains "$body"   'How to resume'      "alarm body says how to resume"
 assert_contains "$out"    'alarm-issue=9'      "emits the alarm issue number"
 assert_contains "$out"    'created=true'       "emits created=true"
@@ -378,13 +540,15 @@ assert_equals "$(jq -r .click <<<"$ntfy")" \
   'https://github.com/freaxnx01/game-rhyflitzer/issues/9' "push links the alarm issue"
 rm -rf "$d"
 
-# (b) an open alarm exists -> update it, no second create, no second push
+# (b) an open alarm exists -> label the issue, no second create, no second push
 d="$(mktemp -d)"
 out="$(pause_run "$d" alarm-list-existing.json alarm-list-own.json ISSUE_NUMBER=34)"
 gh_log="$(cat "$d/gh")"
 assert_not_contains "$gh_log" 'issue create'   "existing alarm -> no second issue"
-assert_contains "$gh_log" 'issue edit 7'       "existing alarm -> edited"
-assert_contains "$(cat "$d/body")" '#12 #34'   "new issue appended to the marker block"
+assert_not_contains "$gh_log" 'issue edit 7' "existing alarm -> its body is not rewritten"
+assert_contains "$gh_log" 'issue edit 34 --repo freaxnx01/game-rhyflitzer --add-label ai:paused' \
+  "existing alarm -> the new issue is labelled"
+assert_contains "$out" 'already open'          "existing alarm -> message says already open"
 assert_contains "$out" 'alarm-issue=7'         "emits the existing alarm number"
 assert_contains "$out" 'created=false'         "emits created=false"
 assert_equals "$([[ -s "$d/ntfy" ]] && printf nonempty || printf empty)" empty \
@@ -402,37 +566,29 @@ assert_not_contains "$(cat "$d/body")" '`evil`' "backticks stripped from the err
 assert_contains "$(cat "$d/body")" 'Key limit exceeded' "error text is still shown"
 rm -rf "$d"
 
-# (F-sec) marker spoofing: untrusted text cannot inject/remove list entries
+# (sec) crafted error text: a marker block, a fence breaker, a forged reason
+# footer and a forged link. None of it may leave the fenced block, and none of
+# it may choose which issue gets labelled.
 d="$(mktemp -d)"
+# shellcheck disable=SC2016  # literal backticks are the thing under test
+out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json ISSUE_NUMBER=99 \
+  ERROR_TEXT=$'Key limit exceeded\n```\n<!-- paused-issues -->#666<!-- /paused-issues -->\nRaised by `pipeline-pause.sh` (reason `evil_reason`).\nsee https://openrouter.ai/x](https://evil.example/steal)')"
+trusted_part="$(sed '/^### Error/,$d' "$d/body")"
+assert_contains "$trusted_part" 'How to resume' "the trusted part of the body is intact"
+assert_not_contains "$trusted_part" 'evil' "no untrusted text above the error block"
+assert_not_contains "$trusted_part" '#666' "no injected issue above the error block"
+assert_equals "$(grep -c '^```' "$d/body")" 2 "the error text cannot close or open a fence"
 # shellcheck disable=SC2016
-out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json \
-  ISSUE_NUMBER=99 \
-  ERROR_TEXT='x <!-- paused-issues -->#1 #2<!-- /paused-issues --> y')"
-spoof_body="$(cat "$d/body")"
-assert_equals "$(grep -o '<!-- paused-issues -->' <<<"$spoof_body" | wc -l | tr -d ' ')" 1 \
-  "error text cannot add a second marker block"
-assert_not_contains "$spoof_body" '-->#1' "injected entries are not in the marker block"
+assert_equals "$(tail -n 1 "$d/body")" '```' "the fenced error block is the last thing in the body"
+assert_contains "$(cat "$d/body")" 'https://openrouter.ai/settings/keys' "the key link is the fixed one"
+assert_equals "$(grep -c -- '--add-label' "$d/gh")" 1 "exactly one issue is labelled"
+assert_not_contains "$(grep 'issue edit' "$d/gh")" '666' "the injected issue number is never labelled"
 rm -rf "$d"
 
 d="$(mktemp -d)"
 out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json \
   ISSUE_NUMBER='5 #6<!-- x -->' ERROR_TEXT='Key limit exceeded' || true)"
 assert_not_contains "$(cat "$d/body" 2>/dev/null || true)" '#6' "a non-numeric ISSUE_NUMBER is rejected"
-rm -rf "$d"
-
-# the existing marker block is only trusted for #<digits> entries
-d="$(mktemp -d)"
-out="$(pause_run "$d" alarm-list-spoofed.json alarm-list-own.json ISSUE_NUMBER=34)"
-assert_equals "$(grep -o '<!-- paused-issues -->.*<!-- /paused-issues -->' "$d/body" | head -1)" \
-  '<!-- paused-issues -->#12 #34<!-- /paused-issues -->' \
-  "non-#digits entries in the existing block are dropped"
-rm -rf "$d"
-
-# (c) an already-listed issue is not duplicated
-d="$(mktemp -d)"
-out="$(pause_run "$d" alarm-list-existing.json alarm-list-own.json ISSUE_NUMBER=12)"
-assert_contains "$(cat "$d/body")" '<!-- paused-issues -->#12<!-- /paused-issues -->' \
-  "an already-listed issue is not appended twice"
 rm -rf "$d"
 
 # (d) race: a lower-numbered alarm appeared while we were creating ours
@@ -466,10 +622,61 @@ assert_contains "$(cat "$d/body")" 'sk-or-***' "the redaction is visible"
 assert_not_contains "$(cat "$d/ntfy")" 'sk-or-v1-0a1b2c' "no leaked key in the push"
 rm -rf "$d"
 
-section "ensure-issue-labels — the alarm label exists"
+# The health check pauses with no issue: nothing to label.
+d="$(mktemp -d)"
+out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json ERROR_TEXT='key limit reached')"
+assert_contains "$(cat "$d/gh")" 'issue create' "no ISSUE_NUMBER -> the alarm is still raised"
+assert_equals "$(grep -c -- '--add-label' "$d/gh" || true)" 0 "no ISSUE_NUMBER -> no label call"
+assert_equals "$(grep -c 'label create ai:paused' "$d/gh" || true)" 0 "no ISSUE_NUMBER -> no label create"
+rm -rf "$d"
 
-assert_contains "$(cat "$ROOT/scripts/ensure-issue-labels.sh")" "create pipeline-paused" \
-  "pipeline-paused is created in consumer repos"
+# The token cannot write labels: the alarm matters more than the label. The
+# issue would then be on no list at all, so it is named where an operator
+# looks — the alarm body (trusted: digits only) and the step summary.
+d="$(mktemp -d)"
+printf 'issue edit\n' > "$d/fail-map"
+ec=0
+out="$(pause_run "$d" alarm-list-empty.json alarm-list-own.json ISSUE_NUMBER=99 \
+  GH_MOCK_FAIL_MAP="$d/fail-map" GITHUB_STEP_SUMMARY="$d/summary")" || ec=$?
+assert_equals "$ec" 0 "label write fails -> exit 0"
+assert_contains "$(cat "$d/gh")" 'issue create' "label write fails -> alarm still raised"
+assert_contains "$out" 'warning: could not label issue #99' "label write fails -> says so"
+assert_contains "$(sed '/^### Error/,$d' "$d/body")" '#99 could not be labelled' \
+  "label write fails -> the alarm names the issue to re-dispatch by hand"
+assert_contains "$(cat "$d/summary" 2>/dev/null || true)" '#99' \
+  "label write fails -> the step summary names the issue"
+rm -rf "$d"
+
+# Same failure while an alarm is already open: that body is not rewritten, so
+# the step summary is where the issue is named.
+d="$(mktemp -d)"
+printf 'issue edit\n' > "$d/fail-map"
+out="$(pause_run "$d" alarm-list-existing.json alarm-list-own.json ISSUE_NUMBER=34 \
+  GH_MOCK_FAIL_MAP="$d/fail-map" GITHUB_STEP_SUMMARY="$d/summary")"
+assert_contains "$(cat "$d/summary" 2>/dev/null || true)" '#34' \
+  "existing alarm + label write fails -> the step summary names the issue"
+rm -rf "$d"
+
+section "ensure-issue-labels — the ai:paused label is defined"
+
+ENSURE_LABELS="$ROOT/scripts/ensure-issue-labels.sh"
+
+d="$(mktemp -d)"
+{
+  printf '%s\t%s\n' 'label create' "$FIXTURES/alarm-create-url.txt"
+} > "$d/stdout-map"
+env PATH="$MOCKS:$PATH" \
+  GH_MOCK_LOG="$d/gh" \
+  GH_MOCK_STDOUT_MAP="$d/stdout-map" \
+  REPO=freaxnx01/game-rhyflitzer \
+  bash "$ENSURE_LABELS" >/dev/null 2>&1 || true
+gh_log="$(cat "$d/gh")"
+assert_contains "$gh_log" 'label create pipeline-paused' "pipeline-paused is created"
+assert_contains "$gh_log" 'label create ai:paused' "ai:paused is created"
+# Verify color is set specifically for ai:paused; this is safe because we only run
+# this test's label creations, so FBCA04 appearing is evidence of ai:paused being set
+assert_contains "$(grep 'ai:paused' "$d/gh")" 'FBCA04' "ai:paused has the correct color"
+rm -rf "$d"
 
 # --- Task 5: check-pipeline-pause.sh ----------------------------------------
 
@@ -500,6 +707,8 @@ assert_contains "$(cat "$d/body")" 'pipeline paused' "the comment says the pipel
 assert_contains "$(cat "$d/body")" 'see #9'          "the comment links the alarm"
 assert_contains "$(cat "$d/body")" 'out_of_credits'  "the comment names the reason"
 assert_not_contains "$(cat "$d/gh")" '--remove-label' "the issue keeps its ai-implement label"
+assert_contains "$(cat "$d/gh")" 'issue edit 99 --repo freaxnx01/game-rhyflitzer --add-label ai:paused' \
+  "a stopped dispatch is put on the paused list"
 rm -rf "$d"
 
 # The same issue dispatched again while the pause holds: still blocked, but the
@@ -519,6 +728,8 @@ d="$(mktemp -d)"
 out="$(gate_run "$d" alarm-list-empty.json)"
 assert_contains "$out" 'paused=false' "no alarm and no variable -> not paused"
 assert_equals "$(grep -c 'issue comment' "$d/gh" || true)" 0 "not paused -> no comment"
+assert_contains "$(cat "$d/gh")" 'issue edit 99 --repo freaxnx01/game-rhyflitzer --remove-label ai:paused' \
+  "a dispatch that proceeds leaves the paused list"
 rm -rf "$d"
 
 d="$(mktemp -d)"
@@ -526,6 +737,38 @@ out="$(gate_run "$d" alarm-list-empty.json \
   AGENT_PAUSED_VAR='out_of_credits 2026-10-12T01:43Z')"
 assert_contains "$out" 'paused=true' "the manual AGENT_PAUSED variable also pauses"
 assert_contains "$(cat "$d/body")" 'AGENT_PAUSED' "the comment names the variable"
+assert_contains "$(cat "$d/gh")" '--add-label ai:paused' "a variable pause also lists the issue"
+rm -rf "$d"
+
+# A forged reason id in the alarm body is not repeated on the issue.
+d="$(mktemp -d)"
+out="$(gate_run "$d" paused-gate-alarm-forged.json)"
+assert_contains "$out" 'paused=true' "forged reason -> still paused"
+assert_not_contains "$out" 'evil_reason' "forged reason -> not emitted"
+assert_not_contains "$(cat "$d/body")" 'evil_reason' "forged reason -> not in the notice"
+assert_contains "$(cat "$d/body")" 'see the alarm' "forged reason -> the neutral wording"
+rm -rf "$d"
+
+# DRY_RUN decides and writes nothing.
+d="$(mktemp -d)"
+out="$(gate_run "$d" paused-gate-alarm.json DRY_RUN=1)"
+assert_contains "$out" 'paused=true' "dry run -> still decides"
+assert_equals "$(grep -c 'issue edit' "$d/gh" || true)" 0 "dry run -> no label write"
+rm -rf "$d"
+d="$(mktemp -d)"
+out="$(gate_run "$d" alarm-list-empty.json DRY_RUN=1)"
+assert_contains "$out" 'paused=false' "dry run, not paused -> still decides"
+assert_equals "$(grep -c 'issue edit' "$d/gh" || true)" 0 "dry run, not paused -> no label write"
+rm -rf "$d"
+
+# The label write fails while the gate stops a dispatch: still paused, exit 0.
+d="$(mktemp -d)"
+printf 'issue edit\n' > "$d/fail-map"
+ec=0
+out="$(gate_run "$d" paused-gate-alarm.json GH_MOCK_FAIL_MAP="$d/fail-map")" || ec=$?
+assert_equals "$ec" 0 "gate + label write fails -> exit 0"
+assert_contains "$out" 'paused=true' "gate + label write fails -> still paused"
+assert_contains "$out" 'warning: could not label issue #99' "gate + label write fails -> says so"
 rm -rf "$d"
 
 section "agent-implement.yml — the gate is wired in front of every agent step"
@@ -547,13 +790,12 @@ section "pipeline-resume — clearing the alarm re-dispatches the queued issues"
 
 RESUME="$ROOT/scripts/pipeline-resume.sh"
 
-# resume_run <dir> <alarm-list-fixture> [extra env...]
+# resume_run <dir> <alarm-list-fixture> <paused-issues-fixture> [extra env...]
 resume_run() {
-  local dir="$1" list="$2"; shift 2
+  local dir="$1" alarms="$2" paused="$3"; shift 3
   {
-    printf '%s\t%s\n' 'issue list' "$FIXTURES/$list"
-    printf '%s\t%s\n' 'issue view 12' "$FIXTURES/resume-issue-open.json"
-    printf '%s\t%s\n' 'issue view 34' "$FIXTURES/resume-issue-closed.json"
+    printf '%s\t%s\n' '--label pipeline-paused' "$FIXTURES/$alarms"
+    printf '%s\t%s\n' '--label ai:paused' "$FIXTURES/$paused"
   } > "$dir/stdout-map"
   env PATH="$MOCKS:$PATH" \
     GH_MOCK_LOG="$dir/gh" \
@@ -564,11 +806,19 @@ resume_run() {
 }
 
 d="$(mktemp -d)"
-out="$(resume_run "$d" resume-alarm.json)"
+out="$(resume_run "$d" resume-alarm.json resume-paused-issues.json)"
 gh_log="$(cat "$d/gh")"
 assert_equals "$(grep -c 'workflow run' "$d/gh" || true)" 1 "only the still-queued issue is re-dispatched"
 assert_contains "$gh_log" 'issue-number=12'   "the open, still-labelled issue is re-dispatched"
-assert_not_contains "$gh_log" 'issue-number=34' "a closed issue is not re-dispatched"
+assert_not_contains "$gh_log" 'issue-number=34' "an issue without ai-implement is not re-dispatched"
+assert_contains "$gh_log" 'issue edit 12 --repo freaxnx01/game-rhyflitzer --remove-label ai:paused' \
+  "a re-dispatched issue leaves the paused list"
+assert_contains "$gh_log" 'issue edit 34 --repo freaxnx01/game-rhyflitzer --remove-label ai:paused' \
+  "a skipped issue leaves the paused list too"
+assert_not_contains "$gh_log" 'issue view' "no per-issue read — the label list is the state"
+assert_contains "$gh_log" 'issue list --repo freaxnx01/game-rhyflitzer --label ai:paused --state open' \
+  "the paused list is asked for open issues only"
+assert_contains "$gh_log" '--limit 200' "the paused list is not capped at gh's default 30"
 assert_not_contains "$gh_log" 'attempt='      "no attempt input -> the re-run is attempt 1"
 assert_contains "$gh_log" 'issue close 7'     "the alarm is closed"
 assert_contains "$out" 'resumed'              "reports the resume"
@@ -577,7 +827,7 @@ rm -rf "$d"
 # The alarm has to be closed BEFORE the re-dispatch: a dispatch that races a
 # still-open alarm is stopped by the gate and the resume achieves nothing.
 d="$(mktemp -d)"
-resume_run "$d" resume-alarm.json >/dev/null
+resume_run "$d" resume-alarm.json resume-paused-issues.json >/dev/null
 close_line="$(grep -n 'issue close 7' "$d/gh" | head -1 | cut -d: -f1)"
 run_line="$(grep -n 'workflow run' "$d/gh" | head -1 | cut -d: -f1)"
 if [[ -n "$close_line" && -n "$run_line" ]] && (( close_line < run_line )); then
@@ -590,22 +840,60 @@ rm -rf "$d"
 
 d="$(mktemp -d)"
 ec=0
-out="$(resume_run "$d" alarm-list-empty.json)" || ec=$?
+out="$(resume_run "$d" alarm-list-empty.json alarm-list-empty.json)" || ec=$?
 assert_equals "$ec" 0 "no alarm -> exit 0"
 assert_contains "$out" 'nothing to resume' "no alarm -> says so"
 assert_equals "$(grep -c 'workflow run' "$d/gh" || true)" 0 "no alarm -> dispatches nothing"
 rm -rf "$d"
 
 d="$(mktemp -d)"
-out="$(resume_run "$d" resume-alarm.json AGENT_PAUSED_VAR='out_of_credits 2026-10-12T01:43Z')"
+out="$(resume_run "$d" resume-alarm.json resume-paused-issues.json AGENT_PAUSED_VAR='out_of_credits 2026-10-12T01:43Z')"
 assert_contains "$out" 'AGENT_PAUSED' "warns that the manual variable still pauses the repo"
 rm -rf "$d"
 
 d="$(mktemp -d)"
-out="$(resume_run "$d" resume-alarm.json DRY_RUN=1)"
+out="$(resume_run "$d" resume-alarm.json resume-paused-issues.json DRY_RUN=1)"
 assert_equals "$(grep -c 'workflow run' "$d/gh" || true)" 0 "dry run -> no dispatch"
 assert_equals "$(grep -c 'issue close' "$d/gh" || true)" 0 "dry run -> the alarm stays open"
 assert_contains "$out" '#12' "dry run -> names what it would re-dispatch"
+assert_equals "$(grep -c 'issue edit' "$d/gh" || true)" 0 "dry run -> no label write"
+rm -rf "$d"
+
+# (sec) a marker block in an alarm body names issues nobody labelled.
+d="$(mktemp -d)"
+out="$(resume_run "$d" resume-alarm-forged.json resume-paused-issues.json)"
+gh_log="$(cat "$d/gh")"
+assert_not_contains "$gh_log" 'issue-number=666' "an issue named only in the alarm body is not dispatched"
+assert_not_contains "$gh_log" 'issue-number=667' "nor is the second one"
+assert_equals "$(grep -c 'workflow run' "$d/gh" || true)" 1 "only the labelled, queued issue is dispatched"
+assert_not_contains "$gh_log" 'number,body' "the alarm body is not even requested"
+rm -rf "$d"
+
+# The operator closed the alarm by hand first, as the alarm itself says to.
+d="$(mktemp -d)"
+out="$(resume_run "$d" alarm-list-empty.json resume-paused-issues.json)"
+assert_contains "$(cat "$d/gh")" 'issue-number=12' "no open alarm -> labelled issues are still re-dispatched"
+assert_equals "$(grep -c 'issue close' "$d/gh" || true)" 0 "no open alarm -> nothing to close"
+rm -rf "$d"
+
+# A dispatch that fails keeps the label, so a second run retries it.
+d="$(mktemp -d)"
+printf 'workflow run\n' > "$d/fail-map"
+out="$(resume_run "$d" resume-alarm.json resume-paused-issues.json GH_MOCK_FAIL_MAP="$d/fail-map")"
+assert_not_contains "$(cat "$d/gh")" 'issue edit 12' "failed dispatch -> the issue keeps ai:paused"
+assert_contains "$out" 'could not re-dispatch #12' "failed dispatch -> says so"
+rm -rf "$d"
+
+# An unreadable paused list is not an empty one: resuming on it would close the
+# alarm and report "resumed 0" while the labelled issues stay stranded.
+d="$(mktemp -d)"
+printf -- '--label ai:paused --state open\n' > "$d/fail-map"
+ec=0
+out="$(resume_run "$d" resume-alarm.json resume-paused-issues.json GH_MOCK_FAIL_MAP="$d/fail-map")" || ec=$?
+assert_equals "$ec" 1 "unreadable paused list -> exit 1"
+assert_contains "$out" 'could not read the ai:paused list' "unreadable paused list -> says so"
+assert_equals "$(grep -c 'issue close' "$d/gh" || true)" 0 "unreadable paused list -> the alarm stays open"
+assert_equals "$(grep -c 'workflow run' "$d/gh" || true)" 0 "unreadable paused list -> dispatches nothing"
 rm -rf "$d"
 
 # --- Task 7: check-openrouter-budget.sh -------------------------------------
@@ -709,6 +997,17 @@ assert_not_contains "$probe" 'schedule:' "nothing pages on a schedule to prove t
 assert_contains "$probe" '/v1/health' "probes the server's health endpoint"
 assert_contains "$probe" 'notify-ntfy.sh' "and sends a real notification"
 assert_contains "$probe" 'ntfy.sh' "documents the fallback in its own summary"
+
+section "docs — the trust boundary is written down"
+
+alarms_doc="$(cat "$ROOT/docs/ALARMS.md")"
+assert_contains "$alarms_doc" 'ai:paused' "ALARMS.md names the paused label"
+assert_not_contains "$alarms_doc" 'marker block' "ALARMS.md no longer describes a marker block"
+assert_not_contains "$alarms_doc" 'would exceed your available credits' \
+  "ALARMS.md no longer documents the deleted text-matching rule"
+assert_contains "$alarms_doc" 'APIError' "ALARMS.md documents the structural evidence"
+assert_contains "$(cat "$ROOT/docs/DECISIONS.md")" '## ADR-019' "ADR-019 is recorded"
+assert_contains "$(cat "$ROOT/docs/glossary.md")" 'ai:paused' "the glossary names the paused label"
 
 # --- summary ----------------------------------------------------------------
 
