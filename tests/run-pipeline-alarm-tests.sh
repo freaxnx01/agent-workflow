@@ -790,14 +790,12 @@ section "pipeline-resume — clearing the alarm re-dispatches the queued issues"
 
 RESUME="$ROOT/scripts/pipeline-resume.sh"
 
-# resume_run <dir> <alarm-list-fixture> [extra env...]
+# resume_run <dir> <alarm-list-fixture> <paused-issues-fixture> [extra env...]
 resume_run() {
-  local dir="$1" list="$2"; shift 2
+  local dir="$1" alarms="$2" paused="$3"; shift 3
   {
-    printf '%s\t%s\n' '--label ai:paused' "$FIXTURES/resume-paused-issues.json"
-    printf '%s\t%s\n' '--label pipeline-paused' "$FIXTURES/$list"
-    printf '%s\t%s\n' 'issue view 12' "$FIXTURES/resume-issue-open.json"
-    printf '%s\t%s\n' 'issue view 34' "$FIXTURES/resume-issue-closed.json"
+    printf '%s\t%s\n' '--label pipeline-paused' "$FIXTURES/$alarms"
+    printf '%s\t%s\n' '--label ai:paused' "$FIXTURES/$paused"
   } > "$dir/stdout-map"
   env PATH="$MOCKS:$PATH" \
     GH_MOCK_LOG="$dir/gh" \
@@ -808,11 +806,19 @@ resume_run() {
 }
 
 d="$(mktemp -d)"
-out="$(resume_run "$d" resume-alarm.json)"
+out="$(resume_run "$d" resume-alarm.json resume-paused-issues.json)"
 gh_log="$(cat "$d/gh")"
 assert_equals "$(grep -c 'workflow run' "$d/gh" || true)" 1 "only the still-queued issue is re-dispatched"
 assert_contains "$gh_log" 'issue-number=12'   "the open, still-labelled issue is re-dispatched"
-assert_not_contains "$gh_log" 'issue-number=34' "a closed issue is not re-dispatched"
+assert_not_contains "$gh_log" 'issue-number=34' "an issue without ai-implement is not re-dispatched"
+assert_contains "$gh_log" 'issue edit 12 --repo freaxnx01/game-rhyflitzer --remove-label ai:paused' \
+  "a re-dispatched issue leaves the paused list"
+assert_contains "$gh_log" 'issue edit 34 --repo freaxnx01/game-rhyflitzer --remove-label ai:paused' \
+  "a skipped issue leaves the paused list too"
+assert_not_contains "$gh_log" 'issue view' "no per-issue read — the label list is the state"
+assert_contains "$gh_log" 'issue list --repo freaxnx01/game-rhyflitzer --label ai:paused --state open' \
+  "the paused list is asked for open issues only"
+assert_contains "$gh_log" '--limit 200' "the paused list is not capped at gh's default 30"
 assert_not_contains "$gh_log" 'attempt='      "no attempt input -> the re-run is attempt 1"
 assert_contains "$gh_log" 'issue close 7'     "the alarm is closed"
 assert_contains "$out" 'resumed'              "reports the resume"
@@ -821,7 +827,7 @@ rm -rf "$d"
 # The alarm has to be closed BEFORE the re-dispatch: a dispatch that races a
 # still-open alarm is stopped by the gate and the resume achieves nothing.
 d="$(mktemp -d)"
-resume_run "$d" resume-alarm.json >/dev/null
+resume_run "$d" resume-alarm.json resume-paused-issues.json >/dev/null
 close_line="$(grep -n 'issue close 7' "$d/gh" | head -1 | cut -d: -f1)"
 run_line="$(grep -n 'workflow run' "$d/gh" | head -1 | cut -d: -f1)"
 if [[ -n "$close_line" && -n "$run_line" ]] && (( close_line < run_line )); then
@@ -834,22 +840,48 @@ rm -rf "$d"
 
 d="$(mktemp -d)"
 ec=0
-out="$(resume_run "$d" alarm-list-empty.json)" || ec=$?
+out="$(resume_run "$d" alarm-list-empty.json alarm-list-empty.json)" || ec=$?
 assert_equals "$ec" 0 "no alarm -> exit 0"
 assert_contains "$out" 'nothing to resume' "no alarm -> says so"
 assert_equals "$(grep -c 'workflow run' "$d/gh" || true)" 0 "no alarm -> dispatches nothing"
 rm -rf "$d"
 
 d="$(mktemp -d)"
-out="$(resume_run "$d" resume-alarm.json AGENT_PAUSED_VAR='out_of_credits 2026-10-12T01:43Z')"
+out="$(resume_run "$d" resume-alarm.json resume-paused-issues.json AGENT_PAUSED_VAR='out_of_credits 2026-10-12T01:43Z')"
 assert_contains "$out" 'AGENT_PAUSED' "warns that the manual variable still pauses the repo"
 rm -rf "$d"
 
 d="$(mktemp -d)"
-out="$(resume_run "$d" resume-alarm.json DRY_RUN=1)"
+out="$(resume_run "$d" resume-alarm.json resume-paused-issues.json DRY_RUN=1)"
 assert_equals "$(grep -c 'workflow run' "$d/gh" || true)" 0 "dry run -> no dispatch"
 assert_equals "$(grep -c 'issue close' "$d/gh" || true)" 0 "dry run -> the alarm stays open"
 assert_contains "$out" '#12' "dry run -> names what it would re-dispatch"
+assert_equals "$(grep -c 'issue edit' "$d/gh" || true)" 0 "dry run -> no label write"
+rm -rf "$d"
+
+# (sec) a marker block in an alarm body names issues nobody labelled.
+d="$(mktemp -d)"
+out="$(resume_run "$d" resume-alarm-forged.json resume-paused-issues.json)"
+gh_log="$(cat "$d/gh")"
+assert_not_contains "$gh_log" 'issue-number=666' "an issue named only in the alarm body is not dispatched"
+assert_not_contains "$gh_log" 'issue-number=667' "nor is the second one"
+assert_equals "$(grep -c 'workflow run' "$d/gh" || true)" 1 "only the labelled, queued issue is dispatched"
+assert_not_contains "$gh_log" 'number,body' "the alarm body is not even requested"
+rm -rf "$d"
+
+# The operator closed the alarm by hand first, as the alarm itself says to.
+d="$(mktemp -d)"
+out="$(resume_run "$d" alarm-list-empty.json resume-paused-issues.json)"
+assert_contains "$(cat "$d/gh")" 'issue-number=12' "no open alarm -> labelled issues are still re-dispatched"
+assert_equals "$(grep -c 'issue close' "$d/gh" || true)" 0 "no open alarm -> nothing to close"
+rm -rf "$d"
+
+# A dispatch that fails keeps the label, so a second run retries it.
+d="$(mktemp -d)"
+printf 'workflow run\n' > "$d/fail-map"
+out="$(resume_run "$d" resume-alarm.json resume-paused-issues.json GH_MOCK_FAIL_MAP="$d/fail-map")"
+assert_not_contains "$(cat "$d/gh")" 'issue edit 12' "failed dispatch -> the issue keeps ai:paused"
+assert_contains "$out" 'could not re-dispatch #12' "failed dispatch -> says so"
 rm -rf "$d"
 
 # --- Task 7: check-openrouter-budget.sh -------------------------------------

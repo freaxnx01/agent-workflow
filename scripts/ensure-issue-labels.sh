@@ -36,14 +36,16 @@
 #                the PR's required status checks could not run at all (#364) —
 #                a repo misconfiguration, not a verdict, so it is additive and
 #                the run's outcome stays ai:done
-#   alarm      pipeline-paused
+#   alarm      pipeline-paused, ai:paused
 #              — written by pipeline-pause.sh and read by
 #                check-pipeline-pause.sh. An OPEN issue carrying this label is
 #                the pause state itself (ADR-018): while one exists, no new
 #                agent run starts in the repo. The label must exist before the
 #                first alarm — `gh issue create --label` fails outright on a
 #                missing label, and a failed alarm means a dry key keeps
-#                burning dispatches silently (#517)
+#                burning dispatches silently (#517). ai:paused marks each
+#                issue a pause stopped — the list pipeline-resume.sh
+#                re-dispatches (ADR-019); defined in lib/paused-issues.sh
 #   coordination enrichment-ongoing, needs-human
 #              — enrichment-ongoing is read/written by /enrich (Step 1.5 / 2.5 / 6)
 #                to prevent two sessions from concurrently enriching the same issue.
