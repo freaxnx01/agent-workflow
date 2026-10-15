@@ -5,6 +5,214 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.1.0) - 2026-10-15
+
+**Upgrading from 2.0.x:** no change to a consumer's `agent.yml` is needed. The
+reusable workflow's inputs and permissions are unchanged; the only interface
+additions are the optional `NTFY_TOKEN` secret and the
+`ai-review-ai-merge-outcome-label` output. New behaviour a consumer will see:
+
+- A run that fails on exhausted OpenRouter credit opens a `pipeline-paused`
+  alarm issue and holds further dispatches until it is closed (#517, #521); set
+  `NTFY_URL` / `NTFY_TOPIC` vars and `NTFY_TOKEN` to get a push. See `docs/ALARMS.md`.
+- An unresolvable opencode model id stops in preflight as `model_not_found`
+  instead of retrying on Claude (#518).
+- The implement job now fails red when the agent run failed (#439).
+- `v2.0.7` was cut off `main`; its fix (#421) is part of this release too.
+
+### Added
+
+- **models:** Keep Fable to a deliberate per-issue choice (#350)
+- **354:** Define the quality gate once, with both callers delegating (#360)
+- **enrich:** Parse --headless, which implies --quick (#373)
+- **autopilot:** Load and validate the host-local config (#373)
+- **autopilot:** Select enrichable candidates, oldest first (#373)
+- **autopilot:** Gate repos on ai-review-ai-merge and a run gate (#373)
+- **autopilot:** Keep a clean managed clone per allowlisted repo (#373)
+- **autopilot:** Wrap one headless enrich per nested session (#373)
+- **autopilot:** Add the driver with its guards and dry run (#373)
+- **autopilot:** Dispatch clean enrichments, escalate the rest (#373)
+- **commands:** Add /autopilot, dry-run by default (#373)
+- **setup:** Ship the autopilot timer units and runbook (#373)
+- **runners:** Install the Claude Code CLI via the native installer
+- **runners:** Distinguish a runner-blocked review from a review-blocked PR
+- **pipeline:** Probe whether an agent PR's checks can run
+- **pipeline:** Report blocked PR checks on the issue
+- **pipeline:** Report the PR number from verify-or-recover-pr
+- **pipeline:** Surface PRs whose required checks cannot run
+- **pipeline:** Wire the checks probe into agent-implement.yml
+- **runners:** Extract the verified-installer fetch to scripts/lib
+- **runners:** Install opencode via its native installer
+- **pipeline:** Wire the freaxnx01-pipeline GitHub App into this repo
+- **azdo:** Add shared ADO query primitives as a sourced library
+- **azdo:** Add field resolution, node listing, and WIP derivation
+- **milestone:** Add the Azure DevOps section
+- **prs,triage:** Add the Azure DevOps sections
+- **commands:** Add Azure DevOps sections for the composition commands
+- **new,parked,roadmap:** Add the Azure DevOps sections, with azdo_set_tags
+- **forge:** Add the read-path adapter, GitHub only
+- **forge:** Add the four write verbs
+- **forge:** Implement the Azure DevOps adapter (#253 step 3)
+- **forge:** Add the PR verb and the Azure DevOps entry point (#253 step 4)
+- **migrate:** Rename the deprecated flow inputs across a fleet (#451)
+- **commands:** Add /integration — agent-workflow + ai-instructions wiring report (#450)
+- **consumer:** Add a caller-permissions rewriter to migrate-consumers (#441)
+- **consumer:** Roll out missing caller permissions as one PR per repo (#441)
+- **commands:** /advisor — run the Software Factory advisor in Claude Code (#461)
+- **advisor:** Let the advisor arm auto-merge of its own docs-only PRs (#475)
+- **pipeline:** Grade a run against the plan and gate AI-merge on coverage (#473)
+- **advisor:** Allow the advisor to set secrets, keep delete denied (#477)
+- **partials:** Add temp-files partial (#481)
+- **partials:** While the pipeline runs, enrich the next wave (#313)
+- **enrich-batch:** Add the interactive batch enrichment command (#493)
+- **azdo:** Port the enrichment write-back so /enrich and /enrich-phased can write (#488) (#494)
+- **pipeline:** Alarm and pause on OpenRouter credit/key-limit failures (#517) (#520)
+
+### Changed
+
+- **runners:** Source the shared fetch-verified-installer
+- **build-agent-prompt:** Add the ISSUE_JSON injection seam
+- **scripts:** Route issue writes through the forge adapter
+
+### Fixed
+
+- **354:** Put plan tasks at h3 so the turn budget is sized (#358)
+- **pipeline:** Size the turn budget from either task heading level (#363)
+- **autopilot:** Use here-string for enrich prompt, tighten log assertion
+- **autopilot:** Fail closed on unknown label state, log escalations
+- **autopilot:** Require positive enrichment evidence before dispatch
+- **autopilot:** Move test-gate declaration into host-local config
+- **autopilot:** Discriminate repo test, split outcome string, doc notes
+- **autopilot:** Route printf EPIPE into SIGPIPE handler
+- **labels:** Create needs-human label for autopilot escalation
+- **autopilot:** Ensure pipeline labels before first dispatch
+- **runners:** Drop npm from the AGENT=claude install path
+- **pipeline:** Deliver the implementation contract to the agent
+- **runners:** Take opencode off the shared npm global prefix
+- **ci:** Grant actions: write so retry-dispatch can actually re-dispatch
+- **issues:** Issue ADO's WIQL through a mechanism that returns data
+- **issues:** Fire the ADO Area Path guard on TF51011, not on emptiness
+- **issues:** Correct the ADO iteration listing's --query path
+- **detect-forge:** Parse remotes by shape so an ssh port is not a path segment
+- **onboard:** Declare the agent and grant actions: write in the stub
+- **labels:** Match the parked label as plain ASCII
+- **pipeline:** Stop counting runs that never started as attempts
+- **ci:** Randomise the GITHUB_ENV delimiter, and extract the step to a script
+- **prompt:** Make the closing instructions forge-specific
+- **azdo:** Make the entry point actually complete a run
+- **pipeline:** Make pipeline pushes act as the App
+- **ci:** Restore the Layer-2 guard by matching the caller's permissions
+- **ci:** Honour dry-run in the OpenCode toolchain steps
+- **retry:** Keep every opencode error message in the adapter result (#439)
+- **retry:** Retry a 0-turn opencode model-not-found as transient (#439)
+- **implement:** Fail the job when the agent run failed (#439)
+- **consumer:** Detect caller stubs that under-grant the reusable workflow (#434)
+- **consumer:** Flag permission gaps in the migrate-consumers inventory (#434)
+- **consumer:** Fail loud on checker errors, count only the calling job (#434)
+- **autopilot:** Require the test gate to have actually gated a pull request (#444)
+- **consumer:** Fail the repo on a failed PR lookup, back off pr create (#441)
+- **consumer:** Reject --fix-perms with --rename-flow (#441)
+- **milestone:** Send due_on at midnight UTC, the only time GitHub keeps (#460)
+- **commands:** Rename /advisor to /factory-advisor, read run actors via REST (#467)
+- **enrich:** Headless escalation fails closed — ensure needs-human, never hang (#471)
+- **pipeline:** Bound the review self-fix on its own and say when it does not finish (#476)
+- **pipeline:** Pass the author allowlist to verify-or-recover-pr (#479)
+- **pipeline:** Read required checks with the App token in the AI-merge job (#483)
+- **tests:** Unset REPO (and ISSUE_BODY) explicitly in leak-prone assertions
+- **review:** Review failures are not `block` verdicts (#490) (#506)
+- **opencode:** Preflight and classify an unresolvable model id as model_not_found (#518) (#527)
+- **security:** Alarm state marker injection and forgeable credit classification (#521) (#534)
+
+### Security
+
+- **specs:** Add design for taking opencode off the shared npm prefix
+
+### Documentation
+
+- **todo:** Add the Azure DevOps manual test plan
+- **contract:** Say `gh pr create --draft` explicitly (#352)
+- **354:** Add spec and plan for one quality-gate definition (#356)
+- **354:** Add Task 0 for the markdownlint globs gap (#357)
+- **359:** Add spec and plan for sizing turns from either heading level (#361)
+- **claim:** Spec and plan for the implement claim (#366) (#367)
+- **todo:** Record the quality-gate session, and correct two stale items (#368)
+- **autopilot:** Design spec for the unattended enrich lane (#373)
+- **autopilot:** Correct test registration and kill-switch doc home (#373)
+- **autopilot:** Implementation plan for the unattended enrich lane (#373)
+- **autopilot:** Fix three nested code fences in the plan (#373)
+- **adr:** Record how the unattended lane drives /enrich (#373)
+- **enrich:** Specify headless mode and its needs-human exit (#373)
+- **superpowers:** Amend the autopilot spec with implementation fixes
+- **ado:** Record the first live-org run of the manual test plan
+- **specs:** Add CLI install unification design for #302
+- **plans:** Add implementation plan for #302 CLI install unification
+- **ai-notes:** Fix typo failing the typos pre-commit hook
+- **specs:** Add design for surfacing blocked agent-PR checks (#364)
+- **plans:** Add implementation plan for #364 blocked PR checks
+- **plans:** Rename for_ test variables to satisfy the typos hook
+- **ado:** Complete the manual test plan with the sections 7-9 write pass
+- **ado:** Record that CONTAINS matches whole tags, and mark the plan as run
+- **specs:** Link the parked opencode follow-up from the #302 spec
+- **changelog:** Merge the #302 entries into the existing Unreleased sections
+- **387:** Add design for parsing remotes by shape, not first delimiter
+- **387:** Add implementation plan for the ssh-port parse fix
+- **386:** Add spec and plan for the ADO section's live-org fixes
+- **286:** Add spec and plan for porting the remaining ADO sections
+- **397:** Add spec and plan for renaming the parked label to ASCII
+- **plans:** Reword a term that crate-ci/typos wrongly corrects
+- **plans:** Add implementation plan for #395 opencode native install
+- **issues:** Drop the ADO tag rationale that describes a non-problem
+- **issues:** Retire the ADO epistemic caveat, the section is verified
+- **setup:** Name the two wiring steps the App runbook omitted
+- **specs:** Add design for excluding non-starts from the attempt cap
+- **plans:** Add implementation plan for #393 attempt-cap non-starts
+- Say parked, not the emoji form, and record ADR-016
+- **253:** Audit agent-implement and design the forge adapter
+- **253:** Add the step-1 implementation plan
+- **specs:** Add design for making pipeline pushes act as the App
+- **plans:** Add implementation plan for #430 App-token pushes
+- **setup:** Require the App's Workflows permission, and say what the token governs
+- **plans:** Mark Task 3 Step 1 landed, drop the stale permission count
+- **specs:** Add design for making the autopilot gate actually gate
+- **plans:** Add implementation plan for #381 autopilot gate
+- **specs:** Add specs and plans for #434 and #439
+- **retry:** Explain the transient model-not-found retry (#439)
+- **factory-map:** Correct stale list_issues quirk, note overview gap (bridge#324, #325)
+- **consumer:** Explain the perms column in the fleet inventory (#434)
+- **specs:** Add spec and plan for #441
+- **consumer:** Document the --fix-perms rollout (#441)
+- **todo:** Record the consumer-permissions / retry session
+- **enrich:** Add spec and plan for #458 (#470)
+- **pipeline:** Add spec and plan for #457 (#472)
+- **handoff:** Record the auto-lane e2e outcome and retire the handoff (#484)
+- **ai-notes:** Record the completed Azure DevOps forge work (#487)
+- **ai-notes:** Record the handoff-index session (#327)
+- **azdo:** Stop citing a blocker that has shipped (#489)
+- **enrich:** Add cost rules — model by issue size, no dry runs, max 4 concurrent (#485)
+- **azdo:** Add the spec and plan for the enrichment write-back (#488) (#491)
+- **processing-test-feedback:** Look at attachments, resume check for filed entries (#503)
+- **review:** Add spec and plan for #490 (#504)
+- **processing-test-feedback:** Handle Testhub exports (#515)
+- **spec:** Pipeline credit/key-limit alarm design (#517)
+- **plan:** Pipeline credit/key-limit alarm plan (#517)
+- **spec:** Add spec and plan for the alarm trust boundary (#521)
+- **spec:** Opencode model-not-found design and plan (#518)
+- **spec:** Amend #521 with confirmed budget rule, 403 handling, landing order
+- **spec:** Amend #521 — a provider 403 pauses only on an exhausted key (C5)
+
+## [2.0.7](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.0.7) - 2026-09-27
+
+### Fixed
+
+- **pipeline:** Grant `actions: write` on the implement job so the retry dispatch can fire (#421)
+
+  A job-level `permissions:` block replaces the inherited set rather than merging with
+  it, so `actions: write` granted by a consumer's caller was dropped at the job boundary
+  and every retry died on `HTTP 403: Resource not accessible by integration`. A
+  recoverable provider hiccup therefore became a permanent `ai:failed` needing a human.
+  Patch release off 2.0.6: this is the only change, so consumers pinned to `v2` get the
+  fix without the unreleased work on `main`.
+
 ## [2.0.6](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.0.6) - 2026-09-14
 
 ### Added
