@@ -191,6 +191,15 @@ assert_not_equals "$(classify_provider 403 openrouter.ai.evil.example "${KEY_EXH
 assert_not_equals "$(classify_provider 429 openrouter.ai "${KEY_EXHAUSTED[@]}")" \
   out_of_credits "a provider 429 is not a payment refusal"
 
+# The provider host is the constant openrouter.ai, not derived from the
+# environment (spec A10): moving the budget API base moves no trust.
+assert_not_equals "$(classify_provider 403 evil.example "${KEY_EXHAUSTED[@]}" \
+  OPENROUTER_API_BASE=https://evil.example/api/v1)" \
+  out_of_credits "OPENROUTER_API_BASE does not widen the trusted host"
+assert_equals "$(classify_provider 403 openrouter.ai "${KEY_EXHAUSTED[@]}" \
+  OPENROUTER_API_BASE=https://gateway.example/api/v1)" \
+  out_of_credits "OPENROUTER_API_BASE does not narrow it either"
+
 # The key is asked only when there is evidence to confirm.
 d="$(mktemp -d)"
 classify_provider '' '' "${KEY_EXHAUSTED[@]}" "CURL_MOCK_LOG=$d/argv" >/dev/null
@@ -242,6 +251,13 @@ assert_equals "$(jq -r .api_error_host <<<"$ad")" openrouter.ai "adapter: the re
 
 ad="$(adapt_events '{"type":"error","error":{"name":"APIError","data":{"message":"x","statusCode":402,"metadata":{"url":"https://OpenRouter.AI/api/v1/chat/completions"}}}}')"
 assert_equals "$(jq -r .api_error_host <<<"$ad")" openrouter.ai "adapter: the host is lower-cased"
+
+# An explicit port is not part of the host: https://openrouter.ai:443 is still
+# openrouter.ai, so a URL that spells out the default port keeps the pause alive.
+ad="$(adapt_events '{"type":"error","error":{"name":"APIError","data":{"message":"x","statusCode":402,"metadata":{"url":"https://openrouter.ai:443/api/v1/chat/completions"}}}}')"
+assert_equals "$(jq -r .api_error_host <<<"$ad")" openrouter.ai "adapter: an explicit port is dropped"
+ad="$(adapt_events '{"type":"error","error":{"name":"APIError","data":{"message":"x","statusCode":402,"metadata":{"url":"https://openrouter.ai@evil.example:443/api"}}}}')"
+assert_not_equals "$(jq -r .api_error_host <<<"$ad")" openrouter.ai "adapter: dropping the port does not unmask userinfo"
 
 # Forged: an error event that is not a provider call carries no evidence.
 ad="$(adapt_events '{"type":"error","error":{"name":"UnknownError","data":{"message":"Key limit exceeded","statusCode":402,"metadata":{"url":"https://openrouter.ai/api/v1/chat/completions"}}}}')"
