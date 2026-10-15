@@ -170,6 +170,10 @@ Two rules keep it from steering the pipeline (#521, ADR-019):
   402 the key limit or account balance exhausted or low, for a 403 the key
   limit exhausted.
 
+Both rules guard against **text**. They do not stop the agent itself: it runs
+as the same user as these steps and can write to their input files and
+scripts. That gap is tracked in #535.
+
 An alarm raised before this change lists its issues only in its body. The
 resume no longer reads that list: add `ai:paused` to those issues by hand
 before running `pipeline-resume.sh`, or re-dispatch them by hand.

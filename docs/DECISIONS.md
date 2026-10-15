@@ -1712,3 +1712,9 @@ provokes included — stays `api_auth`. Only the opencode path can raise
 `out_of_credits`. A label write can fail (a token without triage rights); the
 issue is then named in the step summary and, on a new alarm, in the alarm
 body, and must be re-dispatched by hand.
+
+**Known gap.** This boundary holds against text, not against the agent. The
+agent runs as the same user as the post-run steps, so it can append a forged
+`APIError` line to opencode's output file, or rewrite the pipeline's own
+scripts in the checked-out workspace before they run. Isolating the pipeline
+from the agent is tracked in #535.
