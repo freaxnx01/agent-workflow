@@ -707,6 +707,8 @@ assert_contains "$(cat "$d/body")" 'pipeline paused' "the comment says the pipel
 assert_contains "$(cat "$d/body")" 'see #9'          "the comment links the alarm"
 assert_contains "$(cat "$d/body")" 'out_of_credits'  "the comment names the reason"
 assert_not_contains "$(cat "$d/gh")" '--remove-label' "the issue keeps its ai-implement label"
+assert_contains "$(cat "$d/gh")" 'issue edit 99 --repo freaxnx01/game-rhyflitzer --add-label ai:paused' \
+  "a stopped dispatch is put on the paused list"
 rm -rf "$d"
 
 # The same issue dispatched again while the pause holds: still blocked, but the
@@ -726,6 +728,8 @@ d="$(mktemp -d)"
 out="$(gate_run "$d" alarm-list-empty.json)"
 assert_contains "$out" 'paused=false' "no alarm and no variable -> not paused"
 assert_equals "$(grep -c 'issue comment' "$d/gh" || true)" 0 "not paused -> no comment"
+assert_contains "$(cat "$d/gh")" 'issue edit 99 --repo freaxnx01/game-rhyflitzer --remove-label ai:paused' \
+  "a dispatch that proceeds leaves the paused list"
 rm -rf "$d"
 
 d="$(mktemp -d)"
@@ -733,6 +737,38 @@ out="$(gate_run "$d" alarm-list-empty.json \
   AGENT_PAUSED_VAR='out_of_credits 2026-10-12T01:43Z')"
 assert_contains "$out" 'paused=true' "the manual AGENT_PAUSED variable also pauses"
 assert_contains "$(cat "$d/body")" 'AGENT_PAUSED' "the comment names the variable"
+assert_contains "$(cat "$d/gh")" '--add-label ai:paused' "a variable pause also lists the issue"
+rm -rf "$d"
+
+# A forged reason id in the alarm body is not repeated on the issue.
+d="$(mktemp -d)"
+out="$(gate_run "$d" paused-gate-alarm-forged.json)"
+assert_contains "$out" 'paused=true' "forged reason -> still paused"
+assert_not_contains "$out" 'evil_reason' "forged reason -> not emitted"
+assert_not_contains "$(cat "$d/body")" 'evil_reason' "forged reason -> not in the notice"
+assert_contains "$(cat "$d/body")" 'see the alarm' "forged reason -> the neutral wording"
+rm -rf "$d"
+
+# DRY_RUN decides and writes nothing.
+d="$(mktemp -d)"
+out="$(gate_run "$d" paused-gate-alarm.json DRY_RUN=1)"
+assert_contains "$out" 'paused=true' "dry run -> still decides"
+assert_equals "$(grep -c 'issue edit' "$d/gh" || true)" 0 "dry run -> no label write"
+rm -rf "$d"
+d="$(mktemp -d)"
+out="$(gate_run "$d" alarm-list-empty.json DRY_RUN=1)"
+assert_contains "$out" 'paused=false' "dry run, not paused -> still decides"
+assert_equals "$(grep -c 'issue edit' "$d/gh" || true)" 0 "dry run, not paused -> no label write"
+rm -rf "$d"
+
+# The label write fails while the gate stops a dispatch: still paused, exit 0.
+d="$(mktemp -d)"
+printf 'issue edit\n' > "$d/fail-map"
+ec=0
+out="$(gate_run "$d" paused-gate-alarm.json GH_MOCK_FAIL_MAP="$d/fail-map")" || ec=$?
+assert_equals "$ec" 0 "gate + label write fails -> exit 0"
+assert_contains "$out" 'paused=true' "gate + label write fails -> still paused"
+assert_contains "$out" 'warning: could not label issue #99' "gate + label write fails -> says so"
 rm -rf "$d"
 
 section "agent-implement.yml — the gate is wired in front of every agent step"

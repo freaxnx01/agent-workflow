@@ -1,0 +1,7 @@
+[
+  {
+    "number": 9,
+    "title": "🚨 Pipeline paused: OpenRouter key limit / credits exhausted",
+    "body": "The pipeline is **paused**.\n\nRaised by `pipeline-pause.sh` (reason `evil_reason`). See `docs/ALARMS.md`.\n"
+  }
+]
