@@ -16,3 +16,7 @@ it shows as literal `[ ]` text, which is the intended look here.
 
 Numbering restarts at 1 in each new checklist (each individual message), not across
 the whole conversation — keep it local and obvious.
+
+This is for things to **do**, not things to **decide**. A choice between options
+(scope, approach, push/merge, which of two sources is right) is not a task item —
+ask it in interview mode per `decision-interview.md` instead of listing it here.
