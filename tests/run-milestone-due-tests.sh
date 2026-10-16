@@ -8,7 +8,7 @@
 # midday write reading back as midnight (2026-10-04, milestone #5). Sending
 # midnight then rolled the date back: on 2026-10-16 a midnight-UTC write of
 # 2026-11-30 read back as 2026-11-29 (anim-bossinfo-ch/ArchiveRestApiNextGen
-# milestones 2 and 3), while the same dates PATCHed as `T12:00:00Z` read back
+# milestones 2 and 3), while the same dates sent via PATCH as `T12:00:00Z` read back
 # correct. So the commands send midday again; the read-back still compares the
 # date part only.
 #
