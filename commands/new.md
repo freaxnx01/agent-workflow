@@ -60,11 +60,12 @@ gh issue view <number> --json number,title,url,labels,milestone
 yet, **ask** me before creating it (and ask for a due date); never create one
 silently. If I give no due date, omit `-f due_on=…` entirely — never pass an empty
 value. `gh milestone` doesn't exist, so create it with `gh api`, sending the due
-date at **midnight UTC** — GitHub keeps only the date and stores any time as
-`T00:00:00Z` (verified 2026-10-04), so that is the form the read-back returns:
+date at **midday UTC** — GitHub keeps only the date and reads it back as
+`T00:00:00Z`. On 2026-10-16 a midnight-UTC write read back one day early (cause
+not established), while `T12:00:00Z` kept the requested date:
 
 ```bash
-gh api "repos/$repo/milestones" -f title="<name>" -f due_on="<YYYY-MM-DD>T00:00:00Z"
+gh api "repos/$repo/milestones" -f title="<name>" -f due_on="<YYYY-MM-DD>T12:00:00Z"
 ```
 
 If my notes name no milestone, read the open ones — **sorted locally**, see *The

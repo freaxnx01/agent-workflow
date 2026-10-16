@@ -3,12 +3,14 @@
 # run-milestone-due-tests.sh — Layer-1 contract tests for how the console sends
 # a GitHub milestone due date.
 #
-# GitHub keeps only the date of `due_on`: a milestone created or patched with
-# `2026-10-11T12:00:00Z` reads back as `2026-10-11T00:00:00Z` (verified
-# 2026-10-04 on freaxnx01/agent-workflow milestone #5). The commands used to
-# send midday UTC "so a viewer timezone can't roll the date back"; that time
-# never survives the write, so the commands now send the midnight form the API
-# stores, and a read-back can compare the date exactly.
+# GitHub keeps only the date of `due_on` and reads it back as `T00:00:00Z`. #460
+# switched the commands from midday to midnight UTC on the strength of a
+# midday write reading back as midnight (2026-10-04, milestone #5). Sending
+# midnight then rolled the date back: on 2026-10-16 a midnight-UTC write of
+# 2026-11-30 read back as 2026-11-29 (anim-bossinfo-ch/ArchiveRestApiNextGen
+# milestones 2 and 3), while the same dates PATCHed as `T12:00:00Z` read back
+# correct. So the commands send midday again; the read-back still compares the
+# date part only.
 #
 # Usage: tests/run-milestone-due-tests.sh
 # Exit codes: 0 all pass; 1 at least one assertion failed.
@@ -36,19 +38,19 @@ fail() {
   return 0
 }
 
-section "no command sends a time GitHub discards"
-if hits="$(grep -rn 'T12:00:00Z' "$ROOT/commands")"; then
-  fail "no T12:00:00Z due_on in commands/" "$hits"
+section "no command sends midnight, which can roll the date back"
+if hits="$(grep -rn 'due_on="<YYYY-MM-DD>T00:00:00Z"' "$ROOT/commands")"; then
+  fail "no T00:00:00Z due_on write in commands/" "$hits"
 else
-  pass "no T12:00:00Z due_on in commands/"
+  pass "no T00:00:00Z due_on write in commands/"
 fi
 
-section "GitHub creation sends the stored midnight form"
+section "GitHub creation sends midday UTC"
 for cmd in milestone.md new.md; do
-  if grep -qF 'T00:00:00Z' "$ROOT/commands/$cmd"; then
-    pass "$cmd sends T00:00:00Z"
+  if grep -qF 'due_on="<YYYY-MM-DD>T12:00:00Z"' "$ROOT/commands/$cmd"; then
+    pass "$cmd sends T12:00:00Z"
   else
-    fail "$cmd sends T00:00:00Z"
+    fail "$cmd sends T12:00:00Z"
   fi
 done
 
