@@ -88,7 +88,7 @@ due_day=$(( last_day < 30 ? last_day : 30 ))
 
 gh api "repos/$repo/milestones" \
   -f title="general-$month-$year" \
-  -f due_on="$year-$(date +%m)-${due_day}T00:00:00Z"
+  -f due_on="$year-$(date +%m)-${due_day}T12:00:00Z"
 ```
 
 - **Confirm before creating** — show me the name and the due date and wait for a
