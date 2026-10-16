@@ -39,7 +39,7 @@ fail() {
 }
 
 section "no command sends midnight, which can roll the date back"
-if hits="$(grep -rn 'due_on="<YYYY-MM-DD>T00:00:00Z"' "$ROOT/commands")"; then
+if hits="$(grep -rnE 'due_on=.*T00:00:00Z' "$ROOT/commands")"; then
   fail "no T00:00:00Z due_on write in commands/" "$hits"
 else
   pass "no T00:00:00Z due_on write in commands/"
