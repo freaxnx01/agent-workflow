@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.1.1) - 2026-10-17
+
+### Fixed
+
+- **opencode:** Refresh the pinned installer checksum (#546)
+
+  `opencode.ai/install` changed upstream on 2026-10-16 (anomalyco/opencode, `v1`
+  branch, upstream #54904), so every `AGENT=opencode` run stopped at Ensure OpenCode
+  toolchain with exit 65 (`installer checksum mismatch`). The new installer only adds
+  a guard against OpenCode 2 and changes how the latest version is found; a pinned
+  `--version` still downloads from the same GitHub release.
+  Patch release off 2.1.0: this is the only change, so consumers pinned to `v2` get
+  the fix without the unreleased work on `main`.
+
 ## [2.1.0](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.1.0) - 2026-10-15
 
 **Upgrading from 2.0.x:** no change to a consumer's `agent.yml` is needed. The
