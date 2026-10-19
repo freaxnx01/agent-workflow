@@ -163,6 +163,7 @@ assert_eq "a prose mention of the plan heading does not count" "label" "$(decide
 assert_eq "a bot-opened issue is skipped" "skip opened by a bot" "$(decide issue-bot.json)"
 
 for l in enrichment-ongoing needs-human parked roadmap pipeline-paused; do
+  # shellcheck disable=SC1090
   got="$(jq -n --arg l "$l" '{number:1,labels:[{name:$l}],body:"x",author:{login:"u",is_bot:false}}' \
     | (source "$SCRIPT"; intake_decision))"
   assert_eq "$l blocks intake" "skip pipeline label $l" "$got"
