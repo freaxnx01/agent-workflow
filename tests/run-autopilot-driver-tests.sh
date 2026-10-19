@@ -50,6 +50,10 @@ export GH_MOCK_LOG="$TMPDIR_T/gh.log"
 export AUTOPILOT_CACHE_DIR="$TMPDIR_T/cache"
 export AUTOPILOT_DISABLE_FLAG="$TMPDIR_T/disabled"
 
+# The driver refuses to run without GH_TOKEN (#509). A dummy is enough: gh is
+# mocked, and the guard checks presence, never validity.
+export GH_TOKEN=test-token-not-real
+
 # Config: one allowlisted repo.
 printf 'max_per_run=2\nrepo=o/r:ci.yml\n' > "$TMPDIR_T/ap.conf"
 
@@ -97,6 +101,37 @@ case "$out" in
 esac
 assert_eq "disabled makes no gh calls at all" "" "$(cat "$GH_MOCK_LOG")"
 rm -f "$AUTOPILOT_DISABLE_FLAG"
+
+section "GH_TOKEN comes from direnv, never a fallback (#509)"
+
+: > "$GH_MOCK_LOG"
+rc=0; out="$(env -u GH_TOKEN "$DRIVER" --config "$TMPDIR_T/ap.conf" 2>&1)" || rc=$?
+assert_eq "no GH_TOKEN exits 5" "5" "$rc"
+case "$out" in
+  *"GH_TOKEN is not set"*"direnv exec"*) pass "the error names GH_TOKEN and direnv" ;;
+  *) fail "the error names GH_TOKEN and direnv" "output was: $out" ;;
+esac
+assert_eq "no GH_TOKEN makes no gh calls at all" "" "$(cat "$GH_MOCK_LOG")"
+
+rc=0; GH_TOKEN='' "$DRIVER" --config "$TMPDIR_T/ap.conf" >/dev/null 2>&1 || rc=$?
+assert_eq "an empty GH_TOKEN (passbolt unreachable) exits 5" "5" "$rc"
+
+rc=0; env -u GH_TOKEN "$DRIVER" --config "$TMPDIR_T/ap.conf" --dry-run >/dev/null 2>&1 || rc=$?
+assert_eq "a dry run without GH_TOKEN exits 5 too" "5" "$rc"
+
+: > "$AUTOPILOT_DISABLE_FLAG"
+rc=0; out="$(env -u GH_TOKEN "$DRIVER" --config "$TMPDIR_T/ap.conf" 2>&1)" || rc=$?
+assert_eq "the kill switch still works without GH_TOKEN (exit 0)" "0" "$rc"
+case "$out" in
+  *disabled*) pass "the kill switch is logged even without GH_TOKEN" ;;
+  *) fail "the kill switch is logged even without GH_TOKEN" "output was: $out" ;;
+esac
+rm -f "$AUTOPILOT_DISABLE_FLAG"
+
+# A stored gh login must not stand in for the direnv PAT: with GH_TOKEN unset
+# the driver refuses even though `gh` (the mock) would answer every call.
+rc=0; env -u GH_TOKEN GH_MOCK_AUTH_HOSTS=github.com "$DRIVER" --config "$TMPDIR_T/ap.conf" >/dev/null 2>&1 || rc=$?
+assert_eq "an ambient gh login is not a fallback for GH_TOKEN" "5" "$rc"
 
 section "dry run"
 
