@@ -1,0 +1,122 @@
+# Issue intake (reusable) — label a newly opened issue needs-enrichment (#549).
+#
+# Issues filed through bridge (flowhub's path) or /new are born carrying
+# needs-enrichment; one opened in the GitHub UI is not, and the autopilot lane
+# ignores it. Consumers call this from their own `issues: [opened]` stub
+# (scripts/onboard-consumer.sh generates it): a reusable workflow cannot add a
+# trigger to a consumer. The rules are in scripts/issue-intake.sh.
+#
+# The label is applied with the caller's GITHUB_TOKEN, and events caused by
+# that token start no other workflow — so it cannot fire agent.yml.
+name: Issue intake (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      issue-number:
+        description: The issue that was just opened.
+        type: number
+        required: true
+      pipeline-repo:
+        description: Repo holding the shared scripts.
+        type: string
+        default: freaxnx01/agent-workflow
+      pipeline-ref:
+        description: |
+          Ref of `pipeline-repo` to check out. Pin the same moving major tag
+          the caller pinned in `uses:` — see docs/CONSUMER-SETUP.md.
+        type: string
+        default: main
+      local-scripts:
+        description: Use the caller repo's own scripts/ (agent-workflow dogfooding).
+        type: boolean
+        default: false
+      stub-mode:
+        description: |
+          Test-only, and only together with `local-scripts`. Prepends
+          `tests/mocks` to PATH so every `gh` call routes through the mock, and
+          answers the issue read from `stub-issue-fixture` instead of the API.
+          That is what lets the Layer-2 test (`issue-intake.test.yml`) drive
+          the real script through this workflow's wiring without an issue, a
+          token or a write.
+        type: boolean
+        default: false
+      stub-issue-fixture:
+        description: |
+          Test-only. Path, relative to the caller checkout, of the REST issue
+          object the mocked `gh api` returns under `stub-mode`.
+        type: string
+        default: tests/fixtures/intake/issue-plain.json
+      timeout-minutes:
+        type: number
+        default: 5
+    outputs:
+      decision:
+        description: '`labelled` or `skipped`.'
+        value: ${{ jobs.intake.outputs.decision }}
+      reason:
+        description: Why it was skipped; empty when it was labelled.
+        value: ${{ jobs.intake.outputs.reason }}
+
+permissions:
+  contents: read
+
+jobs:
+  intake:
+    name: Label needs-enrichment
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+      issues: write
+    outputs:
+      decision: ${{ steps.label.outputs.decision }}
+      reason: ${{ steps.label.outputs.reason }}
+    steps:
+      - name: Checkout caller repo (local-scripts mode)
+        if: ${{ inputs.local-scripts }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Checkout agent-workflow scripts
+        if: ${{ !inputs.local-scripts }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ inputs.pipeline-ref }}
+          path: .claude-pipeline
+          sparse-checkout: scripts
+
+      - name: Mirror local scripts to .claude-pipeline (self-test mode)
+        if: ${{ inputs.local-scripts }}
+        run: |
+          mkdir -p .claude-pipeline/scripts
+          cp -r scripts/. .claude-pipeline/scripts/
+
+      - name: Wire the gh mock (stub-mode)
+        # Reads the mock and the fixture straight out of the caller checkout:
+        # stub-mode only makes sense in local-scripts mode, so there is nothing
+        # to mirror. Refuses rather than silently letting real `gh` calls
+        # through if the mock is not in the checkout.
+        if: ${{ inputs.stub-mode }}
+        env:
+          WORKSPACE: ${{ github.workspace }}
+          RUNNER_TEMP_DIR: ${{ runner.temp }}
+          FIXTURE: ${{ inputs.stub-issue-fixture }}
+        run: |
+          [[ -x tests/mocks/gh && -r "$FIXTURE" ]] \
+            || { echo "::error::stub-mode needs local-scripts plus tests/mocks/gh and $FIXTURE"; exit 1; }
+          map="$RUNNER_TEMP_DIR/gh-stdout-map"
+          printf 'api repos/\t%s/%s\n' "$WORKSPACE" "$FIXTURE" > "$map"
+          {
+            printf 'PATH=%s/tests/mocks:%s\n' "$WORKSPACE" "$PATH"
+            printf 'GH_MOCK_LOG=%s\n' "$RUNNER_TEMP_DIR/gh-mock.log"
+            printf 'GH_MOCK_STDOUT_MAP=%s\n' "$map"
+          } >> "$GITHUB_ENV"
+
+      - name: Label the issue
+        id: label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+        run: bash .claude-pipeline/scripts/issue-intake.sh

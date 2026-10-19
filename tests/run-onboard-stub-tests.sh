@@ -75,6 +75,19 @@ health_stub() {
   )
 }
 
+# intake_stub — echoes the generated issue-intake.yml (#549). Same extraction
+# trick as stub().
+intake_stub() {
+  # shellcheck disable=SC2034
+  (
+    REF='v2'
+    PIPELINE_REPO='freaxnx01/agent-workflow'
+    # shellcheck disable=SC1090
+    source <(sed -n '/^build_intake_yml()/,/^}/p' "$SRC")
+    build_intake_yml
+  )
+}
+
 # --- cases -------------------------------------------------------------
 
 section "consumer stub — permissions"
@@ -131,6 +144,34 @@ if command -v yamllint >/dev/null 2>&1; then
     pass "generated health stub is valid YAML"
   else
     fail "generated health stub is valid YAML" "yamllint rejected it"
+  fi
+fi
+
+section "intake stub — new issues enter the lane (#549)"
+
+intake="$(intake_stub)"
+assert_contains 'uses: freaxnx01/agent-workflow/.github/workflows/issue-intake.yml@v2' \
+  "$intake" "calls the intake workflow at the pinned ref"
+assert_contains 'types: [opened]' "$intake" "runs when an issue is opened"
+# shellcheck disable=SC2016  # `${{ }}` is Actions expression syntax, not shell
+assert_contains 'issue-number: ${{ github.event.issue.number }}' "$intake" "passes the new issue's number"
+assert_contains 'pipeline-ref: v2' "$intake" "checks out scripts at the same ref"
+assert_contains 'issues: write' "$intake" "may label the issue"
+assert_not_contains 'contents: write' "$intake" "never writes code"
+# shellcheck disable=SC2016  # `\$NO_STUB` is a sed pattern matching the literal
+# text in the script under test, not a shell expansion.
+writes="$(sed -n '/^if \[\[ "\$NO_STUB"/,/^fi/p' "$SRC" | grep -c 'put_file ".github/workflows/issue-intake.yml"' || true)"
+if [[ "$writes" == 2 ]]; then
+  pass "both onboarding paths write the intake stub"
+else
+  fail "both onboarding paths write the intake stub" "found $writes put_file calls, expected 2"
+fi
+
+if command -v yamllint >/dev/null 2>&1; then
+  if printf '%s\n' "$intake" | yamllint -d '{extends: relaxed, rules: {line-length: disable, truthy: disable}}' - >/dev/null 2>&1; then
+    pass "generated intake stub is valid YAML"
+  else
+    fail "generated intake stub is valid YAML" "yamllint rejected it"
   fi
 fi
 

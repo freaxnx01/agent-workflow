@@ -1,0 +1,121 @@
+name: issue-intake-test
+
+# Layer-2 test for issue-intake.yml (#549). Calls the reusable workflow with
+# `local-scripts: true` and `stub-mode: true`, so the real
+# scripts/issue-intake.sh runs against a fixture through the PATH-shimmed gh
+# mock: no issue is read, no label is written, no token is needed. What this
+# catches that Layer 1 cannot is the wiring — inputs reaching the script's env,
+# and `decision`/`reason` travelling from $GITHUB_OUTPUT out to a caller.
+#
+# Runnable in CI on every PR that touches the intake path, and locally via act.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/issue-intake.yml
+      - .github/workflows/issue-intake.test.yml
+      - scripts/issue-intake.sh
+      - scripts/lib/intake-label.sh
+      - tests/fixtures/intake/**
+      - tests/mocks/gh
+
+permissions:
+  # The union of every job's permissions in the callee. A caller granting less
+  # than the callee declares is rejected at load — startup_failure, no jobs, no
+  # assertions (#34 / #435).
+  contents: read
+  issues: write
+
+concurrency:
+  group: issue-intake-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  call-labelled:
+    name: intake — a maintainer's plain issue (labelled)
+    uses: ./.github/workflows/issue-intake.yml
+    with:
+      issue-number: 9001
+      local-scripts: true
+      stub-mode: true
+      stub-issue-fixture: tests/fixtures/intake/issue-plain.json
+
+  call-outside-author:
+    name: intake — an outsider's issue (skipped)
+    uses: ./.github/workflows/issue-intake.yml
+    with:
+      issue-number: 9002
+      local-scripts: true
+      stub-mode: true
+      stub-issue-fixture: tests/fixtures/intake/issue-outside-author.json
+
+  call-pipeline-label:
+    name: intake — already in the pipeline (skipped)
+    uses: ./.github/workflows/issue-intake.yml
+    with:
+      issue-number: 9003
+      local-scripts: true
+      stub-mode: true
+      stub-issue-fixture: tests/fixtures/intake/issue-ai-implement.json
+
+  verify-labelled:
+    name: Assert the label path reports labelled
+    needs: call-labelled
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      DECISION: ${{ needs.call-labelled.outputs.decision }}
+      REASON: ${{ needs.call-labelled.outputs.reason }}
+    steps:
+      - name: Assert decision=labelled with no reason
+        run: |
+          fail=0
+          [[ "$DECISION" == "labelled" ]] || { echo "::error::decision=$DECISION (want labelled)"; fail=1; }
+          [[ -z "$REASON" ]]              || { echo "::error::reason=$REASON (want empty on labelled)"; fail=1; }
+          (( fail == 0 )) || exit 1
+          echo "label path OK: decision=$DECISION"
+
+  verify-outside-author:
+    name: Assert an outsider's issue is refused
+    needs: call-outside-author
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      DECISION: ${{ needs.call-outside-author.outputs.decision }}
+      REASON: ${{ needs.call-outside-author.outputs.reason }}
+    steps:
+      - name: Assert decision=skipped on the author gate
+        # The gate that keeps a drive-by issue out of the unattended lane, so
+        # it is asserted end to end and not only in the Layer-1 decision test.
+        run: |
+          fail=0
+          [[ "$DECISION" == "skipped" ]] || { echo "::error::decision=$DECISION (want skipped)"; fail=1; }
+          [[ "$REASON" == "author without write access (NONE)" ]] \
+            || { echo "::error::reason=$REASON (want the author gate's reason)"; fail=1; }
+          (( fail == 0 )) || exit 1
+          echo "author gate OK: reason=$REASON"
+
+  verify-pipeline-label:
+    name: Assert a pipeline label is refused
+    needs: call-pipeline-label
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      DECISION: ${{ needs.call-pipeline-label.outputs.decision }}
+      REASON: ${{ needs.call-pipeline-label.outputs.reason }}
+    steps:
+      - name: Assert decision=skipped naming the label
+        run: |
+          fail=0
+          [[ "$DECISION" == "skipped" ]] || { echo "::error::decision=$DECISION (want skipped)"; fail=1; }
+          [[ "$REASON" == "pipeline label ai-implement" ]] \
+            || { echo "::error::reason=$REASON (want 'pipeline label ai-implement')"; fail=1; }
+          (( fail == 0 )) || exit 1
+          echo "pipeline label OK: reason=$REASON"
