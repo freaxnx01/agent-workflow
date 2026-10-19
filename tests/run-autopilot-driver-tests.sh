@@ -88,6 +88,20 @@ case "$out" in
   *--dry-run*) pass "help documents --dry-run" ;;
   *) fail "help documents --dry-run" "help was: $out" ;;
 esac
+# usage() prints a hardcoded line range of this file's own header, so the two
+# edges of that range need pinning or the next header edit shifts them
+# silently: the last documented exit code proves the range still reaches the
+# end of the header, and `set -euo pipefail` (the first line after it) proves
+# it stops there instead of leaking code into the help text.
+case "$out" in
+  *"5  GH_TOKEN is not set"*"Passbolt was unreachable"*)
+    pass "help reaches the last exit code (range not truncated)" ;;
+  *) fail "help reaches the last exit code (range not truncated)" "help was: $out" ;;
+esac
+case "$out" in
+  *"set -euo pipefail"*) fail "help stops at the header (no code leaked)" "help was: $out" ;;
+  *) pass "help stops at the header (no code leaked)" ;;
+esac
 
 section "the disable flag"
 
@@ -754,6 +768,14 @@ case "$exec_start" in
   *"bash -c"*) fail "ExecStart needs no shell" "was: $exec_start" ;;
   *) pass "ExecStart needs no shell" ;;
 esac
+# direnv exec imports the whole .envrc environment, so the one variable known
+# to live in the operator's tree and to outrank autopilot.env's OAuth token
+# has to be stripped back out between direnv and the driver.
+case "$exec_start" in
+  *"direnv exec "*"env -u ANTHROPIC_API_KEY"*"scripts/autopilot.sh"*)
+    pass "ExecStart drops ANTHROPIC_API_KEY after direnv" ;;
+  *) fail "ExecStart drops ANTHROPIC_API_KEY after direnv" "was: $exec_start" ;;
+esac
 if grep -qE '^#.*GH_TOKEN=' "$UNIT"; then
   fail "the unit no longer tells you to copy GH_TOKEN into autopilot.env" "$(grep -nE 'GH_TOKEN=' "$UNIT")"
 else
@@ -766,7 +788,9 @@ else
 fi
 
 DOC="$ROOT/docs/AUTOPILOT.md"
-creds="$(awk '/\*\*Credentials\.\*\*/{on=1} on{print} on && /^3\. /{exit}' "$DOC")"
+# Step 2 only: exit BEFORE printing step 3, whose own text says `direnv exec`
+# and would satisfy the assertion below even if step 2 lost the mention.
+creds="$(awk '/\*\*Credentials\.\*\*/{on=1} on && /^3\. /{exit} on{print}' "$DOC")"
 case "$creds" in
   *'GH_TOKEN='*) fail "AUTOPILOT.md no longer says to put GH_TOKEN= in autopilot.env" "$creds" ;;
   *) pass "AUTOPILOT.md no longer says to put GH_TOKEN= in autopilot.env" ;;

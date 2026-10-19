@@ -36,14 +36,22 @@ EnvironmentFile=%h/.config/agent-workflow/autopilot.env
 # Absolute path to this clone of agent-workflow. Edit after copying.
 WorkingDirectory=%h/repos/github/freaxnx01/public/agent-workflow
 
-# Three paths to edit after copying: direnv itself (`command -v direnv`), the
-# directory whose .envrc exports GH_TOKEN, and the driver in this clone. That
-# .envrc must be `direnv allow`ed by this user, or GH_TOKEN stays unset and the
-# driver exits 5 on its first line.
+# Paths to edit after copying: direnv itself (`command -v direnv`), the
+# directory whose .envrc exports GH_TOKEN, `env`, and the driver in this clone.
+# That .envrc must be `direnv allow`ed by this user, or GH_TOKEN stays unset
+# and the driver exits 5 on its first line.
+#
+# `direnv exec` imports the WHOLE environment the .envrc produces, not just
+# GH_TOKEN, and it lands on top of the EnvironmentFile above. So the .envrc
+# must export nothing that steers the nested Claude sessions' auth — a
+# CLAUDE_CODE_OAUTH_TOKEN there would silently beat autopilot.env's. The one
+# known case in the operator's tree is ANTHROPIC_API_KEY, which Claude prefers
+# over the OAuth token (a run would bill API credit, or fail outright on a
+# stale key), so `env -u` strips it back out after direnv has run.
 #
 # No `bash -c '…'` and no `$` here: systemd expands $VAR in ExecStart itself,
 # before any shell sees it.
-ExecStart=/usr/bin/direnv exec %h/repos/github/freaxnx01/public %h/repos/github/freaxnx01/public/agent-workflow/scripts/autopilot.sh
+ExecStart=/usr/bin/direnv exec %h/repos/github/freaxnx01/public /usr/bin/env -u ANTHROPIC_API_KEY %h/repos/github/freaxnx01/public/agent-workflow/scripts/autopilot.sh
 
 # A run is several nested Claude sessions; generous, but never unbounded.
 # Sized for the shipped defaults (max_per_run x enrich_timeout is the real

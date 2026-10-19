@@ -87,17 +87,29 @@ And per issue: open, `needs-enrichment`, a non-empty body, and none of
      `direnv allow <dir>` once as the user that runs the lane. If an older
      setup put a `GH_TOKEN` line in `autopilot.env`, delete it.
 
+   `direnv exec` imports the **whole** environment the `.envrc` produces, on
+   top of `autopilot.env` — so that `.envrc` must export nothing else that
+   steers the nested sessions' auth. A `CLAUDE_CODE_OAUTH_TOKEN` exported
+   there would silently beat `autopilot.env`'s. The one known case in the
+   operator's tree is `ANTHROPIC_API_KEY`, which Claude prefers over the OAuth
+   token (a run bills API credit instead of the Max plan, or fails outright on
+   a stale key); the unit's `ExecStart` strips it back out with
+   `env -u ANTHROPIC_API_KEY` after direnv has run, and a manual run should too.
+
    The driver refuses to start without `GH_TOKEN` (exit `5`). It never falls
    back to a stored `gh` login. Verified 2026-10-19: `passbolt get` works from
    a `--user` unit with no login session, because go-passbolt-cli keeps its
    key and passphrase in its own config (no GPG agent), and the user has
    linger enabled.
 3. **Dry run.** `direnv exec ~/repos/github/freaxnx01/public scripts/autopilot.sh --dry-run`.
-   Nothing is written. Read every line before going further.
-4. **One real issue.** `direnv exec ~/repos/github/freaxnx01/public scripts/autopilot.sh --max 1`
+   Nothing is written, and no nested session runs. Read every line before
+   going further.
+4. **One real issue.** This one does enrich, so drop `ANTHROPIC_API_KEY` the
+   way the unit does:
+   `direnv exec ~/repos/github/freaxnx01/public env -u ANTHROPIC_API_KEY scripts/autopilot.sh --max 1`
    against the sandbox.
 5. **The units.** Follow the install block at the top of
-   `setup/agent-autopilot.service`. The three paths in its `ExecStart` and
+   `setup/agent-autopilot.service`. The paths in its `ExecStart` and
    `WorkingDirectory` need editing for your clone. Neither unit is installed by `setup/bootstrap.sh` — enabling an
    unattended lane that opens and merges PRs is a deliberate per-host act, not
    something bootstrap turns on for you. The unit's `TimeoutStartSec=3h` is
