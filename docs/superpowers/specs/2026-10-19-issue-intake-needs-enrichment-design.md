@@ -48,7 +48,8 @@ is applied at intake, once, and removing it is a deliberate act.
 
 Env: `REPO`, `ISSUE_NUMBER`, `GH_TOKEN`; optional `DRY_RUN=1`.
 
-1. Re-read the issue: `gh issue view <n> --json number,labels,body,author`.
+1. Re-read the issue:
+   `gh issue view <n> --json number,labels,body,author,authorAssociation`.
    The re-read rather than the event payload gives a fresher state: a label
    someone added in the seconds before the job started counts.
 2. Decide, in this order, with a pure function `intake_decision` (JSON on
@@ -57,6 +58,7 @@ Env: `REPO`, `ISSUE_NUMBER`, `GH_TOKEN`; optional `DRY_RUN=1`.
    | Rule | Result |
    |---|---|
    | `author.is_bot` is true | `skip opened by a bot` |
+   | `authorAssociation` is not `OWNER`, `MEMBER` or `COLLABORATOR` (including absent) | `skip author without write access (<assoc>)` |
    | already carries `needs-enrichment` | `skip already labelled` |
    | carries any of `ai-implement`, `enrichment-ongoing`, `needs-human`, `parked`, `🧊 parked`, `roadmap`, `pipeline-paused`, or any `ai:`-prefixed label | `skip pipeline label <name>` |
    | body has a `## Implementation Plan` heading line | `skip already has an implementation plan` |
@@ -64,9 +66,22 @@ Env: `REPO`, `ISSUE_NUMBER`, `GH_TOKEN`; optional `DRY_RUN=1`.
 
    Other labels (`bug`, `enhancement`, `area:*`, …) do **not** block intake. A
    human categorising a new issue is not a human deciding it needs no spec.
+
+   The author gate is fail-**closed**, for the same reason option 2 below was
+   rejected: the label is the entry ticket to the unattended lane, so an issue
+   is stamped only when its author could already write to the repo. Otherwise
+   an outside contributor filing an issue in a consumer repo on the autopilot
+   allowlist would spend enrichment credits and drive an auto-merged agent PR
+   with no human having marked the issue (review of PR #556). A maintainer
+   labels an outsider's issue by hand.
 3. On `label`: `gh label create needs-enrichment --color d4c5f9 --description …`
    (`|| true`: it may exist; the colour matches `/new`'s Forgejo path,
    `commands/new.md:156`), then `gh issue edit <n> --add-label needs-enrichment`.
+   Name, colour and description come from `scripts/lib/intake-label.sh`, which
+   `ensure-issue-labels.sh` also seeds from — so the two writers cannot drift,
+   and the per-issue create is a fallback for a repo onboarded before the label
+   existed. Both calls quote gh's own stderr on failure: a missing
+   `issues: write` must be distinguishable from a transient API error.
 4. Print one line, `intake: #<n> labelled needs-enrichment` or
    `intake: #<n> skipped (<reason>)`, and write `decision=` / `reason=` to
    `$GITHUB_OUTPUT` when set.
@@ -81,7 +96,9 @@ missing or invalid.
 `pipeline-ref`, `local-scripts`, `timeout-minutes` (default 5), the same
 checkout pattern as `pipeline-health.yml`. Workflow-level
 `permissions: contents: read`, job-level `issues: write`. Actions pinned by
-full SHA. It uses `github.token`. Issues labelled with that token do not fire
+full SHA. The labelling step carries `id: label` and the workflow re-exports
+the script's `decision` / `reason` as `workflow_call` outputs, so a caller can
+gate on the intake decision. It uses `github.token`. Issues labelled with that token do not fire
 other workflows, so the intake label cannot trigger `agent.yml`, which ignores
 anything but `ai-implement` anyway.
 

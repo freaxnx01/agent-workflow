@@ -3611,6 +3611,12 @@ assert_not_contains "$log" 'label create ai-pre-preview'  "does not create depre
 assert_contains "$log" 'label create ai:review-blocked --repo owner/repo' "creates ai:review-blocked"
 assert_contains "$log" 'label create ai:review-failed --repo owner/repo' "creates ai:review-failed (#490)"
 
+# Intake label (written by issue-intake.sh, bridge and /new; read by
+# autopilot-candidates.sh as the lane's entry ticket). Seeded here so the
+# per-issue `gh label create` in issue-intake.sh is a fallback, not the only
+# definition of its colour and description (#549).
+assert_contains "$log" 'label create needs-enrichment --repo owner/repo' "creates needs-enrichment (#549)"
+
 # Coordination labels (read/written by /enrich's concurrency lock; needs-human
 # written by the unattended /autopilot escalation lane)
 assert_contains "$log" 'label create enrichment-ongoing --repo owner/repo' "creates enrichment-ongoing"

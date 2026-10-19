@@ -57,10 +57,35 @@ assert_eq "a bot-opened issue is skipped" "skip opened by a bot" "$(decide issue
 
 for l in enrichment-ongoing needs-human parked roadmap pipeline-paused; do
   # shellcheck disable=SC1090
-  got="$(jq -n --arg l "$l" '{number:1,labels:[{name:$l}],body:"x",author:{login:"u",is_bot:false}}' \
+  got="$(jq -n --arg l "$l" '{number:1,labels:[{name:$l}],body:"x",author:{login:"u",is_bot:false},authorAssociation:"OWNER"}' \
     | (source "$SCRIPT"; intake_decision))"
   assert_eq "$l blocks intake" "skip pipeline label $l" "$got"
 done
+
+section "intake_decision — only a writer's issue enters the lane (#549)"
+
+# The label is the entry ticket to the unattended lane, so it is fail-closed on
+# the author: an outsider must not be able to spend enrichment credits and
+# trigger an auto-merged agent PR by filing an issue.
+assert_eq "an outside author's issue is skipped" "skip author without write access (NONE)" \
+  "$(decide issue-outside-author.json)"
+
+assoc_decision() {
+  # shellcheck disable=SC1090
+  jq -n --arg a "$1" '{number:1,labels:[],body:"x",author:{login:"u",is_bot:false},authorAssociation:$a}' \
+    | (source "$SCRIPT"; intake_decision)
+}
+for a in OWNER MEMBER COLLABORATOR; do
+  assert_eq "$a gets the label" "label" "$(assoc_decision "$a")"
+done
+for a in CONTRIBUTOR FIRST_TIME_CONTRIBUTOR FIRST_TIMER MANNEQUIN NONE; do
+  assert_eq "$a is skipped" "skip author without write access ($a)" "$(assoc_decision "$a")"
+done
+
+# shellcheck disable=SC1090
+got="$(jq -n '{number:1,labels:[],body:"x",author:{login:"u",is_bot:false}}' \
+  | (source "$SCRIPT"; intake_decision))"
+assert_eq "an association gh did not report is skipped" "skip author without write access (unknown)" "$got"
 
 # run_intake <dir> <fixture> [extra env...] — runs the script with gh mocked.
 run_intake() {
@@ -77,8 +102,10 @@ out="$(run_intake "$d" issue-plain.json GITHUB_OUTPUT="$d/out")"
 assert_contains "labelled -> says so" "$out" 'intake: #357 labelled needs-enrichment'
 assert_contains "labelled -> the issue is edited" "$(cat "$d/gh")" \
   'issue edit 357 --repo freaxnx01/game-rhyflitzer --add-label needs-enrichment'
-create_line="$(grep -n 'label create needs-enrichment' "$d/gh" | head -1 | cut -d: -f1)"
-edit_line="$(grep -n -- '--add-label needs-enrichment' "$d/gh" | head -1 | cut -d: -f1)"
+# `|| true`: a non-matching grep under pipefail would otherwise abort the whole
+# runner here, so the named failure below (and every later case) never runs.
+create_line="$(grep -n 'label create needs-enrichment' "$d/gh" | head -1 | cut -d: -f1 || true)"
+edit_line="$(grep -n -- '--add-label needs-enrichment' "$d/gh" | head -1 | cut -d: -f1 || true)"
 if [[ -n "$create_line" && -n "$edit_line" ]] && (( create_line < edit_line )); then
   pass "the label is created before it is applied"
 else
@@ -87,7 +114,13 @@ fi
 assert_contains "the create carries the colour" "$(grep 'label create' "$d/gh")" 'd4c5f9'
 assert_contains "GITHUB_OUTPUT gets the decision" "$(cat "$d/out")" 'decision=labelled'
 assert_contains "the issue is re-read, not taken from the payload" "$(cat "$d/gh")" \
-  'issue view 357 --repo freaxnx01/game-rhyflitzer --json number,labels,body,author'
+  'issue view 357 --repo freaxnx01/game-rhyflitzer --json number,labels,body,author,authorAssociation'
+rm -rf "$d"
+
+d="$(mktemp -d)"; : > "$d/gh"
+out="$(run_intake "$d" issue-outside-author.json GITHUB_OUTPUT="$d/out")"
+assert_contains "an outside author -> says why" "$out" 'intake: #357 skipped (author without write access (NONE))'
+assert_not_contains "an outside author -> no edit" "$(cat "$d/gh")" 'issue edit'
 rm -rf "$d"
 
 d="$(mktemp -d)"; : > "$d/gh"
@@ -109,18 +142,31 @@ rm -rf "$d"
 section "failures are loud"
 
 d="$(mktemp -d)"; : > "$d/gh"
-printf 'issue view\n' > "$d/fail"
+printf 'issue view\tHTTP 404: Not Found (api.github.com/repos/o/r/issues/357)\n' > "$d/fail"
 ec=0; out="$(run_intake "$d" issue-plain.json GH_MOCK_FAIL_MAP="$d/fail")" || ec=$?
 assert_eq "unreadable issue -> exit 1" "1" "$ec"
 assert_contains "unreadable issue -> says so" "$out" 'could not read issue #357'
+assert_contains "unreadable issue -> quotes gh's message" "$out" 'HTTP 404: Not Found'
 assert_not_contains "unreadable issue -> no edit" "$(cat "$d/gh")" 'issue edit'
+rm -rf "$d"
+
+# A permissions failure and a transient one must be told apart from the log
+# alone, so the gh message is quoted rather than discarded.
+d="$(mktemp -d)"; : > "$d/gh"
+printf -- '--add-label needs-enrichment\tHTTP 403: Resource not accessible by integration\n' > "$d/fail"
+ec=0; out="$(run_intake "$d" issue-plain.json GH_MOCK_FAIL_MAP="$d/fail")" || ec=$?
+assert_eq "failed label write -> exit 1" "1" "$ec"
+assert_contains "failed label write -> says so" "$out" 'could not label issue #357'
+assert_contains "failed label write -> quotes gh's message" "$out" \
+  'HTTP 403: Resource not accessible by integration'
 rm -rf "$d"
 
 d="$(mktemp -d)"; : > "$d/gh"
 printf -- '--add-label needs-enrichment\n' > "$d/fail"
 ec=0; out="$(run_intake "$d" issue-plain.json GH_MOCK_FAIL_MAP="$d/fail")" || ec=$?
-assert_eq "failed label write -> exit 1" "1" "$ec"
-assert_contains "failed label write -> says so" "$out" 'could not label issue #357'
+assert_eq "a silent gh failure -> exit 1" "1" "$ec"
+assert_contains "a silent gh failure -> says gh said nothing" "$out" \
+  'gh issue edit failed without a message'
 rm -rf "$d"
 
 d="$(mktemp -d)"; : > "$d/gh"
@@ -141,6 +187,16 @@ assert_contains "runs the intake script" "$wf" 'scripts/issue-intake.sh'
 assert_contains "issues: write on the job" "$wf" 'issues: write'
 assert_not_contains "never writes code" "$wf" 'contents: write'
 assert_contains "has a job timeout" "$wf" 'timeout-minutes:'
+# The script writes decision=/reason= to $GITHUB_OUTPUT; without a step id and
+# a declared output chain that plumbing is inert for a caller.
+# shellcheck disable=SC2016  # `${{ }}` is Actions expression syntax, not shell
+for needle in 'id: label' \
+              'decision: ${{ steps.label.outputs.decision }}' \
+              'reason: ${{ steps.label.outputs.reason }}' \
+              'value: ${{ jobs.intake.outputs.decision }}' \
+              'value: ${{ jobs.intake.outputs.reason }}'; do
+  assert_contains "the caller can read the decision — $needle" "$wf" "$needle"
+done
 unpinned="$(grep -E '^\s*-?\s*uses: ' "$WF" 2>/dev/null | grep -vE '@[0-9a-f]{40}' || true)"
 assert_eq "every action is pinned by full SHA" "" "$unpinned"
 if [[ -n "$wf" ]] && command -v actionlint >/dev/null 2>&1; then

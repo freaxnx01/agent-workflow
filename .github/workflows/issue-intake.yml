@@ -34,6 +34,13 @@ on:
       timeout-minutes:
         type: number
         default: 5
+    outputs:
+      decision:
+        description: '`labelled` or `skipped`.'
+        value: ${{ jobs.intake.outputs.decision }}
+      reason:
+        description: Why it was skipped; empty when it was labelled.
+        value: ${{ jobs.intake.outputs.reason }}
 
 permissions:
   contents: read
@@ -46,6 +53,9 @@ jobs:
     permissions:
       contents: read
       issues: write
+    outputs:
+      decision: ${{ steps.label.outputs.decision }}
+      reason: ${{ steps.label.outputs.reason }}
     steps:
       - name: Checkout caller repo (local-scripts mode)
         if: ${{ inputs.local-scripts }}
@@ -67,6 +77,7 @@ jobs:
           cp -r scripts/. .claude-pipeline/scripts/
 
       - name: Label the issue
+        id: label
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
