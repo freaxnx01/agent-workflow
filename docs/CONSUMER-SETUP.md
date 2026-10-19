@@ -501,6 +501,42 @@ jobs:
 `OPENROUTER_API_KEY` skips the job green — there is no OpenRouter budget to
 report on.
 
+## 3c. Issue intake (recommended)
+
+An issue filed through bridge (flowhub's path) or `/new` is born carrying
+`needs-enrichment`. One opened in the GitHub UI is not, so the autopilot lane
+([`AUTOPILOT.md`](AUTOPILOT.md)) never sees it. The intake stub gives it the
+same start (#549). `scripts/onboard-consumer.sh` writes it on every onboarding.
+
+```yaml
+# .github/workflows/issue-intake.yml
+name: Issue intake
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  intake:
+    uses: freaxnx01/agent-workflow/.github/workflows/issue-intake.yml@v2
+    with:
+      issue-number: ${{ github.event.issue.number }}
+      pipeline-ref: v2
+```
+
+It labels the new issue `needs-enrichment` **unless** the issue was opened by
+a bot, already carries the label, carries a pipeline label (`ai-implement`,
+`enrichment-ongoing`, `needs-human`, `parked`, `🧊 parked`, `roadmap`,
+`pipeline-paused`, or any `ai:*`), or its body already has a
+`## Implementation Plan` heading. Category labels (`bug`, `area:*`, …) do not
+stop it. To keep an issue out of the lane, remove the label or park it.
+
+Existing issues are not touched; the stub only sees issues opened after it is
+merged.
+
 ## 4. Issue chaining (optional, requires ai-review-ai-merge)
 
 When an auto-merged PR closes an issue, the pipeline can dispatch a follow-up issue that was `Blocked by:` it. Conventions live in [ADR-003](DECISIONS.md#adr-003--issue-chain-dispatch-on-auto-merge); this section is just the wiring.
