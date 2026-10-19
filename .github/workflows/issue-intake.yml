@@ -31,6 +31,22 @@ on:
         description: Use the caller repo's own scripts/ (agent-workflow dogfooding).
         type: boolean
         default: false
+      stub-mode:
+        description: |
+          Test-only, and only together with `local-scripts`. Prepends
+          `tests/mocks` to PATH so every `gh` call routes through the mock, and
+          answers the issue read from `stub-issue-fixture` instead of the API.
+          That is what lets the Layer-2 test (`issue-intake.test.yml`) drive
+          the real script through this workflow's wiring without an issue, a
+          token or a write.
+        type: boolean
+        default: false
+      stub-issue-fixture:
+        description: |
+          Test-only. Path, relative to the caller checkout, of the REST issue
+          object the mocked `gh api` returns under `stub-mode`.
+        type: string
+        default: tests/fixtures/intake/issue-plain.json
       timeout-minutes:
         type: number
         default: 5
@@ -75,6 +91,27 @@ jobs:
         run: |
           mkdir -p .claude-pipeline/scripts
           cp -r scripts/. .claude-pipeline/scripts/
+
+      - name: Wire the gh mock (stub-mode)
+        # Reads the mock and the fixture straight out of the caller checkout:
+        # stub-mode only makes sense in local-scripts mode, so there is nothing
+        # to mirror. Refuses rather than silently letting real `gh` calls
+        # through if the mock is not in the checkout.
+        if: ${{ inputs.stub-mode }}
+        env:
+          WORKSPACE: ${{ github.workspace }}
+          RUNNER_TEMP_DIR: ${{ runner.temp }}
+          FIXTURE: ${{ inputs.stub-issue-fixture }}
+        run: |
+          [[ -x tests/mocks/gh && -r "$FIXTURE" ]] \
+            || { echo "::error::stub-mode needs local-scripts plus tests/mocks/gh and $FIXTURE"; exit 1; }
+          map="$RUNNER_TEMP_DIR/gh-stdout-map"
+          printf 'api repos/\t%s/%s\n' "$WORKSPACE" "$FIXTURE" > "$map"
+          {
+            printf 'PATH=%s/tests/mocks:%s\n' "$WORKSPACE" "$PATH"
+            printf 'GH_MOCK_LOG=%s\n' "$RUNNER_TEMP_DIR/gh-mock.log"
+            printf 'GH_MOCK_STDOUT_MAP=%s\n' "$map"
+          } >> "$GITHUB_ENV"
 
       - name: Label the issue
         id: label

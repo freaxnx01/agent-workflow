@@ -541,7 +541,7 @@ stop it. To keep an issue out of the lane, remove the label or park it.
 issue may be enriched by a paid nested session and, with
 `ai-review-ai-merge` on the repo, end as an agent-written PR that merges
 itself. So the stub is fail-closed on the author — it stamps only issues whose
-`authorAssociation` is `OWNER`, `MEMBER` or `COLLABORATOR`. An issue from an
+`author_association` is `OWNER`, `MEMBER` or `COLLABORATOR`. An issue from an
 outside contributor, a first-time contributor, or an author GitHub reported no
 association for is skipped with
 `intake: #<n> skipped (author without write access (NONE))`. That makes the

@@ -18,7 +18,9 @@
 #
 # Output: one stdout line, `intake: #<n> labelled needs-enrichment` or
 # `intake: #<n> skipped (<reason>)`; `decision=` and `reason=` appended to
-# $GITHUB_OUTPUT when set.
+# $GITHUB_OUTPUT when set. DRY_RUN=1 is the exception: a run that would label
+# prints only what it would do and writes neither the label nor $GITHUB_OUTPUT
+# (a skip is a decision either way, so it still reports).
 #
 # Exit codes:
 #   0  labelled, or skipped by rule
@@ -35,12 +37,12 @@ source "$_II_HERE/lib/intake-label.sh"
 # gh's own message. Set by main; empty while only sourced.
 GH_STDERR=''
 
-# intake_decision — issue JSON ({labels, body, author, authorAssociation}) on
-# stdin. Prints `label`, or `skip <reason>`. Query only.
+# intake_decision — a REST issue object ({labels, body, user,
+# author_association}) on stdin. Prints `label`, or `skip <reason>`. Query only.
 #
-# The author gate is fail-CLOSED, and deliberately not just `is_bot`: the label
-# is the entry ticket to the unattended lane, which spends credits on
-# enrichment and can end in an agent-written, auto-merged PR
+# The author gate is fail-CLOSED, and deliberately more than the bot check:
+# the label is the entry ticket to the unattended lane, which spends credits
+# on enrichment and can end in an agent-written, auto-merged PR
 # (scripts/autopilot.sh). Only someone who can already write to the repo may
 # start that, so anything but OWNER/MEMBER/COLLABORATOR — an outside
 # contributor, a first-time contributor, or an association gh did not report —
@@ -53,10 +55,10 @@ intake_decision() {
     def names: [.labels[]?.name];
     def blockers: [names[] | select(. as $n | (blocking | index($n)) != null
                                      or startswith("ai:"))];
-    if (.author.is_bot // false) then "skip opened by a bot"
-    elif (.authorAssociation as $a | (trusted | index($a)) == null)
+    if ((.user.type // "") == "Bot") then "skip opened by a bot"
+    elif (.author_association as $a | (trusted | index($a)) == null)
       then "skip author without write access ("
-             + (.authorAssociation // "unknown") + ")"
+             + (.author_association // "unknown") + ")"
     elif (names | index("needs-enrichment")) != null then "skip already labelled"
     elif (blockers | length) > 0 then "skip pipeline label " + blockers[0]
     elif ((.body // "") | test("(^|\n)## Implementation Plan[ \t]*\r?(\n|$)"))
@@ -110,18 +112,25 @@ apply_label() {
 }
 
 main() {
-  [[ -n "${REPO:-}" ]] || usage_error 'REPO must be set'
+  # Shape-checked, not just non-empty: REPO lands in the REST path below, so a
+  # malformed value would address some other endpoint rather than fail loudly.
+  [[ "${REPO:-}" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] \
+    || usage_error "REPO must be owner/name (got: ${REPO:-})"
   [[ "${ISSUE_NUMBER:-}" =~ ^[1-9][0-9]*$ ]] \
     || usage_error "ISSUE_NUMBER must be a positive integer (got: ${ISSUE_NUMBER:-})"
 
   GH_STDERR="$(mktemp)"
   trap 'rm -f "$GH_STDERR"' EXIT
 
+  # The REST issue object, not `gh issue view --json`: the author gate needs the
+  # author's association with the repo, and that field is not among the ones
+  # `gh issue view --json` can project (gh 2.102 answers `Unknown JSON field:
+  # "authorAssociation"`). REST carries it as `author_association`, alongside
+  # `user.type` for the bot check, so one call still answers every rule.
   local json decision
-  if ! json="$(gh issue view "$ISSUE_NUMBER" --repo "$REPO" \
-                 --json number,labels,body,author,authorAssociation 2>"$GH_STDERR")"; then
+  if ! json="$(gh api "repos/$REPO/issues/$ISSUE_NUMBER" 2>"$GH_STDERR")"; then
     printf 'error: could not read issue #%s in %s — not labelled\n' "$ISSUE_NUMBER" "$REPO" >&2
-    report_gh_stderr 'gh issue view'
+    report_gh_stderr 'gh api'
     exit 1
   fi
   : > "$GH_STDERR"

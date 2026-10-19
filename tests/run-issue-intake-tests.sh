@@ -57,7 +57,7 @@ assert_eq "a bot-opened issue is skipped" "skip opened by a bot" "$(decide issue
 
 for l in enrichment-ongoing needs-human parked roadmap pipeline-paused; do
   # shellcheck disable=SC1090
-  got="$(jq -n --arg l "$l" '{number:1,labels:[{name:$l}],body:"x",author:{login:"u",is_bot:false},authorAssociation:"OWNER"}' \
+  got="$(jq -n --arg l "$l" '{number:1,labels:[{name:$l}],body:"x",user:{login:"u",type:"User"},author_association:"OWNER"}' \
     | (source "$SCRIPT"; intake_decision))"
   assert_eq "$l blocks intake" "skip pipeline label $l" "$got"
 done
@@ -72,7 +72,7 @@ assert_eq "an outside author's issue is skipped" "skip author without write acce
 
 assoc_decision() {
   # shellcheck disable=SC1090
-  jq -n --arg a "$1" '{number:1,labels:[],body:"x",author:{login:"u",is_bot:false},authorAssociation:$a}' \
+  jq -n --arg a "$1" '{number:1,labels:[],body:"x",user:{login:"u",type:"User"},author_association:$a}' \
     | (source "$SCRIPT"; intake_decision)
 }
 for a in OWNER MEMBER COLLABORATOR; do
@@ -83,14 +83,14 @@ for a in CONTRIBUTOR FIRST_TIME_CONTRIBUTOR FIRST_TIMER MANNEQUIN NONE; do
 done
 
 # shellcheck disable=SC1090
-got="$(jq -n '{number:1,labels:[],body:"x",author:{login:"u",is_bot:false}}' \
+got="$(jq -n '{number:1,labels:[],body:"x",user:{login:"u",type:"User"}}' \
   | (source "$SCRIPT"; intake_decision))"
 assert_eq "an association gh did not report is skipped" "skip author without write access (unknown)" "$got"
 
 # run_intake <dir> <fixture> [extra env...] — runs the script with gh mocked.
 run_intake() {
   local dir="$1" fixture="$2"; shift 2
-  printf '%s\t%s\n' 'issue view' "$FIX/$fixture" > "$dir/stdout-map"
+  printf '%s\t%s\n' 'api repos/' "$FIX/$fixture" > "$dir/stdout-map"
   env PATH="$MOCKS:$PATH" GH_MOCK_LOG="$dir/gh" GH_MOCK_STDOUT_MAP="$dir/stdout-map" \
     REPO=freaxnx01/game-rhyflitzer ISSUE_NUMBER=357 "$@" bash "$SCRIPT" 2>&1
 }
@@ -113,8 +113,10 @@ else
 fi
 assert_contains "the create carries the colour" "$(grep 'label create' "$d/gh")" 'd4c5f9'
 assert_contains "GITHUB_OUTPUT gets the decision" "$(cat "$d/out")" 'decision=labelled'
+# The REST object, not `gh issue view --json`: `authorAssociation` is not a
+# projectable field there, so the author gate would have no input at all.
 assert_contains "the issue is re-read, not taken from the payload" "$(cat "$d/gh")" \
-  'issue view 357 --repo freaxnx01/game-rhyflitzer --json number,labels,body,author,authorAssociation'
+  'api repos/freaxnx01/game-rhyflitzer/issues/357'
 rm -rf "$d"
 
 d="$(mktemp -d)"; : > "$d/gh"
@@ -133,16 +135,27 @@ assert_contains "skipped -> GITHUB_OUTPUT names the reason" "$(cat "$d/out")" 'r
 rm -rf "$d"
 
 d="$(mktemp -d)"; : > "$d/gh"
-out="$(run_intake "$d" issue-plain.json DRY_RUN=1)"
+out="$(run_intake "$d" issue-plain.json DRY_RUN=1 GITHUB_OUTPUT="$d/out")"
 assert_contains "dry run -> says what it would do" "$out" 'DRY_RUN: would label #357 needs-enrichment'
 assert_not_contains "dry run -> no edit" "$(cat "$d/gh")" 'issue edit'
 assert_not_contains "dry run -> no label create" "$(cat "$d/gh")" 'label create'
+# Documented in the script header: a dry run that would label writes nothing at
+# all, $GITHUB_OUTPUT included — there is no decision to hand a later job.
+assert_eq "dry run -> GITHUB_OUTPUT is left untouched" "" "$(cat "$d/out" 2>/dev/null || true)"
+rm -rf "$d"
+
+# A skip is a decision whichever mode it is reached in, so the dry run still
+# reports it — the asymmetry the header calls out.
+d="$(mktemp -d)"; : > "$d/gh"
+out="$(run_intake "$d" issue-ai-implement.json DRY_RUN=1 GITHUB_OUTPUT="$d/out")"
+assert_contains "dry run -> a skip is still reported" "$out" 'intake: #357 skipped (pipeline label ai-implement)'
+assert_contains "dry run -> a skip still reaches GITHUB_OUTPUT" "$(cat "$d/out")" 'decision=skipped'
 rm -rf "$d"
 
 section "failures are loud"
 
 d="$(mktemp -d)"; : > "$d/gh"
-printf 'issue view\tHTTP 404: Not Found (api.github.com/repos/o/r/issues/357)\n' > "$d/fail"
+printf 'api repos/\tHTTP 404: Not Found (api.github.com/repos/o/r/issues/357)\n' > "$d/fail"
 ec=0; out="$(run_intake "$d" issue-plain.json GH_MOCK_FAIL_MAP="$d/fail")" || ec=$?
 assert_eq "unreadable issue -> exit 1" "1" "$ec"
 assert_contains "unreadable issue -> says so" "$out" 'could not read issue #357'
@@ -174,6 +187,10 @@ ec=0; env PATH="$MOCKS:$PATH" GH_MOCK_LOG="$d/gh" ISSUE_NUMBER=357 bash "$SCRIPT
 assert_eq "missing REPO -> exit 2" "2" "$ec"
 ec=0; env PATH="$MOCKS:$PATH" GH_MOCK_LOG="$d/gh" REPO=o/r ISSUE_NUMBER='12;x' bash "$SCRIPT" >/dev/null 2>&1 || ec=$?
 assert_eq "non-numeric ISSUE_NUMBER -> exit 2" "2" "$ec"
+# REPO is interpolated into the REST path, so a malformed value must be refused
+# rather than addressing a different endpoint.
+ec=0; env PATH="$MOCKS:$PATH" GH_MOCK_LOG="$d/gh" REPO='o/r/issues/1/comments' ISSUE_NUMBER=357 bash "$SCRIPT" >/dev/null 2>&1 || ec=$?
+assert_eq "malformed REPO -> exit 2" "2" "$ec"
 assert_eq "invalid env -> no gh call" "" "$(cat "$d/gh")"
 rm -rf "$d"
 
@@ -201,6 +218,46 @@ unpinned="$(grep -E '^\s*-?\s*uses: ' "$WF" 2>/dev/null | grep -vE '@[0-9a-f]{40
 assert_eq "every action is pinned by full SHA" "" "$unpinned"
 if [[ -n "$wf" ]] && command -v actionlint >/dev/null 2>&1; then
   if actionlint "$WF" >/dev/null 2>&1; then pass "actionlint is clean"; else fail "actionlint is clean" "$(actionlint "$WF" 2>&1 | head -5)"; fi
+fi
+
+section "the Layer-2 test workflow"
+
+TEST_WF="$ROOT/.github/workflows/issue-intake.test.yml"
+test_wf="$(cat "$TEST_WF" 2>/dev/null || true)"
+assert_contains "exists and calls the reusable workflow" "$test_wf" 'uses: ./.github/workflows/issue-intake.yml'
+assert_contains "drives the real script through the gh mock" "$test_wf" 'stub-mode: true'
+# The label path and both refusals the lane depends on, asserted end to end.
+for fixture in issue-plain.json issue-outside-author.json issue-ai-implement.json; do
+  assert_contains "covers $fixture" "$test_wf" "stub-issue-fixture: tests/fixtures/intake/$fixture"
+done
+
+# A caller granting less than the callee's jobs declare is rejected at load:
+# startup_failure, no jobs, no assertions — the failure mode #34 and #435 both
+# hit. A green run cannot prove the sets still agree, so assert it here.
+perm_union() {
+  python3 -c '
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+need = {}
+for job in d["jobs"].values():
+    for k, v in (job.get("permissions") or {}).items():
+        need[k] = v
+print("\n".join(f"{k}: {v}" for k, v in sorted(need.items())))
+' "$1"
+}
+perm_top() {
+  python3 -c '
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+print("\n".join(f"{k}: {v}" for k, v in sorted((d.get("permissions") or {}).items())))
+' "$1"
+}
+if [[ -n "$test_wf" ]]; then
+  assert_eq "the test caller grants exactly the union of the callee's job permissions" \
+    "$(perm_union "$WF")" "$(perm_top "$TEST_WF")"
+fi
+if [[ -n "$test_wf" ]] && command -v actionlint >/dev/null 2>&1; then
+  if actionlint "$TEST_WF" >/dev/null 2>&1; then pass "actionlint is clean (test workflow)"; else fail "actionlint is clean (test workflow)" "$(actionlint "$TEST_WF" 2>&1 | head -5)"; fi
 fi
 
 printf '\npassed: %d   failed: %d\n' "$PASS" "$FAIL"
