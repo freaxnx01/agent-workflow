@@ -765,6 +765,29 @@ else
   fail "the unit documents the direnv allow prerequisite"
 fi
 
+DOC="$ROOT/docs/AUTOPILOT.md"
+creds="$(awk '/\*\*Credentials\.\*\*/{on=1} on{print} on && /^3\. /{exit}' "$DOC")"
+case "$creds" in
+  *'GH_TOKEN='*) fail "AUTOPILOT.md no longer says to put GH_TOKEN= in autopilot.env" "$creds" ;;
+  *) pass "AUTOPILOT.md no longer says to put GH_TOKEN= in autopilot.env" ;;
+esac
+case "$creds" in
+  *'direnv exec'*) pass "AUTOPILOT.md's credentials step names direnv exec" ;;
+  *) fail "AUTOPILOT.md's credentials step names direnv exec" "$creds" ;;
+esac
+# shellcheck disable=SC2016  # the backticks are the docs' markdown code spans
+if grep -qE '^\| `5` \|' "$DOC"; then
+  pass "AUTOPILOT.md documents exit code 5"
+else
+  fail "AUTOPILOT.md documents exit code 5"
+fi
+# shellcheck disable=SC2016  # ditto
+if grep -qE '^- `5`' "$ROOT/commands/autopilot.md"; then
+  pass "/autopilot documents exit code 5"
+else
+  fail "/autopilot documents exit code 5"
+fi
+
 printf '\n%s──────────%s\n' "$C_DIM" "$C_OFF"
 printf 'passed: %d   failed: %d\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then

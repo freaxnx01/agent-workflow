@@ -75,16 +75,30 @@ And per issue: open, `needs-enrichment`, a non-empty body, and none of
 
 1. **Config.** `cp setup/autopilot.conf.example ~/.config/agent-workflow/autopilot.conf`
    and edit. Start with `agent-action-sandbox` only.
-2. **Credentials.** Create `~/.config/agent-workflow/autopilot.env`, mode
-   `0600`, with `CLAUDE_CODE_OAUTH_TOKEN=` and `GH_TOKEN=`. A `--user` unit
-   inherits nothing from a shell, so this file is not optional — both tokens
-   missing is the most likely first-run failure.
-3. **Dry run.** `scripts/autopilot.sh --dry-run`. Nothing is written. Read every
-   line before going further.
-4. **One real issue.** `scripts/autopilot.sh --max 1` against the sandbox.
+2. **Credentials.** Two tokens, from two places:
+   - `CLAUDE_CODE_OAUTH_TOKEN` goes in `~/.config/agent-workflow/autopilot.env`,
+     mode `0600`. A `--user` unit inherits nothing from a shell, so this file
+     is not optional.
+   - `GH_TOKEN` does **not** go in that file. GitHub auth is only the PAT that
+     direnv exports from Passbolt (the operator's
+     `~/repos/github/freaxnx01/public/.envrc`); a second copy drifts, outlives
+     a rotation and hides an expiry (#509). Every launch runs under
+     `direnv exec <dir with the .envrc>`, the unit included. Run
+     `direnv allow <dir>` once as the user that runs the lane. If an older
+     setup put a `GH_TOKEN` line in `autopilot.env`, delete it.
+
+   The driver refuses to start without `GH_TOKEN` (exit `5`). It never falls
+   back to a stored `gh` login. Verified 2026-10-19: `passbolt get` works from
+   a `--user` unit with no login session, because go-passbolt-cli keeps its
+   key and passphrase in its own config (no GPG agent), and the user has
+   linger enabled.
+3. **Dry run.** `direnv exec ~/repos/github/freaxnx01/public scripts/autopilot.sh --dry-run`.
+   Nothing is written. Read every line before going further.
+4. **One real issue.** `direnv exec ~/repos/github/freaxnx01/public scripts/autopilot.sh --max 1`
+   against the sandbox.
 5. **The units.** Follow the install block at the top of
-   `setup/agent-autopilot.service`. Both paths in it need editing for your
-   clone. Neither unit is installed by `setup/bootstrap.sh` — enabling an
+   `setup/agent-autopilot.service`. The three paths in its `ExecStart` and
+   `WorkingDirectory` need editing for your clone. Neither unit is installed by `setup/bootstrap.sh` — enabling an
    unattended lane that opens and merges PRs is a deliberate per-host act, not
    something bootstrap turns on for you. The unit's `TimeoutStartSec=3h` is
    sized for the shipped defaults; raising `max_per_run` or `enrich_timeout`
@@ -141,6 +155,7 @@ The process's own exit code, distinct from the per-line outcomes above:
 | `2` | Usage error |
 | `3` | A missing dependency (`gh`, `jq`, `git`, `flock`, `timeout`) |
 | `4` | The config is invalid or unreadable — the message names the offending file and line |
+| `5` | `GH_TOKEN` is not set or empty — launched without `direnv exec`, the `.envrc` is not `direnv allow`ed, or Passbolt was unreachable (the `.envrc` discards passbolt's errors, so an outage arrives as an empty token). Nothing was read or written |
 
 ## When something is wedged
 
@@ -170,6 +185,12 @@ The process's own exit code, distinct from the per-line outcomes above:
   applied)`.** The issue enriched cleanly (`needs-enrichment` is already
   gone), but neither the dispatch labels nor `needs-human` landed — it has
   dropped out of the lane silently. Apply `needs-human` by hand.
+- **Every run exits `5` (`GH_TOKEN is not set`).** Run
+  `direnv exec ~/repos/github/freaxnx01/public sh -c 'test -n "$GH_TOKEN" && echo ok'`
+  as the lane's user. No `ok`: either the `.envrc` is blocked (`direnv allow`
+  it) or Passbolt did not answer (`passbolt get resource --id …` by hand shows
+  the real error). Do not work around it by copying the PAT into
+  `autopilot.env`.
 
 ## Prerequisite for the game repos
 
