@@ -732,6 +732,16 @@ assert_contains "$(cat "$d/gh")" 'issue edit 99 --repo freaxnx01/game-rhyflitzer
   "a dispatch that proceeds leaves the paused list"
 rm -rf "$d"
 
+# #536: the gate's clear is best-effort. A repo that was never paused has no
+# ai:paused label at all, and the gate's verdict must not depend on it.
+d="$(mktemp -d)"
+printf -- '--remove-label ai:paused\n' > "$d/fail-map"
+ec=0
+out="$(gate_run "$d" alarm-list-empty.json GH_MOCK_FAIL_MAP="$d/fail-map")" || ec=$?
+assert_equals "$ec" 0 "gate proceeds when its clear fails (#536)"
+assert_contains "$out" 'paused=false' "gate still reports not paused when its clear fails (#536)"
+rm -rf "$d"
+
 d="$(mktemp -d)"
 out="$(gate_run "$d" alarm-list-empty.json \
   AGENT_PAUSED_VAR='out_of_credits 2026-10-12T01:43Z')"
@@ -783,6 +793,26 @@ assert_contains "$wf" 'pipeline-pause.sh' "the alarm is raised from the implemen
 assert_contains "$wf" 'NTFY_TOKEN' "the ntfy token is wired through"
 assert_contains "$(cat "$ROOT/.github/workflows/agent.yml")" 'NTFY_TOKEN' \
   "the dogfood consumer forwards the ntfy token"
+
+# --- #536: paused_issue_clear reports failure --------------------------------
+
+section "paused_issue_clear — a failed removal is reported, not swallowed"
+
+# clear_rc <dir> [extra env...] — sources the library and prints the clear's rc.
+clear_rc() {
+  local dir="$1"; shift
+  # shellcheck disable=SC2016  # $1 is the inner bash's argument, not this shell's
+  env PATH="$MOCKS:$PATH" GH_MOCK_LOG="$dir/gh" REPO=freaxnx01/game-rhyflitzer "$@" \
+    bash -c 'source "$1"; rc=0; paused_issue_clear 12 || rc=$?; printf "%s" "$rc"' _ \
+    "$ROOT/scripts/lib/paused-issues.sh"
+}
+
+d="$(mktemp -d)"
+assert_equals "$(clear_rc "$d")" 0 "paused_issue_clear returns 0 when gh succeeds (#536)"
+printf -- '--remove-label ai:paused\n' > "$d/fail-map"
+assert_equals "$(clear_rc "$d" GH_MOCK_FAIL_MAP="$d/fail-map")" 1 \
+  "paused_issue_clear returns 1 when gh fails (#536)"
+rm -rf "$d"
 
 # --- Task 6: pipeline-resume.sh ---------------------------------------------
 
