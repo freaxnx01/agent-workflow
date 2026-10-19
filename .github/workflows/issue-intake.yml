@@ -1,0 +1,74 @@
+# Issue intake (reusable) — label a newly opened issue needs-enrichment (#549).
+#
+# Issues filed through bridge (flowhub's path) or /new are born carrying
+# needs-enrichment; one opened in the GitHub UI is not, and the autopilot lane
+# ignores it. Consumers call this from their own `issues: [opened]` stub
+# (scripts/onboard-consumer.sh generates it): a reusable workflow cannot add a
+# trigger to a consumer. The rules are in scripts/issue-intake.sh.
+#
+# The label is applied with the caller's GITHUB_TOKEN, and events caused by
+# that token start no other workflow — so it cannot fire agent.yml.
+name: Issue intake (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      issue-number:
+        description: The issue that was just opened.
+        type: number
+        required: true
+      pipeline-repo:
+        description: Repo holding the shared scripts.
+        type: string
+        default: freaxnx01/agent-workflow
+      pipeline-ref:
+        description: |
+          Ref of `pipeline-repo` to check out. Pin the same moving major tag
+          the caller pinned in `uses:` — see docs/CONSUMER-SETUP.md.
+        type: string
+        default: main
+      local-scripts:
+        description: Use the caller repo's own scripts/ (agent-workflow dogfooding).
+        type: boolean
+        default: false
+      timeout-minutes:
+        type: number
+        default: 5
+
+permissions:
+  contents: read
+
+jobs:
+  intake:
+    name: Label needs-enrichment
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout caller repo (local-scripts mode)
+        if: ${{ inputs.local-scripts }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Checkout agent-workflow scripts
+        if: ${{ !inputs.local-scripts }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ inputs.pipeline-ref }}
+          path: .claude-pipeline
+          sparse-checkout: scripts
+
+      - name: Mirror local scripts to .claude-pipeline (self-test mode)
+        if: ${{ inputs.local-scripts }}
+        run: |
+          mkdir -p .claude-pipeline/scripts
+          cp -r scripts/. .claude-pipeline/scripts/
+
+      - name: Label the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+        run: bash .claude-pipeline/scripts/issue-intake.sh

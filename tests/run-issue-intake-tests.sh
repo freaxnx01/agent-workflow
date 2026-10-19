@@ -131,6 +131,22 @@ assert_eq "non-numeric ISSUE_NUMBER -> exit 2" "2" "$ec"
 assert_eq "invalid env -> no gh call" "" "$(cat "$d/gh")"
 rm -rf "$d"
 
+section "the reusable workflow"
+
+WF="$ROOT/.github/workflows/issue-intake.yml"
+wf="$(cat "$WF" 2>/dev/null || true)"
+assert_contains "callable by a consumer stub" "$wf" 'workflow_call:'
+assert_contains "takes the issue number" "$wf" 'issue-number:'
+assert_contains "runs the intake script" "$wf" 'scripts/issue-intake.sh'
+assert_contains "issues: write on the job" "$wf" 'issues: write'
+assert_not_contains "never writes code" "$wf" 'contents: write'
+assert_contains "has a job timeout" "$wf" 'timeout-minutes:'
+unpinned="$(grep -E '^\s*-?\s*uses: ' "$WF" 2>/dev/null | grep -vE '@[0-9a-f]{40}' || true)"
+assert_eq "every action is pinned by full SHA" "" "$unpinned"
+if [[ -n "$wf" ]] && command -v actionlint >/dev/null 2>&1; then
+  if actionlint "$WF" >/dev/null 2>&1; then pass "actionlint is clean"; else fail "actionlint is clean" "$(actionlint "$WF" 2>&1 | head -5)"; fi
+fi
+
 printf '\npassed: %d   failed: %d\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then
   printf 'failed:\n'
