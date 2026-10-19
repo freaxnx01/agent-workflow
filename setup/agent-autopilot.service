@@ -6,7 +6,8 @@
 # Install (as the user that owns the clone and the tokens — NOT root):
 #   mkdir -p ~/.config/systemd/user
 #   cp setup/agent-autopilot.{service,timer} ~/.config/systemd/user/
-#   $EDITOR ~/.config/systemd/user/agent-autopilot.service   # fix the two paths
+#   $EDITOR ~/.config/systemd/user/agent-autopilot.service   # fix the paths
+#   direnv allow ~/repos/github/freaxnx01/public              # once, as this user
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now agent-autopilot.timer
 #
@@ -23,16 +24,26 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 
-# A --user unit inherits NOTHING from an interactive shell. Both tokens must
-# come from here, or every run fails at the first gh call. Keep the file 0600 —
-# it holds credentials.
+# A --user unit inherits NOTHING from an interactive shell.
+#
+# CLAUDE_CODE_OAUTH_TOKEN comes from this file. Keep it 0600:
 #   CLAUDE_CODE_OAUTH_TOKEN=…
-#   GH_TOKEN=…
+# GH_TOKEN does NOT go in here (#509). GitHub auth is only the PAT that direnv
+# exports from Passbolt; a second copy drifts, outlives a rotation and hides an
+# expiry. ExecStart below runs the driver under `direnv exec`, which loads it.
 EnvironmentFile=%h/.config/agent-workflow/autopilot.env
 
 # Absolute path to this clone of agent-workflow. Edit after copying.
 WorkingDirectory=%h/repos/github/freaxnx01/public/agent-workflow
-ExecStart=%h/repos/github/freaxnx01/public/agent-workflow/scripts/autopilot.sh
+
+# Three paths to edit after copying: direnv itself (`command -v direnv`), the
+# directory whose .envrc exports GH_TOKEN, and the driver in this clone. That
+# .envrc must be `direnv allow`ed by this user, or GH_TOKEN stays unset and the
+# driver exits 5 on its first line.
+#
+# No `bash -c '…'` and no `$` here: systemd expands $VAR in ExecStart itself,
+# before any shell sees it.
+ExecStart=/usr/bin/direnv exec %h/repos/github/freaxnx01/public %h/repos/github/freaxnx01/public/agent-workflow/scripts/autopilot.sh
 
 # A run is several nested Claude sessions; generous, but never unbounded.
 # Sized for the shipped defaults (max_per_run x enrich_timeout is the real

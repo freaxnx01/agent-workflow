@@ -738,6 +738,33 @@ assert_eq "the issue edit before the SIGPIPE really landed" "1" \
 # and the process just died by the raw signal instead of the trap's `exit 1`.
 assert_eq "SIGPIPE after a write exits exactly 1" "1" "$rc"
 
+section "the unit loads GH_TOKEN through direnv (#509)"
+
+UNIT="$ROOT/setup/agent-autopilot.service"
+exec_start="$(grep -E '^ExecStart=' "$UNIT")"
+case "$exec_start" in
+  *"direnv exec "*"scripts/autopilot.sh"*) pass "ExecStart runs the driver under direnv exec" ;;
+  *) fail "ExecStart runs the driver under direnv exec" "was: $exec_start" ;;
+esac
+case "$exec_start" in
+  *'$'*) fail "ExecStart has no \$ (systemd would expand it)" "was: $exec_start" ;;
+  *) pass "ExecStart has no \$ (systemd would expand it)" ;;
+esac
+case "$exec_start" in
+  *"bash -c"*) fail "ExecStart needs no shell" "was: $exec_start" ;;
+  *) pass "ExecStart needs no shell" ;;
+esac
+if grep -qE '^#.*GH_TOKEN=' "$UNIT"; then
+  fail "the unit no longer tells you to copy GH_TOKEN into autopilot.env" "$(grep -nE 'GH_TOKEN=' "$UNIT")"
+else
+  pass "the unit no longer tells you to copy GH_TOKEN into autopilot.env"
+fi
+if grep -q 'direnv allow' "$UNIT"; then
+  pass "the unit documents the direnv allow prerequisite"
+else
+  fail "the unit documents the direnv allow prerequisite"
+fi
+
 printf '\n%s──────────%s\n' "$C_DIM" "$C_OFF"
 printf 'passed: %d   failed: %d\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then
