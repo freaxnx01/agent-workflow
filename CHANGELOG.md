@@ -582,6 +582,9 @@ additions are the optional `NTFY_TOKEN` secret and the
   comment; `/issues` now points here instead of a raw `gh` invocation (#175)
 
 ### Changed
+- **processing-test-feedback:** on resume, the skill now searches closed issues
+  too for each pending entry's Source text, so an entry that was filed and fixed
+  without the worklog being updated is marked `done` instead of re-triaged.
 
 - **runners:** opencode installs via its native installer (checksum-pinned)
   instead of `npm install -g`, which resolved to the shared global prefix and
