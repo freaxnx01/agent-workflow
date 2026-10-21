@@ -1,5 +1,24 @@
 # TODO
 
+## Session 2026-10-16 (claude-md sync, decision-interview partial) — parked threads
+
+Shipped: #543 (`decision-interview` partial), #544 (general-month `due_on` at midday,
+guard widened, `typos` false positive on "PATCHed" removed from `main`).
+
+- [ ] **`tests/run-all.sh` hangs on WSL2** — killed twice by a 280 s `timeout`
+      (exit 143), while the same suite passes in ~40 s in CI. Find which
+      runner blocks locally (network/`gh`/credential prompt?) and make it fail
+      fast or skip.
+
+- [ ] **claude-md skill: native pwsh on Windows.** The skill drives Windows via
+      Git Bash and only hops from pwsh to WSL2. Collect what is actually
+      missing in a pwsh session before changing anything.
+
+- [ ] **Promote overlapping local CLAUDE.md sections to partials.** GitHub
+      auth / `.envrc` PAT exists on all three machines in different wording;
+      Obsidian Vaults on WSL2 + Windows. Genericise (public repo), show the
+      redacted text for approval, then remove the local copies.
+
 ## Session 2026-10-01/02 (consumer permissions + model-not-found retry) — 3 issues shipped, rollout and #449 open
 
 Shipped: #439 (PR #443), #434 (PR #442), #441 (PR #448). Specs in PR #440 / #447.
