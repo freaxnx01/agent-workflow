@@ -186,9 +186,24 @@ assert_eq "$(verdict_of freaxnx01/rules-partial)" "partial" \
 assert_no_finding freaxnx01/bridge rules-invisible-to-opencode \
   "a record without a rules key produces no finding"
 
+# A .claude/rules that holds only non-.md files (a lone .gitkeep) counts 0 —
+# there is nothing for opencode to miss.
+assert_no_finding freaxnx01/rules-gitkeep rules-invisible-to-opencode \
+  "an empty .claude/rules produces no finding"
+assert_eq "$(verdict_of freaxnx01/rules-gitkeep)" "healthy" \
+  "  → and the repo stays healthy"
+
+# instructions is recorded verbatim, so a hand-edited opencode.json can hold a
+# string where opencode's schema wants an array. Iterating that raw aborts the
+# whole graded report with a jq error, after every API call has been paid for.
+assert_finding freaxnx01/rules-string rules-invisible-to-opencode \
+  "a non-array instructions lists nothing, so the finding stands"
+assert_eq "$(verdict_of freaxnx01/rules-string)" "broken" \
+  "  → and grading the fleet survives the malformed record"
+
 rules_out="$("$SCRIPT" --from "$FIXTURE" --repo freaxnx01/agent-workflow)"
 assert_contains "$rules_out" "rules 3" "the instructions line shows the rules count"
-assert_not_contains "$("$SCRIPT" --from "$FIXTURE" --repo freaxnx01/bridge)" "rules" \
+assert_not_contains "$("$SCRIPT" --from "$FIXTURE" --repo freaxnx01/bridge)" "·  rules " \
   "a repo with no rules says nothing about them"
 
 # --- rendering --------------------------------------------------------------
@@ -313,8 +328,10 @@ assert_eq "$(printf '%s' 'ci' | drop_api_error)" "ci" \
 
 section "progress never pollutes the data stream"
 
-# --json is a pipe into jq; a progress line on stdout would break it.
-assert_eq "$("$SCRIPT" --from "$FIXTURE" --json 2>/dev/null | jq -r 'length')" "12" \
+# --json is a pipe into jq; a progress line on stdout would break it. The count
+# is read off the fixture so adding a record does not fail an unrelated test.
+assert_eq "$("$SCRIPT" --from "$FIXTURE" --json 2>/dev/null | jq -r 'length')" \
+  "$(jq -r 'length' "$FIXTURE")" \
   "--json emits parseable JSON and nothing else"
 
 section "an unforwarded secret is graded by what it actually costs"

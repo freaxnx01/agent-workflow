@@ -616,9 +616,14 @@ def grade_workflow(r):
         # Covered means opencode is told to read the rules at all: an explicit
         # path counts as much as the glob. A record from an older --json dump
         # has no rules key, which reads as count 0 and so says nothing.
+        # instructions is recorded verbatim, so a hand-edited opencode.json can
+        # put a string or an object there. `arrays[] | strings` reads those as
+        # "nothing is listed" — which is what opencode makes of them too — where
+        # iterating them raw aborts the whole graded report with a jq error.
         ( (r.instructions.rules // {}) as $rules
           | if (($rules.count // 0) > 0)
-               and ((($rules.opencode_instructions // []) | any(startswith(".claude/rules/"))) | not)
+               and (([$rules.opencode_instructions | arrays[] | strings]
+                     | any(startswith(".claude/rules/"))) | not)
           then finding("rules-invisible-to-opencode";
                (if $w.agent == "opencode" then "broken" else "degraded" end);
                (if $w.agent == "opencode"
