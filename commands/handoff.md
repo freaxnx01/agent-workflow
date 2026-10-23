@@ -78,11 +78,21 @@ then stop:
    not left as local-only, uncommitted state. If there is no remote or push fails,
    say so and continue; don't block the handoff on it.
 
-   **Never commit a handoff onto `main`, and never push to `main`.** If the current
-   branch is `main` (or the repo's default branch), leave the handoff file
-   uncommitted, say so in the report, and stop there — a handoff is not worth
-   bypassing branch protection for, and the file stays readable on disk either way.
-   The index still lists it, marked `uncommitted`.
+   **On `main` (or the repo's default branch), commit only if the repo is
+   trunk-based.** Some repos work through feature branches and PRs, others commit
+   straight to `main`. Decide from the repo, not from the branch name:
+
+   - **Trunk-based → commit and push as usual.** Signs: the project's `CLAUDE.md`
+     says to commit/push to `main`, recent `git log` on `main` shows direct commits
+     rather than PR merges, or the forge reports no branch protection (GitHub:
+     `gh api repos/{owner}/{repo}/branches/main/protection` returns 404).
+   - **PR-based, protected, or unclear → leave the handoff file uncommitted**, say
+     so in the report, and stop there. A handoff is not worth bypassing branch
+     protection for, and the file stays readable on disk either way. The index
+     still lists it, marked `uncommitted`.
+   - **Push rejected as protected** (`protected branch`, `pre-receive hook
+     declined`) → `git reset --soft HEAD~1` to undo the local commit, then treat
+     it as the uncommitted case above. Never force or bypass.
 
    From a worktree whose branch is published onto another branch (e.g.
    `git push origin worktree-finnova:main`), the handoff file lands on that target
