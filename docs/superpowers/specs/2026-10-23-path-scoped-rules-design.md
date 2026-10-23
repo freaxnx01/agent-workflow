@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-23
 **Status:** draft, awaiting review
-**Repos touched:** `freaxnx01/ai-instructions`, `freaxnx01/freax-agent-skills` (`sync-ai-instructions`), `freaxnx01/agent-workflow`
+**Repos touched:** `freaxnx01/ai-instructions`, `freaxnx01/agent-skills` (marketplace `freax-agent-skills`, plugin `sync-ai-instructions`), `freaxnx01/agent-workflow`
 
 ## Problem
 
@@ -102,10 +102,12 @@ Plus:
 
 ### 3. agent-workflow
 
-- **`/integration`, ai-instructions half:** report the rule count, the stack they came
-  from, and whether the generated rules match upstream.
-- **New finding `rules-invisible-to-opencode`:** `.claude/rules/` holds generated
-  rules but `opencode.json` is missing or its `instructions` do not cover them.
+- **`/integration`, ai-instructions half:** report the number of `.claude/rules/*.md`
+  files. (Comparing each rule to upstream would cost one API call per rule; base and
+  stack drift already signal a stale sync, so this is left out.)
+- **New finding `rules-invisible-to-opencode`:** `.claude/rules/` holds any rule
+  (generated or hand-written — opencode misses both) but `opencode.json` is missing
+  or no `instructions` entry starts with `.claude/rules/`.
   Graded **broken** on a repo declaring `agent: opencode` (runs proceed without the
   conventions, no error anywhere), **degraded** on a Claude repo (bites only once a
   per-issue `agent:opencode` label is applied) — the same grading pattern as
@@ -135,7 +137,7 @@ Plus:
 
 1. **ai-instructions:** `.ai/rules/` format, CI frontmatter check, the three pilot
    rules, pointers in base + ci overlay.
-2. **freax-agent-skills:** sync fan-out, `opencode.json` merge, stale cleanup,
+2. **agent-skills:** sync fan-out, `opencode.json` merge, stale cleanup,
    pointer handling.
 3. **agent-workflow:** `/integration` reporting + `rules-invisible-to-opencode`,
    re-sync as pilot consumer.
