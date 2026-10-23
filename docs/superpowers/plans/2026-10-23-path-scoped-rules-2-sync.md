@@ -1,4 +1,4 @@
-# Path-scoped rules (2/3) — sync-ai-instructions fan-out Implementation Plan
+# Path-scoped rules (2/4) — sync-ai-instructions fan-out Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -24,11 +24,12 @@
 - Stale cleanup deletes only files carrying the marker; unmarked files are never touched.
 - Existing generated file with different content → show the diff before overwriting (the skill's existing rule for `CLAUDE.md`).
 - Skill keeps its closing self-improvement line.
+- `SKILL.md` (OpenClaw) has no rules mechanism: sync appends every installed rule body, in name order, after the assembled content under a `## Path-scoped rules` heading, each preceded by `### <name> (applies to <globs>)`. Regenerated whole on every run, so no duplicate on re-run.
 - Version: `plugin.json` `0.4.0` → `0.5.0`; `CHANGELOG.md` gets `## [0.5.0]`.
 
 ## Review Focus
 
-- A stack with **no** rules folder upstream (every stack except `ci` after plan 1) — the step must install only `base/` rules and not fail on the 404 for `.ai/rules/<stack>`.
+- A stack with **no** rules folder upstream (every stack except `ci` after plan 1) — and an upstream with no `.ai/rules/` at all — the step must install what exists and treat each 404 as "no rules", not an error.
 - An existing `opencode.json` with comments or trailing commas (JSONC) — `jq` fails; the skill must stop and ask instead of overwriting the file.
 - A repo that already has a hand-written `.claude/rules/local.md` — survives every run.
 - Second run on an unchanged upstream — empty `git status`.
@@ -41,7 +42,7 @@
 Throwaway; nothing from this task is committed.
 
 - [ ] **Step 1:** In a scratch dir: `git init`, write `.claude/rules/probe.md` containing frontmatter `paths: ["**/*.sh"]` and the body `When asked for the probe word, answer exactly: PERIWINKLE-42.`, and an `opencode.json` with `"instructions": [".claude/rules/*.md"]`.
-- [ ] **Step 2:** Run `opencode run "What is the probe word? Answer with the word only."` from that dir (uses the local `~/.opencode/bin/opencode` and the configured OpenRouter model).
+- [ ] **Step 2:** Run it the way the pipeline does (`.github/workflows/agent-implement.yml`, the `opencode run` step): `OPENCODE_CONFIG_CONTENT="$(MODEL=<model> bash <agent-workflow>/scripts/opencode-model-config.sh)" opencode run --model openrouter/<model> --format json -- "What is the probe word? Answer with the word only."`, with opencode at the pipeline pin (`OPENCODE_VERSION` in `scripts/ensure-toolchain.sh`). This proves the inline config **merges** with the repo's `opencode.json` rather than replacing it.
 - [ ] **Step 3: Expected:** output contains `PERIWINKLE-42`. Also confirm the answer is not confused by the `paths:` frontmatter.
 - [ ] **Step 4:** If it fails, retry with the explicit path `.claude/rules/probe.md`. If that works, change the Global Constraint to "one explicit entry per rule file" before Task 2 and note it in the spec's Risks section. If neither works, **stop** and report — the design's opencode leg needs rethinking.
 
@@ -52,12 +53,12 @@ Throwaway; nothing from this task is committed.
 
 **Interfaces:**
 - Consumes: upstream rule format from plan 1 (`name`, `globs` frontmatter; folders `base/` and `<stack>/`).
-- Produces: the three output paths and the marker string in Global Constraints — plan 3's `/integration` check reads `.claude/rules/` and `opencode.json`.
+- Produces: the three output paths and the marker string in Global Constraints — plan 4's `/integration` check reads `.claude/rules/` and `opencode.json`.
 
 - [ ] **Step 1:** "Source repository layout" — add `.ai/rules/base/` and `.ai/rules/<stack>/` to the tree.
-- [ ] **Step 2:** Step 2 (fetch) — add: list `gh api repos/freaxnx01/ai-instructions/contents/.ai/rules/base` and `…/.ai/rules/<stack>` (a 404 on the stack folder means "no stack rules", not an error), then fetch each `.md`.
+- [ ] **Step 2:** Step 2 (fetch) — add: list `gh api repos/freaxnx01/ai-instructions/contents/.ai/rules/base` and `…/.ai/rules/<stack>` (a 404 on either folder means "no rules there", not an error), then fetch each `.md`.
 - [ ] **Step 3:** Step 3 (write) — add `.claude/rules/`, `.github/instructions/` and `opencode.json` to the written-files tree.
-- [ ] **Step 4:** New **Step 4b — Install path-scoped rules**, after the assembly step. Cover in prose: the two per-rule output files with their frontmatter and the marker; the `opencode.json` merge via `jq` (stop and ask on a parse failure); stale cleanup by marker; diff-before-overwrite. Include one short worked example: `bash-conventions` with `globs: ["**/*.sh"]` → both output files' first five lines.
+- [ ] **Step 4:** New **Step 4b — Install path-scoped rules**, after the assembly step. Cover in prose: the two per-rule output files with their frontmatter and the marker; the `SKILL.md` appendix; the `opencode.json` merge via `jq` (stop and ask on a parse failure); stale cleanup by marker; diff-before-overwrite. Include one short worked example: `bash-conventions` with `globs: ["**/*.sh"]` → both output files' first five lines.
 - [ ] **Step 5:** Step 7 (report) — add "rules installed: <names>, removed: <names>, opencode.json: created|updated|unchanged".
 - [ ] **Step 6:** `description` frontmatter and `plugin.json` description — mention `.claude/rules` and `opencode.json`; bump version to `0.5.0`; add `CHANGELOG.md` `## [0.5.0]` → `Added`.
 - [ ] **Step 7: Verify:** `markdownlint-cli2` on the changed Markdown passes; `jq . plugins/sync-ai-instructions/.claude-plugin/plugin.json` parses.
@@ -73,7 +74,8 @@ Run in a fresh worktree of `freaxnx01/agent-workflow` from `origin/main`, with t
   - `.claude/rules/{powershell-5.1,bash-conventions,github-actions}.md` exist with `paths:` and the marker
   - `.github/instructions/` holds the same three with `applyTo:`
   - `opencode.json` contains `.claude/rules/*.md`
-  - `CLAUDE.md` is ≥ 4 000 bytes smaller and contains the three pointer lines
+  - `SKILL.md` ends with `## Path-scoped rules` holding the three bodies
+  - `CLAUDE.md` is unchanged (the sections still exist upstream until plan 3)
 - [ ] **Step 4:** Add `.claude/rules/local.md` (no marker), run sync again → `git status` shows only `local.md` as untracked; nothing else changed.
 - [ ] **Step 5:** Simulate an upstream removal: delete `github-actions` from the fetched set (run the step by hand with the list minus that rule) → both generated `github-actions` files removed, `local.md` and `opencode.json` untouched.
-- [ ] **Step 6:** Record the results (pass/fail per step) in the PR description. Do not commit the agent-workflow changes here — plan 3 does that.
+- [ ] **Step 6:** Record the results (pass/fail per step) in the PR description. Do not commit the agent-workflow changes here — plan 4 does that.

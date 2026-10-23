@@ -1,4 +1,4 @@
-# Path-scoped rules (3/3) — /integration finding + pilot re-sync Implementation Plan
+# Path-scoped rules (4/4) — /integration finding + pilot re-sync Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-23-path-scoped-rules-design.md`
 
-**Depends on:** plan 2 released (Task 3 here runs the new sync). Tasks 1–2 can land before it, Task 3 cannot.
+**Depends on:** Tasks 1–2 none. Task 3 needs plan 2 released **and** plan 3 merged (otherwise the re-sync installs rules but `CLAUDE.md` does not shrink).
 
 ## Global Constraints
 
