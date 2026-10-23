@@ -26,6 +26,9 @@
 #   AUTOPILOT_LOG_DIR       nested session logs. Default $AUTOPILOT_CACHE_DIR/logs
 #   ENRICH_CMD              per-issue enrich command. Default scripts/lib/agent-cmd-enrich.sh
 #   MODEL                   passed through to the nested session
+#   GH_TOKEN                required. The direnv-exported PAT — run the driver
+#                           under `direnv exec <dir with the .envrc>`; it is
+#                           never read from a file or a stored gh login (#509)
 #
 # Exit codes:
 #   0  ran (including "disabled" and "already running" — neither is an error)
@@ -37,6 +40,8 @@
 #   2  usage error
 #   3  missing dependency
 #   4  config invalid or unreadable
+#   5  GH_TOKEN is not set (or empty) — launched without direnv, the .envrc is
+#      not allowed, or Passbolt was unreachable (#509)
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -82,7 +87,7 @@ ENRICH_CMD="${ENRICH_CMD:-$ROOT/scripts/lib/agent-cmd-enrich.sh}"
 
 die() { printf 'error: %s\n' "$1" >&2; exit "${2:-2}"; }
 
-usage() { sed -n '3,40p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,44p' "$0" | sed 's/^# \{0,1\}//'; }
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
@@ -104,6 +109,15 @@ require_tools() {
   for tool in gh jq git flock timeout; do
     command -v "$tool" >/dev/null 2>&1 || die "missing dependency: $tool" 3
   done
+}
+
+# GitHub auth for the lane is the direnv-exported PAT and nothing else (#509).
+# Checks the variable only: a stored `gh` login must not stand in for it, which
+# is the silent fallback that once hid an expired PAT for days. Presence only —
+# the first gh call finds out whether the token is valid.
+require_gh_token() {
+  [[ -n "${GH_TOKEN:-}" ]] && return 0
+  die 'GH_TOKEN is not set — start the driver under direnv: direnv exec <dir with the .envrc> scripts/autopilot.sh (see docs/AUTOPILOT.md, "Credentials")' 5
 }
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -310,6 +324,8 @@ main() {
     log "disabled: $DISABLE_FLAG present"
     exit 0
   fi
+
+  require_gh_token
 
   if [[ -n "$CONFIG_FILE" ]]; then
     load_autopilot_config "$CONFIG_FILE" || exit 4
