@@ -1,0 +1,4 @@
+{"type":"step_start","timestamp":1000,"sessionID":"ses_cut","part":{"type":"step-start"}}
+{"type":"tool_use","timestamp":1400,"sessionID":"ses_cut","part":{"type":"tool","tool":"read","state":{"status":"error","error":"The user rejected permission to use this specific tool call."}}}
+{"type":"tool_use","timestamp":1600,"sessionID":"ses_cut","part":{"type":"tool","tool":"bash","state":{"status":"completed"}}}
+{"type":"step_finish","timestamp":1700,"sessionID":"ses_cut","part":{"type":"step-finish","reason":"tool-calls","tokens":{"total":24554,"input":7133,"output":0,"reasoning":77,"cache":{"write":0,"read":17344}},"cost":0.002024}}
