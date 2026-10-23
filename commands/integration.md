@@ -79,9 +79,12 @@ starts and says nothing useful:
   therefore absent from an opencode run's prompt, and it produces code ignoring
   conventions nobody told it about. Graded by what it costs, like
   `openrouter-not-forwarded`: **broken** on an `agent: opencode` repo, **degraded** on
-  a Claude repo, where it only bites under a per-issue `agent:opencode` label. Listing
-  the rules by explicit path counts as much as the `.claude/rules/*.md` glob — what
-  matters is that opencode is told to read them at all.
+  a Claude repo, where it only bites under a per-issue `agent:opencode` label. Reported
+  only where opencode can actually run — `OPENROUTER_API_KEY` set on the repo *and*
+  forwarded — because the credential guard forces Claude otherwise, and then no opencode
+  run exists for the rules to be invisible to. Listing the rules by explicit path counts
+  as much as the `.claude/rules/*.md` glob — what matters is that opencode is told to
+  read them at all.
 
 ## Two things the report deliberately will not claim
 

@@ -14,9 +14,9 @@
 
 ## Global Constraints
 
-- Record shape, added to `instructions`: `"rules": {"count": <int>, "opencode_instructions": <array of strings> | null}` — `null` means `opencode.json` is absent or has no `instructions` key.
+- Record shape, added to `instructions`: `"rules": {"count": <int>, "opencode_instructions": <array of strings> | null}` — `null` means `opencode.json` is absent, has no `instructions` key, or holds a value of any other type there (a hand-edited file can).
 - Covered = some entry of `opencode_instructions` starts with `.claude/rules/`.
-- Finding code `rules-invisible-to-opencode`; severity `broken` when `$w.agent == "opencode"`, else `degraded`; only when `rules.count > 0` and not covered; only for repos with a workflow (no finding on `partial` repos).
+- Finding code `rules-invisible-to-opencode`; severity `broken` when `$w.agent == "opencode"`, else `degraded`; only when `rules.count > 0` and not covered; only for repos with a workflow (no finding on `partial` repos); and only where opencode is runnable at all — `OPENROUTER_API_KEY` set on the repo *and* forwarded to the run, since `classify-agent.sh`'s credential guard forces claude otherwise.
 - Finding text — opencode: `agent: opencode, but opencode does not read .claude/rules and opencode.json does not list them — runs proceed without these conventions`; Claude: `.claude/rules are not listed in opencode.json; a per-issue agent:opencode label would run without them`.
 - Render: the `- instructions:` line gains `  ·  rules <count>` when `count > 0`.
 - Each new read follows the existing guard pattern (`e=0; x="$(…)" || e=$?; (( e == 2 )) && ec=2`) — absent is not unreadable.
@@ -26,7 +26,9 @@
 - A record from an older `--json` dump with no `instructions.rules` key (`--from` replays) — no finding, no render error.
 - `opencode.json` present but not valid JSON — must count as `opencode_instructions: null` (finding fires), not abort the repo's collection.
 - `opencode.json` listing the rules by explicit path (`.claude/rules/bash-conventions.md`) rather than the glob — counts as covered.
-- `.claude/rules/` containing only non-`.md` files (e.g. `.gitkeep`) — count `0`, no finding.
+- `.claude/rules/` containing only non-`.md` files (e.g. `.gitkeep`) — count `0`, no finding. The gh mock ignores `--jq`, so the listing filter is asserted directly against a canned payload.
+- `opencode.json` whose `instructions` is not an array of strings — normalised to `null` by the collector, and the grading clause still tolerates it, because `--from` replays dumps collected before that.
+- A repo where `OPENROUTER_API_KEY` is unset or unforwarded — no finding, since no opencode run can happen.
 - A `partial` repo (instructions, no workflow) with uncovered rules — no finding, verdict stays `partial`.
 
 ---
