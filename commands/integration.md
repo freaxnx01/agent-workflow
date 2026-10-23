@@ -38,8 +38,8 @@ Common invocations:
   create PRs", and auto-merge/squash for an ai-merge repo
 
 **The ai-instructions half** — which of the five generated files exist, which stack
-overlay is in use, and whether `.ai/base-instructions.md` and the stack overlay match
-upstream.
+overlay is in use, whether `.ai/base-instructions.md` and the stack overlay match
+upstream, and how many path-scoped rules live under `.claude/rules`.
 
 Each repo gets one verdict: **healthy**, **degraded** (runs, but not as intended),
 **broken** (will fail on dispatch), **partial** (one half only), **not-integrated**, or
@@ -49,7 +49,7 @@ than a graded bad one.
 
 ## The findings that justify the API calls
 
-Five failure modes are silent — the run looks fine and does the wrong thing, or never
+Six failure modes are silent — the run looks fine and does the wrong thing, or never
 starts and says nothing useful:
 
 - **`secret-not-forwarded`** — a critical secret (`CLAUDE_CODE_OAUTH_TOKEN`,
@@ -74,6 +74,15 @@ starts and says nothing useful:
   Claude when `OPENROUTER_API_KEY` is absent, so `agent: opencode` looks honoured
   while the run is not.
 
+- **`rules-invisible-to-opencode`** — opencode reads `AGENTS.md` and `opencode.json`,
+  never `.claude/rules`. Path-scoped rules that `opencode.json` does not list are
+  therefore absent from an opencode run's prompt, and it produces code ignoring
+  conventions nobody told it about. Graded by what it costs, like
+  `openrouter-not-forwarded`: **broken** on an `agent: opencode` repo, **degraded** on
+  a Claude repo, where it only bites under a per-issue `agent:opencode` label. Listing
+  the rules by explicit path counts as much as the `.claude/rules/*.md` glob — what
+  matters is that opencode is told to read them at all.
+
 ## Two things the report deliberately will not claim
 
 **A secret is read as set, never as valid.** The API exposes a secret's name, never
@@ -94,6 +103,10 @@ distinction, the fix is upstream — have the sync write a provenance stamp.
 on repos that have something wired, four repos at a time. Measured over 82 repos:
 **~3 minutes**, a few hundred API calls against a 5000/hour limit. Progress goes to
 stderr, so `--json` stays a clean pipe.
+
+The rules state costs **two more calls per wired repo** — the `.claude/rules`
+directory listing and `opencode.json` — paid only in phase 2, so a repo with neither
+half wired still costs nothing extra.
 
 `COLLECT_JOBS` raises or lowers the fan-out. Be careful raising it: at 8 the sweep
 finished in 1 minute but tripped GitHub's **secondary** rate limit, and 18 wired

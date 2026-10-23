@@ -384,10 +384,26 @@ instructions_of() {
   (( e == 2 )) && ec=2
   e=0; skill="$(blob_sha "$repo" 'SKILL.md')" || e=$?
   (( e == 2 )) && ec=2
+  # Both halves of the rules state, because one without the other cannot tell
+  # "this repo has no rules" from "it has rules opencode will never see".
+  local rules_count opencode_b64 rules_listed='null'
+  e=0; rules_count="$(gh_json "repos/$repo/contents/.claude/rules" \
+    --jq '[.[] | select(.type == "file" and (.name | endswith(".md")))] | length')" || e=$?
+  (( e == 2 )) && ec=2
+  e=0; opencode_b64="$(gh_json "repos/$repo/contents/opencode.json" --jq '.content // empty')" || e=$?
+  (( e == 2 )) && ec=2
+  if [[ -n "$opencode_b64" ]]; then
+    # An opencode.json that no longer parses lists nothing — which is the state
+    # the finding exists to report, so it must not abort the repo's collection.
+    rules_listed="$(printf '%s' "$opencode_b64" | tr -d '\n' | base64 -d 2>/dev/null \
+      | jq -c '.instructions // null' 2>/dev/null || printf 'null')"
+    [[ -n "$rules_listed" ]] || rules_listed='null'
+  fi
   jq -nc \
     --arg stack "$stack" --arg sp "$stack_path" \
     --arg bl "$base_local" --arg bu "$base_up" \
     --arg sl "$stack_local" --arg su "$stack_up" \
+    --argjson rc "${rules_count:-0}" --argjson ri "$rules_listed" \
     --arg c "$claude" --arg co "$copilot" --arg sk "$skill" '
     {
       stack: (if $stack == "" then null else $stack end),
@@ -398,7 +414,8 @@ instructions_of() {
         "SKILL.md": ($sk != "")
       } + (if $sp == "" then {} else {($sp): ($sl != "")} end)),
       blobs: ((if $bl == "" then {} else {".ai/base-instructions.md": {local: $bl, upstream: $bu}} end)
-            + (if $sp == "" or $sl == "" then {} else {($sp): {local: $sl, upstream: $su}} end))
+            + (if $sp == "" or $sl == "" then {} else {($sp): {local: $sl, upstream: $su}} end)),
+      rules: {count: $rc, opencode_instructions: $ri}
     }'
   return "$ec"
 }

@@ -441,6 +441,53 @@ rec="$(PATH="$MOCKS:$PATH" GH_MOCK_STDOUT_MAP="$COLLECT_TMP/stdout.map" \
 assert_eq "$(jq -r '.unreadable' <<< "$rec")" "false" \
   "a clean read is not marked unreadable"
 
+section "the collector reads the rules state"
+
+# The gh mock ignores --jq, so each fixture holds the value the real filter
+# would have produced: a count for the directory listing, base64 for the
+# contents API's .content.
+RULES_TMP="$(mktemp -d)"
+printf '3\n' > "$RULES_TMP/count"
+printf '%s' '{"instructions":[".claude/rules/*.md"]}' | base64 > "$RULES_TMP/listed"
+printf '%s' '{"instructions": [' | base64 > "$RULES_TMP/unparseable"
+
+collect_rules() {  # <opencode.json fixture>
+  { printf 'contents/.github/workflows/agent.yml\t%s\n' "$ROOT/tests/fixtures/autopilot/agent-yml-good.yml"
+    printf 'contents/.claude/rules\t%s\n' "$RULES_TMP/count"
+    printf 'contents/opencode.json\t%s\n' "$1"; } > "$RULES_TMP/stdout.map"
+  GH_MOCK_LOG="$RULES_TMP/gh.log" PATH="$MOCKS:$PATH" \
+    GH_MOCK_STDOUT_MAP="$RULES_TMP/stdout.map" GH_RETRY_MAX=1 collect_one o/r v3.0.0
+}
+
+rec="$(collect_rules "$RULES_TMP/listed")"
+assert_eq "$(jq -r '.instructions.rules.count' <<< "$rec")" "3" \
+  "the .md files under .claude/rules are counted"
+assert_eq "$(jq -c '.instructions.rules.opencode_instructions' <<< "$rec")" \
+  '[".claude/rules/*.md"]' "opencode.json's instructions are recorded verbatim"
+
+# A hand-edited opencode.json that no longer parses lists nothing, which is
+# exactly what the finding is for. Aborting the repo's collection over it would
+# turn a reportable state into an unreadable repo.
+rec="$(collect_rules "$RULES_TMP/unparseable")"
+assert_eq "$(jq -r '.instructions.rules.opencode_instructions' <<< "$rec")" "null" \
+  "an unparseable opencode.json lists nothing"
+assert_eq "$(jq -r '.instructions.rules.count' <<< "$rec")" "3" \
+  "  → and the rest of the repo is still collected"
+assert_eq "$(jq -r '.unreadable' <<< "$rec")" "false" \
+  "  → and the repo is not marked unreadable"
+
+# Most repos have neither file. A 404 is "no rules", not a failed read — the
+# distinction this whole tool exists to keep.
+printf 'contents/.claude/rules\tHTTP 404: Not Found\n' > "$RULES_TMP/fail.map"
+rec="$(GH_MOCK_LOG="$RULES_TMP/gh.log" PATH="$MOCKS:$PATH" \
+       GH_MOCK_STDOUT_MAP="$RULES_TMP/stdout.map" GH_MOCK_FAIL_MAP="$RULES_TMP/fail.map" \
+       GH_RETRY_MAX=1 collect_one o/r v3.0.0)"
+assert_eq "$(jq -r '.unreadable' <<< "$rec")" "false" \
+  "an absent .claude/rules is not unreadable"
+assert_eq "$(jq -r '.instructions.rules.count' <<< "$rec")" "0" \
+  "  → it is simply no rules"
+rm -rf "$RULES_TMP"
+
 section "remaining instances of the quote and forwarding classes"
 
 # Same bug as the fixed runner-labels one: a quoted uses: yields v2" which
