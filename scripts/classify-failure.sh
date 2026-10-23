@@ -30,7 +30,8 @@
 #   - api_auth     → 401 / invalid token, or a provider 403 the budget check
 #                    did not confirm (a low budget does not) — operator
 #                    intervention, no retry
-#   - transient    → 5xx / network / timeout — retry with exponential backoff
+#   - transient    → 5xx / network / timeout, or an opencode run cut off after
+#                    a tool-calls step (#558) — retry with exponential backoff
 #   - task_failure → max-turns or similar Claude-side failure — at most one retry
 #   - bug          → unclassified is_error=true — no retry, ping operator
 #
@@ -101,6 +102,13 @@ budget_confirms_refusal() {
 # which is the right default for an outcome we cannot name.
 if [[ "$is_error" != "true" && "$subtype" != error_* ]]; then
   class=success
+elif [[ "$subtype" == "error_agent_cut_off" ]]; then
+  # opencode stopped after a tool-calls step, before the model answered
+  # (#558). adapt-opencode-result.sh emits this subtype only for a stream with
+  # no error event, so there is no provider evidence for the branches below to
+  # weigh. Keyed on the structural subtype, never on result text (#521). A
+  # hiccup, not a verdict on the issue: retry within the transient cap.
+  class=transient
 elif provider_refused_payment && ! budget_confirms_refusal; then
   # The provider refused its own call, but the budget does not confirm it.
   # Matched BEFORE rate_limit and api_auth, which would otherwise claim these
