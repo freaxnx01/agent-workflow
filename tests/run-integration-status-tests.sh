@@ -148,6 +148,49 @@ assert_contains "$out_bridge" "drifted" "a blob mismatch is worded as drifted"
 assert_not_contains "$out_bridge" "commits behind" \
   "a blob mismatch does not claim a commit distance it cannot know"
 
+# --- path-scoped rules ------------------------------------------------------
+
+section "path-scoped rules"
+
+# opencode reads AGENTS.md and opencode.json, never .claude/rules. Rules that
+# are not listed in opencode.json therefore reach a Claude run and no other, and
+# nothing in the run says so.
+assert_finding freaxnx01/rules-opencode rules-invisible-to-opencode \
+  "rules unlisted in opencode.json on an opencode repo are reported"
+assert_eq "$(verdict_of freaxnx01/rules-opencode)" "broken" \
+  "  → and the configured agent cannot see them, so it is broken"
+
+assert_finding freaxnx01/rules-claude rules-invisible-to-opencode \
+  "the same gap on a claude repo is reported"
+assert_eq "$(verdict_of freaxnx01/rules-claude)" "degraded" \
+  "  → but it only bites under a per-issue agent:opencode label, so degraded"
+
+# Listing the rules by explicit path is as good as the glob — what matters is
+# that opencode is told to read them at all.
+assert_no_finding freaxnx01/rules-explicit rules-invisible-to-opencode \
+  "rules listed by explicit path count as covered"
+assert_eq "$(verdict_of freaxnx01/rules-explicit)" "healthy" \
+  "  → and the repo stays healthy"
+
+assert_no_finding freaxnx01/agent-workflow rules-invisible-to-opencode \
+  "rules listed by glob count as covered"
+assert_eq "$(verdict_of freaxnx01/agent-workflow)" "healthy" \
+  "  → and the repo stays healthy"
+
+# A repo with no stub runs nothing, so there is no run for the rules to be
+# invisible to.
+assert_eq "$(verdict_of freaxnx01/rules-partial)" "partial" \
+  "uncovered rules on a repo with no workflow leave the verdict partial"
+
+# A record from an older --json dump has no instructions.rules key at all.
+assert_no_finding freaxnx01/bridge rules-invisible-to-opencode \
+  "a record without a rules key produces no finding"
+
+rules_out="$("$SCRIPT" --from "$FIXTURE" --repo freaxnx01/agent-workflow)"
+assert_contains "$rules_out" "rules 3" "the instructions line shows the rules count"
+assert_not_contains "$("$SCRIPT" --from "$FIXTURE" --repo freaxnx01/bridge)" "rules" \
+  "a repo with no rules says nothing about them"
+
 # --- rendering --------------------------------------------------------------
 
 section "report rendering"
@@ -271,7 +314,7 @@ assert_eq "$(printf '%s' 'ci' | drop_api_error)" "ci" \
 section "progress never pollutes the data stream"
 
 # --json is a pipe into jq; a progress line on stdout would break it.
-assert_eq "$("$SCRIPT" --from "$FIXTURE" --json 2>/dev/null | jq -r 'length')" "8" \
+assert_eq "$("$SCRIPT" --from "$FIXTURE" --json 2>/dev/null | jq -r 'length')" "12" \
   "--json emits parseable JSON and nothing else"
 
 section "an unforwarded secret is graded by what it actually costs"

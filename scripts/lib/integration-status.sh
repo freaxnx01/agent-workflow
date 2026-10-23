@@ -43,6 +43,12 @@
 #   opencode-without-key   classify-agent.sh's credential guard silently falls
 #                          back to Claude, so `agent: opencode` looks honoured
 #                          while the run is not.
+#   rules-invisible-to-opencode
+#                          opencode reads AGENTS.md and opencode.json, never
+#                          `.claude/rules` — so path-scoped rules the repo
+#                          relies on are simply absent from the prompt, and the
+#                          run produces code that ignores conventions nobody
+#                          told it about.
 #
 # Usage:
 #   integration-status.sh                     # the current repo
@@ -122,7 +128,7 @@ parse_args() {
       --from)     [[ -n "${2:-}" ]] || die "--from needs a file"; FROM_FILE="$2"; shift 2 ;;
       --upstream) [[ -n "${2:-}" ]] || die "--upstream needs owner/name"; UPSTREAM="$2"; shift 2 ;;
       --pipeline) [[ -n "${2:-}" ]] || die "--pipeline needs owner/name"; PIPELINE="$2"; shift 2 ;;
-      -h|--help)  sed -n '2,76p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+      -h|--help)  sed -n '2,77p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
       *)          die "unknown option: $1" ;;
     esac
   done
@@ -590,6 +596,19 @@ def grade_workflow(r):
                "agent: opencode with no OPENROUTER_API_KEY — classify-agent.sh falls back to Claude silently")
           else empty end ),
 
+        # Covered means opencode is told to read the rules at all: an explicit
+        # path counts as much as the glob. A record from an older --json dump
+        # has no rules key, which reads as count 0 and so says nothing.
+        ( (r.instructions.rules // {}) as $rules
+          | if (($rules.count // 0) > 0)
+               and ((($rules.opencode_instructions // []) | any(startswith(".claude/rules/"))) | not)
+          then finding("rules-invisible-to-opencode";
+               (if $w.agent == "opencode" then "broken" else "degraded" end);
+               (if $w.agent == "opencode"
+                then "agent: opencode, but opencode does not read .claude/rules and opencode.json does not list them — runs proceed without these conventions"
+                else ".claude/rules are not listed in opencode.json; a per-issue agent:opencode label would run without them" end))
+          else empty end ),
+
         ( if ((r.labels // []) | index("ai-implement")) == null
           then finding("implement-label-missing"; "broken";
                "the ai-implement label does not exist in this repo")
@@ -746,7 +765,9 @@ render_repo() {
     "- instructions: stack " + dash(.instructions.stack) +
       "  ·  " + ((.instructions.blobs // {}) | to_entries
                  | map(.key + " " + (if .value.local == .value.upstream then "in sync" else "drifted" end))
-                 | if length == 0 then "none" else join("  ·  ") end) + "\n" +
+                 | if length == 0 then "none" else join("  ·  ") end) +
+      (if ((.instructions.rules.count // 0) > 0)
+       then "  ·  rules " + (.instructions.rules.count | tostring) else "" end) + "\n" +
     (if (.findings | length) == 0 then "- findings: none\n"
      else (.findings | map("- " + (if .severity == "broken" then "✗" else "!" end) + " " + .code + ": " + .text) | join("\n")) + "\n"
      end)
