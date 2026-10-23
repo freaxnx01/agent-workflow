@@ -22,6 +22,7 @@ The catch is that the pipeline does not only run Claude:
 |---|---|---|
 | Claude Code | `.claude/rules/*.md`, `paths:` frontmatter | memory docs |
 | GitHub Copilot | `.github/instructions/*.instructions.md`, `applyTo:` | Copilot docs |
+| OpenClaw (`SKILL.md`) | none — a single assembled file | sync |
 | opencode | **none** — reads `AGENTS.md` (falls back to `CLAUDE.md`) plus the `instructions` array in `opencode.json`, always loaded; `.claude/rules/` is not read | [opencode rules](https://opencode.ai/docs/rules/) |
 
 Moving a section out of `CLAUDE.md` into `.claude/rules/` alone would silently strip it
@@ -94,6 +95,8 @@ For each rule in `base/` plus the chosen stack's folder, sync writes:
 
 Plus:
 
+- **`SKILL.md` appendix:** OpenClaw has no rules mechanism, so sync appends every
+  installed rule body to `SKILL.md` under `## Path-scoped rules` (regenerated whole each run).
 - **Stale cleanup:** delete generated rule files (marker present) whose source no
   longer exists. Files without the marker are the repo's own and are never touched.
 - **Idempotent:** a second run produces an empty diff.
@@ -114,7 +117,8 @@ Plus:
   `openrouter-not-forwarded`.
 - **`agent-workflow-init` / `init-repo`:** no new logic (they already run sync); their
   report lists the rules installed.
-- **Pipeline (`agent-implement`):** unchanged.
+- **Pipeline (`agent-implement`):** unchanged — it passes model config via
+  `OPENCODE_CONFIG_CONTENT` and writes no `opencode.json`, so the synced file stays.
 - agent-workflow is re-synced as the pilot consumer.
 
 ## Testing
@@ -136,14 +140,18 @@ Plus:
 ## Rollout — issues in landing order
 
 1. **ai-instructions:** `.ai/rules/` format, CI frontmatter check, the three pilot
-   rules, pointers in base + ci overlay.
-2. **agent-skills:** sync fan-out, `opencode.json` merge, stale cleanup,
-   pointer handling.
-3. **agent-workflow:** `/integration` reporting + `rules-invisible-to-opencode`,
-   re-sync as pilot consumer.
+   rules **as copies** — base and the ci overlay stay untouched.
+2. **agent-skills:** sync fan-out, `opencode.json` merge, `SKILL.md` appendix,
+   stale cleanup. Released as `sync-ai-instructions` 0.5.0.
+3. **ai-instructions:** swap the three source sections for pointer lines.
+   **Gate: not before 2 is released** — otherwise every consumer re-syncing in
+   between gets pointers to rule files nothing installed, and the base section
+   (PowerShell 5.1) disappears from all stacks.
+4. **agent-workflow:** `/integration` reporting + `rules-invisible-to-opencode`
+   (can land any time), then re-sync as pilot consumer (after 2 and 3).
 
-Issue 3 must not merge before 2 has shipped — otherwise `/integration` flags a state
-no tool can yet produce correctly.
+Between 2 and 3, consumers that re-sync carry the pilot content twice (rule + section)
+— harmless, and the window should be short.
 
 ## Risks
 
@@ -151,6 +159,10 @@ no tool can yet produce correctly.
   `instructions`; confirm a `.claude/rules/*.md` glob resolves relative to the repo
   root in a headless pipeline run before issue 2 merges. Fallback: list each file
   explicitly.
+- **Pipeline config merge** — `agent-implement` passes its model config as
+  `OPENCODE_CONFIG_CONTENT` (no file written). opencode should merge that with the
+  repo's `opencode.json`; plan 2's spike runs the exact pipeline invocation to prove
+  the `instructions` entry survives.
 - **Frontmatter in opencode:** opencode will see the `paths:` YAML block as text. Harmless,
   but check it does not confuse the model; fallback is a separate frontmatter-free
   copy (rejected for now as duplication).
