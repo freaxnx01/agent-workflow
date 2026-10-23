@@ -3340,6 +3340,10 @@ assert_contains "$out" 'class=api_auth' "missing OPENROUTER_API_KEY → api_auth
 out="$(adapter_to_classifier opencode-model-not-found.json)"
 assert_contains "$out" 'class=model_not_found' "opencode 0-turn model-not-found → model_not_found"
 
+# Cut off after a tool-calls step is a hiccup, not a verdict: retry (#558).
+out="$(adapter_to_classifier opencode-cut-after-tool-calls.json)"
+assert_contains "$out" 'class=transient' "opencode cut after tool-calls → class=transient"
+
 # Error paths
 ec="$(run_capture_ec env bash "$ADAPT_OC")"
 assert_equals "$ec" "2" "adapter: missing EXECUTION_FILE → exit 2"
@@ -3378,6 +3382,9 @@ assert_contains "$out" 'class=rate_limit'   "result-opencode-rate-limit.json →
 
 out="$(RESULT_FILE="$FIXTURES/result-opencode-task-failure.json" bash "$CLASSIFY_FAIL")"
 assert_contains "$out" 'class=task_failure' "result-opencode-task-failure.json → task_failure"
+
+out="$(RESULT_FILE="$FIXTURES/result-opencode-cut-after-tool-calls.json" bash "$CLASSIFY_FAIL")"
+assert_contains "$out" 'class=transient' "result-opencode-cut-after-tool-calls.json → transient"
 
 # post-run-report.sh renders the OpenCode-flavored success fixture without
 # error. RENDER_ONLY skips the gh comment/label side effects.
