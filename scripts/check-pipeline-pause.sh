@@ -112,7 +112,9 @@ else
   printf 'check-pipeline-pause: no open %s alarm and AGENT_PAUSED unset — proceeding\n' "$ALARM_LABEL"
   # A run that starts is not paused. Clears a label left behind when the alarm
   # was closed and the issue re-dispatched by hand, without pipeline-resume.sh.
-  [[ "$DRY_RUN" == "1" ]] || paused_issue_clear "$ISSUE_NUMBER"
+  # Best-effort (#536): a repo that was never paused has no such label, and the
+  # gate's verdict must not depend on this write.
+  [[ "$DRY_RUN" == "1" ]] || paused_issue_clear "$ISSUE_NUMBER" || true
   not_paused
 fi
 
