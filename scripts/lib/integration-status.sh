@@ -43,6 +43,12 @@
 #   opencode-without-key   classify-agent.sh's credential guard silently falls
 #                          back to Claude, so `agent: opencode` looks honoured
 #                          while the run is not.
+#   rules-invisible-to-opencode
+#                          opencode reads AGENTS.md and opencode.json, never
+#                          `.claude/rules` — so path-scoped rules the repo
+#                          relies on are simply absent from the prompt, and the
+#                          run produces code that ignores conventions nobody
+#                          told it about.
 #
 # Usage:
 #   integration-status.sh                     # the current repo
@@ -122,7 +128,7 @@ parse_args() {
       --from)     [[ -n "${2:-}" ]] || die "--from needs a file"; FROM_FILE="$2"; shift 2 ;;
       --upstream) [[ -n "${2:-}" ]] || die "--upstream needs owner/name"; UPSTREAM="$2"; shift 2 ;;
       --pipeline) [[ -n "${2:-}" ]] || die "--pipeline needs owner/name"; PIPELINE="$2"; shift 2 ;;
-      -h|--help)  sed -n '2,76p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+      -h|--help)  sed -n '2,77p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
       *)          die "unknown option: $1" ;;
     esac
   done
@@ -346,6 +352,20 @@ repo_settings() {
   return "$ec"
 }
 
+# The rules the directory listing counts are the ones opencode would have to be
+# told to read: `.md` files directly under `.claude/rules`. A `.gitkeep` or a
+# subdirectory entry is not a rule, and counting it would report rules nobody
+# wrote. Named rather than inlined because the gh mock ignores `--jq`, so this
+# is the only seam at which the filter itself can be asserted.
+RULES_COUNT_JQ='[.[] | select(.type == "file" and (.name | endswith(".md")))] | length'
+
+# opencode's schema says `instructions` is an array of paths. A hand-edited
+# opencode.json can hold any JSON there, and the record contract is
+# `<array of strings> | null`, so anything else is normalised to null here —
+# "nothing is listed", which is also what opencode makes of it — rather than
+# shipped verbatim for the grader to iterate.
+RULES_LISTED_JQ='.instructions | if type == "array" then [.[] | strings] else null end'
+
 instructions_of() {
   local repo="$1" stack base_local base_up stack_path='' stack_local='' stack_up=''
   local ec=0 e=0
@@ -378,10 +398,28 @@ instructions_of() {
   (( e == 2 )) && ec=2
   e=0; skill="$(blob_sha "$repo" 'SKILL.md')" || e=$?
   (( e == 2 )) && ec=2
+  # Both halves of the rules state, because one without the other cannot tell
+  # "this repo has no rules" from "it has rules opencode will never see".
+  local rules_count opencode_b64 rules_listed='null'
+  e=0; rules_count="$(gh_json "repos/$repo/contents/.claude/rules" \
+    --jq "$RULES_COUNT_JQ")" || e=$?
+  (( e == 2 )) && ec=2
+  e=0; opencode_b64="$(gh_json "repos/$repo/contents/opencode.json" --jq '.content // empty')" || e=$?
+  (( e == 2 )) && ec=2
+  if [[ -n "$opencode_b64" ]]; then
+    # An opencode.json that no longer parses lists nothing — which is the state
+    # the finding exists to report, so it must not abort the repo's collection.
+    # The fallback sits outside the substitution: jq can print a value and then
+    # fail on trailing garbage, and a `|| printf null` inside would append to it.
+    rules_listed="$(printf '%s' "$opencode_b64" | tr -d '\n' | base64 -d 2>/dev/null \
+      | jq -c "$RULES_LISTED_JQ" 2>/dev/null)" || rules_listed=''
+    [[ -n "$rules_listed" ]] || rules_listed='null'
+  fi
   jq -nc \
     --arg stack "$stack" --arg sp "$stack_path" \
     --arg bl "$base_local" --arg bu "$base_up" \
     --arg sl "$stack_local" --arg su "$stack_up" \
+    --argjson rc "${rules_count:-0}" --argjson ri "$rules_listed" \
     --arg c "$claude" --arg co "$copilot" --arg sk "$skill" '
     {
       stack: (if $stack == "" then null else $stack end),
@@ -392,7 +430,8 @@ instructions_of() {
         "SKILL.md": ($sk != "")
       } + (if $sp == "" then {} else {($sp): ($sl != "")} end)),
       blobs: ((if $bl == "" then {} else {".ai/base-instructions.md": {local: $bl, upstream: $bu}} end)
-            + (if $sp == "" or $sl == "" then {} else {($sp): {local: $sl, upstream: $su}} end))
+            + (if $sp == "" or $sl == "" then {} else {($sp): {local: $sl, upstream: $su}} end)),
+      rules: {count: $rc, opencode_instructions: $ri}
     }'
   return "$ec"
 }
@@ -468,7 +507,8 @@ collect_one() {
       {repo: $repo, unreadable: $unreadable, workflow: null, latest_release: $release,
        secrets_set: [], labels: [],
        settings: {actions_can_create_prs: false, allow_auto_merge: false, allow_squash_merge: false},
-       instructions: {stack: null, files: {}, blobs: {}}}'
+       instructions: {stack: null, files: {}, blobs: {},
+                     rules: {count: 0, opencode_instructions: null}}}'
     return 0
   fi
   collect_repo "$repo" "$probe" "$release"
@@ -499,7 +539,8 @@ reconcile_shards() {
         {repo: $repo, unreadable: true, workflow: null, latest_release: "",
          secrets_set: [], labels: [],
          settings: {actions_can_create_prs: false, allow_auto_merge: false, allow_squash_merge: false},
-         instructions: {stack: null, files: {}, blobs: {}}}')")
+         instructions: {stack: null, files: {}, blobs: {},
+                     rules: {count: 0, opencode_instructions: null}}}')")
     fi
   done
   printf '%s\n' "${out[@]+"${out[@]}"}" | jq -sc .
@@ -588,6 +629,35 @@ def grade_workflow(r):
         ( if ($w.agent == "opencode") and (((r.secrets_set // []) | index("OPENROUTER_API_KEY")) == null)
           then finding("opencode-without-key"; "broken";
                "agent: opencode with no OPENROUTER_API_KEY — classify-agent.sh falls back to Claude silently")
+          else empty end ),
+
+        # Covered means opencode is told to read the rules at all: an explicit
+        # path counts as much as the glob. A record from an older --json dump
+        # has no rules key, which reads as count 0 and so says nothing.
+        # The collector normalises instructions to the record contract, but a
+        # replayed --from dump predates that: `arrays[] | strings` reads a
+        # string or an object there as "nothing is listed" — which is what
+        # opencode makes of them too — where iterating them raw aborts the
+        # whole graded report with a jq error.
+        #
+        # Gated on opencode actually being runnable, the same way
+        # openrouter-not-forwarded is: the credential guard in classify-agent.sh
+        # forces claude when OPENROUTER_API_KEY is not set on the repo or not
+        # forwarded to the run, so there no opencode run exists for the rules
+        # to be invisible to and the finding would be a false positive on an
+        # otherwise-healthy repo.
+        ( (r.instructions.rules // {}) as $rules
+          | ($w.secrets_forwarded // []) as $fwd
+          | ((((r.secrets_set // []) | index("OPENROUTER_API_KEY")) != null)
+             and ((($fwd | index("*")) != null) or (($fwd | index("OPENROUTER_API_KEY")) != null))) as $opencode_runnable
+          | if (($rules.count // 0) > 0) and $opencode_runnable
+               and (([$rules.opencode_instructions | arrays[] | strings]
+                     | any(startswith(".claude/rules/"))) | not)
+          then finding("rules-invisible-to-opencode";
+               (if $w.agent == "opencode" then "broken" else "degraded" end);
+               (if $w.agent == "opencode"
+                then "agent: opencode, but opencode does not read .claude/rules and opencode.json does not list them — runs proceed without these conventions"
+                else ".claude/rules are not listed in opencode.json; a per-issue agent:opencode label would run without them" end))
           else empty end ),
 
         ( if ((r.labels // []) | index("ai-implement")) == null
@@ -746,7 +816,9 @@ render_repo() {
     "- instructions: stack " + dash(.instructions.stack) +
       "  ·  " + ((.instructions.blobs // {}) | to_entries
                  | map(.key + " " + (if .value.local == .value.upstream then "in sync" else "drifted" end))
-                 | if length == 0 then "none" else join("  ·  ") end) + "\n" +
+                 | if length == 0 then "none" else join("  ·  ") end) +
+      (if ((.instructions.rules.count // 0) > 0)
+       then "  ·  rules " + (.instructions.rules.count | tostring) else "" end) + "\n" +
     (if (.findings | length) == 0 then "- findings: none\n"
      else (.findings | map("- " + (if .severity == "broken" then "✗" else "!" end) + " " + .code + ": " + .text) | join("\n")) + "\n"
      end)
