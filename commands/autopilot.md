@@ -46,6 +46,9 @@ nested Claude session per issue and applies `ai-implement` +
 - `2` — usage error
 - `3` — a missing dependency (`gh`, `jq`, `git`, `flock`, `timeout`)
 - `4` — the config is invalid or unreadable
+- `5` — `GH_TOKEN` is not set. Start the session (or the driver) under
+  `direnv exec` for the directory whose `.envrc` exports it; the driver never
+  falls back to a stored `gh` login
 
 On `4`, the script names the offending file and line. The most common cause on a
 fresh host is that no config exists yet — point at
