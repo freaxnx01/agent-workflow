@@ -4530,23 +4530,24 @@ fi
 
 # The pipeline-ref checkouts fetch agent-workflow itself and must keep the
 # default token — scoping the change.
-assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'ref: ..{ inputs.pipeline-ref' || true)" "3" \
-  "the three pipeline-ref checkouts are still present and untouched"
+assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'ref: ..{ inputs.pipeline-ref' || true)" "4" \
+  "the four pipeline-ref checkouts are still present and untouched"
 
-# Both review jobs must mint their own token. Passing one between jobs via a
-# job output is not an option: job outputs are not secret-masked.
-assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'id: app_token' || true)" "3" \
-  "all three jobs mint an installation token"
+# Both review jobs and the implement gate must mint their own token. Passing one
+# between jobs via a job output is not an option: job outputs are not
+# secret-masked.
+assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'id: app_token' || true)" "4" \
+  "all four jobs that call the App mint their own token"
 
 # The mint's if: tests env.PIPELINE_APP_ID because the secrets context is not
 # available in if:. Without the job-level env line the condition evaluates
 # empty and the step silently never runs.
-assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'PIPELINE_APP_ID: ..{ secrets' || true)" "3" \
-  "all three jobs declare PIPELINE_APP_ID at job level"
+assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'PIPELINE_APP_ID: ..{ secrets' || true)" "4" \
+  "all four jobs declare PIPELINE_APP_ID at job level"
 
 # self-fix pushes; it must not be handed the ambient token.
-assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'GH_TOKEN: ..{ steps.app_token' || true)" "13" \
-  "App token consumers: 9 implement-job callers + 2 self-fix + 2 AI-merge checks readers (#482)"
+assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'GH_TOKEN: ..{ steps.app_token' || true)" "14" \
+  "App token consumers: 6 implement + 4 implement gate + 2 self-fix + 2 AI-merge checks readers (#482, #535)"
 
 section "agent-implement.test.yml — caller permissions cover the callee (#435)"
 
@@ -4608,22 +4609,35 @@ assert_equals "$(printf '%s' "$callee_raw" | grep -c 'AGENT: opencode' || true)"
 assert_equals "$(printf '%s' "$callee_raw" | grep -c 'OPENCODE_DRY_RUN: ..{ inputs.dry-run' || true)" "3" \
   "each of them honours dry-run, so a dry run installs nothing"
 
-section "agent-implement.yml — a failed agent run fails the implement job (#439)"
+section "agent-implement.yml — a failed agent run fails the implement gate job (#439)"
 
 # The OpenCode step swallows opencode's exit code on purpose so the adapter,
 # classifier, retry and run report still run. Nothing turned the failure back into
 # a red job, so game-sky-fury run 36632007246 showed green with
-# "Outcome: failed: error_during_execution" in its report.
+# "Outcome: failed: error_during_execution" in its report. #535 moved the
+# post-run steps — and with them this one — into implement_gate.
 WF439="$ROOT/.github/workflows/agent-implement.yml"
-impl439="$(awk '/^  implement:$/{f=1;next} f && /^  [a-z_]+:$/{exit} f' "$WF439")"
+impl439="$(awk '/^  implement_gate:$/{f=1;next} f && /^  [a-z_]+:$/{exit} f' "$WF439")"
 last439="$(printf '%s\n' "$impl439" | grep -E '^      - name: ' | tail -1 | sed 's/^      - name: //')"
 assert_equals "$last439" "Fail the job when the agent run failed" \
-  "the implement job's LAST step fails it on a failed run (post-run steps run first)"
+  "the implement gate job's LAST step fails it on a failed run (post-run steps run first)"
 step439="$(printf '%s\n' "$impl439" | awk '/^      - name: Fail the job when the agent run failed$/{f=1;print;next} f && /^      - name: /{exit} f' | grep -vE '^[[:space:]]*#')"
 assert_contains "$step439" 'always()'                                  "fail step runs after earlier failures too"
 assert_contains "$step439" '!inputs.stub-claude'                       "fail step skips stub runs (act suite asserts outputs)"
 assert_contains "$step439" "steps.outputs.outputs.outcome == 'failed'" "fail step keys off the run outcome"
 assert_contains "$step439" 'exit 1'                                    "fail step actually fails"
+
+section "agent-implement.yml — implement evidence goes to a gate job (#535)"
+WF535="$ROOT/.github/workflows/agent-implement.yml"
+gate535="$(awk '/^  implement_gate:$/{f=1;next} f && /^  [a-z_]+:$/{exit} f' "$WF535")"
+assert_contains "$gate535" 'needs: implement' "the gate needs the implement job"
+assert_contains "$gate535" "needs.implement.outputs.agent-eligible == 'true'" "the gate runs whenever the agent was due"
+# shellcheck disable=SC2016  # literal GitHub Actions expression, not shell
+assert_contains "$gate535" 'RESULT_JSON: ${{ needs.implement.outputs.result-json }}' "the result arrives through env"
+assert_contains "$gate535" 'persist-credentials: false' "the gate's consumer checkout keeps no token"
+for o in outcome cost-usd num-turns failure-class retry-decision; do
+  assert_contains "$(cat "$WF535")" "value: \${{ jobs.implement_gate.outputs.$o }}" "workflow output $o comes from the gate"
+done
 
 section "azdo enrichment write-back — the command sections match the library"
 

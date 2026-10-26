@@ -787,8 +787,8 @@ wf="$(cat "$ROOT/.github/workflows/agent-implement.yml")"
 assert_contains "$wf" 'id: pause_gate' "the gate step exists"
 assert_contains "$wf" "steps.pause_gate.outputs.paused != 'true'" "agent steps are gated on it"
 assert_equals "$(grep -c "steps.pause_gate.outputs.paused != 'true'" \
-  "$ROOT/.github/workflows/agent-implement.yml")" 3 \
-  "attempt cap, Claude and OpenCode are all gated"
+  "$ROOT/.github/workflows/agent-implement.yml")" 4 \
+  "attempt cap, Claude, OpenCode and the gate's agent-eligible output are all gated"
 assert_contains "$wf" 'pipeline-pause.sh' "the alarm is raised from the implement job"
 assert_contains "$wf" 'NTFY_TOKEN' "the ntfy token is wired through"
 assert_contains "$(cat "$ROOT/.github/workflows/agent.yml")" 'NTFY_TOKEN' \

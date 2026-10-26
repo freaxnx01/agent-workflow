@@ -11,6 +11,15 @@ on:
         description: JSON array of runner labels (e.g. '["ubuntu-latest"]').
         type: string
         default: '["ubuntu-latest"]'
+      gate-runner-labels:
+        description: |
+          JSON array of runner labels for the gate jobs, which never run an
+          agent (#535, ADR-020). Empty uses `runner-labels`. On persistent
+          self-hosted runners point this at GitHub-hosted or ephemeral runners:
+          an agent can leave changes in $HOME that a later job on the same
+          machine inherits.
+        type: string
+        default: ''
       default-model:
         description: |
           Model used when no `model:*` label is present on the issue. Defaults
@@ -319,19 +328,19 @@ on:
     outputs:
       outcome:
         description: '"success" or "failed".'
-        value: ${{ jobs.implement.outputs.outcome }}
+        value: ${{ jobs.implement_gate.outputs.outcome }}
       cost-usd:
         description: Total Claude API cost in USD for this run.
-        value: ${{ jobs.implement.outputs.cost-usd }}
+        value: ${{ jobs.implement_gate.outputs.cost-usd }}
       num-turns:
         description: Number of conversation turns the run took.
-        value: ${{ jobs.implement.outputs.num-turns }}
+        value: ${{ jobs.implement_gate.outputs.num-turns }}
       failure-class:
         description: 'Failure bucket from classify-failure.sh (success | out_of_credits | model_not_found | rate_limit | api_auth | transient | task_failure | bug).'
-        value: ${{ jobs.implement.outputs.failure-class }}
+        value: ${{ jobs.implement_gate.outputs.failure-class }}
       retry-decision:
         description: '"retry" or "stop" from retry-dispatch.sh. Empty when class=success (retry-dispatch is skipped).'
-        value: ${{ jobs.implement.outputs.retry-decision }}
+        value: ${{ jobs.implement_gate.outputs.retry-decision }}
       ai-review-ai-merge-enabled:
         description: |
           "true" or "false" from check-ai-merge-gate.sh. The
@@ -414,16 +423,18 @@ jobs:
       # here and every retry dies on HTTP 403 (#351).
       actions: write
     outputs:
-      outcome:             ${{ steps.outputs.outputs.outcome }}
-      cost-usd:            ${{ steps.outputs.outputs.cost-usd }}
-      num-turns:           ${{ steps.outputs.outputs.num-turns }}
-      failure-class:       ${{ steps.classify_failure.outputs.class }}
-      retry-decision:      ${{ steps.retry.outputs.decision }}
       ai-review-ai-merge-enabled:    ${{ steps.ai_merge_gate.outputs.enabled || steps.ai_merge_gate_stub.outputs.enabled }}
       ai-review-human-merge-enabled: ${{ steps.human_merge_gate.outputs.enabled || steps.human_merge_gate_stub.outputs.enabled }}
       agent:               ${{ steps.classify_agent.outputs.agent || inputs.agent }}
       model:               ${{ steps.triage.outputs.model || inputs.default-model }}
-      plan-coverage:       ${{ steps.plan_coverage.outputs.coverage }}
+      # Trusted: every step above finished before the first agent step (#535).
+      max-turns:           ${{ steps.triage_turns.outputs.turns }}
+      has-plan:            ${{ steps.issue.outputs.has-plan }}
+      agent-eligible:      ${{ steps.agent_reached.outputs.reached == 'true' && steps.pause_gate.outputs.paused != 'true' && steps.attempt_cap.outputs.proceed != 'false' }}
+      # Evidence: produced after the agent ran, re-validated by implement_gate.
+      result-json:         ${{ steps.export_result.outputs.result-json }}
+      execution-usage:     ${{ steps.export_result.outputs.execution-usage }}
+      salvaged:            ${{ steps.verify_pr.outputs.salvaged }}
     env:
       # Optional GitHub App for PR creation (#55). Exposed as an env var so the
       # mint step's `if:` can test it (the `secrets` context isn't available in
@@ -705,6 +716,12 @@ jobs:
           ENABLED: ${{ inputs.stub-human-merge-enabled }}
         run: printf 'enabled=%s\n' "$ENABLED" >> "$GITHUB_OUTPUT"
 
+      - name: Mark the agent step reached
+        # #535: its output is captured before any agent runs, so the gate can
+        # trust "an agent was due" even when no result comes back.
+        id: agent_reached
+        run: printf 'reached=true\n' >> "$GITHUB_OUTPUT"
+
       - name: Run Claude Code
         if: ${{ !inputs.stub-claude && steps.classify_agent.outputs.agent == 'claude' && steps.attempt_cap.outputs.proceed != 'false' && steps.pause_gate.outputs.paused != 'true' }}
         id: claude_run
@@ -974,11 +991,123 @@ jobs:
           echo "result-file=$out" >> "$GITHUB_OUTPUT"
           echo "execution-file=$EXECUTION_FILE" >> "$GITHUB_OUTPUT"
 
-      - name: Classify failure
-        id: classify_failure
+      - name: Export result for the gate
+        # #535 / ADR-020: everything from here on is evidence. implement_gate
+        # makes every decision from these outputs on its own runner.
+        id: export_result
         if: always() && (steps.claude.outputs.result-file != '' || steps.opencode_adapt.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
         env:
           RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.opencode_adapt.outputs.result-file || steps.stub_run.outputs.result-file }}
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution-file || steps.opencode_adapt.outputs.execution-file }}
+        run: bash .claude-pipeline/scripts/export-result-output.sh
+
+      - name: Verify or recover PR
+        id: verify_pr
+        if: always() && !inputs.dry-run && (steps.claude.outputs.result-file != '' || steps.opencode_adapt.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          IS_ERROR: ${{ steps.export_result.outputs.is-error }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
+          # #478: without it find-pipeline-pr.sh only accepts github-actions[bot],
+          # misses an App-authored PR, and pr-number comes back empty.
+          AUTHOR_ALLOWLIST: ${{ inputs.pipeline-author-allowlist }}
+        run: bash .claude-pipeline/scripts/verify-or-recover-pr.sh
+
+  implement_gate:
+    # #535 / ADR-020: every decision about the implement run. Own runner, own
+    # fresh checkouts, never an agent. Inputs are the implement job's outputs:
+    # pre-agent ones are trusted, result-json / execution-usage are evidence.
+    name: Judge implement run — issue #${{ inputs.issue-number }}
+    needs: implement
+    if: ${{ !cancelled() && needs.implement.outputs.agent-eligible == 'true' }}
+    runs-on: ${{ fromJSON(inputs.gate-runner-labels != '' && inputs.gate-runner-labels || inputs.runner-labels) }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write
+      # retry-dispatch.sh ends in `gh workflow run` (#351).
+      actions: write
+    env:
+      # Mirrors the implement job: the mint step's `if:` tests this, because
+      # the `secrets` context is not available in `if:`. Without it the
+      # condition evaluates empty and the mint silently never runs (#430).
+      PIPELINE_APP_ID: ${{ secrets.PIPELINE_APP_ID }}
+    outputs:
+      outcome:        ${{ steps.outputs.outputs.outcome }}
+      cost-usd:       ${{ steps.outputs.outputs.cost-usd }}
+      num-turns:      ${{ steps.outputs.outputs.num-turns }}
+      failure-class:  ${{ steps.classify_failure.outputs.class }}
+      retry-decision: ${{ steps.retry.outputs.decision }}
+      plan-coverage:  ${{ steps.plan_coverage.outputs.coverage }}
+    steps:
+      - name: Mint pipeline App token (optional)
+        # Each job mints its own: an installation token must never travel
+        # between jobs through a job output, which is not secret-masked (#430).
+        id: app_token
+        if: ${{ env.PIPELINE_APP_ID != '' }}
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349  # v2.2.2
+        with:
+          app-id: ${{ secrets.PIPELINE_APP_ID }}
+          private-key: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
+
+      - name: Checkout consumer repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          # This job pushes nothing and commits nothing — it decides. Persisting
+          # a token would only widen what a later step could do with it (#535).
+          persist-credentials: false
+
+      - name: Checkout agent-workflow scripts
+        # The gate's own copy of the pipeline, at the ref the consumer pinned.
+        # The implement job's copy sits in a workspace the agent can write, so
+        # the scripts that judge the run must not come from there (#535).
+        if: ${{ !inputs.local-scripts }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ inputs.pipeline-ref }}
+          path: .claude-pipeline
+          sparse-checkout: |
+            scripts
+            tests/mocks
+            tests/fixtures
+
+      - name: Mirror local scripts to .claude-pipeline (self-test mode)
+        if: ${{ inputs.local-scripts }}
+        run: |
+          mkdir -p .claude-pipeline/scripts \
+                   .claude-pipeline/tests/mocks \
+                   .claude-pipeline/tests/fixtures
+          cp -r scripts/. .claude-pipeline/scripts/
+          if [[ -d tests/mocks ]]; then
+            cp -r tests/mocks/. .claude-pipeline/tests/mocks/
+          fi
+          if [[ -d tests/fixtures ]]; then
+            cp -r tests/fixtures/. .claude-pipeline/tests/fixtures/
+          fi
+
+      - name: Ensure toolchain
+        run: bash .claude-pipeline/scripts/ensure-toolchain.sh
+
+      - name: Import the implement job's result
+        # Turns the evidence back into the canonical result file every script
+        # below reads. Anything non-canonical — an empty output included —
+        # becomes error_invalid_evidence, so a missing result is reported as a
+        # failed run rather than silently skipped (#535).
+        id: result
+        env:
+          RESULT_JSON: ${{ needs.implement.outputs.result-json }}
+          EXECUTION_USAGE: ${{ needs.implement.outputs.execution-usage }}
+        run: bash .claude-pipeline/scripts/import-result-output.sh
+
+      - name: Classify failure
+        id: classify_failure
+        if: always() && steps.result.outputs.result-file != ''
+        env:
+          RESULT_FILE: ${{ steps.result.outputs.result-file }}
           # #521: lets the classifier confirm a provider refusal against the
           # budget's own state before a run may pause the repo. Only the
           # opencode adapter emits the provider request host, so a Claude run
@@ -999,7 +1128,7 @@ jobs:
           REASON: ${{ steps.classify_failure.outputs.class }}
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
-          RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.opencode_adapt.outputs.result-file || steps.stub_run.outputs.result-file }}
+          RESULT_FILE: ${{ steps.result.outputs.result-file }}
           GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
           NTFY_URL: ${{ vars.NTFY_URL }}
           NTFY_TOPIC: ${{ vars.NTFY_TOPIC }}
@@ -1033,7 +1162,7 @@ jobs:
           # The class covers an unlisted id and a listed id opencode could not
           # resolve, which take opposite fixes, so the push names neither — the
           # report block post-run-report.sh writes tells them apart.
-          NTFY_MESSAGE: "${{ format('Issue #{0}: model {1} not found, so the run did no work. The run report on the issue names the cause and the fix.', inputs.issue-number, steps.triage.outputs.model || inputs.default-model) }}"
+          NTFY_MESSAGE: "${{ format('Issue #{0}: model {1} not found, so the run did no work. The run report on the issue names the cause and the fix.', inputs.issue-number, needs.implement.outputs.model) }}"
           NTFY_PRIORITY: high
           NTFY_TAGS: warning
           NTFY_CLICK: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -1057,9 +1186,9 @@ jobs:
 
       - name: Extract job outputs from result.json
         id: outputs
-        if: always() && (steps.claude.outputs.result-file != '' || steps.opencode_adapt.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
+        if: always() && steps.result.outputs.result-file != ''
         env:
-          RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.opencode_adapt.outputs.result-file || steps.stub_run.outputs.result-file }}
+          RESULT_FILE: ${{ steps.result.outputs.result-file }}
         run: |
           jq -r '
             "cost-usd="  + (.total_cost_usd | tostring),
@@ -1074,19 +1203,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: bash .claude-pipeline/scripts/ensure-issue-labels.sh
 
-      - name: Verify or recover PR
-        id: verify_pr
-        if: always() && !inputs.dry-run && (steps.claude.outputs.result-file != '' || steps.opencode_adapt.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
+      - name: Find pipeline-opened PR
+        # The gate's own lookup (#535). verify-or-recover-pr.sh ran in the
+        # implement job and may have opened the PR, but its outputs are evidence.
+        # Mirrors its IS_ERROR short-circuit: a failed run reports no PR.
+        id: find_pr
+        if: always() && !inputs.dry-run && steps.outputs.outputs.outcome == 'success'
         env:
-          ISSUE_NUMBER: ${{ inputs.issue-number }}
-          REPO: ${{ github.repository }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          IS_ERROR: ${{ steps.outputs.outputs.outcome == 'failed' }}
           GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
-          # #478: without it find-pipeline-pr.sh only accepts github-actions[bot],
-          # misses an App-authored PR, and pr-number comes back empty.
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
           AUTHOR_ALLOWLIST: ${{ inputs.pipeline-author-allowlist }}
-        run: bash .claude-pipeline/scripts/verify-or-recover-pr.sh
+        run: bash .claude-pipeline/scripts/find-pipeline-pr.sh
 
       - name: Check plan coverage
         # #457: grades the PR against the issue's Implementation Plan. A run
@@ -1097,11 +1225,11 @@ jobs:
         # "never fails the implement job" hold even if it does not.
         id: plan_coverage
         continue-on-error: true
-        if: always() && !inputs.dry-run && steps.verify_pr.outputs.pr-present == 'true'
+        if: always() && !inputs.dry-run && steps.find_pr.outputs.found == 'true'
         env:
           REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
-          PR_NUMBER: ${{ steps.verify_pr.outputs.pr-number }}
+          PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
           GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
         run: bash .claude-pipeline/scripts/plan-coverage-step.sh
 
@@ -1111,32 +1239,32 @@ jobs:
         # never fail the implement job — the script's own exit 2 on missing env
         # would otherwise do exactly that.
         continue-on-error: true
-        if: always() && !inputs.dry-run && steps.verify_pr.outputs.pr-present == 'true'
+        if: always() && !inputs.dry-run && steps.find_pr.outputs.found == 'true'
         env:
           REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ steps.verify_pr.outputs.pr-number }}
+          PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
           APP_TOKEN_CONFIGURED: ${{ env.PIPELINE_APP_ID != '' }}
           GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
         run: bash .claude-pipeline/scripts/check-pr-checks-runnable.sh
 
       - name: Post run report
-        if: always() && (steps.claude.outputs.result-file != '' || steps.opencode_adapt.outputs.result-file != '' || steps.stub_run.outputs.result-file != '')
+        if: always() && steps.result.outputs.result-file != ''
         env:
-          RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.opencode_adapt.outputs.result-file || steps.stub_run.outputs.result-file }}
-          EXECUTION_FILE: ${{ steps.claude.outputs.execution-file || steps.opencode_adapt.outputs.execution-file }}
+          RESULT_FILE: ${{ steps.result.outputs.result-file }}
+          EXECUTION_FILE: ${{ steps.result.outputs.execution-file }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
           RENDER_ONLY: ${{ inputs.dry-run && '1' || '0' }}
-          MODEL: ${{ steps.triage.outputs.model }}
-          AGENT: ${{ steps.classify_agent.outputs.agent }}
-          MAX_TURNS: ${{ steps.triage_turns.outputs.turns }}
-          PR_PRESENT: ${{ steps.verify_pr.outputs.pr-present }}
-          SALVAGED: ${{ steps.verify_pr.outputs.salvaged }}
+          MODEL: ${{ needs.implement.outputs.model }}
+          AGENT: ${{ needs.implement.outputs.agent }}
+          MAX_TURNS: ${{ needs.implement.outputs.max-turns }}
+          PR_PRESENT: ${{ !inputs.dry-run && (steps.find_pr.outputs.found || 'false') || '' }}
+          SALVAGED: ${{ needs.implement.outputs.salvaged }}
           CHECKS_RUNNABLE: ${{ steps.pr_checks.outputs.checks-runnable }}
           CHECKS_BLOCKED_REASON: ${{ steps.pr_checks.outputs.checks-blocked-reason }}
-          HAS_PLAN: ${{ steps.issue.outputs.has-plan }}
+          HAS_PLAN: ${{ needs.implement.outputs.has-plan }}
           PLAN_COVERAGE: ${{ steps.plan_coverage.outputs.coverage }}
           MISSING_TASKS: ${{ steps.plan_coverage.outputs.missing-tasks }}
           PLAN_COVERAGE_REASON: ${{ steps.plan_coverage.outputs.reason }}
@@ -1184,14 +1312,17 @@ jobs:
     # coverage step is skipped under dry-run, where the act suite drives this
     # job with stub verdicts (agent-implement.test.yml), hence the exemption.
     name: AI review, AI merge — PR for issue #${{ inputs.issue-number }}
-    needs: implement
+    needs: [implement, implement_gate]
+    # #535: the gate decides, not the implement job's own conclusion — which an
+    # agent can influence (and which a failed diagnostics upload can redden).
     if: |
-      (!inputs.stub-claude || inputs.stub-review-verdict != '')
+      !cancelled() && needs.implement_gate.result == 'success'
+      && (!inputs.stub-claude || inputs.stub-review-verdict != '')
       && (!inputs.dry-run || inputs.stub-review-verdict != '')
-      && needs.implement.outputs.outcome == 'success'
+      && needs.implement_gate.outputs.outcome == 'success'
       && needs.implement.outputs.ai-review-ai-merge-enabled == 'true'
       && needs.implement.outputs.ai-review-human-merge-enabled != 'true'
-      && (inputs.dry-run || needs.implement.outputs.plan-coverage == 'complete')
+      && (inputs.dry-run || needs.implement_gate.outputs.plan-coverage == 'complete')
     runs-on: ${{ fromJSON(inputs.runner-labels) }}
     # Review (~7 min, hard-capped at review-pr.sh's AGENT_TIMEOUT_SECONDS budget
     # of 10 min shared across its attempt + retry, #490) + the self-fix step's
@@ -1613,11 +1744,13 @@ jobs:
     # stamps ai:review-blocked. Mutually exclusive with ai_review_ai_merge via
     # the implement-job gate (human-merge wins when both labels are present).
     name: AI review, human merge — PR for issue #${{ inputs.issue-number }}
-    needs: implement
+    needs: [implement, implement_gate]
+    # #535: same as ai_review_ai_merge — the gate's conclusion is the gate.
     if: |
-      (!inputs.stub-claude || inputs.stub-review-verdict != '')
+      !cancelled() && needs.implement_gate.result == 'success'
+      && (!inputs.stub-claude || inputs.stub-review-verdict != '')
       && (!inputs.dry-run || inputs.stub-review-verdict != '')
-      && needs.implement.outputs.outcome == 'success'
+      && needs.implement_gate.outputs.outcome == 'success'
       && needs.implement.outputs.ai-review-human-merge-enabled == 'true'
     runs-on: ${{ fromJSON(inputs.runner-labels) }}
     # Review (~7 min, hard-capped at review-pr.sh's AGENT_TIMEOUT_SECONDS budget
