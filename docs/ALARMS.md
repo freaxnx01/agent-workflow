@@ -66,11 +66,15 @@ REPO=<owner>/<repo> bash scripts/pipeline-resume.sh
 `pipeline-resume.sh` closes the alarm **before** it re-dispatches: a dispatch
 sent while the alarm is still open is stopped by the gate.
 
-The script re-dispatches the **open issues labelled `ai:paused`** and removes
-the label from each. One that lost its `ai-implement` label in the meantime is
-not dispatched and only loses `ai:paused`; one whose dispatch fails keeps
-`ai:paused`, so running the script again retries it. Closing the alarm by hand
-first is fine — the script still finds the labelled issues. Nothing is
+The script re-dispatches the **open issues labelled `ai:paused`**. For each one
+it removes the label **first** and dispatches second, so an issue that is in
+flight is never still on the list a later resume reads (#536). If the label
+cannot be removed, the issue is not dispatched this time and the script says
+so — run it again. If the dispatch fails, the label is put back, so running the
+script again retries it; if even that fails, the script names the issue so it
+can be re-dispatched by hand. One that lost its `ai-implement` label in the
+meantime is not dispatched and only loses `ai:paused`. Closing the alarm by
+hand first is fine — the script still finds the labelled issues. Nothing is
 dispatched with `-f attempt=`, so each one runs as attempt 1 on the default
 agent — a paused run did no work, and nothing was learned that would justify
 escalating the next one.

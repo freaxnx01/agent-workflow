@@ -15,6 +15,11 @@
 # open alarm as the pause state, so a dispatch sent while it is still open is
 # stopped by the gate and the resume would achieve nothing.
 #
+# Per issue, the label comes off BEFORE the dispatch, and goes back on if the
+# dispatch fails (#536). A clear that fails means the issue is not dispatched
+# this time: a dispatched issue still carrying ai:paused would be dispatched
+# again by the next resume.
+#
 # Required environment variables:
 #   REPO      owner/repo.
 #   GH_TOKEN  (or ambient gh auth) with `issues: write` and `actions: write`.
@@ -104,26 +109,42 @@ done
 
 # --- re-dispatch ------------------------------------------------------------
 
+# redispatch_issue <n> — take <n> off the paused list, THEN dispatch it (#536).
+# The other order left a window where a failed clear kept a dispatched issue on
+# the list, and a second resume dispatched it again. Returns 0 only when the
+# dispatch was sent.
+redispatch_issue() {
+  local issue="$1"
+  if ! paused_issue_clear "$issue"; then
+    printf 'warning: could not remove %s from #%s — not dispatched, so a second resume cannot double-dispatch it; run this again\n' \
+      "$PAUSED_ISSUE_LABEL" "$issue" >&2
+    return 1
+  fi
+  # No `-f attempt=` on purpose: the paused run never reached the agent, so the
+  # re-run is attempt 1 and classify-agent.sh's escalation does not fire.
+  if gh workflow run "$CONSUMER_WORKFLOW" --repo "$REPO" -f issue-number="$issue" >/dev/null 2>&1; then
+    printf 're-dispatched #%s as attempt 1\n' "$issue"
+    return 0
+  fi
+  # Put it back so running this again retries exactly these. A failed re-mark
+  # is warned about and named in the step summary by paused_issue_mark itself.
+  paused_issue_mark "$issue" || true
+  printf 'warning: could not re-dispatch #%s — it keeps %s; run this again or dispatch it by hand\n' \
+    "$issue" "$PAUSED_ISSUE_LABEL" >&2
+  return 1
+}
+
 resumed=0
 for issue in ${paused_issues[@]+"${paused_issues[@]}"}; do
   has_label="$(jq -r --argjson n "$issue" --arg l "$DISPATCH_LABEL" \
     '(map(select(.number == $n)) | .[0].labels // []) | map(.name) | index($l) != null' <<<"$paused")"
   if [[ "$has_label" != "true" ]]; then
     printf 'skipping #%s: no %s label — parked or handled by hand\n' "$issue" "$DISPATCH_LABEL"
-    paused_issue_clear "$issue"
+    paused_issue_clear "$issue" \
+      || printf 'warning: could not remove %s from #%s\n' "$PAUSED_ISSUE_LABEL" "$issue" >&2
     continue
   fi
-  # No `-f attempt=` on purpose: the paused run never reached the agent, so the
-  # re-run is attempt 1 and classify-agent.sh's escalation does not fire.
-  if gh workflow run "$CONSUMER_WORKFLOW" --repo "$REPO" -f issue-number="$issue" >/dev/null 2>&1; then
-    paused_issue_clear "$issue"
-    printf 're-dispatched #%s as attempt 1\n' "$issue"
-    resumed=$((resumed + 1))
-  else
-    # The label stays: running this script again retries exactly these.
-    printf 'warning: could not re-dispatch #%s — it keeps %s; run this again or dispatch it by hand\n' \
-      "$issue" "$PAUSED_ISSUE_LABEL" >&2
-  fi
+  redispatch_issue "$issue" && resumed=$((resumed + 1))
 done
 
 printf 'pipeline-resume: resumed %d issue(s) in %s\n' "$resumed" "$REPO"
