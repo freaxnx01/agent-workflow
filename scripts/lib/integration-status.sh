@@ -409,8 +409,10 @@ instructions_of() {
   if [[ -n "$opencode_b64" ]]; then
     # An opencode.json that no longer parses lists nothing — which is the state
     # the finding exists to report, so it must not abort the repo's collection.
+    # The fallback sits outside the substitution: jq can print a value and then
+    # fail on trailing garbage, and a `|| printf null` inside would append to it.
     rules_listed="$(printf '%s' "$opencode_b64" | tr -d '\n' | base64 -d 2>/dev/null \
-      | jq -c "$RULES_LISTED_JQ" 2>/dev/null || printf 'null')"
+      | jq -c "$RULES_LISTED_JQ" 2>/dev/null)" || rules_listed=''
     [[ -n "$rules_listed" ]] || rules_listed='null'
   fi
   jq -nc \
@@ -505,7 +507,8 @@ collect_one() {
       {repo: $repo, unreadable: $unreadable, workflow: null, latest_release: $release,
        secrets_set: [], labels: [],
        settings: {actions_can_create_prs: false, allow_auto_merge: false, allow_squash_merge: false},
-       instructions: {stack: null, files: {}, blobs: {}}}'
+       instructions: {stack: null, files: {}, blobs: {},
+                     rules: {count: 0, opencode_instructions: null}}}'
     return 0
   fi
   collect_repo "$repo" "$probe" "$release"
@@ -536,7 +539,8 @@ reconcile_shards() {
         {repo: $repo, unreadable: true, workflow: null, latest_release: "",
          secrets_set: [], labels: [],
          settings: {actions_can_create_prs: false, allow_auto_merge: false, allow_squash_merge: false},
-         instructions: {stack: null, files: {}, blobs: {}}}')")
+         instructions: {stack: null, files: {}, blobs: {},
+                     rules: {count: 0, opencode_instructions: null}}}')")
     fi
   done
   printf '%s\n' "${out[@]+"${out[@]}"}" | jq -sc .

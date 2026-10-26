@@ -505,6 +505,10 @@ printf '3\n' > "$RULES_TMP/count"
 printf '%s' '{"instructions":[".claude/rules/*.md"]}' | base64 > "$RULES_TMP/listed"
 printf '%s' '{"instructions": [' | base64 > "$RULES_TMP/unparseable"
 printf '%s' '{"instructions":".claude/rules/*.md"}' | base64 > "$RULES_TMP/non-array"
+# Valid JSON followed by garbage: jq prints the first value, then exits
+# non-zero. A fallback inside the command substitution appended to that
+# output and handed `["…"]\nnull` to --argjson (#563 review).
+printf '%s' '{"instructions":[".claude/rules/*.md"]}}' | base64 > "$RULES_TMP/trailing"
 
 collect_rules() {  # <opencode.json fixture>
   { printf 'contents/.github/workflows/agent.yml\t%s\n' "$ROOT/tests/fixtures/autopilot/agent-yml-good.yml"
@@ -550,6 +554,32 @@ assert_eq "$(jq -r '.unreadable' <<< "$rec")" "false" \
   "an absent .claude/rules is not unreadable"
 assert_eq "$(jq -r '.instructions.rules.count' <<< "$rec")" "0" \
   "  → it is simply no rules"
+rec="$(collect_rules "$RULES_TMP/trailing")"
+assert_eq "$(jq -r '.instructions.rules.opencode_instructions' <<< "$rec")" "null" \
+  "an opencode.json with trailing garbage lists nothing, not the parsed prefix"
+assert_eq "$(jq -r '.instructions.rules.count' <<< "$rec")" "3" \
+  "  → and the record is still built (count 3)"
+
+# The common case: rules exist, opencode.json does not.
+printf 'contents/opencode.json\tHTTP 404: Not Found\n' > "$RULES_TMP/fail.map"
+rec="$(GH_MOCK_LOG="$RULES_TMP/gh.log" PATH="$MOCKS:$PATH" \
+       GH_MOCK_STDOUT_MAP="$RULES_TMP/stdout.map" GH_MOCK_FAIL_MAP="$RULES_TMP/fail.map" \
+       GH_RETRY_MAX=1 collect_one o/r v3.0.0)"
+assert_eq "$(jq -r '.instructions.rules.opencode_instructions' <<< "$rec")" "null" \
+  "an absent opencode.json lists nothing"
+assert_eq "$(jq -r '.instructions.rules.count' <<< "$rec")" "3" \
+  "  → while the rules are still counted"
+assert_eq "$(jq -r '.unreadable' <<< "$rec")" "false" \
+  "  → and the repo is not marked unreadable"
+
+# A repo with neither half takes the phase-1 shortcut; its record must carry
+# the same instructions shape as a fully collected one.
+printf 'contents/\tHTTP 404: Not Found\n' > "$RULES_TMP/fail.map"
+rec="$(GH_MOCK_LOG="$RULES_TMP/gh.log" PATH="$MOCKS:$PATH" \
+       GH_MOCK_STDOUT_MAP="$RULES_TMP/stdout.map" GH_MOCK_FAIL_MAP="$RULES_TMP/fail.map" \
+       GH_RETRY_MAX=1 collect_one o/r v3.0.0)"
+assert_eq "$(jq -c '.instructions.rules' <<< "$rec")" '{"count":0,"opencode_instructions":null}' \
+  "a not-integrated record carries the empty rules shape"
 rm -rf "$RULES_TMP"
 
 section "remaining instances of the quote and forwarding classes"
