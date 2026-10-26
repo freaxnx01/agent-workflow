@@ -10,6 +10,7 @@ unset GITHUB_OUTPUT GITHUB_REPOSITORY GITHUB_ACTIONS GITHUB_TOKEN
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FIX="$ROOT/tests/fixtures"
 EXPORT="$ROOT/scripts/export-result-output.sh"
+IMPORT="$ROOT/scripts/import-result-output.sh"
 T="$(mktemp -d)"
 trap 'rm -rf "$T"' EXIT
 
@@ -60,6 +61,34 @@ rc=0; RESULT_FILE='' bash "$EXPORT" >/dev/null 2>&1 || rc=$?
 assert_eq "missing RESULT_FILE → exit 2" "2" "$rc"
 : > "$T/go"; GITHUB_OUTPUT="$T/go" RESULT_FILE="$FIX/result-success-cheap.json" bash "$EXPORT" >/dev/null
 assert_eq "writes exactly three single-line outputs" "3" "$(wc -l < "$T/go" | tr -d ' ')"
+
+section "import: a valid result round-trips"
+rj="$(jq -c . "$FIX/result-success-cheap.json")"
+out="$(RESULT_JSON="$rj" EXECUTION_USAGE='[]' OUT_DIR="$T/imp1" bash "$IMPORT")"
+assert_eq "valid=true" "true" "$(field "$out" valid)"
+assert_eq "result file holds the result" "$rj" "$(jq -c . "$(field "$out" result-file)")"
+assert_eq "an empty usage array still yields a file" "[]" "$(jq -c . "$(field "$out" execution-file)")"
+
+section "import: anything else becomes a synthetic failure"
+for bad in '' '{not json' '[]' '{"type":"assistant","is_error":false}' '{"type":"result","is_error":"no"}'; do
+  out="$(RESULT_JSON="$bad" OUT_DIR="$T/imp-bad" bash "$IMPORT" 2>/dev/null)"
+  rf="$(field "$out" result-file)"
+  assert_eq "valid=false for: ${bad:-<empty>}" "false" "$(field "$out" valid)"
+  assert_eq "synthetic result is an error for: ${bad:-<empty>}" "true error_invalid_evidence" \
+    "$(jq -r '"\(.is_error) \(.subtype)"' "$rf")"
+  assert_eq "classifies as bug for: ${bad:-<empty>}" "class=bug" \
+    "$(RESULT_FILE="$rf" bash "$ROOT/scripts/classify-failure.sh" | tail -1)"
+done
+
+section "import: usage that is not an array is dropped"
+out="$(RESULT_JSON="$rj" EXECUTION_USAGE='{"x":1}' OUT_DIR="$T/imp3" bash "$IMPORT")"
+assert_eq "no execution file" "" "$(field "$out" execution-file)"
+
+section "export → import end to end"
+ex="$(RESULT_FILE="$FIX/result-opencode-rate-limit.json" bash "$EXPORT")"
+out="$(RESULT_JSON="$(field "$ex" result-json)" EXECUTION_USAGE="$(field "$ex" execution-usage)" OUT_DIR="$T/imp4" bash "$IMPORT")"
+assert_eq "a rate limit survives the hand-over" "class=rate_limit" \
+  "$(RESULT_FILE="$(field "$out" result-file)" bash "$ROOT/scripts/classify-failure.sh" | tail -1)"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then printf '  - %s\n' "${FAIL_NAMES[@]}"; exit 1; fi
