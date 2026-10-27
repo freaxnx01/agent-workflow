@@ -142,6 +142,7 @@ commands/
            /issues  /prs  /triage  /queue  /route  /work  /milestone  /new  /enrich
            /enrich-phased  /parked  /roadmap  /done  (forge-agnostic)
            /capture-idea  /commands  /update-commands  /factory-advisor
+           /release-package
 ```
 
 `setup/link-commands.sh` installs them into `~/.claude/commands/`, preserving the
