@@ -62,6 +62,10 @@ vocabulary (MudBlazor, shadcn/ui, Flutter widgets, …) comes from the project's
 `/issues` · `/prs` · `/parked` · `/triage` · `/queue` · `/done` · `/new` ·
 `/enrich` · `/enrich-phased` · `/route` · `/work` · `/milestone` · `/roadmap`
 
+**Release** (forge-agnostic, drives the repo's justfile): `/release-package [<customer>]`
+— `bump-auto → release → package` via the recipes ai-instructions syncs, then asks
+before `push-release`. Stops and names any missing recipe instead of improvising.
+
 **Idea capture** (forge-agnostic, local — precedes the issue funnel):
 `/capture-idea <idea>` — jot an idea into the current repo's `docs/ideas.md`.
 

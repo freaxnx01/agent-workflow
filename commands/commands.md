@@ -46,6 +46,8 @@ Use these as the baseline set:
   _Hand a well-specced issue to @copilot/@claude or the agent-workflow instead of building it locally._
 - **Release-scoped work:** `/milestone new <name> due <date>` → `/new` → `/milestone assign <issue> to <name>` → `/milestone list`
   _Open a milestone, file work into it, then see everything still open for that ship date._
+- **Ship a release:** `/milestone list` → `/release-package [<customer>]`
+  _Confirm nothing is still open for the ship date, then bump, release, package and (after a yes) push._
 - **Session continuity (clear & resume):** `/loose-ends` → `/clear-check` → `/handoff` → `/clear` → `/pickup`
   _Wrap up mid-task, confirm it's safe to clear, save state, then resume in a fresh context._
 - **Session wrap / next day:** `/wrap-up` → (`/clear` or new session) → `/todo`
