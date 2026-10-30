@@ -108,5 +108,79 @@ assert_eq "start_skips_config_when_configured" "no" \
   "$([[ -e "$dir/config.argv" ]] && echo yes || echo no)"
 assert_eq "run.sh still started" "yes" "$([[ -e "$dir/run.env" ]] && echo yes || echo no)"
 
+section "download (curl stubbed; fixture tarball built at test time)"
+
+# Stub curl: logs argv and the byte count of stdin per call. The packages-API
+# call answers with JSON naming $STUB_DOWNLOAD_URL; a `-o <file>` call copies
+# the fixture tarball there. Stdin is never logged -- it carries the PAT.
+STUBS="$WORK/stubs"
+mkdir -p "$STUBS" "$WORK/fixture"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$WORK/fixture/config.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$WORK/fixture/run.sh"
+chmod +x "$WORK/fixture/config.sh" "$WORK/fixture/run.sh"
+tar -czf "$WORK/agent.tar.gz" -C "$WORK/fixture" config.sh run.sh
+cat > "$STUBS/curl" <<'STUB'
+#!/usr/bin/env bash
+argv="$*"
+bytes=0
+[[ "$argv" == *"-K -"* ]] && bytes=$(wc -c | tr -d ' ')
+printf '%s\tstdin=%s\n' "$argv" "$bytes" >> "$CURL_STUB_LOG"
+out=""
+while (( $# )); do [[ "$1" == "-o" ]] && out="$2"; shift; done
+if [[ -n "$out" ]]; then cp "$CURL_STUB_TARBALL" "$out"; exit 0; fi
+printf '{"value":[{"downloadUrl":"%s"}]}' "$STUB_DOWNLOAD_URL"
+STUB
+chmod +x "$STUBS/curl"
+
+# download <name> <download-url> — runs the script against an empty agent dir
+# with the stub curl; sets DL_DIR, DL_LOG, DL_RC.
+download() {
+  DL_DIR="$WORK/$1/agent"; DL_LOG="$WORK/$1.curl.log"
+  mkdir -p "$WORK/$1"; : > "$DL_LOG"; DL_RC=0
+  env -i PATH="$STUBS:$PATH" HOME="$WORK" "${FULL_ENV[@]}" \
+    AZP_URL=https://example.com/contoso/ AZP_AGENT_DIR="$DL_DIR" \
+    CURL_STUB_LOG="$DL_LOG" CURL_STUB_TARBALL="$WORK/agent.tar.gz" \
+    STUB_DOWNLOAD_URL="$2" bash "$SCRIPT" >/dev/null 2>&1 || DL_RC=$?
+}
+
+download ok https://cdn.example.net/agent.tar.gz
+assert_eq "download_unpacks_and_starts" "0" "$DL_RC"
+assert_eq "download_populates_agent_dir" "yes" \
+  "$([[ -x "$DL_DIR/config.sh" ]] && echo yes || echo no)"
+assert_eq "download_api_call_has_credentials_on_stdin" "yes" \
+  "$(sed -n 1p "$DL_LOG" | grep -q 'stdin=[1-9]' && echo yes || echo no)"
+assert_contains "download_api_call_hits_packages_api_without_double_slash" \
+  "https://example.com/contoso/_apis/distributedtask/packages/agent" "$(sed -n 1p "$DL_LOG")"
+assert_contains "download_tarball_call_targets_the_cdn_url" \
+  "https://cdn.example.net/agent.tar.gz" "$(sed -n 2p "$DL_LOG")"
+assert_contains "download_tarball_call_has_no_credentials" "stdin=0" "$(sed -n 2p "$DL_LOG")"
+assert_not_contains "download_token_not_in_any_argv" "$TOKEN" "$(cat "$DL_LOG")"
+
+download http "http://cdn.example.net/agent.tar.gz"
+assert_eq "download_refuses_non_https_url" "1" "$DL_RC"
+assert_eq "refused_download_leaves_no_config" "no" \
+  "$([[ -e "$DL_DIR/config.sh" ]] && echo yes || echo no)"
+assert_eq "refused_download_makes_no_tarball_request" "1" "$(wc -l < "$DL_LOG" | tr -d ' ')"
+
+# A tarball that is not a tarball: tar fails -> exit 1, nothing left behind.
+printf 'not a tarball' > "$WORK/bad.tar.gz"
+DL_DIR="$WORK/bad/agent"; mkdir -p "$WORK/bad"; DL_RC=0
+env -i PATH="$STUBS:$PATH" HOME="$WORK" "${FULL_ENV[@]}" AZP_AGENT_DIR="$DL_DIR" \
+  CURL_STUB_LOG="$WORK/bad.log" CURL_STUB_TARBALL="$WORK/bad.tar.gz" \
+  STUB_DOWNLOAD_URL=https://cdn.example.net/a.tar.gz bash "$SCRIPT" >/dev/null 2>&1 || DL_RC=$?
+assert_eq "download_unpack_failure_exits_1" "1" "$DL_RC"
+assert_eq "failed_unpack_leaves_no_config" "no" \
+  "$([[ -e "$DL_DIR/config.sh" ]] && echo yes || echo no)"
+
+section "token validation"
+
+dir="$(new_agent_dir badtoken)"
+assert_eq "token_with_quote_exits_2" "2" \
+  "$(start "$dir" AZP_URL=https://example.com/c AZP_TOKEN='a"b' AZP_POOL=p)"
+assert_eq "token_with_backslash_exits_2" "2" \
+  "$(start "$dir" AZP_URL=https://example.com/c AZP_TOKEN='a\b' AZP_POOL=p)"
+assert_eq "token_with_newline_exits_2" "2" \
+  "$(start "$dir" AZP_URL=https://example.com/c AZP_TOKEN=$'a\nb' AZP_POOL=p)"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then printf 'Failed: %s\n' "${FAIL_NAMES[*]}"; exit 1; fi
