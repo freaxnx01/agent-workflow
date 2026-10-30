@@ -433,6 +433,42 @@ assert_eq "finds an addition on the second page" "late@example.com" \
 printf 'skip=0\t%s\nskip=200\t%s\n' "$tg3/p1.json" "$FIXTURES/azdo-wiql-tf51011.txt" > "$tg3/map-fail.tsv"
 rc=0; AZ_MOCK_MAP="$tg3/map-fail.tsv" run_lib azdo-revisions-no-tag.json azdo_tag_adder 5 ai-implement >/dev/null 2>&1 || rc=$?
 assert_eq "a failing second page exits 1" "1" "$rc"
+
+section "azdo_editors_since_tag — who changed the item after the tag was added"
+
+assert_eq "editors_lists_a_later_editor" "bob@example.com" \
+  "$(run_lib azdo-revisions-tag-added.json azdo_editors_since_tag 5 ai-implement)"
+
+assert_eq "editors_lists_a_later_comment_author_once" "owner@example.com
+mallory@example.com" \
+  "$(run_lib azdo-revisions-later-stranger-comment.json azdo_editors_since_tag 5 ai-implement)"
+
+assert_eq "editors_dedupes_case_insensitively" "Owner@Example.com" \
+  "$(run_lib azdo-revisions-tag-added-clean.json azdo_editors_since_tag 5 ai-implement)"
+
+rc=0; out=$(run_lib azdo-revisions-tag-readded.json azdo_editors_since_tag 5 AI-Implement) || rc=$?
+assert_eq "editors_after_the_latest_addition_only: exit" "0" "$rc"
+assert_eq "editors_after_the_latest_addition_only: none" "" "$out"
+
+rc=0; out=$(run_lib azdo-revisions-no-tag.json azdo_editors_since_tag 5 ai-implement 2>/dev/null) || rc=$?
+assert_eq "editors_absent_tag_exits_64" "64" "$rc"
+assert_eq "editors_absent_tag_prints_nothing" "" "$out"
+
+rc=0; out=$(run_lib azdo-wiql-tf51011.txt azdo_editors_since_tag 5 ai-implement 2>/dev/null) || rc=$?
+assert_eq "editors_read_failure_exits_1" "1" "$rc"
+assert_eq "editors_read_failure_prints_nothing" "" "$out"
+
+rc=0; out=$(run_lib azdo-revisions-later-unidentified.json azdo_editors_since_tag 5 ai-implement 2>/dev/null) || rc=$?
+assert_eq "editors_unidentified_later_editor_exits_1" "1" "$rc"
+assert_eq "editors_unidentified_later_editor_prints_nothing" "" "$out"
+
+rc=0; run_lib azdo-revisions-tag-added.json azdo_editors_since_tag 5 >/dev/null 2>&1 || rc=$?
+assert_eq "editors_usage_error_exits_2" "2" "$rc"
+
+assert_eq "editors_reads_every_page" "bob@example.com" \
+  "$(AZ_MOCK_MAP="$tg3/map.tsv" run_lib azdo-revisions-no-tag.json azdo_editors_since_tag 5 ai-implement)"
+rc=0; AZ_MOCK_MAP="$tg3/map-fail.tsv" run_lib azdo-revisions-no-tag.json azdo_editors_since_tag 5 ai-implement >/dev/null 2>&1 || rc=$?
+assert_eq "editors_failing_second_page_exits_1" "1" "$rc"
 rm -rf "$tg3"
 
 # --- summary -------------------------------------------------------------

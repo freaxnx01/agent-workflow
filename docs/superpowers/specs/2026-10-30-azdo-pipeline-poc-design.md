@@ -78,6 +78,14 @@ introduced `ai-implement`, and compares its `System.ChangedBy` identity against 
 comment says why, the agent does not run. The wrapper's header is amended to name
 this gate as the unattended justification. *(Decided by the maintainer.)*
 
+**Later edits count too.** The agent reads the description and comments at run
+time, so the tagger's trust does not cover edits made after the tag. If any
+revision after the tag-adding one is by an identity that is not on the
+allowlist, the guard refuses the same way (tag removed, one comment, exit 66),
+asking for the tag to be re-added on the current content. There is one
+allowlist: if the build service edits the item, its uniqueName must be on it.
+*(Hardening ruling from the final review.)*
+
 ### D1b — Failures leave a trace on the work item
 
 Because the guard removes the tag first, a failed run would otherwise leave an
