@@ -441,7 +441,7 @@ if mode == "add":
     if tag not in tags:
         tags.append(tag)
 else:
-    tags = [t for t in tags if t != tag]
+    tags = [t for t in tags if t.lower() != tag.lower()]
 print("; ".join(tags))' "$mode" "$tag")
 
   azdo_set_tags "$id" "$next"
@@ -521,7 +521,7 @@ def identity(rev):
     who = rev.get("fields", {}).get("System.ChangedBy", "")
     if isinstance(who, dict):
         return who.get("uniqueName", "")
-    m = re.search(r"<([^>]+)>", who)
+    m = re.search(r"<([^<>]+)>\s*$", who)
     return m.group(1) if m else ""
 
 adder, had = None, False

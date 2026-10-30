@@ -15,6 +15,11 @@
 #   TRIGGER_TAG       optional  default: ai-implement
 #   AZURE_DEVOPS_EXT_PAT is needed by the tag write (see azdo_set_tags).
 #
+# Known race: if someone else removes and re-adds the tag between the adder read
+# and the removal, the removal consumes their tag on the earlier tagger's
+# verdict. The window is a few API calls wide and the outcome is a lost
+# trigger, never an unauthorised run.
+#
 # Order: read tags -> absent: 64 -> find the adder -> allowlist -> remove the
 # tag -> comment (65 only).
 #
@@ -35,7 +40,10 @@ source "$HERE/lib/detect-forge.sh"
 # shellcheck source=scripts/lib/azdo.sh
 source "$HERE/lib/azdo.sh"
 
-if [[ -z "${WORK_ITEM_ID:-}" || -z "${TAGGER_ALLOWLIST:-}" ]]; then
+# A list with no real entry (only commas/whitespace) counts as unset.
+allowlist_entries="${TAGGER_ALLOWLIST:-}"
+allowlist_entries="${allowlist_entries//[,$' \t']/}"
+if [[ -z "${WORK_ITEM_ID:-}" || -z "$allowlist_entries" ]]; then
   echo "azdo-tag-guard: WORK_ITEM_ID and TAGGER_ALLOWLIST must be set" >&2
   exit 2
 fi
@@ -53,9 +61,12 @@ has_tag() {
   fi
   printf '%s' "$row" | python3 -c '
 import sys, json
-row = json.loads(sys.stdin.readline())
-want = sys.argv[1].strip().lower()
-tags = {t.strip().lower() for t in row.get("tags", "").split(";") if t.strip()}
+try:
+    row = json.loads(sys.stdin.readline())
+    want = sys.argv[1].strip().lower()
+    tags = {t.strip().lower() for t in row.get("tags", "").split(";") if t.strip()}
+except Exception:
+    sys.exit(3)   # unreadable is not "absent"
 sys.exit(0 if want in tags else 1)' "$TRIGGER_TAG"
 }
 
@@ -85,10 +96,20 @@ fi
 
 allowed=0; is_allowlisted "$adder" && allowed=1
 
-azdo_remove_tag "$WORK_ITEM_ID" "$TRIGGER_TAG" >/dev/null || {
+# Trust the tags the write RETURNS, not the fact that it succeeded: a removal
+# that left the tag on the item must never end in exit 0.
+remaining=$(azdo_remove_tag "$WORK_ITEM_ID" "$TRIGGER_TAG") || {
   echo "azdo-tag-guard: could not remove the $TRIGGER_TAG tag" >&2
   exit 1
 }
+if printf '%s' "$remaining" | python3 -c '
+import sys
+want = sys.argv[1].strip().lower()
+tags = {t.strip().lower() for t in sys.stdin.read().split(";") if t.strip()}
+sys.exit(0 if want in tags else 1)' "$TRIGGER_TAG"; then
+  echo "azdo-tag-guard: the $TRIGGER_TAG tag is still on $WORK_ITEM_ID after removal" >&2
+  exit 1
+fi
 
 if [[ $allowed -eq 1 ]]; then
   exit 0

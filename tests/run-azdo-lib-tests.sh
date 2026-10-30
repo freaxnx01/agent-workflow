@@ -369,6 +369,12 @@ run_tag azdo-fields-tagged.json azdo_remove_tag 5 enrichment-ongoing >/dev/null
 assert_eq "removing a non-existent tag is a no-op" "parked; roadmap" \
   "$(sent_value)"
 
+# Tag matching is case-insensitive everywhere; a case-sensitive remove left the
+# trigger tag on the item.
+rm -f "$tg_dir/body.txt"
+run_tag azdo-fields-mixedcase-tagged.json azdo_remove_tag 5 ai-implement >/dev/null
+assert_eq "removing is case-insensitive" "parked" "$(sent_value)"
+
 rm -rf "$tg_dir"
 
 section "azdo_tag_adder — who most recently added the tag"
@@ -381,6 +387,9 @@ assert_eq "uses the latest addition after a removal" "mallory@example.com" \
 
 assert_eq "tag match is case-insensitive" "owner@example.com" \
   "$(run_lib azdo-revisions-tag-added.json azdo_tag_adder 5 AI-Implement)"
+
+assert_eq "string ChangedBy: the LAST bracket is the identity" "mallory@example.com" \
+  "$(run_lib azdo-revisions-string-changedby-nested.json azdo_tag_adder 5 ai-implement)"
 
 rc=0; out=$(run_lib azdo-revisions-no-tag.json azdo_tag_adder 5 ai-implement 2>/dev/null) || rc=$?
 assert_eq "absent tag exits 64" "64" "$rc"

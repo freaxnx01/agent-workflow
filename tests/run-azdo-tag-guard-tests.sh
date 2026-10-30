@@ -52,10 +52,12 @@ AZ_LOG="$WORK/az.log"; CURL_LOG="$WORK/curl.log"; BODY_LOG="$WORK/body.log"
 # Extra env (WORK_ITEM_ID, TAGGER_ALLOWLIST) comes from the caller's environment.
 run_guard() {
   local fields="$1" revisions="$2"
+  local update="${UPDATE_FIXTURE:-azdo-set-tags-replaced.json}"
+  local write="${WRITE_FIXTURE:-azdo-set-tags-replaced.json}"
   : > "$AZ_LOG"; : > "$CURL_LOG"; : > "$BODY_LOG"
   printf 'workitemsbatch\t%s\nrevisions\t%s\nwork-item update\t%s\n' \
-    "$FIXTURES/$fields" "$FIXTURES/$revisions" "$FIXTURES/azdo-set-tags-replaced.json" > "$WORK/az.map"
-  printf 'workitems/\t%s\n' "$FIXTURES/azdo-set-tags-replaced.json" > "$WORK/curl.map"
+    "$FIXTURES/$fields" "$FIXTURES/$revisions" "$FIXTURES/$update" > "$WORK/az.map"
+  printf 'workitems/\t%s\n' "$FIXTURES/$write" > "$WORK/curl.map"
   rc=0
   (
     cd "$REPO"
@@ -102,6 +104,7 @@ section "adder not allowlisted"
 TAGGER_ALLOWLIST="someone@example.com" run_guard azdo-fields-ai-implement.json azdo-revisions-tag-added.json
 assert_eq "guard_not_allowlisted_exits_65: exit" 65 "$rc"
 assert_eq "guard_not_allowlisted_exits_65: tag removed" "parked" "$(sent_value)"
+assert_eq "guard_not_allowlisted_exits_65: exactly one comment" 1 "$(grep -c 'work-item update' "$AZ_LOG")"
 if grep -q -- "--discussion ai-implement ignored: the tag was added by owner@example.com, who is not on this pipeline's allowlist." "$AZ_LOG"; then
   pass "guard_not_allowlisted_exits_65_removes_tag_and_comments: comment text"
 else
@@ -121,7 +124,31 @@ TAGGER_ALLOWLIST="owner@example.com" run_guard azdo-wiql-tf51011.txt azdo-revisi
 assert_eq "guard_tag_read_failure_exits_1" 1 "$rc"
 assert_no_writes "guard_tag_read_failure_exits_1"
 
+section "removal must really remove the tag"
+TAGGER_ALLOWLIST="owner@example.com" run_guard azdo-fields-ai-implement-mixedcase.json azdo-revisions-tag-added.json
+assert_eq "guard_mixed_case_tag_exits_0: exit" 0 "$rc"
+assert_eq "guard_mixed_case_tag_exits_0: tag removed" "parked" "$(sent_value)"
+
+TAGGER_ALLOWLIST="owner@example.com" WRITE_FIXTURE=azdo-set-tags-still-tagged.json \
+  run_guard azdo-fields-ai-implement.json azdo-revisions-tag-added.json
+assert_eq "guard_removal_leaves_tag_exits_1" 1 "$rc"
+
+TAGGER_ALLOWLIST="owner@example.com" CURL_MOCK_FAIL=1 \
+  run_guard azdo-fields-ai-implement.json azdo-revisions-tag-added.json
+assert_eq "guard_tag_write_failure_exits_1" 1 "$rc"
+
+TAGGER_ALLOWLIST="someone@example.com" UPDATE_FIXTURE=azdo-wiql-tf51011.txt \
+  run_guard azdo-fields-ai-implement.json azdo-revisions-tag-added.json
+assert_eq "guard_comment_failure_after_removal_exits_1" 1 "$rc"
+assert_eq "guard_comment_failure_after_removal: tag was removed first" "parked" "$(sent_value)"
+
+TAGGER_ALLOWLIST="owner@example.com" run_guard azdo-fields-tags-not-text.json azdo-revisions-tag-added.json
+assert_eq "guard_unparseable_tag_read_exits_1" 1 "$rc"
+assert_no_writes "guard_unparseable_tag_read_exits_1"
+
 section "missing env"
+rc=0; (cd "$REPO"; WORK_ITEM_ID=7 TAGGER_ALLOWLIST=" , ,$(printf '\t')" "$GUARD") >/dev/null 2>&1 || rc=$?
+assert_eq "guard_blank_allowlist_exits_2" 2 "$rc"
 rc=0; (cd "$REPO"; unset TAGGER_ALLOWLIST; WORK_ITEM_ID=7 "$GUARD") >/dev/null 2>&1 || rc=$?
 assert_eq "guard_missing_env_exits_2: allowlist" 2 "$rc"
 rc=0; (cd "$REPO"; unset WORK_ITEM_ID; TAGGER_ALLOWLIST=a@b "$GUARD") >/dev/null 2>&1 || rc=$?
