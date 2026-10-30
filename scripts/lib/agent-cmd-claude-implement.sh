@@ -25,8 +25,10 @@
 # --permission-mode bypassPermissions. That is a real grant: the agent can run
 # any tool in the working directory without prompting. It is acceptable here
 # because the caller is a human at a terminal in a repo they chose, which is not
-# the same trust model as an unattended runner reacting to a public issue. Do not
-# reuse this wrapper for anything triggered by untrusted input.
+# the same trust model as an unattended runner reacting to a public issue. The one
+# unattended caller is azdo-pipeline-run.sh, acceptable only because it runs behind
+# azdo-tag-guard.sh's tagger allowlist. Any other unattended caller must still not
+# use this wrapper, and nothing triggered by untrusted input may.
 set -euo pipefail
 IFS=$'\n\t'
 

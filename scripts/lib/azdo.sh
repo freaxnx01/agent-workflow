@@ -14,6 +14,13 @@
 #   azdo_org_url        echoes https://dev.azure.com/<org>
 #   azdo_closed_states  echoes "'A','B'" — the project's closed state names
 #   azdo_wiql <query>   echoes matching work-item ids, one per line
+#   azdo_tag_adder <id> <tag>
+#                       echoes the uniqueName of the identity that most recently
+#                       added <tag> (exit 64 if no revision has it)
+#   azdo_editors_since_tag <id> <tag>
+#                       echoes the unique identities of every revision after
+#                       that addition, one per line (exit 64 if no revision has
+#                       the tag)
 #
 # Exit codes:
 #   0  success, including a query that legitimately matched nothing
@@ -21,7 +28,10 @@
 #   2  meaning depends on the function:
 #        - azdo_wiql: the Area Path in the query does not exist (TF51011)
 #        - azdo_set_description, azdo_comment, azdo_add_tag, azdo_remove_tag,
-#          _azdo_edit_tags: a usage error (missing/malformed arguments)
+#          _azdo_edit_tags, azdo_tag_adder, azdo_editors_since_tag: a usage
+#          error (missing/malformed arguments)
+#   64 azdo_tag_adder, azdo_editors_since_tag only: the tag is in no revision
+#      of the work item
 #
 # Callers must CAPTURE the status rather than calling bare. Sourcing this file
 # applies `set -e` to the caller (as detect-forge.sh already does), so a bare
@@ -277,7 +287,12 @@ d = json.load(sys.stdin)
 if "fields" not in d:
     sys.stderr.write("azdo_set_tags: unexpected response: %s\n" % str(d)[:200])
     sys.exit(1)
-print(d["fields"].get("System.Tags", ""))'
+tags = d["fields"].get("System.Tags", "")
+if not isinstance(tags, str):
+    # Printed as a repr it would read to a caller as "no such tag".
+    sys.stderr.write("azdo_set_tags: System.Tags in the response is not text\n")
+    sys.exit(1)
+print(tags)'
 }
 
 # azdo_html_escape  filter: stdin to stdout, escaping & < > " for System.Description.
@@ -436,7 +451,7 @@ if mode == "add":
     if tag not in tags:
         tags.append(tag)
 else:
-    tags = [t for t in tags if t != tag]
+    tags = [t for t in tags if t.lower() != tag.lower()]
 print("; ".join(tags))' "$mode" "$tag")
 
   azdo_set_tags "$id" "$next"
@@ -447,3 +462,140 @@ azdo_add_tag() { _azdo_edit_tags "${1-}" add "${2-}"; }
 
 # azdo_remove_tag <id> <tag>  removes one tag, preserving the rest.
 azdo_remove_tag() { _azdo_edit_tags "${1-}" remove "${2-}"; }
+
+# azdo_tag_adder <id> <tag>  echoes the uniqueName of the identity on the MOST
+# RECENT revision that added <tag> -- its System.Tags contains the tag while the
+# previous revision's did not (the first revision counts if it already has it).
+#
+# Who ADDED a tag is not who last edited the item: a later edit by someone else
+# keeps the tag but did not add it, and a tag removed and re-added belongs to the
+# re-adder. Tags are split on `;`, trimmed and compared case-insensitively, as
+# Azure DevOps treats them. System.ChangedBy is an identity object; a plain
+# string is accepted only in the `Name <mail>` form (the mail is returned) --
+# without a <mail> part there is no identity to return, so the tag counts as not
+# found (64) rather than yielding a display name a caller might trust.
+#
+# Exit 0 found; 64 the tag is in no revision (or the adding revision names no
+# identity); 1 a read failed; 2 usage.
+azdo_tag_adder() {
+  local id="${1-}" tag="${2-}"
+  if [[ -z "$id" || -z "$tag" ]]; then
+    echo "usage: azdo_tag_adder <id> <tag>" >&2
+    return 2
+  fi
+  local revs
+  revs=$(_azdo_revisions "$id" azdo_tag_adder) || return 1
+  printf '%s' "$revs" | _azdo_revision_scan adder "$tag"
+}
+
+# azdo_editors_since_tag <id> <tag>  echoes the unique identities (uniqueNames,
+# one per line, first spelling kept, compared case-insensitively) of every
+# revision STRICTLY AFTER the one azdo_tag_adder would name -- any field change
+# or comment counts. Empty output means nobody touched the item since.
+#
+# A later revision whose identity cannot be read fails (1) rather than being
+# skipped: a caller vetting editors must not miss one it cannot name.
+#
+# Exit 0 success (including no later editor); 64 the tag is in no revision;
+# 1 a read failed or a later revision names no identity; 2 usage.
+azdo_editors_since_tag() {
+  local id="${1-}" tag="${2-}"
+  if [[ -z "$id" || -z "$tag" ]]; then
+    echo "usage: azdo_editors_since_tag <id> <tag>" >&2
+    return 2
+  fi
+  local revs
+  revs=$(_azdo_revisions "$id" azdo_editors_since_tag) || return 1
+  printf '%s' "$revs" | _azdo_revision_scan editors "$tag"
+}
+
+# _azdo_revisions <id> <caller>  echoes every revision of the work item, one
+# JSON array (one page) per line.
+#
+# The revisions list is PAGED, oldest first, and `az devops invoke` does not
+# follow continuation. A truncated page would drop the NEWEST revisions and so
+# could return a stale adder or miss a later editor -- wrong for a security
+# gate -- hence the explicit $top/$skip loop: pages are read until one returns
+# fewer than the page size. Any page failing aborts with 1. Each read is
+# captured before parsing so its failure is not masked by python receiving empty
+# input.
+_azdo_revisions() {
+  local id="$1" caller="$2"
+  : "${AZDO_PROJECT:?AZDO_PROJECT must be set — call resolve_azdo_context first}"
+
+  local page_size=200 skip=0 out rc count revs="" page
+  while :; do
+    rc=0
+    out=$(az devops invoke --org "$(azdo_org_url)" --area wit --resource revisions \
+            --route-parameters project="$AZDO_PROJECT" id="$id" \
+            --query-parameters "\$top=$page_size" "\$skip=$skip" \
+            --api-version 7.1 --output json --only-show-errors) || rc=$?
+    if [[ $rc -ne 0 || -z "$out" ]]; then
+      echo "$caller: could not read revisions of work item $id" >&2
+      return 1
+    fi
+    page=$(printf '%s' "$out" | python3 -c '
+import sys, json
+try:
+    v = json.load(sys.stdin).get("value", [])
+except ValueError:
+    sys.stderr.write(sys.argv[1] + ": unparseable revisions response\n")
+    sys.exit(1)
+print(len(v))
+print(json.dumps(v))' "$caller") || return 1
+    count="${page%%$'\n'*}"
+    revs+="${page#*$'\n'}"$'\n'
+    [[ "$count" -ge "$page_size" ]] || break
+    skip=$((skip + page_size))
+  done
+  printf '%s' "$revs"
+}
+
+# _azdo_revision_scan <adder|editors> <tag>  reads _azdo_revisions output on
+# stdin. Both modes share ONE definition of "the revision that added the tag"
+# and of how an identity is read, so the two public functions cannot drift.
+_azdo_revision_scan() {
+  python3 -c '
+import sys, json, re
+mode, want = sys.argv[1], sys.argv[2].strip().lower()
+revs = [r for line in sys.stdin if line.strip() for r in json.loads(line)]
+revs.sort(key=lambda r: r.get("rev", 0))
+
+def tags(rev):
+    raw = rev.get("fields", {}).get("System.Tags", "")
+    return {t.strip().lower() for t in raw.split(";") if t.strip()}
+
+def identity(rev):
+    who = rev.get("fields", {}).get("System.ChangedBy", "")
+    if isinstance(who, dict):
+        return who.get("uniqueName", "")
+    m = re.search(r"<([^<>]+)>\s*$", who)
+    return m.group(1) if m else ""
+
+added_at, had = None, False
+for i, rev in enumerate(revs):
+    has = want in tags(rev)
+    if has and not had:
+        added_at = i
+    had = has
+if added_at is None:
+    sys.exit(64)
+
+if mode == "adder":
+    adder = identity(revs[added_at])
+    if not adder:
+        sys.exit(64)
+    print(adder)
+    sys.exit(0)
+
+seen = []
+for rev in revs[added_at + 1:]:
+    who = identity(rev)
+    if not who:
+        sys.stderr.write("azdo_editors_since_tag: revision %s names no identity\n" % rev.get("rev", "?"))
+        sys.exit(1)
+    if who.lower() not in (s.lower() for s in seen):
+        seen.append(who)
+for who in seen:
+    print(who)' "$1" "$2"
+}
