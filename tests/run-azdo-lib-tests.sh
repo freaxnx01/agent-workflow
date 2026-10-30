@@ -371,6 +371,28 @@ assert_eq "removing a non-existent tag is a no-op" "parked; roadmap" \
 
 rm -rf "$tg_dir"
 
+section "azdo_tag_adder — who most recently added the tag"
+
+assert_eq "returns the identity that added it, not a later editor" "owner@example.com" \
+  "$(run_lib azdo-revisions-tag-added.json azdo_tag_adder 5 ai-implement)"
+
+assert_eq "uses the latest addition after a removal" "mallory@example.com" \
+  "$(run_lib azdo-revisions-tag-readded.json azdo_tag_adder 5 ai-implement)"
+
+assert_eq "tag match is case-insensitive" "owner@example.com" \
+  "$(run_lib azdo-revisions-tag-added.json azdo_tag_adder 5 AI-Implement)"
+
+rc=0; out=$(run_lib azdo-revisions-no-tag.json azdo_tag_adder 5 ai-implement 2>/dev/null) || rc=$?
+assert_eq "absent tag exits 64" "64" "$rc"
+assert_eq "absent tag prints nothing" "" "$out"
+
+rc=0; out=$(run_lib azdo-wiql-tf51011.txt azdo_tag_adder 5 ai-implement 2>/dev/null) || rc=$?
+assert_eq "a failed read exits 1" "1" "$rc"
+assert_eq "a failed read prints nothing" "" "$out"
+
+rc=0; run_lib azdo-revisions-tag-added.json azdo_tag_adder >/dev/null 2>&1 || rc=$?
+assert_eq "usage error without arguments" "2" "$rc"
+
 # --- summary -------------------------------------------------------------
 
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"

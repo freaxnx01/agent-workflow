@@ -14,6 +14,9 @@
 #   azdo_org_url        echoes https://dev.azure.com/<org>
 #   azdo_closed_states  echoes "'A','B'" — the project's closed state names
 #   azdo_wiql <query>   echoes matching work-item ids, one per line
+#   azdo_tag_adder <id> <tag>
+#                       echoes the uniqueName of the identity that most recently
+#                       added <tag> (exit 64 if no revision has it)
 #
 # Exit codes:
 #   0  success, including a query that legitimately matched nothing
@@ -21,7 +24,9 @@
 #   2  meaning depends on the function:
 #        - azdo_wiql: the Area Path in the query does not exist (TF51011)
 #        - azdo_set_description, azdo_comment, azdo_add_tag, azdo_remove_tag,
-#          _azdo_edit_tags: a usage error (missing/malformed arguments)
+#          _azdo_edit_tags, azdo_tag_adder: a usage error (missing/malformed
+#          arguments)
+#   64 azdo_tag_adder only: the tag is in no revision of the work item
 #
 # Callers must CAPTURE the status rather than calling bare. Sourcing this file
 # applies `set -e` to the caller (as detect-forge.sh already does), so a bare
@@ -447,3 +452,62 @@ azdo_add_tag() { _azdo_edit_tags "${1-}" add "${2-}"; }
 
 # azdo_remove_tag <id> <tag>  removes one tag, preserving the rest.
 azdo_remove_tag() { _azdo_edit_tags "${1-}" remove "${2-}"; }
+
+# azdo_tag_adder <id> <tag>  echoes the uniqueName of the identity on the MOST
+# RECENT revision that added <tag> -- its System.Tags contains the tag while the
+# previous revision's did not (the first revision counts if it already has it).
+#
+# Who ADDED a tag is not who last edited the item: a later edit by someone else
+# keeps the tag but did not add it, and a tag removed and re-added belongs to the
+# re-adder. Tags are split on `;`, trimmed and compared case-insensitively, as
+# Azure DevOps treats them. System.ChangedBy is an identity object, but a plain
+# `Name <mail>` string is accepted too.
+#
+# The read is captured before parsing so its failure is not masked by python
+# receiving empty input. Exit 0 found; 64 the tag is in no revision; 1 the read
+# failed; 2 usage.
+azdo_tag_adder() {
+  local id="${1-}" tag="${2-}"
+  if [[ -z "$id" || -z "$tag" ]]; then
+    echo "usage: azdo_tag_adder <id> <tag>" >&2
+    return 2
+  fi
+  : "${AZDO_PROJECT:?AZDO_PROJECT must be set — call resolve_azdo_context first}"
+
+  local out rc=0
+  out=$(az devops invoke --org "$(azdo_org_url)" --area wit --resource revisions           --route-parameters project="$AZDO_PROJECT" id="$id"           --api-version 7.1 --output json --only-show-errors) || rc=$?
+  if [[ $rc -ne 0 || -z "$out" ]]; then
+    echo "azdo_tag_adder: could not read revisions of work item $id" >&2
+    return 1
+  fi
+
+  printf '%s' "$out" | python3 -c '
+import sys, json, re
+want = sys.argv[1].strip().lower()
+try:
+    revs = json.load(sys.stdin).get("value", [])
+except ValueError:
+    sys.stderr.write("azdo_tag_adder: unparseable revisions response\n")
+    sys.exit(1)
+
+def tags(rev):
+    raw = rev.get("fields", {}).get("System.Tags", "")
+    return {t.strip().lower() for t in raw.split(";") if t.strip()}
+
+def identity(rev):
+    who = rev.get("fields", {}).get("System.ChangedBy", "")
+    if isinstance(who, dict):
+        return who.get("uniqueName", "")
+    m = re.search(r"<([^>]+)>", who)
+    return m.group(1) if m else who
+
+adder, had = None, False
+for rev in sorted(revs, key=lambda r: r.get("rev", 0)):
+    has = want in tags(rev)
+    if has and not had:
+        adder = identity(rev)
+    had = has
+if not adder:
+    sys.exit(64)
+print(adder)' "$tag"
+}
