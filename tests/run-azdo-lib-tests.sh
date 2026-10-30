@@ -393,6 +393,39 @@ assert_eq "a failed read prints nothing" "" "$out"
 rc=0; run_lib azdo-revisions-tag-added.json azdo_tag_adder >/dev/null 2>&1 || rc=$?
 assert_eq "usage error without arguments" "2" "$rc"
 
+# String-form ChangedBy: "Name <mail>" yields the mail; no <mail> yields no identity.
+tg3=$(mktemp -d)
+printf '{"value":[{"rev":1,"fields":{"System.Tags":"ai-implement","System.ChangedBy":"Owner Person <owner@example.com>"}}]}' > "$tg3/with-mail.json"
+printf '{"value":[{"rev":1,"fields":{"System.Tags":"ai-implement","System.ChangedBy":"Owner Person"}}]}' > "$tg3/no-mail.json"
+printf 'revisions\t%s\n' "$tg3/with-mail.json" > "$tg3/map-mail.tsv"
+printf 'revisions\t%s\n' "$tg3/no-mail.json" > "$tg3/map-nomail.tsv"
+assert_eq "string ChangedBy yields the mail inside <...>" "owner@example.com" \
+  "$(AZ_MOCK_MAP="$tg3/map-mail.tsv" run_lib azdo-revisions-no-tag.json azdo_tag_adder 5 ai-implement)"
+rc=0; out=$(AZ_MOCK_MAP="$tg3/map-nomail.tsv" run_lib azdo-revisions-no-tag.json azdo_tag_adder 5 ai-implement 2>/dev/null) || rc=$?
+assert_eq "string ChangedBy without <mail> exits 64" "64" "$rc"
+assert_eq "string ChangedBy without <mail> prints nothing" "" "$out"
+
+# Paging: page 1 is full (200 revisions, tag absent); the tag is added on page 2.
+python3 - "$tg3" <<'PY'
+import json, sys
+d = sys.argv[1]
+def rev(n, tags, who):
+    f = {"System.ChangedBy": {"uniqueName": who}}
+    if tags: f["System.Tags"] = tags
+    return {"rev": n, "fields": f}
+json.dump({"value": [rev(n, "", "alice@example.com") for n in range(1, 201)]}, open(d + "/p1.json", "w"))
+json.dump({"value": [rev(201, "ai-implement", "late@example.com"),
+                     rev(202, "ai-implement", "bob@example.com")]}, open(d + "/p2.json", "w"))
+PY
+printf 'skip=0\t%s\nskip=200\t%s\n' "$tg3/p1.json" "$tg3/p2.json" > "$tg3/map.tsv"
+assert_eq "finds an addition on the second page" "late@example.com" \
+  "$(AZ_MOCK_MAP="$tg3/map.tsv" run_lib azdo-revisions-no-tag.json azdo_tag_adder 5 ai-implement)"
+
+printf 'skip=0\t%s\nskip=200\t%s\n' "$tg3/p1.json" "$FIXTURES/azdo-wiql-tf51011.txt" > "$tg3/map-fail.tsv"
+rc=0; AZ_MOCK_MAP="$tg3/map-fail.tsv" run_lib azdo-revisions-no-tag.json azdo_tag_adder 5 ai-implement >/dev/null 2>&1 || rc=$?
+assert_eq "a failing second page exits 1" "1" "$rc"
+rm -rf "$tg3"
+
 # --- summary -------------------------------------------------------------
 
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"

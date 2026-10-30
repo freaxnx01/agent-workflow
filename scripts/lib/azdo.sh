@@ -460,12 +460,20 @@ azdo_remove_tag() { _azdo_edit_tags "${1-}" remove "${2-}"; }
 # Who ADDED a tag is not who last edited the item: a later edit by someone else
 # keeps the tag but did not add it, and a tag removed and re-added belongs to the
 # re-adder. Tags are split on `;`, trimmed and compared case-insensitively, as
-# Azure DevOps treats them. System.ChangedBy is an identity object, but a plain
-# `Name <mail>` string is accepted too.
+# Azure DevOps treats them. System.ChangedBy is an identity object; a plain
+# string is accepted only in the `Name <mail>` form (the mail is returned) --
+# without a <mail> part there is no identity to return, so the tag counts as not
+# found (64) rather than yielding a display name a caller might trust.
 #
-# The read is captured before parsing so its failure is not masked by python
-# receiving empty input. Exit 0 found; 64 the tag is in no revision; 1 the read
-# failed; 2 usage.
+# The revisions list is PAGED, oldest first, and `az devops invoke` does not
+# follow continuation. A truncated page would drop the NEWEST revisions and so
+# could return a stale adder -- wrong for a security gate -- hence the explicit
+# $top/$skip loop: pages are read until one returns fewer than the page size,
+# and only then is the adder computed. Any page failing aborts with 1.
+#
+# Each read is captured before parsing so its failure is not masked by python
+# receiving empty input. Exit 0 found; 64 the tag is in no revision (or the
+# adding revision names no identity); 1 a read failed; 2 usage.
 azdo_tag_adder() {
   local id="${1-}" tag="${2-}"
   if [[ -z "$id" || -z "$tag" ]]; then
@@ -474,21 +482,36 @@ azdo_tag_adder() {
   fi
   : "${AZDO_PROJECT:?AZDO_PROJECT must be set — call resolve_azdo_context first}"
 
-  local out rc=0
-  out=$(az devops invoke --org "$(azdo_org_url)" --area wit --resource revisions           --route-parameters project="$AZDO_PROJECT" id="$id"           --api-version 7.1 --output json --only-show-errors) || rc=$?
-  if [[ $rc -ne 0 || -z "$out" ]]; then
-    echo "azdo_tag_adder: could not read revisions of work item $id" >&2
-    return 1
-  fi
-
-  printf '%s' "$out" | python3 -c '
-import sys, json, re
-want = sys.argv[1].strip().lower()
+  local page_size=200 skip=0 out rc count revs="" page
+  while :; do
+    rc=0
+    out=$(az devops invoke --org "$(azdo_org_url)" --area wit --resource revisions \
+            --route-parameters project="$AZDO_PROJECT" id="$id" \
+            --query-parameters "\$top=$page_size" "\$skip=$skip" \
+            --api-version 7.1 --output json --only-show-errors) || rc=$?
+    if [[ $rc -ne 0 || -z "$out" ]]; then
+      echo "azdo_tag_adder: could not read revisions of work item $id" >&2
+      return 1
+    fi
+    page=$(printf '%s' "$out" | python3 -c '
+import sys, json
 try:
-    revs = json.load(sys.stdin).get("value", [])
+    v = json.load(sys.stdin).get("value", [])
 except ValueError:
     sys.stderr.write("azdo_tag_adder: unparseable revisions response\n")
     sys.exit(1)
+print(len(v))
+print(json.dumps(v))') || return 1
+    count="${page%%$'\n'*}"
+    revs+="${page#*$'\n'}"$'\n'
+    [[ "$count" -ge "$page_size" ]] || break
+    skip=$((skip + page_size))
+  done
+
+  printf '%s' "$revs" | python3 -c '
+import sys, json, re
+want = sys.argv[1].strip().lower()
+revs = [r for line in sys.stdin if line.strip() for r in json.loads(line)]
 
 def tags(rev):
     raw = rev.get("fields", {}).get("System.Tags", "")
@@ -499,7 +522,7 @@ def identity(rev):
     if isinstance(who, dict):
         return who.get("uniqueName", "")
     m = re.search(r"<([^>]+)>", who)
-    return m.group(1) if m else who
+    return m.group(1) if m else ""
 
 adder, had = None, False
 for rev in sorted(revs, key=lambda r: r.get("rev", 0)):
