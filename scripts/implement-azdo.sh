@@ -25,7 +25,10 @@
 #
 # Required environment:
 #   ISSUE_NUMBER            the work item id
-#   AZURE_DEVOPS_EXT_PAT    a PAT with work-item and code scopes
+#   AZURE_DEVOPS_EXT_PAT    a PAT with work-item and code scopes. May be left
+#                           unset on a CI host: the host's built-in identity
+#                           token (lib/ci-host.sh) is used instead. A PAT that
+#                           is set always wins.
 #   ANTHROPIC_API_KEY       or CLAUDE_CODE_OAUTH_TOKEN, for the agent
 #
 # Optional:
@@ -43,6 +46,8 @@ source "$HERE/lib/detect-forge.sh"
 source "$HERE/lib/forge.sh"
 # shellcheck source=scripts/lib/azdo.sh
 source "$HERE/lib/azdo.sh"
+# shellcheck source=scripts/lib/ci-host.sh
+source "$HERE/lib/ci-host.sh"
 
 : "${ISSUE_NUMBER:?ISSUE_NUMBER must be set (the work item id)}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -54,7 +59,14 @@ if [[ "$forge" != "azdo" ]]; then
   exit 2
 fi
 
-: "${AZURE_DEVOPS_EXT_PAT:?AZURE_DEVOPS_EXT_PAT must be set — prefer an allowed .envrc reached with direnv exec}"
+if [[ -z "${AZURE_DEVOPS_EXT_PAT:-}" && "$(ci_host)" != "local" ]]; then
+  AZURE_DEVOPS_EXT_PAT="$(ci_host_token)" || exit 2
+  export AZURE_DEVOPS_EXT_PAT
+fi
+if [[ -z "${AZURE_DEVOPS_EXT_PAT:-}" ]]; then
+  printf 'error: AZURE_DEVOPS_EXT_PAT must be set — prefer an allowed .envrc reached with direnv exec\n' >&2
+  exit 2
+fi
 resolve_azdo_context || { printf 'error: could not resolve the ADO context from origin\n' >&2; exit 2; }
 
 printf '== implement (Azure DevOps) ==\n'
