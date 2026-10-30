@@ -14,6 +14,13 @@
 #   ci_host_token   echoes the CI identity token
 #                     pipelines  $SYSTEM_ACCESSTOKEN
 #                     actions    $GITHUB_TOKEN
+#   ci_host_export_azdo_pat
+#                   on Azure Pipelines only, and only when AZURE_DEVOPS_EXT_PAT
+#                   is unset: exports it from $SYSTEM_ACCESSTOKEN. A PAT that is
+#                   already set always wins. A no-op on every other host -- a
+#                   GitHub Actions GITHUB_TOKEN must never become the credential
+#                   that is sent to Azure DevOps. Call it directly, never in
+#                   $(...): it exports into the calling shell.
 #
 # Deliberately absent (spec D5): set-output and re-dispatch. Those differ per
 # host in ways a one-verb adapter must not paper over.
@@ -22,10 +29,12 @@
 #   0   success
 #   1   ci_host_token: on a CI host but its token variable is empty (stderr
 #       names the variable; on pipelines, how to map System.AccessToken)
+#       ci_host_export_azdo_pat: on pipelines, no PAT set and no token to use
 #   64  ci_host_token: running locally — no CI identity; the caller supplies
 #       its own credential (nothing on stdout)
 #
 # The token is only ever written to stdout of ci_host_token, never logged.
+# ci_host_export_azdo_pat writes nothing to stdout.
 
 ci_host() {
   local tf_build="${TF_BUILD:-}"
@@ -62,4 +71,13 @@ ci_host_token() {
       ;;
   esac
   printf '%s\n' "$token"
+}
+
+ci_host_export_azdo_pat() {
+  [[ "$(ci_host)" == "pipelines" ]] || return 0
+  [[ -z "${AZURE_DEVOPS_EXT_PAT:-}" ]] || return 0
+  local token
+  token="$(ci_host_token)" || return 1
+  AZURE_DEVOPS_EXT_PAT="$token"
+  export AZURE_DEVOPS_EXT_PAT
 }

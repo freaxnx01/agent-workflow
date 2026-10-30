@@ -26,9 +26,10 @@
 # Required environment:
 #   ISSUE_NUMBER            the work item id
 #   AZURE_DEVOPS_EXT_PAT    a PAT with work-item and code scopes. May be left
-#                           unset on a CI host: the host's built-in identity
-#                           token (lib/ci-host.sh) is used instead. A PAT that
-#                           is set always wins.
+#                           unset on Azure Pipelines: SYSTEM_ACCESSTOKEN is used
+#                           instead (lib/ci-host.sh, ci_host_export_azdo_pat).
+#                           A PAT that is set always wins. On any other host it
+#                           must be set explicitly.
 #   ANTHROPIC_API_KEY       or CLAUDE_CODE_OAUTH_TOKEN, for the agent
 #
 # Optional:
@@ -59,10 +60,7 @@ if [[ "$forge" != "azdo" ]]; then
   exit 2
 fi
 
-if [[ -z "${AZURE_DEVOPS_EXT_PAT:-}" && "$(ci_host)" != "local" ]]; then
-  AZURE_DEVOPS_EXT_PAT="$(ci_host_token)" || exit 2
-  export AZURE_DEVOPS_EXT_PAT
-fi
+ci_host_export_azdo_pat || exit 2
 if [[ -z "${AZURE_DEVOPS_EXT_PAT:-}" ]]; then
   printf 'error: AZURE_DEVOPS_EXT_PAT must be set — prefer an allowed .envrc reached with direnv exec\n' >&2
   exit 2

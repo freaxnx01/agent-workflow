@@ -84,6 +84,32 @@ assert_contains "token_actions_without_token_names_var" "GITHUB_TOKEN" "$ERR"
 run_lib "" "ci_host_token"
 assert_eq "token_local_exits_64_empty_stdout" "64|" "$RC|$OUT"
 
+section "ci_host_export_azdo_pat"
+SENTINEL="tok-SECRET-9f3a"
+# shellcheck disable=SC2016  # expanded by the inner bash, not here
+SHOW_PAT='ci_host_export_azdo_pat; rc=$?; printf "%s|%s" "$rc" "${AZURE_DEVOPS_EXT_PAT-<unset>}" | sed "s/'"$SENTINEL"'/<sentinel>/"'
+run_lib "GITHUB_ACTIONS=true GITHUB_TOKEN=$SENTINEL" "$SHOW_PAT"
+assert_eq "export_pat_actions_github_token_stays_unset" "0|<unset>" "$OUT"
+run_lib "TF_BUILD=True SYSTEM_ACCESSTOKEN=$SENTINEL" "$SHOW_PAT"
+assert_eq "export_pat_pipelines_sets_system_accesstoken" "0|<sentinel>" "$OUT"
+run_lib "TF_BUILD=True SYSTEM_ACCESSTOKEN=$SENTINEL" 'ci_host_export_azdo_pat; env | grep -c "^AZURE_DEVOPS_EXT_PAT="'
+assert_eq "export_pat_pipelines_is_exported" "1" "$OUT"
+run_lib "AZURE_DEVOPS_EXT_PAT=explicit-pat TF_BUILD=True" "$SHOW_PAT"
+assert_eq "export_pat_explicit_pat_wins_without_accesstoken" "0|explicit-pat" "$OUT"
+run_lib "AZURE_DEVOPS_EXT_PAT=explicit-pat TF_BUILD=True SYSTEM_ACCESSTOKEN=$SENTINEL" "$SHOW_PAT"
+assert_eq "export_pat_explicit_pat_wins_over_accesstoken" "0|explicit-pat" "$OUT"
+run_lib "TF_BUILD=True SYSTEM_ACCESSTOKEN=" "$SHOW_PAT"
+assert_eq "export_pat_pipelines_empty_token_fails" "1|<unset>" "$OUT"
+assert_contains "export_pat_pipelines_empty_token_hint" "System.AccessToken" "$ERR"
+run_lib "TF_BUILD=True GITHUB_ACTIONS=true SYSTEM_ACCESSTOKEN=$SENTINEL GITHUB_TOKEN=gh-other" "$SHOW_PAT"
+assert_eq "export_pat_tf_build_and_actions_counts_as_pipelines" "0|<sentinel>" "$OUT"
+run_lib "" "$SHOW_PAT"
+assert_eq "export_pat_local_is_noop" "0|<unset>" "$OUT"
+run_lib "TF_BUILD=True SYSTEM_ACCESSTOKEN=$SENTINEL" "ci_host_export_azdo_pat"
+assert_eq "export_pat_never_prints_token" "" "$OUT$ERR"
+run_lib "TF_BUILD=True GITHUB_ACTIONS=true" "ci_host"
+assert_eq "host_pipelines_when_both_set" "pipelines" "$OUT"
+
 # --- summary -------------------------------------------------------------
 
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"

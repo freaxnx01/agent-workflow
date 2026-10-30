@@ -71,13 +71,26 @@ run_driver() {
 
 section "token source"
 
-run_driver TF_BUILD=True SYSTEM_ACCESSTOKEN=tok
+SENTINEL="tok-SECRET-9f3a"
+
+run_driver TF_BUILD=True SYSTEM_ACCESSTOKEN="$SENTINEL"
 assert_eq "pipelines_token_used_when_pat_unset: rc" "0" "$RC"
 assert_contains "pipelines_token_used_when_pat_unset: dry run reached" "DRY_RUN=1" "$OUT"
-assert_not_contains "token_never_printed" "tok" "$OUT$ERR"
+assert_not_contains "token_never_printed" "$SENTINEL" "$OUT$ERR"
 
-run_driver AZURE_DEVOPS_EXT_PAT=pat TF_BUILD=True SYSTEM_ACCESSTOKEN=tok
+run_driver AZURE_DEVOPS_EXT_PAT=pat TF_BUILD=True SYSTEM_ACCESSTOKEN="$SENTINEL"
 assert_eq "explicit_pat_wins: rc" "0" "$RC"
+
+run_driver AZURE_DEVOPS_EXT_PAT=pat TF_BUILD=True
+assert_eq "explicit_pat_wins_without_system_accesstoken: rc" "0" "$RC"
+
+run_driver TF_BUILD=True SYSTEM_ACCESSTOKEN=
+assert_eq "pipelines_empty_token_exits_2: rc" "2" "$RC"
+
+run_driver GITHUB_ACTIONS=true GITHUB_TOKEN="$SENTINEL"
+assert_eq "actions_github_token_not_used_as_pat: rc" "2" "$RC"
+assert_contains "actions_github_token_not_used_as_pat: message" "AZURE_DEVOPS_EXT_PAT must be set" "$ERR"
+assert_not_contains "actions_github_token_never_printed" "$SENTINEL" "$OUT$ERR"
 
 run_driver
 assert_eq "local_without_pat_exits_2: rc" "2" "$RC"
