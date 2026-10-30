@@ -108,6 +108,14 @@ assert_eq "start_skips_config_when_configured" "no" \
   "$([[ -e "$dir/config.argv" ]] && echo yes || echo no)"
 assert_eq "run.sh still started" "yes" "$([[ -e "$dir/run.env" ]] && echo yes || echo no)"
 
+dir="$(new_agent_dir configured-noenv)"
+touch "$dir/.agent"
+assert_eq "start_configured_needs_no_env" "0" "$(start "$dir")"
+assert_eq "start_configured_needs_no_env: run.sh exec'd" "yes" \
+  "$([[ -e "$dir/run.env" ]] && echo yes || echo no)"
+assert_eq "start_configured_needs_no_env: config.sh not called" "no" \
+  "$([[ -e "$dir/config.argv" ]] && echo yes || echo no)"
+
 section "download (curl stubbed; fixture tarball built at test time)"
 
 # Stub curl: logs argv and the byte count of stdin per call. The packages-API
@@ -188,6 +196,18 @@ assert_eq "download_unpack_failure_exits_1" "1" "$DL_RC"
 assert_eq "failed_unpack_leaves_no_config" "no" \
   "$([[ -e "$DL_DIR/config.sh" ]] && echo yes || echo no)"
 assert_clean_failure "download_unpack_failure"
+
+# Unconfigured agent dir (no .agent, no config.sh), token unset: must refuse
+# before any download.
+mkdir -p "$WORK/notoken.tmp" "$WORK/notoken"
+: > "$WORK/notoken.curl.log"
+rc=0
+env -i PATH="$STUBS:$PATH" HOME="$WORK" TMPDIR="$WORK/notoken.tmp" \
+  AZP_URL=https://example.com/contoso AZP_POOL=p AZP_AGENT_DIR="$WORK/notoken/agent" \
+  CURL_STUB_LOG="$WORK/notoken.curl.log" bash "$SCRIPT" >/dev/null 2>&1 || rc=$?
+assert_eq "start_unconfigured_without_token_exits_2" "2" "$rc"
+assert_eq "start_unconfigured_without_token_exits_2: nothing downloaded" "0" \
+  "$(wc -l < "$WORK/notoken.curl.log" | tr -d ' ')"
 
 section "token validation"
 

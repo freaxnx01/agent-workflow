@@ -3,7 +3,8 @@
 # azp-agent-start.sh — Container entrypoint for a self-hosted Azure Pipelines
 # agent: fetch the agent if absent, register it once, then hand over to run.sh.
 #
-# Required environment variables:
+# Required environment variables, ONLY while the agent is not yet registered
+# (no $AZP_AGENT_DIR/.agent); a configured agent starts with no environment:
 #   AZP_URL     Organization URL.
 #   AZP_TOKEN   PAT with Agent Pools (read, manage). Never passed as an argument
 #               (visible in `ps`): curl reads it from a config on stdin, and
@@ -17,10 +18,16 @@
 # Both token variables are unset before run.sh, so pipeline jobs never inherit
 # the PAT.
 #
+# Registration: register once with the token in a one-shot container (docker
+# run --rm, -e AZP_URL/AZP_TOKEN/AZP_POOL, agent dir on a volume); it configures
+# the agent and then runs it. Start the persistent container on the same volume
+# WITHOUT any AZP_* variable, so the PAT is never kept in its stored config.
+#
 # Exit codes:
 #   0   run.sh exited cleanly (exec: this is run.sh's own status)
 #   1   the agent download, URL check or unpack failed
-#   2   a required environment variable is missing
+#   2   registration is needed and a required environment variable is missing
+#       or the token contains a forbidden character
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -86,19 +93,28 @@ configure_agent() {
     --replace --acceptTeeEula --work _work
 }
 
-main() {
+# register_agent <dir> — the only path that needs the registration environment:
+# fetches the agent if absent, then configures it.
+register_agent() {
+  local agent_dir="$1"
   require_env
   AZP_AGENT_NAME="${AZP_AGENT_NAME:-$(hostname)}"
-  local agent_dir="${AZP_AGENT_DIR:-/azp/agent}"
-
   if [[ ! -f "$agent_dir/config.sh" ]]; then
     download_agent "$agent_dir" || {
       printf 'azp-agent-start: agent download failed\n' >&2
       exit 1
     }
   fi
+  (cd "$agent_dir" && configure_agent)
+}
+
+main() {
+  local agent_dir="${AZP_AGENT_DIR:-/azp/agent}"
+
+  if [[ ! -e "$agent_dir/.agent" ]]; then
+    register_agent "$agent_dir"
+  fi
   cd "$agent_dir"
-  [[ -e .agent ]] || configure_agent
 
   unset AZP_TOKEN VSTS_AGENT_INPUT_TOKEN
   exec ./run.sh
