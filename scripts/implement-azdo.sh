@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # implement-azdo.sh — run the implement sequence against an Azure DevOps work
-# item, locally. Step 4 of #253.
+# item, locally or as the driver step of an Azure Pipelines run. Step 4 of #253.
 #
 # The GitHub path is a workflow triggered by a label. Azure DevOps has no
 # equivalent trigger in this design, so this is invoked explicitly. It composes
@@ -67,7 +67,11 @@ if [[ -z "${AZURE_DEVOPS_EXT_PAT:-}" ]]; then
 fi
 resolve_azdo_context || { printf 'error: could not resolve the ADO context from origin\n' >&2; exit 2; }
 
-printf '== implement (Azure DevOps) ==\n'
+# Where this run happens, for the banner and the work-item report.
+run_context=local
+[[ "$(ci_host)" == "pipelines" ]] && run_context=pipeline
+
+printf '== implement (%s, Azure DevOps) ==\n' "$run_context"
 printf '   org/project/repo : %s / %s / %s\n' "$AZDO_ORG" "$AZDO_PROJECT" "$AZDO_REPO"
 printf '   work item        : #%s\n' "$ISSUE_NUMBER"
 printf '   retry            : unavailable on this forge\n'
@@ -168,7 +172,7 @@ printf 'draft PR  : #%s (work item #%s linked)\n' "$pr" "$ISSUE_NUMBER"
 # --- report back onto the work item -----------------------------------------
 report="$(mktemp)"
 {
-  printf '## implement run (local, Azure DevOps)\n\n'
+  printf '## implement run (%s, Azure DevOps)\n\n' "$run_context"
   printf -- '- outcome: %s\n' "${class:-success}"
   printf -- '- agent: %s, turns budget: %s\n' "${agent:-claude}" "${turns:-80}"
   printf -- '- draft PR: !%s\n\n' "$pr"

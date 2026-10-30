@@ -96,6 +96,14 @@ run_driver
 assert_eq "local_without_pat_exits_2: rc" "2" "$RC"
 assert_contains "local_without_pat_exits_2: message" "AZURE_DEVOPS_EXT_PAT must be set" "$ERR"
 
+section "run context label"
+
+run_driver TF_BUILD=True SYSTEM_ACCESSTOKEN="$SENTINEL"
+assert_contains "pipeline_run_labelled_pipeline" "implement (pipeline, Azure DevOps)" "$OUT"
+
+run_driver AZURE_DEVOPS_EXT_PAT=pat
+assert_contains "local_run_labelled_local" "implement (local, Azure DevOps)" "$OUT"
+
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"
 printf '  %s%d passed%s' "$C_GREEN" "$PASS" "$C_OFF"
 if [ "$FAIL" -gt 0 ]; then
