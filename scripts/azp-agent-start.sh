@@ -58,21 +58,26 @@ fetch_download_url() {
 # download_agent <dir> — unpacks the newest linux-x64 agent into <dir>. The
 # tarball comes from a separate CDN host and is fetched WITHOUT credentials.
 # Extracts into a scratch dir and moves into place only on success, so a failed
-# download never leaves a half-populated <dir>/config.sh behind.
+# download never leaves a half-populated <dir>/config.sh behind. The scratch dir
+# is removed on every path, success or failure, before this returns -- no trap,
+# since an EXIT trap would fire after the function's locals are gone.
 download_agent() {
-  local dir="$1" scratch download_url
+  local dir="$1" scratch rc=0
   scratch="$(mktemp -d)"
-  trap 'rm -rf "$scratch"' EXIT
+  fetch_agent_into "$scratch" "$dir" || rc=$?
+  rm -rf "$scratch"
+  return "$rc"
+}
 
+# fetch_agent_into <scratch> <dir> — the download and unpack steps proper.
+fetch_agent_into() {
+  local scratch="$1" dir="$2" download_url
   download_url="$(fetch_download_url)" || return 1
   curl -sS -fL -o "$scratch/agent.tar.gz" "$download_url" || return 1
-  mkdir "$scratch/agent"
+  mkdir "$scratch/agent" || return 1
   tar -xzf "$scratch/agent.tar.gz" -C "$scratch/agent" || return 1
-
   mkdir -p "$dir" || return 1
   cp -a "$scratch/agent/." "$dir/" || return 1
-  rm -rf "$scratch"
-  trap - EXIT
 }
 
 configure_agent() {

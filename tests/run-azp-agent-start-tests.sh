@@ -127,24 +127,38 @@ bytes=0
 printf '%s\tstdin=%s\n' "$argv" "$bytes" >> "$CURL_STUB_LOG"
 out=""
 while (( $# )); do [[ "$1" == "-o" ]] && out="$2"; shift; done
-if [[ -n "$out" ]]; then cp "$CURL_STUB_TARBALL" "$out"; exit 0; fi
+if [[ -n "$out" ]]; then
+  [[ -z "${CURL_STUB_FAIL_DOWNLOAD:-}" ]] || exit 22
+  cp "$CURL_STUB_TARBALL" "$out"; exit 0
+fi
 printf '{"value":[{"downloadUrl":"%s"}]}' "$STUB_DOWNLOAD_URL"
 STUB
 chmod +x "$STUBS/curl"
 
-# download <name> <download-url> — runs the script against an empty agent dir
-# with the stub curl; sets DL_DIR, DL_LOG, DL_RC.
+# download <name> <download-url> [VAR=value ...] — runs the script against an
+# empty agent dir with the stub curl and its own empty TMPDIR; sets DL_DIR,
+# DL_LOG, DL_RC, DL_ERR (stderr) and DL_TMP.
 download() {
-  DL_DIR="$WORK/$1/agent"; DL_LOG="$WORK/$1.curl.log"
-  mkdir -p "$WORK/$1"; : > "$DL_LOG"; DL_RC=0
-  env -i PATH="$STUBS:$PATH" HOME="$WORK" "${FULL_ENV[@]}" \
+  local name="$1" url="$2"; shift 2
+  DL_DIR="$WORK/$name/agent"; DL_LOG="$WORK/$name.curl.log"; DL_TMP="$WORK/$name.tmp"
+  mkdir -p "$WORK/$name" "$DL_TMP"; : > "$DL_LOG"; DL_RC=0
+  env -i PATH="$STUBS:$PATH" HOME="$WORK" TMPDIR="$DL_TMP" "${FULL_ENV[@]}" \
     AZP_URL=https://example.com/contoso/ AZP_AGENT_DIR="$DL_DIR" \
     CURL_STUB_LOG="$DL_LOG" CURL_STUB_TARBALL="$WORK/agent.tar.gz" \
-    STUB_DOWNLOAD_URL="$2" bash "$SCRIPT" >/dev/null 2>&1 || DL_RC=$?
+    STUB_DOWNLOAD_URL="$url" "$@" bash "$SCRIPT" >/dev/null 2>"$WORK/$name.err" || DL_RC=$?
+  DL_ERR="$(cat "$WORK/$name.err")"
+}
+
+# assert_clean_failure <name> — a failed download leaves no scratch dir behind
+# and no "unbound variable" from a trap that outlived its local.
+assert_clean_failure() {
+  assert_eq "$1: no leaked scratch dir" "" "$(ls -A "$DL_TMP")"
+  assert_not_contains "$1: no unbound variable" "unbound variable" "$DL_ERR"
 }
 
 download ok https://cdn.example.net/agent.tar.gz
 assert_eq "download_unpacks_and_starts" "0" "$DL_RC"
+assert_eq "download_success_leaves_no_scratch_dir" "" "$(ls -A "$DL_TMP")"
 assert_eq "download_populates_agent_dir" "yes" \
   "$([[ -x "$DL_DIR/config.sh" ]] && echo yes || echo no)"
 assert_eq "download_api_call_has_credentials_on_stdin" "yes" \
@@ -161,16 +175,19 @@ assert_eq "download_refuses_non_https_url" "1" "$DL_RC"
 assert_eq "refused_download_leaves_no_config" "no" \
   "$([[ -e "$DL_DIR/config.sh" ]] && echo yes || echo no)"
 assert_eq "refused_download_makes_no_tarball_request" "1" "$(wc -l < "$DL_LOG" | tr -d ' ')"
+assert_clean_failure "refused_download"
+
+download fetchfail https://cdn.example.net/agent.tar.gz CURL_STUB_FAIL_DOWNLOAD=1
+assert_eq "download_fetch_failure_exits_1" "1" "$DL_RC"
+assert_clean_failure "download_fetch_failure"
 
 # A tarball that is not a tarball: tar fails -> exit 1, nothing left behind.
 printf 'not a tarball' > "$WORK/bad.tar.gz"
-DL_DIR="$WORK/bad/agent"; mkdir -p "$WORK/bad"; DL_RC=0
-env -i PATH="$STUBS:$PATH" HOME="$WORK" "${FULL_ENV[@]}" AZP_AGENT_DIR="$DL_DIR" \
-  CURL_STUB_LOG="$WORK/bad.log" CURL_STUB_TARBALL="$WORK/bad.tar.gz" \
-  STUB_DOWNLOAD_URL=https://cdn.example.net/a.tar.gz bash "$SCRIPT" >/dev/null 2>&1 || DL_RC=$?
+download bad https://cdn.example.net/a.tar.gz CURL_STUB_TARBALL="$WORK/bad.tar.gz"
 assert_eq "download_unpack_failure_exits_1" "1" "$DL_RC"
 assert_eq "failed_unpack_leaves_no_config" "no" \
   "$([[ -e "$DL_DIR/config.sh" ]] && echo yes || echo no)"
+assert_clean_failure "download_unpack_failure"
 
 section "token validation"
 
