@@ -185,6 +185,12 @@ assert_eq "replacing shrinks the list" "alpha" \
 assert_eq "an empty value CLEARS rather than no-ops" "" \
   "$(run_set_tags azdo-set-tags-cleared.json 4 '')"
 
+# A tags value that is not a string must fail, not be printed as a repr that a
+# caller would then read as "the tag is gone".
+rc=0; out=$(run_set_tags azdo-set-tags-not-text.json 7 'parked' 2>/dev/null) || rc=$?
+assert_eq "set_tags_non_string_tags_in_response_exits_1" "1" "$rc"
+assert_eq "set_tags_non_string_tags_in_response_prints_nothing" "" "$out"
+
 # The request must be a json-patch `replace`, not an `add` -- `add` on this field
 # is what appends, which is the behaviour being escaped.
 assert_eq "sends a json-patch replace on System.Tags" "replace" \

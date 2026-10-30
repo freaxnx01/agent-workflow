@@ -163,6 +163,10 @@ TAGGER_ALLOWLIST="owner@example.com" WRITE_FIXTURE=azdo-set-tags-multiline.json 
   run_guard azdo-fields-ai-implement.json azdo-revisions-tag-added-clean.json
 assert_eq "guard_removal_check_crash_exits_1_never_0" 1 "$rc"
 
+TAGGER_ALLOWLIST="owner@example.com" WRITE_FIXTURE=azdo-set-tags-not-text.json \
+  run_guard azdo-fields-ai-implement.json azdo-revisions-tag-added-clean.json
+assert_eq "guard_non_string_tags_in_write_response_exits_1" 1 "$rc"
+
 TAGGER_ALLOWLIST="owner@example.com" CURL_MOCK_FAIL=1 \
   run_guard azdo-fields-ai-implement.json azdo-revisions-tag-added-clean.json
 assert_eq "guard_tag_write_failure_exits_1" 1 "$rc"

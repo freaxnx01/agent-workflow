@@ -287,7 +287,12 @@ d = json.load(sys.stdin)
 if "fields" not in d:
     sys.stderr.write("azdo_set_tags: unexpected response: %s\n" % str(d)[:200])
     sys.exit(1)
-print(d["fields"].get("System.Tags", ""))'
+tags = d["fields"].get("System.Tags", "")
+if not isinstance(tags, str):
+    # Printed as a repr it would read to a caller as "no such tag".
+    sys.stderr.write("azdo_set_tags: System.Tags in the response is not text\n")
+    sys.exit(1)
+print(tags)'
 }
 
 # azdo_html_escape  filter: stdin to stdout, escaping & < > " for System.Description.
