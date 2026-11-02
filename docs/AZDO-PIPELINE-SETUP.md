@@ -25,18 +25,20 @@ env file that is deleted afterwards, on a fresh volume.
 
 ```bash
 umask 077
-trap 'shred -u azp.env 2>/dev/null || rm -f azp.env' EXIT
-cat > azp.env <<'EOF'
+(
+  trap 'shred -u azp.env 2>/dev/null || rm -f azp.env' EXIT
+  cat > azp.env <<'EOF'
 AZP_URL=https://dev.azure.com/<org>
 AZP_TOKEN=<pat>
 AZP_POOL=<pool>
 EOF
-docker volume create <volume>
-docker run --rm --env-file azp.env -v <volume>:/azp/agent <image>
+  docker volume create <volume>
+  docker run --rm --env-file azp.env -v <volume>:/azp/agent <image>
+)
 ```
 
-Run this in a shell you close afterwards, or as a script: the `trap` deletes
-the env file on any exit, including a failed or interrupted `docker run`.
+The `trap` is scoped to the subshell, so it deletes the env file as soon as
+the block finishes, including after a failed or interrupted `docker run`.
 Confirm with `ls azp.env` that it is gone.
 
 The container registers the agent, then listens for a single job and exits
