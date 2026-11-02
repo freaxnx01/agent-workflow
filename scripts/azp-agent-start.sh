@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 #
 # azp-agent-start.sh — Container entrypoint for a self-hosted Azure Pipelines
-# agent: fetch the agent if absent, register it once, then hand over to run.sh.
+# agent: fetch the PINNED agent if absent (hash-verified, no credentials),
+# register it once, check its version, then hand over to `run.sh --once`: one
+# job per container, the supervisor restarts it for the next one.
+#
+# Required environment variables on EVERY start (baked into the image):
+#   AZP_AGENT_VERSION  Agent version to run, e.g. 5.281.1.
+#   AZP_AGENT_SHA256   SHA-256 of that version's linux-x64 tarball.
 #
 # Required environment variables, ONLY while the agent is not yet registered
-# (no $AZP_AGENT_DIR/.agent); a configured agent starts with no environment:
+# (no $AZP_AGENT_DIR/.agent); a configured agent needs no registration variable:
 #   AZP_URL     Organization URL.
 #   AZP_TOKEN   PAT with Agent Pools (read, manage). Never passed as an argument
-#               (visible in `ps`): curl reads it from a config on stdin, and
-#               config.sh reads it from VSTS_AGENT_INPUT_TOKEN.
+#               (visible in `ps`): config.sh reads it from VSTS_AGENT_INPUT_TOKEN.
 #   AZP_POOL    Agent pool to register in.
 #
 # Optional environment variables:
@@ -16,18 +21,18 @@
 #   AZP_AGENT_DIR   Where the agent lives. Default: /azp/agent.
 #
 # Both token variables are unset before run.sh, so pipeline jobs never inherit
-# the PAT.
-#
-# Registration: register once with the token in a one-shot container (docker
-# run --rm, -e AZP_URL/AZP_TOKEN/AZP_POOL, agent dir on a volume); it configures
-# the agent and then runs it. Start the persistent container on the same volume
-# WITHOUT any AZP_* variable, so the PAT is never kept in its stored config.
+# the PAT. The work folder is /azp/work, off the agent volume.
 #
 # Exit codes:
-#   0   run.sh exited cleanly (exec: this is run.sh's own status)
-#   1   the agent download, URL check or unpack failed
-#   2   registration is needed and a required environment variable is missing
-#       or the token contains a forbidden character
+#   0/other  run.sh's own status (exec). The agent uses 1-4 itself, 2 meaning
+#            "retryable", so this script never reuses 2.
+#   1   the agent download or unpack failed
+#   64  a required variable is missing or invalid (the pin on every start, the
+#       registration variables while unregistered, or a forbidden token character)
+#   65  the downloaded tarball's SHA-256 differs from AZP_AGENT_SHA256
+#   66  the installed agent's version differs from AZP_AGENT_VERSION
+# 64-66 are configuration errors: a restart cannot fix them, so the supervisor
+# lists them in RestartPreventExitStatus.
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -36,35 +41,32 @@ require_env() {
   for name in AZP_URL AZP_TOKEN AZP_POOL; do
     if [[ -z "${!name:-}" ]]; then
       printf 'azp-agent-start: %s must be set\n' "$name" >&2
-      exit 2
+      exit 64
     fi
   done
-  # The token is written into a curl config line between double quotes.
+  # Kept from when the token was written into a quoted curl config line: such
+  # characters are never valid in a PAT, so fail fast on a mangled secret.
   if [[ "$AZP_TOKEN" == *[\"\\]* || "$AZP_TOKEN" == *$'\n'* ]]; then
     printf 'azp-agent-start: AZP_TOKEN must not contain ", \\ or a newline\n' >&2
-    exit 2
+    exit 64
   fi
   AZP_URL="${AZP_URL%/}"
 }
 
-# fetch_download_url — asks the packages API (the ONLY authenticated request,
-# and only to $AZP_URL) for the newest linux-x64 agent; prints its https URL.
-# The PAT goes to curl as a config on stdin, never in argv.
-fetch_download_url() {
-  local api="$AZP_URL/_apis/distributedtask/packages/agent?platform=linux-x64&top=1&api-version=7.1"
-  local url
-  url="$(printf 'user = ":%s"\n' "$AZP_TOKEN" | curl -sS -fL -K - "$api" \
-    | jq -er '.value[0].downloadUrl')" || return 1
-  if [[ "$url" != https://* ]]; then
-    printf 'azp-agent-start: refusing a non-https agent download URL\n' >&2
-    return 1
-  fi
-  printf '%s' "$url"
+# require_pin — the version pin is needed on every start, registered or not.
+require_pin() {
+  local name
+  for name in AZP_AGENT_VERSION AZP_AGENT_SHA256; do
+    if [[ -z "${!name:-}" ]]; then
+      printf 'azp-agent-start: %s must be set\n' "$name" >&2
+      exit 64
+    fi
+  done
 }
 
-# download_agent <dir> — unpacks the newest linux-x64 agent into <dir>. The
-# tarball comes from a separate CDN host and is fetched WITHOUT credentials.
-# Extracts into a scratch dir and moves into place only on success, so a failed
+# download_agent <dir> — unpacks the pinned linux-x64 agent into <dir>. The
+# tarball comes from a public CDN URL built from the pin and is fetched WITHOUT
+# credentials, then checked against AZP_AGENT_SHA256 before tar sees it. Extracts into a scratch dir and moves into place only on success, so a failed
 # download never leaves a half-populated <dir>/config.sh behind. The scratch dir
 # is removed on every path, success or failure, before this returns -- no trap,
 # since an EXIT trap would fire after the function's locals are gone.
@@ -76,11 +78,19 @@ download_agent() {
   return "$rc"
 }
 
-# fetch_agent_into <scratch> <dir> — the download and unpack steps proper.
+# fetch_agent_into <scratch> <dir> — the download, verify and unpack steps
+# proper. Returns 1 on download/unpack failure, 65 on a hash mismatch.
 fetch_agent_into() {
-  local scratch="$1" dir="$2" download_url
-  download_url="$(fetch_download_url)" || return 1
-  curl -sS -fL -o "$scratch/agent.tar.gz" "$download_url" || return 1
+  local scratch="$1" dir="$2" actual
+  local version="$AZP_AGENT_VERSION"
+  curl -sS -fL -o "$scratch/agent.tar.gz" \
+    "https://download.agent.dev.azure.com/agent/$version/vsts-agent-linux-x64-$version.tar.gz" \
+    || return 1
+  actual="$(sha256sum "$scratch/agent.tar.gz")" || return 1
+  if [[ "${actual%% *}" != "$AZP_AGENT_SHA256" ]]; then
+    printf 'azp-agent-start: agent tarball SHA-256 mismatch\n' >&2
+    return 65
+  fi
   mkdir "$scratch/agent" || return 1
   tar -xzf "$scratch/agent.tar.gz" -C "$scratch/agent" || return 1
   mkdir -p "$dir" || return 1
@@ -90,7 +100,19 @@ fetch_agent_into() {
 configure_agent() {
   VSTS_AGENT_INPUT_TOKEN="$AZP_TOKEN" ./config.sh --unattended \
     --url "$AZP_URL" --auth pat --pool "$AZP_POOL" --agent "$AZP_AGENT_NAME" \
-    --replace --acceptTeeEula --work _work
+    --replace --acceptTeeEula --work /azp/work
+}
+
+# check_agent_version <dir> — the installed agent must be the pinned one.
+check_agent_version() {
+  local installed
+  installed="$("$1/bin/Agent.Listener" --version)" || installed=""
+  installed="${installed//[[:space:]]/}"
+  if [[ "$installed" != "$AZP_AGENT_VERSION" ]]; then
+    printf 'azp-agent-start: installed agent is "%s", expected %s\n' \
+      "$installed" "$AZP_AGENT_VERSION" >&2
+    exit 66
+  fi
 }
 
 # register_agent <dir> — the only path that needs the registration environment:
@@ -100,10 +122,12 @@ register_agent() {
   require_env
   AZP_AGENT_NAME="${AZP_AGENT_NAME:-$(hostname)}"
   if [[ ! -f "$agent_dir/config.sh" ]]; then
-    download_agent "$agent_dir" || {
+    local rc=0
+    download_agent "$agent_dir" || rc=$?
+    if (( rc != 0 )); then
       printf 'azp-agent-start: agent download failed\n' >&2
-      exit 1
-    }
+      exit "$rc"
+    fi
   fi
   (cd "$agent_dir" && configure_agent)
 }
@@ -111,13 +135,15 @@ register_agent() {
 main() {
   local agent_dir="${AZP_AGENT_DIR:-/azp/agent}"
 
+  require_pin
   if [[ ! -e "$agent_dir/.agent" ]]; then
     register_agent "$agent_dir"
   fi
+  check_agent_version "$agent_dir"
   cd "$agent_dir"
 
   unset AZP_TOKEN VSTS_AGENT_INPUT_TOKEN
-  exec ./run.sh
+  exec ./run.sh --once
 }
 
 main "$@"
