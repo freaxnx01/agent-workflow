@@ -1633,6 +1633,18 @@ dependency the guardrails forbid adding unasked, and makes the write lossy.
 **Consequence.** `/enrich` reports the paths and stops; it never claims the item
 is dispatchable, because nothing dispatches it.
 
+**Amendment (2026-11-02, #573).** A pipeline now runs on this forge: tagging a
+work item `ai-implement` dispatches `scripts/azdo-pipeline-run.sh` from an Azure
+Pipeline. The "no pipeline agent here" reason above no longer holds, but the
+decision stands. The pipeline agent runs inside a checkout of the target
+repository and reads the spec and plan the work item points to, exactly as a
+local `/work` session does; the PoC's test item was written in that shape and
+the agent implemented it from the pointed-to files
+(`docs/ai-notes/2026-10-30-azdo-pipeline-poc-run.md`). The plan stays out of
+the HTML field. The consequence changes accordingly: an enriched item **is**
+dispatchable where the pipeline is installed; `/enrich`'s own wording is not
+changed by the PoC.
+
 ## ADR-018 — The pause state is an open labelled issue, not a repo variable (2026-10-12)
 
 **Status:** accepted
