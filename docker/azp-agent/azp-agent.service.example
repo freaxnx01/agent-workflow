@@ -1,0 +1,22 @@
+# systemd unit template for one ephemeral Azure Pipelines agent container.
+# Replace the <placeholders> and install as /etc/systemd/system/<name>.service.
+# Register the agent ONCE beforehand with the one-shot command in
+# docs/AZDO-PIPELINE-SETUP.md; this unit passes no AZP_* variable and holds no
+# secret. Each start runs one job, then the container exits and is restarted.
+[Unit]
+Description=Azure Pipelines agent (one job per container)
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Restart=always
+RestartSec=5
+# 64 registration/variable missing, 65 SHA-256 mismatch, 66 version drift:
+# configuration errors that a restart cannot fix.
+RestartPreventExitStatus=64 65 66
+ExecStartPre=-/usr/bin/docker rm -f <name>
+ExecStart=/usr/bin/docker run --rm --name <name> --cpus 2 --memory 4g -v <volume>:/azp/agent <image>
+
+[Install]
+WantedBy=multi-user.target

@@ -20,6 +20,7 @@
 #   AZP_AGENT_NAME  Agent name. Default: the hostname.
 #   AZP_AGENT_DIR   Where the agent lives. Default: /azp/agent.
 #
+# One-shot registration (PAT from a mode-600 env file, deleted afterwards): see docs/AZDO-PIPELINE-SETUP.md.
 # Both token variables are unset before run.sh, so pipeline jobs never inherit
 # the PAT. The work folder is /azp/work, off the agent volume.
 #
