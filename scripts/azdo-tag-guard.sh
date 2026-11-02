@@ -35,9 +35,16 @@
 # revisions are read is not seen here at all; the window runs from those reads
 # until the driver reads the item.
 #
-# Order: read tags -> absent: 64 -> list later editors -> find the adder ->
-# allowlist (65) -> later editors allowlisted (66) -> remove the tag -> verify
-# the removal -> comment (65/66 only). Every read happens before the one write.
+# Order: read the latest revision -> read tags -> absent: 64 -> list later
+# editors -> find the adder -> allowlist (65) -> later editors allowlisted (66)
+# -> remove the tag, conditional on that revision -> verify the removal ->
+# comment (65/66 only). Every read happens before the one write.
+#
+# Retry: the removal carries the revision it was judged at. If the item changed
+# meanwhile the write is refused (conflict) and the whole judgement restarts
+# from a fresh revision read, at most 3 attempts; after the third the tag is
+# left in place and the guard exits 1 with no comment. A conflict never falls
+# through to "proceed".
 #
 # Exit codes (the dispatcher branches on these):
 #   0   tag present, adder and every later editor allowlisted, tag removed and
@@ -131,43 +138,63 @@ tags = {t.strip().lower() for t in raw.split(";") if t.strip()}
 sys.exit(11 if want in tags else 10)' "$TRIGGER_TAG"
 }
 
-rc=0; has_tag || rc=$?
-case $rc in
-  0) ;;
-  1) exit 64 ;;
-  *) exit 1 ;;
-esac
+# Each attempt judges the item at one revision and removes the tag only if the
+# item is still at that revision. A conflict means someone edited it meanwhile:
+# the verdict is stale, so judge again from a fresh read (spec: a conflict never
+# falls through to "proceed").
+MAX_ATTEMPTS=3
+remaining=""; removed=0
+for ((attempt = 1; attempt <= MAX_ATTEMPTS; attempt++)); do
+  rev=$(azdo_latest_rev "$WORK_ITEM_ID") || {
+    echo "azdo-tag-guard: could not read the revisions of $WORK_ITEM_ID" >&2
+    exit 1
+  }
 
-# Read before the adder (see the header) and before the removal, which is
-# itself a revision. Acted on only once the adder is known to be allowlisted:
-# a stranger's tag is refused (65) whatever this read returned.
-editors_rc=0; editors=$(azdo_editors_since_tag "$WORK_ITEM_ID" "$TRIGGER_TAG") || editors_rc=$?
+  rc=0; has_tag || rc=$?
+  case $rc in
+    0) ;;
+    1) exit 64 ;;
+    *) exit 1 ;;
+  esac
 
-rc=0; adder=$(azdo_tag_adder "$WORK_ITEM_ID" "$TRIGGER_TAG") || rc=$?
-if [[ $rc -ne 0 ]]; then
-  # 64 here means the tag is present but nobody can be named as its adder:
-  # fail closed and leave the tag for a human, same as a failed read.
-  echo "azdo-tag-guard: cannot attribute the $TRIGGER_TAG tag on $WORK_ITEM_ID — leaving it in place" >&2
-  exit 1
-fi
+  # Read before the adder (see the header) and before the removal, which is
+  # itself a revision. Acted on only once the adder is known to be allowlisted:
+  # a stranger's tag is refused (65) whatever this read returned.
+  editors_rc=0; editors=$(azdo_editors_since_tag "$WORK_ITEM_ID" "$TRIGGER_TAG") || editors_rc=$?
 
-allowed=0; is_allowlisted "$adder" && allowed=1
-
-stranger=""
-if [[ $allowed -eq 1 ]]; then
-  if [[ $editors_rc -ne 0 ]]; then
-    echo "azdo-tag-guard: cannot vet who changed $WORK_ITEM_ID after the $TRIGGER_TAG tag was added — leaving it in place" >&2
+  rc=0; adder=$(azdo_tag_adder "$WORK_ITEM_ID" "$TRIGGER_TAG") || rc=$?
+  if [[ $rc -ne 0 ]]; then
+    # 64 here means the tag is present but nobody can be named as its adder:
+    # fail closed and leave the tag for a human, same as a failed read.
+    echo "azdo-tag-guard: cannot attribute the $TRIGGER_TAG tag on $WORK_ITEM_ID — leaving it in place" >&2
     exit 1
   fi
-  stranger=$(first_stranger "$editors")
+
+  allowed=0; is_allowlisted "$adder" && allowed=1
+
+  stranger=""
+  if [[ $allowed -eq 1 ]]; then
+    if [[ $editors_rc -ne 0 ]]; then
+      echo "azdo-tag-guard: cannot vet who changed $WORK_ITEM_ID after the $TRIGGER_TAG tag was added — leaving it in place" >&2
+      exit 1
+    fi
+    stranger=$(first_stranger "$editors")
+  fi
+
+  rc=0; remaining=$(azdo_remove_tag "$WORK_ITEM_ID" "$TRIGGER_TAG" "$rev") || rc=$?
+  case $rc in
+    0) removed=1; break ;;
+    64) ;;  # the item changed since $rev: judge it again
+    *) echo "azdo-tag-guard: could not remove the $TRIGGER_TAG tag" >&2; exit 1 ;;
+  esac
+done
+if [[ $removed -ne 1 ]]; then
+  echo "azdo-tag-guard: $WORK_ITEM_ID kept changing while being checked — leaving the tag in place" >&2
+  exit 1
 fi
 
 # Trust the tags the write RETURNS, not the fact that it succeeded: a removal
 # that left the tag on the item must never end in exit 0.
-remaining=$(azdo_remove_tag "$WORK_ITEM_ID" "$TRIGGER_TAG") || {
-  echo "azdo-tag-guard: could not remove the $TRIGGER_TAG tag" >&2
-  exit 1
-}
 rc=0; removed_tag_state "$remaining" || rc=$?
 case $rc in
   10) ;;

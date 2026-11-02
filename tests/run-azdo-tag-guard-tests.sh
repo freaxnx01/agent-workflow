@@ -72,7 +72,8 @@ run_guard() {
 sent_value() {
   python3 -c '
 import json,sys
-print(json.loads(open(sys.argv[1]).read().strip().splitlines()[0])[0]["value"])' "$BODY_LOG"
+ops = json.loads(open(sys.argv[1]).read().strip().splitlines()[0])
+print([o for o in ops if o["op"] == "replace"][0]["value"])' "$BODY_LOG"
 }
 
 assert_no_writes() {
@@ -179,6 +180,38 @@ assert_eq "guard_comment_failure_after_removal: tag was removed first" "parked" 
 TAGGER_ALLOWLIST="owner@example.com" run_guard azdo-fields-tags-not-text.json azdo-revisions-tag-added-clean.json
 assert_eq "guard_unparseable_tag_read_exits_1" 1 "$rc"
 assert_no_writes "guard_unparseable_tag_read_exits_1"
+
+section "the item changes while the guard checks it (revision-guarded removal)"
+TAGGER_ALLOWLIST="owner@example.com" run_guard azdo-fields-ai-implement.json azdo-revisions-tag-added-clean.json
+want_rev=$(python3 -c 'import json,sys; print(max(r["rev"] for r in json.load(open(sys.argv[1]))["value"]))' "$FIXTURES/azdo-revisions-tag-added-clean.json")
+got_rev=$(python3 -c '
+import json,sys
+ops = json.loads(open(sys.argv[1]).read().strip().splitlines()[0])
+print([o for o in ops if o["op"] == "test"][0]["value"])' "$BODY_LOG")
+assert_eq "guard_removal_sends_rev_test" "$want_rev" "$got_rev"
+
+printf '%s\n%s\n' "$FIXTURES/azdo-set-tags-rev-conflict.json" "$FIXTURES/azdo-set-tags-replaced.json" > "$WORK/seq"
+TAGGER_ALLOWLIST="owner@example.com" CURL_MOCK_SEQUENCE="$WORK/seq" \
+  run_guard azdo-fields-ai-implement.json azdo-revisions-tag-added-clean.json
+assert_eq "guard_one_conflict_then_proceeds_exits_0: exit" 0 "$rc"
+assert_eq "guard_one_conflict_then_proceeds_exits_0: two PATCHes" 2 "$(grep -c . "$BODY_LOG")"
+
+printf '%s\n' "$FIXTURES/azdo-set-tags-rev-conflict.json" > "$WORK/seq"
+TAGGER_ALLOWLIST="owner@example.com" CURL_MOCK_SEQUENCE="$WORK/seq" \
+  run_guard azdo-fields-ai-implement.json azdo-revisions-tag-added-clean.json
+assert_eq "guard_three_conflicts_exits_1_no_comment: exit" 1 "$rc"
+assert_eq "guard_three_conflicts_exits_1_no_comment: three PATCHes" 3 "$(grep -c . "$BODY_LOG")"
+if grep -q 'work-item update' "$AZ_LOG"; then fail "guard_three_conflicts_exits_1_no_comment: no comment" "comment logged"; else pass "guard_three_conflicts_exits_1_no_comment: no comment"; fi
+
+printf '%s\n%s\n' "$FIXTURES/azdo-set-tags-rev-conflict.json" "$FIXTURES/azdo-set-tags-replaced.json" > "$WORK/seq"
+TAGGER_ALLOWLIST="owner@example.com" CURL_MOCK_SEQUENCE="$WORK/seq" \
+  run_guard azdo-fields-ai-implement.json azdo-revisions-later-stranger-comment.json
+assert_eq "guard_conflict_then_stranger_exits_66: exit" 66 "$rc"
+assert_eq "guard_conflict_then_stranger_exits_66: exactly one comment" 1 "$(grep -c 'work-item update' "$AZ_LOG")"
+
+TAGGER_ALLOWLIST="owner@example.com" run_guard azdo-fields-ai-implement.json azdo-wiql-tf51011.txt
+assert_eq "guard_latest_rev_read_failure_exits_1_keeps_tag: exit" 1 "$rc"
+assert_no_writes "guard_latest_rev_read_failure_exits_1_keeps_tag"
 
 section "missing env"
 for bad in "7; rm -rf /" "-1" "7 " "0x7" "abc"; do
