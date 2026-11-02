@@ -94,13 +94,13 @@ counts, because the sandbox has one member).
 | Check | Run(s) | Result |
 |---|---|---|
 | Two consecutive jobs | 12, 13 | different containers; a marker written to `$HOME` by job 1 is absent in job 2 |
-| Work folder off the volume | all | jobs run under `/azp/work`, which dies with the container |
+| Work folder off the volume | 15 | the job ran its scripts from `/azp/work/_temp/…`, which dies with the container |
 | Long-running container holds no PAT | — | its env is `PATH`, `AZP_AGENT_VERSION`, `AZP_AGENT_SHA256` only; the unit holds no secret |
 | Build service pushes to `main` directly | 14 | refused: `TF402455: Pushes to this branch are not permitted; you must use a pull request` |
 | Guard exit 66, live | 15, 16 | build service commented after the maintainer's tag; the manual run refused it, removed the tag, posted the refusal comment, no agent |
 | Happy path under the branch policy | 17 → 18 | **draft PR !8**, item linked, report comment; the follow-up run exited 64 |
-| `run.sh --once` after a normal and a cancelled job | 12–20 | the container exits cleanly and systemd starts a fresh one |
-| Wrong `AZP_AGENT_SHA256` | — | exit **65**, agent directory left empty |
+| `run.sh --once` after a normal and a cancelled job | 12–18, 19 (cancelled), 20 | each job ended its container cleanly and systemd started a fresh one (run 20 ran in a new container after the `ExecStop` fix) |
+| Wrong `AZP_AGENT_SHA256` | — | a throwaway `docker run` exited **65** and left the agent directory empty. That the unit then stops restarting rests on `RestartPreventExitStatus=65`; it was not observed under the unit |
 
 ### Findings
 
@@ -129,3 +129,21 @@ counts, because the sandbox has one member).
 
 The "persistent agent home", "no `/rev` test" and "image not digest-pinned"
 risks listed above are closed by this hardening.
+
+### Acceptance criteria
+
+| Criterion | Status |
+|---|---|
+| Fresh container and empty home per job | shown live, runs 12, 13 |
+| No PAT in the long-running container; no secret in the unit | shown live (container env), and by review of the template |
+| Wrong SHA-256 fails before unpacking | Layer-1 test, and shown live with `docker run` (exit 65) |
+| `FROM` carries a digest | in the Dockerfile; the image was built from it |
+| Tag write sends a `test` on `/rev`; one conflict re-evaluates, three exit 1 | Layer-1 tests only. A real concurrent edit inside the guard's seconds-wide window was **not exercised** live; the happy path and exit-66 runs exercised the conditional write without a conflict |
+| Exit 66 live | shown, runs 15, 16 |
+| Build service cannot push to `main`; draft PR still opens | shown, runs 14 and 17 |
+| Run note and setup docs (branch policy, auto-update) | this section; `docs/AZDO-PIPELINE-SETUP.md` |
+| Full test suite and leak grep | `tests/run-script-tests.sh` 971/971 on the branch; leak grep over the branch's changed files and commit messages: no hits |
+
+The old agent container and its volume were removed after these checks. The
+unit's first start after the registration container was killed found no
+leftover session: the agent was listening within about 40 s.
