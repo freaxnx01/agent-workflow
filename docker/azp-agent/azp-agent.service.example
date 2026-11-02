@@ -12,10 +12,12 @@ Requires=docker.service
 [Service]
 Restart=always
 RestartSec=5
+TimeoutStopSec=30
 # 64 registration/variable missing, 65 SHA-256 mismatch, 66 version drift:
 # configuration errors that a restart cannot fix.
 RestartPreventExitStatus=64 65 66
 ExecStartPre=-/usr/bin/docker rm -f <name>
+# The agent ignores SIGTERM, so `docker stop` ends it by SIGKILL after its timeout.
 ExecStop=/usr/bin/docker stop <name>
 ExecStart=/usr/bin/docker run --rm --name <name> --cpus 2 --memory 4g -v <volume>:/azp/agent <image>
 

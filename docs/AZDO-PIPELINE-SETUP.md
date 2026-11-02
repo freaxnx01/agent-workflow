@@ -34,20 +34,28 @@ AZP_POOL=<pool>
 AZP_AGENT_NAME=<name>
 EOF
   docker volume create <volume>
-  docker run --rm --env-file azp.env -v <volume>:/azp/agent <image>
+  docker run -d --rm --name <name>-reg --env-file azp.env -v <volume>:/azp/agent <image>
 )
 ```
 
 The `trap` is scoped to the subshell, so it deletes the env file as soon as
-the block finishes, including after a failed or interrupted `docker run`.
-Confirm with `ls azp.env` that it is gone.
+the block finishes. `docker run -d` returns once the container has started and
+already holds its environment, so the file is not needed any longer. Confirm
+with `ls azp.env` that it is gone.
 
-The container registers the agent, then listens for a single job and exits
-after it (`run.sh --once`). Either let it run one job, which is fine for a
-one-shot container, or stop it with Ctrl+C once *Listening for Jobs* appears
-if no job should run there. Either way the registration is on the volume, and
-the unit's first start works without any `AZP_*` variable. Revoke the PAT
-afterwards.
+The container registers the agent, then listens for a single job
+(`run.sh --once`). Watch it until *Listening for Jobs* appears, then stop it:
+
+```bash
+docker logs -f <name>-reg
+docker kill <name>-reg
+```
+
+The agent ignores SIGINT and SIGTERM, so Ctrl+C or a plain `docker stop` does
+not end it promptly; `docker kill` does. If a job happened to be queued, it may
+run in this container first, which is harmless. Either way the registration is
+on the volume, and the unit's first start works without any `AZP_*` variable.
+Revoke the PAT afterwards.
 
 ## 3. Install the unit
 
