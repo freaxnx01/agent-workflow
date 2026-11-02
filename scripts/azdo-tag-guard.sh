@@ -29,16 +29,15 @@
 # stranger's re-add after an allowlisted adder was named, and nobody after it
 # would be vetted.
 #
-# Known races: if someone else removes and re-adds the tag between the adder
-# read and the removal, the removal consumes their tag on the earlier tagger's
-# verdict -- a lost trigger, never an unauthorised run. An edit made after the
-# revisions are read is not seen here at all; the window runs from those reads
-# until the driver reads the item.
+# Known races: the removal is conditional on the judged revision, so any edit
+# between the reads and the removal (including someone else removing and
+# re-adding the tag) forces a re-judge. Only an edit made after the removal and
+# before the driver reads the item goes unseen.
 #
 # Order: read the latest revision -> read tags -> absent: 64 -> list later
 # editors -> find the adder -> allowlist (65) -> later editors allowlisted (66)
 # -> remove the tag, conditional on that revision -> verify the removal ->
-# comment (65/66 only). Every read happens before the one write.
+# comment (65/66 only). Every read of an attempt happens before its one write.
 #
 # Retry: the removal carries the revision it was judged at. If the item changed
 # meanwhile the write is refused (conflict) and the whole judgement restarts

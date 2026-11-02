@@ -17,6 +17,12 @@
 #   azdo_tag_adder <id> <tag>
 #                       echoes the uniqueName of the identity that most recently
 #                       added <tag> (exit 64 if no revision has it)
+#   azdo_latest_rev <id>
+#                       echoes the highest revision number of the work item
+#   azdo_set_tags <id> <tags> [expected_rev]
+#   azdo_remove_tag <id> <tag> [expected_rev]
+#                       with [expected_rev] the write is conditional on that
+#                       revision (exit 64 if the item has moved on)
 #   azdo_editors_since_tag <id> <tag>
 #                       echoes the unique identities of every revision after
 #                       that addition, one per line (exit 64 if no revision has
@@ -30,8 +36,10 @@
 #        - azdo_set_description, azdo_comment, azdo_add_tag, azdo_remove_tag,
 #          _azdo_edit_tags, azdo_tag_adder, azdo_editors_since_tag: a usage
 #          error (missing/malformed arguments)
-#   64 azdo_tag_adder, azdo_editors_since_tag only: the tag is in no revision
-#      of the work item
+#   64 azdo_tag_adder, azdo_editors_since_tag: the tag is in no revision of the
+#      work item. azdo_set_tags, azdo_remove_tag, _azdo_edit_tags: a revision
+#      conflict (TestPatchOperationFailedException) when an expected revision
+#      is given.
 #
 # Callers must CAPTURE the status rather than calling bare. Sourcing this file
 # applies `set -e` to the caller (as detect-forge.sh already does), so a bare
@@ -451,7 +459,7 @@ for c in comments:
 _azdo_edit_tags() {
   local id="${1-}" mode="${2-}" tag="${3-}" rev="${4-}"
   if [[ -z "$id" || -z "$mode" || -z "$tag" ]]; then
-    echo "usage: _azdo_edit_tags <id> <add|remove> <tag>" >&2
+    echo "usage: _azdo_edit_tags <id> <add|remove> <tag> [expected-rev]" >&2
     return 2
   fi
 

@@ -16,6 +16,7 @@ RestartSec=5
 # configuration errors that a restart cannot fix.
 RestartPreventExitStatus=64 65 66
 ExecStartPre=-/usr/bin/docker rm -f <name>
+ExecStop=/usr/bin/docker stop <name>
 ExecStart=/usr/bin/docker run --rm --name <name> --cpus 2 --memory 4g -v <volume>:/azp/agent <image>
 
 [Install]

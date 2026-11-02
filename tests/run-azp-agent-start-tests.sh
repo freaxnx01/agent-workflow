@@ -231,6 +231,9 @@ assert_eq "start_sha_match_configures" "0" "$DL_RC"
 assert_contains "start_sha_match_configures: --work /azp/work" "--work /azp/work" \
   "$(cat "$DL_DIR/config.argv")"
 
+download shaupper "AZP_AGENT_SHA256=${PIN_SHA^^}"
+assert_eq "start_sha_uppercase_pin_accepted" "0" "$DL_RC"
+
 download fetchfail CURL_STUB_FAIL_DOWNLOAD=1
 assert_eq "download_fetch_failure_exits_1" "1" "$DL_RC"
 assert_clean_failure "download_fetch_failure"

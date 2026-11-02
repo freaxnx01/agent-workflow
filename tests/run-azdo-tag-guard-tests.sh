@@ -195,6 +195,7 @@ TAGGER_ALLOWLIST="owner@example.com" CURL_MOCK_SEQUENCE="$WORK/seq" \
   run_guard azdo-fields-ai-implement.json azdo-revisions-tag-added-clean.json
 assert_eq "guard_one_conflict_then_proceeds_exits_0: exit" 0 "$rc"
 assert_eq "guard_one_conflict_then_proceeds_exits_0: two PATCHes" 2 "$(grep -c . "$BODY_LOG")"
+if (( $(grep -c 'revisions' "$AZ_LOG") >= 2 )); then pass "guard_one_conflict_then_proceeds_exits_0: revisions re-read"; else fail "guard_one_conflict_then_proceeds_exits_0: revisions re-read" "read fewer than twice"; fi
 
 printf '%s\n' "$FIXTURES/azdo-set-tags-rev-conflict.json" > "$WORK/seq"
 TAGGER_ALLOWLIST="owner@example.com" CURL_MOCK_SEQUENCE="$WORK/seq" \
@@ -208,6 +209,8 @@ TAGGER_ALLOWLIST="owner@example.com" CURL_MOCK_SEQUENCE="$WORK/seq" \
   run_guard azdo-fields-ai-implement.json azdo-revisions-later-stranger-comment.json
 assert_eq "guard_conflict_then_stranger_exits_66: exit" 66 "$rc"
 assert_eq "guard_conflict_then_stranger_exits_66: exactly one comment" 1 "$(grep -c 'work-item update' "$AZ_LOG")"
+assert_eq "guard_conflict_then_stranger_exits_66: two PATCHes" 2 "$(grep -c . "$BODY_LOG")"
+if (( $(grep -c 'revisions' "$AZ_LOG") >= 2 )); then pass "guard_conflict_then_stranger_exits_66: revisions re-read"; else fail "guard_conflict_then_stranger_exits_66: revisions re-read" "read fewer than twice"; fi
 
 TAGGER_ALLOWLIST="owner@example.com" run_guard azdo-fields-ai-implement.json azdo-wiql-tf51011.txt
 assert_eq "guard_latest_rev_read_failure_exits_1_keeps_tag: exit" 1 "$rc"

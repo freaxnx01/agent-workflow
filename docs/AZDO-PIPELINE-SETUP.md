@@ -24,13 +24,14 @@ long-running unit: register in a one-shot container, with the PAT in a mode-600
 env file that is deleted afterwards, on a fresh volume.
 
 ```bash
-umask 077
 (
+  umask 077
   trap 'shred -u azp.env 2>/dev/null || rm -f azp.env' EXIT
   cat > azp.env <<'EOF'
 AZP_URL=https://dev.azure.com/<org>
 AZP_TOKEN=<pat>
 AZP_POOL=<pool>
+AZP_AGENT_NAME=<name>
 EOF
   docker volume create <volume>
   docker run --rm --env-file azp.env -v <volume>:/azp/agent <image>

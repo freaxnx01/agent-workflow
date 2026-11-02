@@ -20,7 +20,8 @@
 #   AZP_AGENT_NAME  Agent name. Default: the hostname.
 #   AZP_AGENT_DIR   Where the agent lives. Default: /azp/agent.
 #
-# One-shot registration (PAT from a mode-600 env file, deleted afterwards): see docs/AZDO-PIPELINE-SETUP.md.
+# One-shot registration (PAT from a mode-600 env file, deleted afterwards):
+# see docs/AZDO-PIPELINE-SETUP.md.
 # Both token variables are unset before run.sh, so pipeline jobs never inherit
 # the PAT. The work folder is /azp/work, off the agent volume.
 #
@@ -29,7 +30,8 @@
 #            "retryable", so this script never reuses 2.
 #   1   the agent download or unpack failed
 #   64  a required variable is missing or invalid (the pin on every start, the
-#       registration variables while unregistered, or a forbidden token character)
+#       registration variables while unregistered, or a forbidden token
+#       character)
 #   65  the downloaded tarball's SHA-256 differs from AZP_AGENT_SHA256
 #   66  the installed agent's version differs from AZP_AGENT_VERSION
 # 64-66 are configuration errors: a restart cannot fix them, so the supervisor
@@ -67,10 +69,11 @@ require_pin() {
 
 # download_agent <dir> — unpacks the pinned linux-x64 agent into <dir>. The
 # tarball comes from a public CDN URL built from the pin and is fetched WITHOUT
-# credentials, then checked against AZP_AGENT_SHA256 before tar sees it. Extracts into a scratch dir and moves into place only on success, so a failed
-# download never leaves a half-populated <dir>/config.sh behind. The scratch dir
-# is removed on every path, success or failure, before this returns -- no trap,
-# since an EXIT trap would fire after the function's locals are gone.
+# credentials, then checked against AZP_AGENT_SHA256 before tar sees it.
+# Extracts into a scratch dir and moves into place only on success, so a failed
+# download never leaves a half-populated <dir>/config.sh behind. The scratch
+# dir is removed on every path, success or failure, before this returns -- no
+# trap, since an EXIT trap would fire after the function's locals are gone.
 download_agent() {
   local dir="$1" scratch rc=0
   scratch="$(mktemp -d)"
@@ -88,7 +91,7 @@ fetch_agent_into() {
     "https://download.agent.dev.azure.com/agent/$version/vsts-agent-linux-x64-$version.tar.gz" \
     || return 1
   actual="$(sha256sum "$scratch/agent.tar.gz")" || return 1
-  if [[ "${actual%% *}" != "$AZP_AGENT_SHA256" ]]; then
+  if [[ "${actual%% *}" != "${AZP_AGENT_SHA256,,}" ]]; then
     printf 'azp-agent-start: agent tarball SHA-256 mismatch\n' >&2
     return 65
   fi
