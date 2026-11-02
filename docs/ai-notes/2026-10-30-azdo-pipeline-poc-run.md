@@ -79,3 +79,53 @@ Recorded here, not fixed in code, for the PoC:
   seconds-wide window.
 - **Image not digest-pinned.** The base image and the agent tarball are
   fetched by tag and version.
+
+---
+
+## Hardening (2026-11-02)
+
+The hardening from `docs/superpowers/specs/2026-11-02-azdo-pipeline-hardening-design.md`
+was run live against the same sandbox. The agent was rebuilt from the branch,
+registered once on a fresh volume, and is now run by the systemd unit from
+`docker/azp-agent/azp-agent.service.example`. The pool's auto-update is off,
+and `practice`'s `main` requires a pull request (1 reviewer; the creator's vote
+counts, because the sandbox has one member).
+
+| Check | Run(s) | Result |
+|---|---|---|
+| Two consecutive jobs | 12, 13 | different containers; a marker written to `$HOME` by job 1 is absent in job 2 |
+| Work folder off the volume | all | jobs run under `/azp/work`, which dies with the container |
+| Long-running container holds no PAT | — | its env is `PATH`, `AZP_AGENT_VERSION`, `AZP_AGENT_SHA256` only; the unit holds no secret |
+| Build service pushes to `main` directly | 14 | refused: `TF402455: Pushes to this branch are not permitted; you must use a pull request` |
+| Guard exit 66, live | 15, 16 | build service commented after the maintainer's tag; the manual run refused it, removed the tag, posted the refusal comment, no agent |
+| Happy path under the branch policy | 17 → 18 | **draft PR !8**, item linked, report comment; the follow-up run exited 64 |
+| `run.sh --once` after a normal and a cancelled job | 12–20 | the container exits cleanly and systemd starts a fresh one |
+| Wrong `AZP_AGENT_SHA256` | — | exit **65**, agent directory left empty |
+
+### Findings
+
+1. **The build service identity has no mail address.** In revisions it is
+   `Build\<project-id>`. The guard treats it as a uniqueName that is not on the
+   allowlist, which is what made the exit-66 test work without a second person.
+2. **The agent ignores SIGINT and SIGTERM.** Ctrl+C and `docker kill --signal
+   INT` left it running for 40 s, with and without `docker run --init`;
+   `docker stop` only ends it through its SIGKILL fallback (exit 137). The setup
+   doc therefore stops the registration container with `docker kill`.
+3. **`ExecStop` must ignore a failed stop.** After a job the `--rm` container is
+   already gone, so `docker stop` fails; without the `-` prefix every normal
+   restart was recorded as a unit failure. The template carries the prefix.
+4. **Registering under the same agent name replaces the old agent**, and the
+   new one waits until the old session ends ("A session for this agent already
+   exists … Retrying until reconnected"). Stop the old container first.
+
+### Risks still open
+
+- **Tokens in the agent's environment** (`CLAUDE_CODE_OAUTH_TOKEN`, the job
+  access token), as on the GitHub path. Out of scope by the spec.
+- **apt packages and the Azure CLI's transitive Python dependencies** are not
+  hash-locked; their top-level versions are.
+- The window between the guard's tag removal and the driver's read of the item
+  remains; any edit before the removal now forces a re-check.
+
+The "persistent agent home", "no `/rev` test" and "image not digest-pinned"
+risks listed above are closed by this hardening.
