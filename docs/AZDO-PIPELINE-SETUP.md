@@ -25,6 +25,7 @@ env file that is deleted afterwards, on a fresh volume.
 
 ```bash
 umask 077
+trap 'shred -u azp.env 2>/dev/null || rm -f azp.env' EXIT
 cat > azp.env <<'EOF'
 AZP_URL=https://dev.azure.com/<org>
 AZP_TOKEN=<pat>
@@ -32,12 +33,18 @@ AZP_POOL=<pool>
 EOF
 docker volume create <volume>
 docker run --rm --env-file azp.env -v <volume>:/azp/agent <image>
-shred -u azp.env
 ```
 
-The registration run starts the agent too. Stop it (Ctrl+C) once it reports
-that it is listening for jobs. The volume now holds the registration; revoke
-the PAT afterwards.
+Run this in a shell you close afterwards, or as a script: the `trap` deletes
+the env file on any exit, including a failed or interrupted `docker run`.
+Confirm with `ls azp.env` that it is gone.
+
+The container registers the agent, then listens for a single job and exits
+after it (`run.sh --once`). Either let it run one job, which is fine for a
+one-shot container, or stop it with Ctrl+C once *Listening for Jobs* appears
+if no job should run there. Either way the registration is on the volume, and
+the unit's first start works without any `AZP_*` variable. Revoke the PAT
+afterwards.
 
 ## 3. Install the unit
 
