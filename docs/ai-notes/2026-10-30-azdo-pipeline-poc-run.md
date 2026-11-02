@@ -94,12 +94,12 @@ counts, because the sandbox has one member).
 | Check | Run(s) | Result |
 |---|---|---|
 | Two consecutive jobs | 12, 13 | different containers; a marker written to `$HOME` by job 1 is absent in job 2 |
-| Work folder off the volume | 15 | the job ran its scripts from `/azp/work/_temp/…`, i.e. in the container layer, not on the volume; the `--rm` container is removed after the job |
+| Work folder off the volume | 15 | observed: the job ran its scripts from `/azp/work/_temp/…`. By design only `/azp/agent` is a volume in the unit's `docker run`, and `--rm` removes the container after the job |
 | Long-running container holds no PAT | — | its env is `PATH`, `AZP_AGENT_VERSION`, `AZP_AGENT_SHA256` only; the unit holds no secret |
 | Build service pushes to `main` directly | 14 | refused: `TF402455: Pushes to this branch are not permitted; you must use a pull request` |
 | Guard exit 66, live | 15, 16 | build service commented after the maintainer's tag; the manual run refused it, removed the tag, posted the refusal comment, no agent |
 | Happy path under the branch policy | 17 → 18 | **draft PR !8**, item linked, report comment; the follow-up run exited 64 |
-| `run.sh --once` after a normal and a cancelled job | 12–18, 19 (cancelled), 20 | the unit's journal shows one restart per job and no non-zero main-process exit (systemd logs only those), so `run.sh --once` exited 0, cancelled job included; run 20 ran in a new container after the `ExecStop` fix |
+| `run.sh --once` after a normal and a cancelled job | 12–18, 19 (cancelled), 20 | the unit's journal shows a scheduled restart after each job (runs 12–18, then 19 and 20) and no main-process failure line; the exit status itself was not read directly. Run 20 ran in a new container after the `ExecStop` fix |
 | Wrong `AZP_AGENT_SHA256` | — | a throwaway `docker run` exited **65**; the agent directory on its test volume was empty afterwards (`ls -A` counted 0 entries). That the unit then stops restarting rests on `RestartPreventExitStatus=65`; it was not observed under the unit |
 
 ### Findings
@@ -147,5 +147,5 @@ risks listed above are closed by this hardening.
 | Full test suite and leak grep | `tests/run-script-tests.sh` 971/971 on the branch; leak grep over the branch's changed files and commit messages: no hits |
 
 The old agent container and its volume were removed after these checks. The
-unit's first start after the registration container was killed found no
-leftover session: the agent was listening within about 40 s.
+unit's first start after the registration container was killed showed no
+"already exists" wait in its log: the agent was listening within about 40 s.
