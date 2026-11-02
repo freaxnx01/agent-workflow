@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # implement-azdo.sh — run the implement sequence against an Azure DevOps work
-# item, locally. Step 4 of #253.
+# item, locally or as the driver step of an Azure Pipelines run. Step 4 of #253.
 #
 # The GitHub path is a workflow triggered by a label. Azure DevOps has no
 # equivalent trigger in this design, so this is invoked explicitly. It composes
@@ -25,7 +25,11 @@
 #
 # Required environment:
 #   ISSUE_NUMBER            the work item id
-#   AZURE_DEVOPS_EXT_PAT    a PAT with work-item and code scopes
+#   AZURE_DEVOPS_EXT_PAT    a PAT with work-item and code scopes. May be left
+#                           unset on Azure Pipelines: SYSTEM_ACCESSTOKEN is used
+#                           instead (lib/ci-host.sh, ci_host_export_azdo_pat).
+#                           A PAT that is set always wins. On any other host it
+#                           must be set explicitly.
 #   ANTHROPIC_API_KEY       or CLAUDE_CODE_OAUTH_TOKEN, for the agent
 #
 # Optional:
@@ -43,6 +47,8 @@ source "$HERE/lib/detect-forge.sh"
 source "$HERE/lib/forge.sh"
 # shellcheck source=scripts/lib/azdo.sh
 source "$HERE/lib/azdo.sh"
+# shellcheck source=scripts/lib/ci-host.sh
+source "$HERE/lib/ci-host.sh"
 
 : "${ISSUE_NUMBER:?ISSUE_NUMBER must be set (the work item id)}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -54,10 +60,18 @@ if [[ "$forge" != "azdo" ]]; then
   exit 2
 fi
 
-: "${AZURE_DEVOPS_EXT_PAT:?AZURE_DEVOPS_EXT_PAT must be set — prefer an allowed .envrc reached with direnv exec}"
+ci_host_export_azdo_pat || exit 2
+if [[ -z "${AZURE_DEVOPS_EXT_PAT:-}" ]]; then
+  printf 'error: AZURE_DEVOPS_EXT_PAT must be set — prefer an allowed .envrc reached with direnv exec\n' >&2
+  exit 2
+fi
 resolve_azdo_context || { printf 'error: could not resolve the ADO context from origin\n' >&2; exit 2; }
 
-printf '== implement (Azure DevOps) ==\n'
+# Where this run happens, for the banner and the work-item report.
+run_context=local
+[[ "$(ci_host)" == "pipelines" ]] && run_context=pipeline
+
+printf '== implement (%s, Azure DevOps) ==\n' "$run_context"
 printf '   org/project/repo : %s / %s / %s\n' "$AZDO_ORG" "$AZDO_PROJECT" "$AZDO_REPO"
 printf '   work item        : #%s\n' "$ISSUE_NUMBER"
 printf '   retry            : unavailable on this forge\n'
@@ -158,7 +172,7 @@ printf 'draft PR  : #%s (work item #%s linked)\n' "$pr" "$ISSUE_NUMBER"
 # --- report back onto the work item -----------------------------------------
 report="$(mktemp)"
 {
-  printf '## implement run (local, Azure DevOps)\n\n'
+  printf '## implement run (%s, Azure DevOps)\n\n' "$run_context"
   printf -- '- outcome: %s\n' "${class:-success}"
   printf -- '- agent: %s, turns budget: %s\n' "${agent:-claude}" "${turns:-80}"
   printf -- '- draft PR: !%s\n\n' "$pr"
