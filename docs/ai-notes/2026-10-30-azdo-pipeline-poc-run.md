@@ -94,13 +94,13 @@ counts, because the sandbox has one member).
 | Check | Run(s) | Result |
 |---|---|---|
 | Two consecutive jobs | 12, 13 | different containers; a marker written to `$HOME` by job 1 is absent in job 2 |
-| Work folder off the volume | 15 | the job ran its scripts from `/azp/work/_temp/…`, which dies with the container |
+| Work folder off the volume | 15 | the job ran its scripts from `/azp/work/_temp/…`, i.e. in the container layer, not on the volume; the `--rm` container is removed after the job |
 | Long-running container holds no PAT | — | its env is `PATH`, `AZP_AGENT_VERSION`, `AZP_AGENT_SHA256` only; the unit holds no secret |
 | Build service pushes to `main` directly | 14 | refused: `TF402455: Pushes to this branch are not permitted; you must use a pull request` |
 | Guard exit 66, live | 15, 16 | build service commented after the maintainer's tag; the manual run refused it, removed the tag, posted the refusal comment, no agent |
 | Happy path under the branch policy | 17 → 18 | **draft PR !8**, item linked, report comment; the follow-up run exited 64 |
-| `run.sh --once` after a normal and a cancelled job | 12–18, 19 (cancelled), 20 | each job ended its container cleanly and systemd started a fresh one (run 20 ran in a new container after the `ExecStop` fix) |
-| Wrong `AZP_AGENT_SHA256` | — | a throwaway `docker run` exited **65** and left the agent directory empty. That the unit then stops restarting rests on `RestartPreventExitStatus=65`; it was not observed under the unit |
+| `run.sh --once` after a normal and a cancelled job | 12–18, 19 (cancelled), 20 | the unit's journal shows one restart per job and no non-zero main-process exit (systemd logs only those), so `run.sh --once` exited 0, cancelled job included; run 20 ran in a new container after the `ExecStop` fix |
+| Wrong `AZP_AGENT_SHA256` | — | a throwaway `docker run` exited **65**; the agent directory on its test volume was empty afterwards (`ls -A` counted 0 entries). That the unit then stops restarting rests on `RestartPreventExitStatus=65`; it was not observed under the unit |
 
 ### Findings
 
@@ -116,7 +116,9 @@ counts, because the sandbox has one member).
    restart was recorded as a unit failure. The template carries the prefix.
 4. **Registering under the same agent name replaces the old agent**, and the
    new one waits until the old session ends ("A session for this agent already
-   exists … Retrying until reconnected"). Stop the old container first.
+   exists … Retrying until reconnected"). This happened to the registration
+   container, because the old agent container was still connected. Stop the
+   old container first.
 
 ### Risks still open
 
