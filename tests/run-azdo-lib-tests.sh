@@ -205,6 +205,79 @@ if grep -q 'not-a-real-token' "$ct_dir/argv.txt"; then
 else
   pass "the PAT never appears on curl's command line"
 fi
+# Revision guard (#573): with an expected revision the PATCH leads with a json-patch
+# `test` on /rev, so the server rejects the write if the item moved since it was read.
+body_op() { # <body-file> <index> <key>
+  python3 -c '
+import json,sys
+b = json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])
+print(b[int(sys.argv[2])][sys.argv[3]])' "$@"
+}
+
+: > "$ct_dir/body.txt"
+run_set_tags azdo-set-tags-replaced.json 4 'alpha' 12 >/dev/null
+assert_eq "set_tags_with_rev_sends_test_op_first" '{"op":"test","path":"/rev","value":12}' \
+  "$(python3 -c '
+import json,sys
+b = json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])
+print(json.dumps(b[0], separators=(",", ":")))' "$ct_dir/body.txt")"
+assert_eq "set_tags_with_rev_then_replace" "replace" "$(body_op "$ct_dir/body.txt" 1 op)"
+
+: > "$ct_dir/body.txt"
+run_set_tags azdo-set-tags-replaced.json 4 'alpha' >/dev/null
+assert_eq "set_tags_without_rev_body_unchanged" "1 replace" \
+  "$(python3 -c '
+import json,sys
+b = json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])
+print(len(b), b[0]["op"])' "$ct_dir/body.txt")"
+
+rc=0; out=$(run_set_tags azdo-set-tags-rev-conflict.json 4 'alpha' 12 2>/dev/null) || rc=$?
+assert_eq "set_tags_rev_conflict_exits_64" "64" "$rc"
+assert_eq "set_tags_rev_conflict_prints_nothing" "" "$out"
+
+rc=0; out=$(run_set_tags azdo-set-tags-bad-request.json 4 'alpha' 12 2>/dev/null) || rc=$?
+assert_eq "set_tags_other_400_is_failure" "1" "$rc"
+
+: > "$ct_dir/body.txt"
+rc=0; run_set_tags azdo-set-tags-replaced.json 4 'alpha' abc >/dev/null 2>&1 || rc=$?
+assert_eq "set_tags_rev_not_integer_exits_2" "2" "$rc"
+assert_eq "set_tags_rev_not_integer_sends_no_request" "0" "$(wc -c < "$ct_dir/body.txt" | tr -d ' ')"
+
+# remove_tag reads the item via az (fields fixture), then writes via curl.
+: > "$ct_dir/body.txt"
+# shellcheck disable=SC2030,SC2031
+(
+  export PATH="$MOCKS:$PATH"
+  export AZ_MOCK_FIXTURE="$FIXTURES/azdo-fields-ai-implement.json"
+  export CURL_MOCK_FIXTURE="$FIXTURES/azdo-set-tags-replaced.json"
+  export CURL_MOCK_BODY_LOG="$ct_dir/body.txt"
+  export AZDO_ORG=contoso AZDO_PROJECT=MyProject AZDO_REPO=my-repo
+  export AZURE_DEVOPS_EXT_PAT=not-a-real-token
+  # shellcheck disable=SC1090
+  source "$LIB"
+  azdo_remove_tag 4 ai-implement 12 >/dev/null
+)
+assert_eq "remove_tag_passes_rev_through" "test 12" \
+  "$(python3 -c '
+import json,sys
+b = json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])
+print(b[0]["op"], b[0]["value"])' "$ct_dir/body.txt")"
+
+assert_eq "latest_rev_echoes_highest" "3" \
+  "$(run_lib azdo-revisions-tag-added.json azdo_latest_rev 5)"
+
+# CURL_MOCK_SEQUENCE: each call pops the first fixture; the last one is reused.
+seq_file="$ct_dir/seq.txt"
+printf '%s\n%s\n' "$FIXTURES/azdo-set-tags-rev-conflict.json" "$FIXTURES/azdo-set-tags-replaced.json" > "$seq_file"
+# shellcheck disable=SC2030,SC2031
+seq_out=$(
+  export PATH="$MOCKS:$PATH" CURL_MOCK_SEQUENCE="$seq_file"
+  curl -s x | python3 -c 'import json,sys; print(json.load(sys.stdin)["typeKey"])'
+  curl -s x | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])'
+  curl -s x | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])'
+)
+assert_eq "curl_mock_sequence_pops_in_order" "TestPatchOperationFailedException,4,4" "${seq_out//$'\n'/,}"
+
 rm -rf "$ct_dir"
 
 section "azdo_description / azdo_set_description — the HTML field"
