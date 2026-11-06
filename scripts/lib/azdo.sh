@@ -17,6 +17,12 @@
 #   azdo_tag_adder <id> <tag>
 #                       echoes the uniqueName of the identity that most recently
 #                       added <tag> (exit 64 if no revision has it)
+#   azdo_latest_rev <id>
+#                       echoes the highest revision number of the work item
+#   azdo_set_tags <id> <tags> [expected_rev]
+#   azdo_remove_tag <id> <tag> [expected_rev]
+#                       with [expected_rev] the write is conditional on that
+#                       revision (exit 64 if the item has moved on)
 #   azdo_editors_since_tag <id> <tag>
 #                       echoes the unique identities of every revision after
 #                       that addition, one per line (exit 64 if no revision has
@@ -30,8 +36,10 @@
 #        - azdo_set_description, azdo_comment, azdo_add_tag, azdo_remove_tag,
 #          _azdo_edit_tags, azdo_tag_adder, azdo_editors_since_tag: a usage
 #          error (missing/malformed arguments)
-#   64 azdo_tag_adder, azdo_editors_since_tag only: the tag is in no revision
-#      of the work item
+#   64 azdo_tag_adder, azdo_editors_since_tag: the tag is in no revision of the
+#      work item. azdo_set_tags, azdo_remove_tag, _azdo_edit_tags: a revision
+#      conflict (TestPatchOperationFailedException) when an expected revision
+#      is given.
 #
 # Callers must CAPTURE the status rather than calling bare. Sourcing this file
 # applies `set -e` to the caller (as detect-forge.sh already does), so a bare
@@ -226,8 +234,15 @@ azdo_active_pr_work_items() {
   done | sort -u
 }
 
-# azdo_set_tags <work-item-id> <tags>  REPLACES a work item's tags outright.
-# <tags> is semicolon-delimited ("a;b"); an empty string clears them.
+# azdo_set_tags <work-item-id> <tags> [expected-rev]  REPLACES a work item's tags
+# outright. <tags> is semicolon-delimited ("a;b"); an empty string clears them.
+#
+# With [expected-rev] (an integer) the PATCH leads with a json-patch `test` on
+# /rev, so the server applies the replace only if the item is still at that
+# revision. A stale one is rejected atomically with typeKey
+# TestPatchOperationFailedException (live evidence: docs/ai-notes/
+# 2026-10-08-azdo-writeback-live-run.md, Step 5, #488) and exits 64 with nothing
+# echoed. Without it the body is the plain replace, as before.
 #
 # WARNING -- THE ID IS ORG-SCOPED, NOT PROJECT-SCOPED.
 #
@@ -263,18 +278,26 @@ azdo_active_pr_work_items() {
 # The PAT is passed via a curl config on stdin (`-K -`), never on the command
 # line, so it does not appear in `ps` output or a process listing.
 #
-# Exit codes: 0 replaced; 1 the request failed; 2 usage.
+# Exit codes: 0 replaced (tags echoed); 1 the request failed; 2 usage (including
+# a non-integer expected-rev, rejected before any request); 64 revision conflict.
 azdo_set_tags() {
   local id="${1:?azdo_set_tags requires a work-item id}"
   local tags="${2?azdo_set_tags requires a tag string (empty clears)}"
+  local rev="${3-}"
   : "${AZURE_DEVOPS_EXT_PAT:?AZURE_DEVOPS_EXT_PAT must be set}"
+  if [[ -n "$rev" && ! "$rev" =~ ^[0-9]+$ ]]; then
+    echo "azdo_set_tags: expected revision must be an integer, got '$rev'" >&2
+    return 2
+  fi
   local url body out
   url="$(azdo_org_url)/_apis/wit/workitems/${id}?api-version=7.1"
 
   body=$(python3 -c '
 import json, sys
-print(json.dumps([{"op": "replace", "path": "/fields/System.Tags",
-                   "value": sys.argv[1]}]))' "$tags")
+ops = [{"op": "replace", "path": "/fields/System.Tags", "value": sys.argv[1]}]
+if sys.argv[2]:
+    ops.insert(0, {"op": "test", "path": "/rev", "value": int(sys.argv[2])})
+print(json.dumps(ops))' "$tags" "$rev")
 
   out=$(printf 'user = ":%s"\n' "$AZURE_DEVOPS_EXT_PAT" \
     | curl -sS -K - \
@@ -284,6 +307,9 @@ print(json.dumps([{"op": "replace", "path": "/fields/System.Tags",
   printf '%s' "$out" | python3 -c '
 import sys, json
 d = json.load(sys.stdin)
+if d.get("typeKey") == "TestPatchOperationFailedException":
+    sys.stderr.write("azdo_set_tags: revision conflict: %s\n" % d.get("message", ""))
+    sys.exit(64)
 if "fields" not in d:
     sys.stderr.write("azdo_set_tags: unexpected response: %s\n" % str(d)[:200])
     sys.exit(1)
@@ -420,17 +446,20 @@ for c in comments:
     print(" ".join(html.unescape(text).split()))'
 }
 
-# _azdo_edit_tags <id> <add|remove> <tag>  shared read-modify-write.
+# _azdo_edit_tags <id> <add|remove> <tag> [expected-rev]  shared read-modify-write.
 #
 # azdo_set_tags replaces the WHOLE string, so a single-tag edit has to read the
 # current set first. The read's status is captured and a non-zero one aborts:
 # azdo_fields defaults an absent System.Tags to "", so an empty read is
 # indistinguishable from a failed one, and writing anyway would clear every tag
 # the item has -- parked and roadmap included.
+#
+# [expected-rev] is passed to azdo_set_tags unchanged; exit codes are its (64 =
+# the item moved since that revision).
 _azdo_edit_tags() {
-  local id="${1-}" mode="${2-}" tag="${3-}"
+  local id="${1-}" mode="${2-}" tag="${3-}" rev="${4-}"
   if [[ -z "$id" || -z "$mode" || -z "$tag" ]]; then
-    echo "usage: _azdo_edit_tags <id> <add|remove> <tag>" >&2
+    echo "usage: _azdo_edit_tags <id> <add|remove> <tag> [expected-rev]" >&2
     return 2
   fi
 
@@ -454,14 +483,23 @@ else:
     tags = [t for t in tags if t.lower() != tag.lower()]
 print("; ".join(tags))' "$mode" "$tag")
 
-  azdo_set_tags "$id" "$next"
+  azdo_set_tags "$id" "$next" "$rev"
 }
 
 # azdo_add_tag <id> <tag>  adds one tag, preserving the rest.
 azdo_add_tag() { _azdo_edit_tags "${1-}" add "${2-}"; }
 
-# azdo_remove_tag <id> <tag>  removes one tag, preserving the rest.
-azdo_remove_tag() { _azdo_edit_tags "${1-}" remove "${2-}"; }
+# azdo_remove_tag <id> <tag> [expected-rev]  removes one tag, preserving the rest;
+# with [expected-rev] the write is conditional on that revision (exit 64 if stale).
+azdo_remove_tag() { _azdo_edit_tags "${1-}" remove "${2-}" "${3-}"; }
+
+# azdo_latest_rev <id>  echoes the highest revision number of the work item.
+# Exit 0; 1 if the revisions could not be read or none exist.
+azdo_latest_rev() {
+  local id="${1:?azdo_latest_rev requires a work-item id}" revs
+  revs=$(_azdo_revisions "$id" azdo_latest_rev) || return 1
+  printf '%s' "$revs" | _azdo_revision_scan latest ""
+}
 
 # azdo_tag_adder <id> <tag>  echoes the uniqueName of the identity on the MOST
 # RECENT revision that added <tag> -- its System.Tags contains the tag while the
@@ -551,7 +589,7 @@ print(json.dumps(v))' "$caller") || return 1
   printf '%s' "$revs"
 }
 
-# _azdo_revision_scan <adder|editors> <tag>  reads _azdo_revisions output on
+# _azdo_revision_scan <adder|editors|latest> <tag>  reads _azdo_revisions output on
 # stdin. Both modes share ONE definition of "the revision that added the tag"
 # and of how an identity is read, so the two public functions cannot drift.
 _azdo_revision_scan() {
@@ -560,6 +598,13 @@ import sys, json, re
 mode, want = sys.argv[1], sys.argv[2].strip().lower()
 revs = [r for line in sys.stdin if line.strip() for r in json.loads(line)]
 revs.sort(key=lambda r: r.get("rev", 0))
+
+if mode == "latest":
+    if not revs:
+        sys.stderr.write("azdo_latest_rev: work item has no revisions\n")
+        sys.exit(1)
+    print(revs[-1].get("rev", 0))
+    sys.exit(0)
 
 def tags(rev):
     raw = rev.get("fields", {}).get("System.Tags", "")

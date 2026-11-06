@@ -1,8 +1,13 @@
 # Self-hosted Azure Pipelines agent image. Build context is the repo root:
 #   docker build -f docker/azp-agent/Dockerfile -t azp-agent:poc .
-# Run with AZP_URL, AZP_TOKEN and AZP_POOL set at `docker run` time; the
-# credential is never baked in (no ENV/ARG holds it).
-FROM debian:13-slim
+# The agent version and its SHA-256 are pinned below: bump both together. The
+# base-image digest is bumped by hand (keep the tag for readability). Register
+# once with AZP_URL, AZP_TOKEN and AZP_POOL at `docker run` time (see
+# docs/AZDO-PIPELINE-SETUP.md); the credential is never baked in.
+FROM debian:13-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
+
+ENV AZP_AGENT_VERSION=5.281.1 \
+    AZP_AGENT_SHA256=c9579f76fd71a013e3b9010155454e20592d935134e4fcd04adc5283a820167e
 
 # bash/git/jq/python3/curl run the pipeline scripts; the lib* packages are the
 # .NET runtime dependencies of the agent itself; nodejs is for pipeline tasks.
@@ -19,7 +24,7 @@ RUN python3 -m venv /opt/az \
  && ln -s /opt/az/bin/az /usr/local/bin/az
 
 RUN useradd --create-home --uid 1000 --shell /bin/bash azp \
- && mkdir -p /azp/agent \
+ && mkdir -p /azp/agent /azp/work \
  && chown -R azp:azp /azp
 
 # The installer sources scripts/lib/ relative to itself, so keep the layout.
