@@ -329,6 +329,7 @@ az_read() {
     printf 'L<<\n%s\n>>\n' "${ISSUE_LABELS:-}"
     printf 'B<<\n%s\n>>\n' "${ISSUE_BODY:-}"
     printf 'J<<\n%s\n>>\n' "${ISSUE_JSON:-}"
+    printf 'C<<\n%s\n>>\n' "${ISSUE_COMMENTS_JSON:-}"
   )
 }
 az_block() { az_read | sed -n "/^$1<</,/^>>$/p" | sed '1d;$d'; }
@@ -348,6 +349,40 @@ assert_eq "body is title + newline + description" "$(printf 'Do the thing\nImple
 # mapping every comment renders EMPTY -- and silently, which is the whole risk.
 assert_eq "comments are normalised from .text to .body" "A discussion comment." \
   "$(az_block J | python3 -c 'import sys,json; print(json.load(sys.stdin)["comments"][0]["body"])')"
+
+rm -rf "$az_dir" "$REPO_AZ"
+
+section "azdo comments become plain text"
+
+# The comments API returns HTML; check-attempt-cap matches on a leading
+# "## ai-implement run", so a <div> wrapper hides every report from the cap.
+az_dir="$(mktemp -d)"
+az_map="$az_dir/map"
+printf 'work-item show\t%s/forge-workitem-azdo.json\n' "$FIXTURES" > "$az_map"
+printf 'resource comments\t%s/azdo-comments-report-html.json\n' "$FIXTURES" >> "$az_map"
+REPO_AZ="$(make_repo 'https://dev.azure.com/contoso/MyProject/_git/my-repo')"
+
+cbody() { az_block C | python3 -c 'import sys,json; print(json.load(sys.stdin)[int(sys.argv[1])]["body"], end="")' "$1"; }
+REPORT_HEAD='## ai-implement run (pipeline, Azure DevOps) — attempt 1'
+
+assert_eq "web-UI report body starts with the report heading" "$REPORT_HEAD" \
+  "$(cbody 0 | head -n1)"
+case "$(cbody 0)" in
+  *$'\n**Outcome:** failed: transient'*) pass "report body keeps its outcome line on its own line" ;;
+  *) fail "report body keeps its outcome line on its own line" ;;
+esac
+assert_eq "entities are unescaped after tags are stripped" "a <b> tag & text" "$(cbody 2)"
+assert_eq "ISSUE_JSON comments match ISSUE_COMMENTS_JSON" "$(cbody 0)" \
+  "$(az_block J | python3 -c 'import sys,json; print(json.load(sys.stdin)["comments"][0]["body"], end="")')"
+assert_eq "pipeline-posted body keeps its newlines and heading" "$REPORT_HEAD" \
+  "$(cbody 3 | head -n1)"
+assert_eq "pipeline-posted body ends with the unescaped note" "- note: a < b && c > d" \
+  "$(cbody 3 | tail -n1)"
+
+cap_out="$(ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 ISSUE_COMMENTS_JSON="$(az_block C)" \
+  bash "$ROOT/scripts/check-attempt-cap.sh" 2>/dev/null)"
+assert_eq "attempt cap counts the real attempt" "attempt=2" "$(grep '^attempt=' <<<"$cap_out")"
+assert_eq "attempt cap counts both non-starts" "non-starts=2" "$(grep '^non-starts=' <<<"$cap_out")"
 
 rm -rf "$az_dir" "$REPO_AZ"
 
