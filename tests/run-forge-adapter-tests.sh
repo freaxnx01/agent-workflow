@@ -433,6 +433,105 @@ assert_eq "remove drops one"       "b"      "$(retag "$(printf 'a\nb')" '' 'a')"
 assert_eq "add and remove together" "b;c"   "$(retag "$(printf 'a\nb')" 'c' 'a')"
 assert_eq "removing everything clears" ""   "$(retag "$(printf 'a\nb')" '' 'a,b')"
 
+section "PR verbs"
+
+# pr_run <repo-dir> <forge> <fn> [args...] — runs one PR verb in a subshell with
+# both mocks on PATH and the logs in $PR_LOG_DIR. Echoes stdout; stderr goes to
+# $PR_LOG_DIR/err; the verb's status is written to $PR_LOG_DIR/rc.
+# shellcheck disable=SC2030,SC2031
+pr_run() {
+  local dir="$1" forge="$2"; shift 2
+  (
+    cd "$dir"
+    export PATH="$MOCKS:$PATH"
+    export GH_MOCK_LOG="$PR_LOG_DIR/gh.log" AZ_MOCK_LOG="$PR_LOG_DIR/az.log"
+    export AZ_MOCK_STDIN_LOG="$PR_LOG_DIR/az.stdin"
+    export FORGE="$forge" REPO=o/r
+    # shellcheck disable=SC1090
+    source "$ROOT/scripts/lib/detect-forge.sh"
+    # shellcheck disable=SC1090
+    source "$LIB"
+    rc=0
+    "$@" 2>"$PR_LOG_DIR/err" || rc=$?
+    printf '%s' "$rc" > "$PR_LOG_DIR/rc"
+  )
+}
+pr_reset() { rm -f "$PR_LOG_DIR"/{gh.log,az.log,az.stdin,err,rc}; : > "$PR_LOG_DIR/gh.log"; : > "$PR_LOG_DIR/az.log"; : > "$PR_LOG_DIR/az.stdin"; }
+pr_rc() { cat "$PR_LOG_DIR/rc"; }
+
+PR_LOG_DIR="$(mktemp -d)"
+PR_NOGIT="$(mktemp -d)"   # not a git repo: proves github never calls detect_forge
+PR_BODY="$PR_LOG_DIR/body.md"
+# shellcheck disable=SC2016  # literal backtick and $ are the point
+printf 'First line with `backtick` and $HOME\nsecond line\n' > "$PR_BODY"
+
+pr_reset; pr_run "$PR_NOGIT" github forge_pr_diff 42 >/dev/null
+assert_eq "github pr diff argv" "pr diff 42 --repo o/r" "$(cat "$PR_LOG_DIR/gh.log")"
+pr_reset; pr_run "$PR_NOGIT" github forge_pr_head_sha 42 >/dev/null
+assert_eq "github pr head sha argv" "pr view 42 --repo o/r --json headRefOid --jq .headRefOid" "$(cat "$PR_LOG_DIR/gh.log")"
+pr_reset; pr_run "$PR_NOGIT" github forge_pr_comment 42 "$PR_BODY" >/dev/null
+assert_eq "github pr comment argv" "pr comment 42 --repo o/r --body-file $PR_BODY" "$(cat "$PR_LOG_DIR/gh.log")"
+pr_reset; pr_run "$PR_NOGIT" github forge_pr_comments_json 42 >/dev/null
+assert_eq "github pr comments argv" "pr view 42 --repo o/r --json comments --jq .comments[].body" "$(cat "$PR_LOG_DIR/gh.log")"
+assert_eq "github PR verbs never ask for an auth token" "0" "$(grep -c 'auth token' "$PR_LOG_DIR/gh.log" || true)"
+
+REPO_PR="$(make_repo 'https://dev.azure.com/contoso/MyProject/_git/my-repo')"
+
+pr_reset; AZ_MOCK_FIXTURE="$FIXTURES/azdo-pr-thread-created.json" pr_run "$REPO_PR" azdo forge_pr_comment 42 "$PR_BODY" >/dev/null
+assert_eq "pr_comment_posts_one_active_thread: one az call" "1" "$(wc -l < "$PR_LOG_DIR/az.log" | tr -d ' ')"
+for needle in '--area git --resource pullRequestThreads' 'pullRequestId=42' 'repositoryId=my-repo' '--http-method POST'; do
+  case "$(cat "$PR_LOG_DIR/az.log")" in
+    *"$needle"*) pass "pr_comment argv has $needle" ;;
+    *) fail "pr_comment argv has $needle" "$(cat "$PR_LOG_DIR/az.log")" ;;
+  esac
+done
+assert_eq "pr_comment thread is active" "active" "$(jq -r '.status' "$PR_LOG_DIR/az.stdin")"
+jq -j '.comments[0].content' "$PR_LOG_DIR/az.stdin" > "$PR_LOG_DIR/posted.md"
+if cmp -s "$PR_LOG_DIR/posted.md" "$PR_BODY"; then pass "pr_comment body arrives byte for byte"; else fail "pr_comment body arrives byte for byte"; fi
+
+# Round trip: what was POSTed, served back by the GET, must still carry the
+# marker line the review script greps for.
+jq -s '{value: ., count: length}' "$PR_LOG_DIR/az.stdin" > "$PR_LOG_DIR/round-trip.json"
+pr_reset; out="$(AZ_MOCK_FIXTURE="$PR_LOG_DIR/round-trip.json" pr_run "$REPO_PR" azdo forge_pr_comments_json 42)"
+# shellcheck disable=SC2016
+case "$out" in *'First line with `backtick` and $HOME'*) pass "pr_comments_json_round_trip" ;; *) fail "pr_comments_json_round_trip" "$out" ;; esac
+
+pr_reset; out="$(AZ_MOCK_FIXTURE="$FIXTURES/azdo-pr-threads-marker.json" pr_run "$REPO_PR" azdo forge_pr_comments_json 42)"
+case "$out" in *'<!-- review-pr:abc123 -->'*) pass "pr_comments_json_skips_contentless: marker present" ;; *) fail "pr_comments_json_skips_contentless: marker present" "$out" ;; esac
+case "$out" in *None*|*null*) fail "pr_comments_json_skips_contentless: no None/null" "$out" ;; *) pass "pr_comments_json_skips_contentless: no None/null" ;; esac
+
+# A repo with origin/main and an agent branch that adds src/a.txt.
+REPO_DIFF="$(make_repo 'https://dev.azure.com/contoso/MyProject/_git/my-repo')"
+(
+  cd "$REPO_DIFF"
+  git config user.email t@example.invalid; git config user.name t
+  git checkout -q -b main
+  printf 'base\n' > base.txt; git add base.txt; git commit -q -m base
+  git update-ref refs/remotes/origin/main HEAD
+  git checkout -q -b agent/x
+  mkdir src; printf 'new\n' > src/a.txt; git add src/a.txt; git commit -q -m feature
+  git config diff.noprefix true
+)
+pr_reset; out="$(DEFAULT_BRANCH=main pr_run "$REPO_DIFF" azdo forge_pr_diff 42)"
+case "$out" in *'diff --git a/src/a.txt b/src/a.txt'*) pass "pr_diff_azdo_three_dot (diff.noprefix ignored)" ;; *) fail "pr_diff_azdo_three_dot (diff.noprefix ignored)" "$out" ;; esac
+
+pr_reset; pr_run "$REPO_DIFF" azdo forge_pr_diff 42 >/dev/null
+assert_eq "pr_diff_azdo_requires_default_branch: rc 1" "1" "$(pr_rc)"
+case "$(cat "$PR_LOG_DIR/err")" in *'DEFAULT_BRANCH must be set'*) pass "pr_diff_azdo_requires_default_branch: message" ;; *) fail "pr_diff_azdo_requires_default_branch: message" "$(cat "$PR_LOG_DIR/err")" ;; esac
+
+pr_reset; out="$(pr_run "$REPO_DIFF" azdo forge_pr_head_sha 42)"
+assert_eq "pr_head_sha_azdo equals git rev-parse HEAD" "$(git -C "$REPO_DIFF" rev-parse HEAD)" "$out"
+assert_eq "pr_head_sha_azdo makes no az call" "0" "$(wc -c < "$PR_LOG_DIR/az.log" | tr -d ' ')"
+
+# IFS is newline/tab here, so the verb and its arguments go in as separate words.
+for verb in forge_pr_diff forge_pr_head_sha forge_pr_comment forge_pr_comments_json; do
+  pr_reset
+  DEFAULT_BRANCH=main pr_run "$REPO_PR" forgejo "$verb" 42 "$PR_BODY" >/dev/null
+  assert_eq "pr_verbs_refuse_unknown_forge: $verb" "2" "$(pr_rc)"
+done
+
+rm -rf "$PR_LOG_DIR" "$PR_NOGIT" "$REPO_PR" "$REPO_DIFF"
+
 # --- summary -------------------------------------------------------------
 
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"
