@@ -94,6 +94,52 @@ run_agent_driver() {
   OUT="$(cat "$TMP/out")"; ERR="$(cat "$TMP/err")"
 }
 
+# run_loop <steps-csv> [VAR=value ...] — runs the driver for real against a fresh
+# bare origin (clone in $WORK, so origin/HEAD exists) with the scripted claude
+# mock (tests/mocks/claude, step mode) and the origin shim, which makes detect_forge
+# see an Azure DevOps remote while pushes go to the bare repo. Sets RC, OUT, ERR,
+# AZLOG (az argv log), CLAUDELOG (agent call log), WORK and BARE.
+LOOP_N=0
+RC=0; OUT=''; ERR=''; AZLOG=''; CLAUDELOG=''; WORK=''; BARE=''
+run_loop() {
+  local steps="$1" dir seed
+  shift
+  LOOP_N=$((LOOP_N + 1))
+  dir="$TMP/loop-$LOOP_N"; BARE="$dir/bare.git"; WORK="$dir/work"; seed="$dir/seed"
+  mkdir -p "$dir"
+  git init -q --bare -b main "$BARE"
+  git init -q -b main "$seed"
+  git -C "$seed" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m init
+  git -C "$seed" push -q "$BARE" main
+  git clone -q "$BARE" "$WORK" 2>/dev/null
+  tr ',' '\n' <<<"$steps" > "$dir/steps"
+  : > "$dir/az.log"; : > "$dir/claude.log"
+  {
+    printf 'work-item show\t%s/forge-workitem-azdo.json\n' "$FIXTURES"
+    printf 'work-item update\t%s/forge-workitem-azdo.json\n' "$FIXTURES"
+    printf 'repos pr create\t%s/azdo-pr-create.tsv\n' "$FIXTURES"
+    printf 'resource comments\t%s/%s\n' "$FIXTURES" "${AZ_COMMENTS:-forge-comments-azdo.json}"
+  } > "$dir/map"
+  RC=0
+  # shellcheck disable=SC2016  # $1/$2 are for the inner bash, not this one
+  env -i HOME="$TMP" PATH="$MOCKS/git-origin:$MOCKS:$PATH" \
+    GIT_MOCK_REAL="$(command -v git)" \
+    GIT_MOCK_ORIGIN_URL=https://dev.azure.com/contoso/MyProject/_git/my-repo \
+    AZURE_DEVOPS_EXT_PAT=pat ISSUE_NUMBER=7 DELAY_OVERRIDE_SEC=0 \
+    GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=t@example.invalid \
+    GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=t@example.invalid \
+    AZ_MOCK_FIXTURE="$FIXTURES/forge-workitem-azdo.json" AZ_MOCK_MAP="$dir/map" AZ_MOCK_LOG="$dir/az.log" \
+    CLAUDE_MOCK_STEPS="$dir/steps" CLAUDE_MOCK_STATE="$dir/claude.state" CLAUDE_MOCK_LOG="$dir/claude.log" \
+    "$@" bash -c 'cd "$1" && bash "$2"' _ "$WORK" "$ROOT/scripts/implement-azdo.sh" \
+    >"$dir/out" 2>"$dir/err" || RC=$?
+  OUT="$(cat "$dir/out")"; ERR="$(cat "$dir/err")"
+  AZLOG="$(cat "$dir/az.log")"
+  # shellcheck disable=SC2034  # CLAUDELOG is read by the retry-loop tests
+  CLAUDELOG="$(cat "$dir/claude.log")"
+}
+
+count_reports() { grep -c 'ai-implement run (local, Azure DevOps) — attempt' <<<"$1" || true; }
+
 section "token source"
 
 SENTINEL="tok-SECRET-9f3a"
@@ -156,6 +202,59 @@ DROP_ORIGIN_MAIN=1 run_agent_driver CLAUDE_MOCK_TOUCH=src/app.cs
 assert_eq "missing_base_ref_blocks_run: rc" "1" "$RC"
 assert_contains "missing_base_ref_blocks_run: message" "cannot diff" "$ERR"
 assert_not_contains "missing_base_ref_blocks_run: no push attempt" "could not push" "$ERR"
+
+section "one attempt"
+
+run_loop success
+assert_eq "attempt_success: rc" "0" "$RC"
+assert_contains "attempt_success: PR created" "repos pr create" "$AZLOG"
+assert_contains "attempt_success: work item linked" "--work-items 7" "$AZLOG"
+assert_eq "attempt_success: one report" "1" "$(count_reports "$AZLOG")"
+assert_contains "attempt_success: report heading" "— attempt 1" "$AZLOG"
+assert_contains "attempt_success: outcome" "**Outcome:** success" "$AZLOG"
+assert_contains "attempt_success: turns" "**Turns:** 4 / cap" "$AZLOG"
+# shellcheck disable=SC2016  # literal dollar sign
+assert_contains "attempt_success: cost" '**Cost:** $0.0042' "$AZLOG"
+assert_contains "attempt_success: PR in report" "draft PR: !42" "$AZLOG"
+assert_contains "attempt_success: branch pushed" "ai/7-ok-1" "$(git -C "$BARE" branch --list 'ai/7-ok-1')"
+assert_contains "attempt_success: draft PR line" "draft PR  : #42" "$OUT"
+
+run_loop api_auth
+assert_eq "attempt_api_auth: rc" "1" "$RC"
+assert_eq "attempt_api_auth: one report" "1" "$(count_reports "$AZLOG")"
+assert_contains "attempt_api_auth: outcome" "**Outcome:** failed: api_auth" "$AZLOG"
+assert_not_contains "attempt_api_auth: no PR" "repos pr create" "$AZLOG"
+
+run_loop pipeline-file
+assert_eq "attempt_pipeline_file: rc" "1" "$RC"
+assert_not_contains "attempt_pipeline_file: no PR" "repos pr create" "$AZLOG"
+assert_eq "attempt_pipeline_file: branch not pushed" "" "$(git -C "$BARE" branch --list 'ai/7-pf-1')"
+assert_eq "attempt_pipeline_file: one report" "1" "$(count_reports "$AZLOG")"
+assert_contains "attempt_pipeline_file: report names file" "azure-pipelines.yml" "$AZLOG"
+
+run_loop success
+assert_not_contains "g5_banner_no_longer_unavailable" "retry            : unavailable" "$OUT"
+assert_contains "g5_banner_names_policy" "lib/retry-policy.sh" "$OUT"
+assert_not_contains "g5_report_no_unavailable_text" "Retry and auto-merge are unavailable" "$AZLOG"
+
+# The report must round-trip through check-attempt-cap.sh: it counts a failed
+# attempt, and an unknown or zero-turn report is still counted correctly.
+cap_roundtrip() {
+  local result="$1" body comments
+  # shellcheck disable=SC2016  # $1/$2 are for the inner bash, not this one
+  body="$(env -i HOME="$TMP" PATH="$PATH" bash -c '
+    source "$1"
+    ATTEMPT_SECONDS=5 TURNS_BUDGET=80 RUN_CONTEXT=pipeline RUN_ATTEMPT=1 RESULT_FILE="$2"
+    render_report "failed: task_failure" "next: stopping"' _ "$ROOT/scripts/implement-azdo.sh" "$result")"
+  comments="$(jq -Rs '[{body: .}]' <<<"$body")"
+  env -i HOME="$TMP" PATH="$PATH" ISSUE_NUMBER=7 REPO=contoso/my-repo DRY_RUN=1 \
+    ISSUE_COMMENTS_JSON="$comments" bash "$ROOT/scripts/check-attempt-cap.sh"
+}
+cap_out="$(cap_roundtrip "$FIXTURES/result-max-turns.json")"
+assert_contains "cap_roundtrip_max_turns: attempt" "attempt=2" "$cap_out"
+assert_contains "cap_roundtrip_max_turns: non-starts" "non-starts=0" "$cap_out"
+cap_out="$(cap_roundtrip "$FIXTURES/result-api-auth.json")"
+assert_contains "cap_roundtrip_api_auth: attempt" "attempt=2" "$cap_out"
 
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"
 printf '  %s%d passed%s' "$C_GREEN" "$PASS" "$C_OFF"

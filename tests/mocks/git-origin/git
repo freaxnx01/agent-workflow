@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#
+# git — origin shim for the Azure DevOps driver tests.
+#
+# Intercepts exactly one call, `git remote get-url origin`, and prints
+# $GIT_MOCK_ORIGIN_URL so detect_forge sees an Azure DevOps remote while the
+# real origin stays a local bare repo. Needed because url.*.insteadOf would also
+# rewrite `remote get-url`. Everything else runs the real git ($GIT_MOCK_REAL).
+set -euo pipefail
+
+if [[ "${1:-} ${2:-} ${3:-}" == "remote get-url origin" ]]; then
+  printf '%s\n' "${GIT_MOCK_ORIGIN_URL:?GIT_MOCK_ORIGIN_URL must be set}"
+  exit 0
+fi
+exec "${GIT_MOCK_REAL:?GIT_MOCK_REAL must be set}" "$@"
