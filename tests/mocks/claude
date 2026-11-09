@@ -44,6 +44,9 @@ if [[ -n "${CLAUDE_MOCK_STEPS:-}" ]]; then
     success)       _step_commit ok HELLO.md; cat "$fixtures/result-success-cheap.json" ;;
     pipeline-file) _step_commit pf azure-pipelines.yml; cat "$fixtures/result-success-cheap.json" ;;
     success-fixed) _step_commit same HELLO.md; cat "$fixtures/result-success-cheap.json" ;;
+    success-nobranch)
+      printf 'mock change\n' > HELLO.md; git add HELLO.md; git commit -q -m "mock agent change"
+      cat "$fixtures/result-success-cheap.json" ;;
     transient|transient-pushed|transient-pushed-fixed|task_failure)
       if [[ "$step" == transient-pushed-fixed ]]; then _step_commit same a.txt; else _step_commit try a.txt; fi
       printf 'junk\n' > junk.txt
@@ -51,6 +54,7 @@ if [[ -n "${CLAUDE_MOCK_STEPS:-}" ]]; then
       if [[ "$step" == task_failure ]]; then cat "$fixtures/result-max-turns.json"
       else cat "$fixtures/result-transient.json"; fi
       exit 1 ;;
+    transient-nobranch) cat "$fixtures/result-transient.json"; exit 1 ;;
     api_auth)      cat "$fixtures/result-api-auth.json"; exit 1 ;;
     hang)          sleep 30; exit 0 ;;
     *)             printf 'claude mock: unknown step "%s" for call %s\n' "$step" "$n" >&2; exit 64 ;;

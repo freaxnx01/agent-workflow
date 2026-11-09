@@ -185,7 +185,9 @@ run_attempt() {
     bash "$HERE/lib/agent-cmd-claude-implement.sh" "$PROMPT_FILE" "$RESULT_FILE" || AGENT_RC=$?
   ATTEMPT_SECONDS="$SECONDS"
 
-  HEAD_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+  # Empty on a detached HEAD, which is how Azure Pipelines checks out: there is
+  # no branch called HEAD to push, report or delete.
+  HEAD_BRANCH="$(git symbolic-ref --quiet --short HEAD || true)"
   ATTEMPT_CLASS="$(classify_attempt "$AGENT_RC" "$RESULT_FILE")"
   printf '\noutcome: %s (agent rc=%s)\n' "$ATTEMPT_CLASS" "$AGENT_RC"
 }
@@ -238,9 +240,9 @@ push_branch() {
 # Sets PR_ID and returns 0; on failure sets ATTEMPT_ERROR and returns 1.
 open_draft_pr() {
   ATTEMPT_ERROR=''
-  if [[ "$HEAD_BRANCH" == "$DEFAULT_BRANCH" ]]; then
-    ATTEMPT_ERROR="still on $DEFAULT_BRANCH; the agent did not branch, so there is nothing to PR"
-    printf 'error: still on %s — the agent did not branch, so there is nothing to PR.\n' "$DEFAULT_BRANCH" >&2
+  if [[ -z "$HEAD_BRANCH" || "$HEAD_BRANCH" == "$DEFAULT_BRANCH" ]]; then
+    ATTEMPT_ERROR="still on ${HEAD_BRANCH:-a detached HEAD}; the agent did not branch, so there is nothing to PR"
+    printf 'error: still on %s — the agent did not branch, so there is nothing to PR.\n' "${HEAD_BRANCH:-a detached HEAD}" >&2
     return 1
   fi
 

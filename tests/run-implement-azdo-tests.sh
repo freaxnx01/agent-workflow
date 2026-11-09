@@ -112,6 +112,8 @@ run_loop() {
   git -C "$seed" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m init
   git -C "$seed" push -q "$BARE" main
   git clone -q "$BARE" "$WORK" 2>/dev/null
+  # Azure Pipelines checks out a detached HEAD; LOOP_DETACH=1 reproduces that.
+  [[ -z "${LOOP_DETACH:-}" ]] || git -C "$WORK" checkout -q --detach
   tr ',' '\n' <<<"$steps" > "$dir/steps"
   : > "$dir/az.log"; : > "$dir/claude.log"
   {
@@ -335,6 +337,19 @@ assert_contains "reused_branch: remote tip is attempt 2" "HELLO.md" "$(git -C "$
 assert_not_contains "reused_branch: stale commit gone" "a.txt" "$(git -C "$BARE" ls-tree -r --name-only ai/7-same)"
 
 # reset_workspace keeps ignored files locally and wipes them on a pipeline agent.
+
+# Found live (run 42): on a detached checkout the attempt "ended on" HEAD, and
+# the reset tried `git branch -D HEAD`.
+LOOP_DETACH=1 run_loop transient-nobranch,success
+assert_eq "retry_detached_checkout: rc" "0" "$RC"
+assert_eq "retry_detached_checkout: two reports" "2" "$(count_reports "$AZLOG")"
+assert_not_contains "retry_detached_checkout: no reset error" "could not reset" "$ERR"
+LOOP_DETACH=1 run_loop api_auth
+assert_not_contains "detached_no_branch: no branch-left line" "branch left on the server" "$AZLOG"
+LOOP_DETACH=1 run_loop success-nobranch
+assert_eq "detached_no_branch_success: rc" "1" "$RC"
+assert_not_contains "detached_no_branch_success: no PR" "repos pr create" "$AZLOG"
+assert_contains "detached_no_branch_success: says why" "did not branch" "$AZLOG"
 section "agent timeout"
 
 run_loop hang,success IMPLEMENT_TIMEOUT_MIN=0.02
