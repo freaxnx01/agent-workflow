@@ -536,6 +536,21 @@ for verb in forge_pr_diff forge_pr_head_sha forge_pr_comment forge_pr_comments_j
   assert_eq "pr_verbs_refuse_unknown_forge: $verb" "2" "$(pr_rc)"
 done
 
+# `:?` exits the shell it runs in, so the verb runs in a nested subshell.
+# shellcheck disable=SC2317  # called through pr_run
+without_repo() { ( unset REPO; "$@" ); }
+for verb in forge_pr_diff forge_pr_head_sha forge_pr_comment forge_pr_comments_json; do
+  pr_reset
+  pr_run "$PR_NOGIT" github without_repo "$verb" 42 "$PR_BODY" >/dev/null
+  if [[ "$(pr_rc)" -ne 0 ]]; then pass "pr_verbs_github_need_repo: $verb"; else fail "pr_verbs_github_need_repo: $verb" "rc 0"; fi
+done
+
+printf '{"value":[{"id":1,"status":"active"}],"count":1}' > "$PR_LOG_DIR/no-comments-key.json"
+pr_reset; out="$(AZ_MOCK_FIXTURE="$PR_LOG_DIR/no-comments-key.json" pr_run "$REPO_PR" azdo forge_pr_comments_json 42)"
+assert_eq "pr_comments_json_thread_without_comments: no output" "" "$out"
+assert_eq "pr_comments_json_thread_without_comments: rc 0" "0" "$(pr_rc)"
+assert_eq "pr_comments_json_thread_without_comments: no error" "" "$(cat "$PR_LOG_DIR/err")"
+
 rm -rf "$PR_LOG_DIR" "$PR_NOGIT" "$REPO_PR" "$REPO_DIFF"
 
 # --- summary -------------------------------------------------------------

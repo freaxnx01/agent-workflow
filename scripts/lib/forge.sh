@@ -394,6 +394,19 @@ for thread in json.load(sys.stdin).get("value") or []:
             print(content)'
 }
 
+# _forge_azdo_threads <pr> [az args...]  the pullRequestThreads call shared by
+# forge_pr_comment (POST) and forge_pr_comments_json (GET); the caller's extra
+# arguments pick the method, the input and the output format.
+_forge_azdo_threads() {
+  local pr="$1"; shift
+  _forge_source_azdo; resolve_azdo_context || return 1
+  az devops invoke --org "$(azdo_org_url)" --area git \
+    --resource pullRequestThreads \
+    --route-parameters project="$AZDO_PROJECT" repositoryId="$AZDO_REPO" \
+      pullRequestId="$pr" \
+    --api-version 7.1 --only-show-errors "$@"
+}
+
 # forge_pr_diff <pr>
 #
 # Writes the unified diff to stdout. On azdo it is the three-dot diff of the
@@ -451,15 +464,9 @@ forge_pr_comment() {
       gh pr comment "$pr" --repo "$REPO" --body-file "$f"
       ;;
     azdo)
-      _forge_source_azdo; resolve_azdo_context || return 1
       jq -n --rawfile c "$f" \
         '{comments: [{parentCommentId: 0, content: $c, commentType: 1}], status: "active"}' \
-      | az devops invoke --org "$(azdo_org_url)" --area git \
-          --resource pullRequestThreads \
-          --route-parameters project="$AZDO_PROJECT" repositoryId="$AZDO_REPO" \
-            pullRequestId="$pr" \
-          --http-method POST --in-file /dev/stdin \
-          --api-version 7.1 --output none --only-show-errors
+      | _forge_azdo_threads "$pr" --http-method POST --in-file /dev/stdin --output none
       ;;
     *) _forge_no_pr_adapter ;;
   esac
@@ -478,13 +485,7 @@ forge_pr_comments_json() {
       gh pr view "$pr" --repo "$REPO" --json comments --jq '.comments[].body'
       ;;
     azdo)
-      _forge_source_azdo; resolve_azdo_context || return 1
-      az devops invoke --org "$(azdo_org_url)" --area git \
-        --resource pullRequestThreads \
-        --route-parameters project="$AZDO_PROJECT" repositoryId="$AZDO_REPO" \
-          pullRequestId="$pr" \
-        --api-version 7.1 --output json --only-show-errors \
-      | _forge_azdo_thread_bodies
+      _forge_azdo_threads "$pr" --output json | _forge_azdo_thread_bodies
       ;;
     *) _forge_no_pr_adapter ;;
   esac

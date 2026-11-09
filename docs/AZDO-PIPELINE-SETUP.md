@@ -378,7 +378,8 @@ Budget:
    `ai-implement <ai-implement@noreply.invalid>`, even if the environment sets
    git identity variables. The agent pushes them to the PR branch with the
    same extraheader auth as the PR branch itself. The token is never written
-   into the remote URL or `.git/config`. The fix is skipped when the checkout
+   into the remote URL or `.git/config`, and the fix agent runs without it:
+   the push happens afterwards, outside the agent. The fix is skipped when the checkout
    is not clean.
 3. **Never votes.** The PR stays a draft. The agent never votes, approves,
    completes or publishes it; a human does. Merge gates stay branch policies
@@ -392,13 +393,28 @@ Budget:
    verdict comment says the review failed.
 6. **Time budget.** Plan for about 10 min per review and 20 min per fix: about
    70 min at the default of 2 iterations, and 30 min more per extra iteration.
-   Only the fix has a hard limit (20 min, then SIGKILL after 30 s); a review is
-   bounded only by the job's `timeoutInMinutes: 240` from section 11.
+   Both agent calls have hard limits. The fix runs under
+   `timeout --kill-after=30s 20m`. Each review agent call is bounded by
+   `AGENT_TIMEOUT_SECONDS` of `review-pr.sh` (default 600 s, SIGKILL 30 s
+   later); its first try and its retry share that one deadline. Only the API
+   and git calls around the agents are bounded just by the job's
+   `timeoutInMinutes: 240` from section 11.
 7. **Failures.** A review or self-fix failure never turns the job red and
    never causes a retry. It is reported in the verdict comment.
 8. **The `self-fix:` line.** The verdict comment ends its header with one of:
    - `off` — `SELF_FIX` is not 1;
    - `not needed` — the verdict did not ask for changes;
-   - `not run` — a fix was wanted, but no iteration completed (dirty
-     checkout, guard refusal, or `SELF_FIX_MAX_ITERATIONS=0`);
+   - `not run` — a fix was wanted, but no iteration completed. The comment
+     names the cause when there is one: a dirty checkout (`self-fix skipped`),
+     a failed, timed-out or no-op fix (`self-fix stopped: the fix failed, timed
+     out or made no change`), a fix that left the PR branch (`the fix left the
+     checkout off <branch>`), a guard refusal (`the fix changed pipeline
+     files: ...`), a guard that could not check (`could not check the fix for
+     pipeline files`) or a failed push. `SELF_FIX_MAX_ITERATIONS=0` has no
+     line, because no pass was attempted;
    - `N iteration(s)` — N fix passes were pushed.
+
+   If the loop aborts after a fix was pushed (the head lookup or the
+   re-review failed), the verdict above is for an earlier commit. The loop's
+   outputs cannot tell this apart from a normal run, so the comment does not
+   say so: compare its `head:` line with the PR's tip.
