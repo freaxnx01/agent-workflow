@@ -399,6 +399,16 @@ assert_eq "empty comment text yields an empty body" '[{"body": ""}]' \
 assert_eq "null comments list yields an empty array" '[]' \
   "$(text_of '{"comments":null}')"
 
+# A real report, read back from the comments API after the in-job retry proof
+# (2026-11-09): markdown with no wrapper tags, format "html".
+live_comments="$(text_of "$(cat "$FIXTURES/azdo-comments-report-live.json")")"
+assert_eq "live report body starts with the report heading" "$REPORT_HEAD" \
+  "$(python3 -c 'import sys,json; print(json.load(sys.stdin)[0]["body"].splitlines()[0])' <<<"$live_comments")"
+live_cap="$(ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 ISSUE_COMMENTS_JSON="$live_comments" \
+  bash "$ROOT/scripts/check-attempt-cap.sh" 2>/dev/null)"
+assert_eq "live report counts as one real attempt" "attempt=2" "$(grep '^attempt=' <<<"$live_cap")"
+assert_eq "live report is not a non-start" "non-starts=0" "$(grep '^non-starts=' <<<"$live_cap")"
+
 section "azdo tag arithmetic — read-modify-write, since set_tags REPLACES"
 
 # The label verbs are read-modify-write on this forge: azdo_set_tags replaces the

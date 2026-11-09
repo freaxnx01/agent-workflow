@@ -331,7 +331,8 @@ disables the per-attempt limit (GNU `timeout` semantics), and the job's
 `timeoutInMinutes` is then the only bound. The agent gets SIGKILL 30 s after
 the limit.
 
-Set the job limit above the worst-case total:
+Set the job limit above the worst-case total. A pipeline that lists only
+`steps:` has no place for it, so wrap the steps in a job:
 
 ```yaml
 jobs:
