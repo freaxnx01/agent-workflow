@@ -399,6 +399,15 @@ LOOP_DETACH=1 run_loop success-nobranch
 assert_eq "detached_no_branch_success: rc" "1" "$RC"
 assert_not_contains "detached_no_branch_success: no PR" "repos pr create" "$AZLOG"
 assert_contains "detached_no_branch_success: says why" "did not branch" "$AZLOG"
+
+# Found live (run 50): the agent branched, left its edits uncommitted and
+# reported success. The driver pushed the empty branch and opened an empty PR.
+run_loop success-nocommit
+assert_eq "no_commit_success: rc" "1" "$RC"
+assert_not_contains "no_commit_success: no PR" "repos pr create" "$AZLOG"
+assert_contains "no_commit_success: says why" "committed nothing" "$AZLOG"
+assert_contains "no_commit_success: mentions leftovers" "uncommitted changes" "$AZLOG"
+assert_eq "no_commit_success: branch not pushed" "" "$(git -C "$BARE" branch --list 'ai/7-nc-1')"
 # A failing cap preview must not read as "attempt cap reached".
 # shellcheck disable=SC2016  # $1 is for the inner bash, not this one
 preview_out="$(env -i HOME="$TMP" PATH="$PATH" bash -c '

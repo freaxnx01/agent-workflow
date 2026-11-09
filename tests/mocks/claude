@@ -95,6 +95,9 @@ if [[ -n "${CLAUDE_MOCK_STEPS:-}" ]]; then
       _step_commit ok HELLO.md; git push -q origin HEAD
       printf 'more\n' > MORE.md; git add MORE.md; git commit -q -m "mock follow-up"
       cat "$fixtures/result-success-cheap.json" ;;
+    success-nocommit)
+      git checkout -q -b "ai/7-nc-$n"; printf 'uncommitted\n' > HELLO.md
+      cat "$fixtures/result-success-cheap.json" ;;
     success-nobranch)
       printf 'mock change\n' > HELLO.md; git add HELLO.md; git commit -q -m "mock agent change"
       cat "$fixtures/result-success-cheap.json" ;;

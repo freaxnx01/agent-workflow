@@ -314,6 +314,20 @@ push_for_pr() {
   fi
 }
 
+# True (and sets ATTEMPT_ERROR) when the branch holds no commit beyond the
+# default branch. Found live: an agent branched, left its edits uncommitted and
+# reported success, and an empty PR opened.
+no_new_commits() {
+  local leftovers='' ahead
+  # No base ref to count against: leave it to the pipeline-file guard, which
+  # fails closed on that and says so.
+  ahead="$(git rev-list --count "origin/$DEFAULT_BRANCH..HEAD" 2>/dev/null)" || return 1
+  [[ "$ahead" == 0 ]] || return 1
+  [[ -z "$(git status --porcelain)" ]] || leftovers=' (uncommitted changes were left in the checkout)'
+  ATTEMPT_ERROR="the agent committed nothing on $HEAD_BRANCH$leftovers; nothing to PR"
+  printf 'error: %s.\n' "$ATTEMPT_ERROR" >&2
+}
+
 # Through the adapter, so the work item and the PR are linked -- Azure DevOps
 # has no "Closes #N" convention, the --work-items association IS the link.
 # Sets PR_ID and returns 0; on failure sets ATTEMPT_ERROR and returns 1.
@@ -324,6 +338,7 @@ open_draft_pr() {
     printf 'error: still on %s — the agent did not branch, so there is nothing to PR.\n' "${HEAD_BRANCH:-a detached HEAD}" >&2
     return 1
   fi
+  no_new_commits && return 1
 
   # The agent must not alter the pipeline definitions that validate its own PR.
   # Any non-zero is fatal: 1 = a pipeline file changed (the guard lists them on
