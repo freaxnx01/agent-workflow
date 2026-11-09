@@ -361,6 +361,14 @@ assert_not_contains "reused_branch: stale commit gone" "a.txt" "$(git -C "$BARE"
 
 # A branch that existed on the server before the run is a collision: reported,
 # never overwritten.
+# The agent pushed its branch, then committed once more and succeeded: the
+# server's tip is behind HEAD, so a plain fast-forward push, not a collision.
+run_loop success-pushed-then-more
+assert_eq "agent_pushed_then_committed: rc" "0" "$RC"
+assert_eq "agent_pushed_then_committed: one PR" "1" "$(grep -c 'repos pr create' <<<"$AZLOG" || true)"
+assert_contains "agent_pushed_then_committed: server has the follow-up" "MORE.md" \
+  "$(git -C "$BARE" ls-tree --name-only ai/7-ok-1)"
+
 LOOP_SEED_BRANCH=ai/7-same run_loop success-fixed
 assert_eq "preexisting_branch: rc" "1" "$RC"
 assert_not_contains "preexisting_branch: no PR" "repos pr create" "$AZLOG"

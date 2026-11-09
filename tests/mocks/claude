@@ -44,6 +44,10 @@ if [[ -n "${CLAUDE_MOCK_STEPS:-}" ]]; then
     success)       _step_commit ok HELLO.md; cat "$fixtures/result-success-cheap.json" ;;
     pipeline-file) _step_commit pf azure-pipelines.yml; cat "$fixtures/result-success-cheap.json" ;;
     success-fixed) _step_commit same HELLO.md; cat "$fixtures/result-success-cheap.json" ;;
+    success-pushed-then-more)
+      _step_commit ok HELLO.md; git push -q origin HEAD
+      printf 'more\n' > MORE.md; git add MORE.md; git commit -q -m "mock follow-up"
+      cat "$fixtures/result-success-cheap.json" ;;
     success-nobranch)
       printf 'mock change\n' > HELLO.md; git add HELLO.md; git commit -q -m "mock agent change"
       cat "$fixtures/result-success-cheap.json" ;;

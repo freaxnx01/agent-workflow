@@ -249,14 +249,18 @@ record_pushed_tip() {
   RUN_PUSHED["$HEAD_BRANCH"]="$remote_sha"
 }
 
-# Gets HEAD onto the server. Absent: plain push. Already HEAD: nothing to do. A
-# different tip is replaced only when this run's own failed attempt left it (and
-# then only that exact state); any other branch of that name is a collision.
+# Gets HEAD onto the server. Absent, or behind HEAD (the agent pushed, then
+# committed more): plain push. Already HEAD: nothing to do. A diverged tip is
+# replaced only when this run's own failed attempt left it (and then only that
+# exact state); any other branch of that name is a collision.
 # Sets ATTEMPT_ERROR and returns 1 on failure.
 push_for_pr() {
   local remote_sha
   remote_sha="$(remote_branch_sha "$HEAD_BRANCH")"
   [[ "$remote_sha" != "$(git rev-parse HEAD)" ]] || return 0
+  if [[ -n "$remote_sha" ]] && git merge-base --is-ancestor "$remote_sha" HEAD 2>/dev/null; then
+    remote_sha=''
+  fi
   if [[ -n "$remote_sha" && "${RUN_PUSHED[$HEAD_BRANCH]:-}" != "$remote_sha" ]]; then
     ATTEMPT_ERROR="branch $HEAD_BRANCH already exists on the server with other commits; not overwriting it"
     printf 'error: branch %s already exists on the server with other commits; not overwriting it\n' "$HEAD_BRANCH" >&2

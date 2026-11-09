@@ -322,9 +322,11 @@ A remote branch that a failed attempt pushed is left in place and named in its
 report. If a later attempt of the same run ends on that branch name with
 different commits, the driver replaces the earlier attempt's tip with
 `--force-with-lease` against the exact tip it saw, so the PR carries the
-successful attempt's commits. Any other existing branch with that name (one
-that was on the server before the run, or whose tip is not the one the run
-left) is a collision: the attempt fails and nothing is pushed.
+successful attempt's commits. A tip that HEAD already contains (the agent
+pushed, then committed more) gets a plain fast-forward push. Any other existing
+branch with that name (one that was on the server before the run, or whose tip
+is not the one the run left) is a collision: the attempt fails and nothing is
+pushed.
 
 ### 11.4 Timeouts
 
