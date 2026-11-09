@@ -386,6 +386,19 @@ assert_eq "attempt cap counts both non-starts" "non-starts=2" "$(grep '^non-star
 
 rm -rf "$az_dir" "$REPO_AZ"
 
+# A null or empty text, or a null comments list, must degrade to empty -- the
+# conversion may not crash the export (the old mapping passed null through).
+text_of() {
+  # shellcheck disable=SC1090
+  ( source "$LIB"; printf '%s' "$1" | _forge_azdo_comments_text )
+}
+assert_eq "null comment text yields an empty body" '[{"body": ""}]' \
+  "$(text_of '{"comments":[{"text":null}]}')"
+assert_eq "empty comment text yields an empty body" '[{"body": ""}]' \
+  "$(text_of '{"comments":[{"text":""}]}')"
+assert_eq "null comments list yields an empty array" '[]' \
+  "$(text_of '{"comments":null}')"
+
 section "azdo tag arithmetic — read-modify-write, since set_tags REPLACES"
 
 # The label verbs are read-modify-write on this forge: azdo_set_tags replaces the
