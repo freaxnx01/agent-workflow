@@ -1,6 +1,6 @@
 # Azure DevOps track — state and next steps (#573)
 
-**Date:** 2026-11-06 · **Status:** open decisions, nothing in flight
+**Date:** 2026-11-06 · **Status:** decisions taken 2026-11-09 (see the end); specs and plans written
 
 ## Done
 
@@ -53,3 +53,20 @@
 3. **Pilot with a real .NET work repository** (chosen as next step). Copying
    work code into the personal sandbox org needs the maintainer's explicit OK
    first; the alternative is running the pilot in the work org.
+
+## Decisions taken (2026-11-09)
+
+1. **Token source:** each person runs `claude setup-token` and puts the token in
+   the secret variable of their **own** pipeline. No shared or per-tagger token.
+   Add a branch-control check on the pool or variable group.
+2. **Gap items a–d** are all in scope. They are worked unattended in the
+   personal sandbox: feature branches and draft PRs, no merges in
+   agent-workflow, no writes to the work org. Fixture PRs in the sandbox repo
+   may be merged. Order: c → d → a → b.
+   - Specs: `docs/superpowers/specs/2026-11-09-azdo-*-design.md`
+   - Plans: `docs/superpowers/plans/2026-11-09-azdo-*.md`
+   - Security calls for c: a run whose diff touches a pipeline file fails
+     before the PR. If build validation does not run on draft PRs, it runs
+     once a human publishes the PR.
+3. **Pilot with the real .NET work repository: parked.** No work code goes into
+   the personal sandbox. Item d uses a synthetic sample instead.
