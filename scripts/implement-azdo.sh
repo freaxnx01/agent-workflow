@@ -326,6 +326,15 @@ no_new_commits() {
   [[ -z "$(git status --porcelain)" ]] || leftovers=' (uncommitted changes were left in the checkout)'
   ATTEMPT_ERROR="the agent committed nothing on $HEAD_BRANCH$leftovers; nothing to PR"
   printf 'error: %s.\n' "$ATTEMPT_ERROR" >&2
+  print_agent_summary
+}
+
+# The agent's own closing message, so a run that ends without a commit says why.
+print_agent_summary() {
+  local text
+  text="$(jq -r '.result // empty' "$RESULT_FILE" 2>/dev/null | head -c 2000)" || text=''
+  [[ -n "$text" ]] || return 0
+  printf -- '--- agent summary (first 2000 bytes) ---\n%s\n--- end ---\n' "$text" >&2
 }
 
 # Through the adapter, so the work item and the PR are linked -- Azure DevOps

@@ -408,6 +408,7 @@ assert_not_contains "no_commit_success: no PR" "repos pr create" "$AZLOG"
 assert_contains "no_commit_success: says why" "committed nothing" "$AZLOG"
 assert_contains "no_commit_success: mentions leftovers" "uncommitted changes" "$AZLOG"
 assert_eq "no_commit_success: branch not pushed" "" "$(git -C "$BARE" branch --list 'ai/7-nc-1')"
+assert_contains "no_commit_success: logs what the agent said" "Added the requested hello.md file" "$ERR"
 # A failing cap preview must not read as "attempt cap reached".
 # shellcheck disable=SC2016  # $1 is for the inner bash, not this one
 preview_out="$(env -i HOME="$TMP" PATH="$PATH" bash -c '
