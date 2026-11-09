@@ -409,6 +409,12 @@ assert_contains "no_commit_success: says why" "committed nothing" "$AZLOG"
 assert_contains "no_commit_success: mentions leftovers" "uncommitted changes" "$AZLOG"
 assert_eq "no_commit_success: branch not pushed" "" "$(git -C "$BARE" branch --list 'ai/7-nc-1')"
 assert_contains "no_commit_success: logs what the agent said" "Added the requested hello.md file" "$ERR"
+# The agent succeeds but origin/main is gone: no_new_commits falls through and
+# the pipeline-file guard fails closed with its own message.
+run_loop success CLAUDE_MOCK_DROP_ORIGIN_MAIN=1 MAX_ATTEMPTS=1
+assert_not_contains "no_base_ref_fails_closed: not a no-commit verdict" "committed nothing" "$AZLOG$ERR"
+assert_contains "no_base_ref_fails_closed: guard message" "could not verify the agent left pipeline files alone" "$AZLOG"
+assert_not_contains "no_base_ref_fails_closed: no PR" "repos pr create" "$AZLOG"
 # A failing cap preview must not read as "attempt cap reached".
 # shellcheck disable=SC2016  # $1 is for the inner bash, not this one
 preview_out="$(env -i HOME="$TMP" PATH="$PATH" bash -c '
@@ -522,6 +528,11 @@ assert_eq "self_fix_guard_reported: rc" "0" "$RC"
 assert_eq "self_fix_guard_reported: one thread POST" "1" "$(thread_posts)"
 assert_contains "self_fix_guard_reported: not run" "self-fix: not run" "$AZLOG"
 assert_contains "self_fix_guard_reported: names file" "the fix changed pipeline files: azure-pipelines.yml" "$AZLOG"
+
+run_loop success AI_REVIEW=1 SELF_FIX=1 CLAUDE_MOCK_FIX_FAIL=1 CLAUDE_MOCK_REVIEWS=review-request-changes.json
+assert_eq "self_fix_failure_explained: rc" "0" "$RC"
+assert_contains "self_fix_failure_explained: not run" "self-fix: not run" "$AZLOG"
+assert_contains "self_fix_failure_explained: reason" "self-fix stopped: the fix failed" "$AZLOG"
 
 run_loop success-dirty AI_REVIEW=1 SELF_FIX=1 CLAUDE_MOCK_REVIEWS=review-request-changes.json
 assert_eq "self_fix_skipped_on_dirty_checkout: no fix call" "" "$(cat "$LOOPDIR/fix.log")"

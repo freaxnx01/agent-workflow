@@ -24,7 +24,9 @@
 # Step mode also serves the review and self-fix calls, told apart by argv, and
 # they consume no step: `--output-format json` is the implement call;
 # `--allowedTools` is a fix call (logs `fix <n>` to $CLAUDE_MOCK_FIX_LOG and
-# appends to ${CLAUDE_MOCK_FIX_TOUCH:-FIX.md}); anything else is a review call
+# appends to ${CLAUDE_MOCK_FIX_TOUCH:-FIX.md}; with $CLAUDE_MOCK_FIX_FAIL set it
+# exits 1 without changing anything). $CLAUDE_MOCK_DROP_ORIGIN_MAIN makes the
+# `success` step delete origin/main; anything else is a review call
 # (logs `review <n> args=<argv>` to $CLAUDE_MOCK_REVIEW_LOG, saves its stdin as
 # $CLAUDE_MOCK_REVIEW_DIR/review-<n>.md and prints entry <n> of the
 # comma-separated $CLAUDE_MOCK_REVIEWS, a tests/fixtures file; the last repeats).
@@ -63,6 +65,7 @@ _review_or_fix_call() {
   if [[ " $argv " == *" --allowedTools "* ]]; then
     c="$(_next_count fix)"
     printf 'fix %s\n' "$c" >> "${CLAUDE_MOCK_FIX_LOG:-/dev/null}"
+    [[ -z "${CLAUDE_MOCK_FIX_FAIL:-}" ]] || return 1
     printf 'fix %s\n' "$c" >> "${CLAUDE_MOCK_FIX_TOUCH:-FIX.md}"
     return 0
   fi
@@ -87,7 +90,9 @@ if [[ -n "${CLAUDE_MOCK_STEPS:-}" ]]; then
     "$(git status --porcelain | wc -l)" >> "$CLAUDE_MOCK_LOG"
   step="$(sed -n "${n}p" "$CLAUDE_MOCK_STEPS")"
   case "$step" in
-    success)       _step_commit ok HELLO.md; cat "$fixtures/result-success-cheap.json" ;;
+    success)       _step_commit ok HELLO.md
+                   [[ -z "${CLAUDE_MOCK_DROP_ORIGIN_MAIN:-}" ]] || git update-ref -d refs/remotes/origin/main
+                   cat "$fixtures/result-success-cheap.json" ;;
     success-dirty) _step_commit ok HELLO.md; printf 'junk\n' > junk.txt; cat "$fixtures/result-success-cheap.json" ;;
     pipeline-file) _step_commit pf azure-pipelines.yml; cat "$fixtures/result-success-cheap.json" ;;
     success-fixed) _step_commit same HELLO.md; cat "$fixtures/result-success-cheap.json" ;;

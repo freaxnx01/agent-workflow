@@ -232,12 +232,32 @@ selffix_azdo self-fix-agent
 assert_eq "self_fix_guard_fails_closed: exit 3" "3" "$RC"
 assert_eq "self_fix_guard_fails_closed: remote unchanged" "$BEFORE" "$(git -C "$B" rev-parse agent/x)"
 assert_not_contains "self_fix_guard_fails_closed: no push" " push " "$SF_LOG"
+assert_eq "self_fix_guard_fails_closed: stop file says it could not check" \
+  "self-fix stopped: could not check the fix for pipeline files" "$SF_STOP"
+assert_not_contains "self_fix_guard_fails_closed: not blamed on the fix" "the fix changed pipeline files" "$SF_OUT"
 
 fresh_world
 selffix_azdo self-fix-agent-fail
 assert_eq "self_fix_agent_failure: exit 1" "1" "$RC"
 assert_not_contains "self_fix_agent_failure: no push" " push " "$SF_LOG"
-assert_eq "self_fix_agent_failure: stop file empty" "" "$SF_STOP"
+assert_eq "self_fix_agent_failure: stop file explains" \
+  "self-fix stopped: the fix failed, timed out or made no change" "$SF_STOP"
+
+fresh_world
+BEFORE="$(git -C "$B" rev-parse agent/x)"
+selffix_azdo self-fix-agent-switch
+assert_eq "self_fix_off_branch: exit 4" "4" "$RC"
+assert_eq "self_fix_off_branch: remote unchanged" "$BEFORE" "$(git -C "$B" rev-parse agent/x)"
+assert_not_contains "self_fix_off_branch: no push" " push " "$SF_LOG"
+assert_eq "self_fix_off_branch: stop file" \
+  "self-fix stopped: the fix left the checkout off agent/x" "$SF_STOP"
+
+fresh_world
+selffix_azdo self-fix-agent-env ENV_RECORD="$T/env-record" SYSTEM_ACCESSTOKEN=sys-tok
+assert_eq "self_fix_agent_has_no_credentials: exit 0" "0" "$RC"
+assert_eq "self_fix_agent_has_no_credentials: agent saw neither token" "unset/unset" "$(cat "$T/env-record")"
+assert_eq "self_fix_agent_has_no_credentials: push still succeeds" \
+  "$(git -C "$W" rev-parse HEAD)" "$(git -C "$B" rev-parse agent/x)"
 
 fresh_world
 RC=0
