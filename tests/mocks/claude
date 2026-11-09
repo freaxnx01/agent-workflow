@@ -16,6 +16,9 @@
 #   task_failure      as transient                                 max-turns result, rc 1
 #   api_auth          no git change                                api-auth result, rc 1
 #   pipeline-file     branch ai/7-pf-<n>, commit azure-pipelines.yml  cheap result, rc 0
+#   transient-pushed-fixed / success-fixed
+#                     as transient-pushed / success, but on the same branch
+#                     ai/7-same every call (a reused name across attempts)
 #   hang              no output, sleeps 30 s
 set -euo pipefail
 IFS=$'\n\t'
@@ -24,7 +27,7 @@ cat >/dev/null
 
 # _step_commit <branch-prefix> <file> — branch ai/7-<prefix>-<n> and commit <file>.
 _step_commit() {
-  git checkout -q -b "ai/7-$1-$n"
+  if [[ "$1" == same ]]; then git checkout -q -b ai/7-same; else git checkout -q -b "ai/7-$1-$n"; fi
   printf 'mock change\n' > "$2"
   git add -- "$2"
   git commit -q -m "mock agent change"
@@ -40,8 +43,9 @@ if [[ -n "${CLAUDE_MOCK_STEPS:-}" ]]; then
   case "$step" in
     success)       _step_commit ok HELLO.md; cat "$fixtures/result-success-cheap.json" ;;
     pipeline-file) _step_commit pf azure-pipelines.yml; cat "$fixtures/result-success-cheap.json" ;;
-    transient|transient-pushed|task_failure)
-      _step_commit try a.txt
+    success-fixed) _step_commit same HELLO.md; cat "$fixtures/result-success-cheap.json" ;;
+    transient|transient-pushed|transient-pushed-fixed|task_failure)
+      if [[ "$step" == transient-pushed-fixed ]]; then _step_commit same a.txt; else _step_commit try a.txt; fi
       printf 'junk\n' > junk.txt
       [[ "$step" != transient-pushed ]] || git push -q origin HEAD
       if [[ "$step" == task_failure ]]; then cat "$fixtures/result-max-turns.json"

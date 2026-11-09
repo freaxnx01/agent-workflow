@@ -68,6 +68,8 @@ RUN_CONTEXT=''       # pipeline | local
 DEFAULT_BRANCH=''
 RUN_ATTEMPT=1        # 1-based attempt number within this run
 CAP_ATTEMPT=''       # attempt number counted from the work item's reports
+CAP_SCRIPT_ATTEMPT=''
+CAP_SCRIPT_PROCEED=''
 RETRY_DECISION=''    # retry | stop, from retry_policy
 RETRY_DELAY=0
 PR_ID=''             # empty until open_draft_pr succeeds
@@ -206,8 +208,18 @@ remote_branch_exists() {
     ls-remote --exit-code --heads origin "$1" >/dev/null 2>&1
 }
 
+# Prints the branch's SHA on the server, or nothing when it is absent.
+remote_branch_sha() {
+  git -c http.extraheader="$(_azdo_auth_header)" \
+    ls-remote --heads origin "$1" 2>/dev/null | awk 'NR == 1 {print $1}'
+}
+
+# push_branch <branch> [<expected-remote-sha>]: with a SHA, overwrite only that
+# exact remote state (a stale branch an earlier attempt left behind).
 push_branch() {
-  git -c http.extraheader="$(_azdo_auth_header)" push -q -u origin "$1"
+  local lease=()
+  [[ -z "${2:-}" ]] || lease=("--force-with-lease=refs/heads/$1:$2")
+  git -c http.extraheader="$(_azdo_auth_header)" push -q -u "${lease[@]}" origin "$1"
 }
 
 # Through the adapter, so the work item and the PR are linked -- Azure DevOps
@@ -240,12 +252,16 @@ open_draft_pr() {
     return 1
   fi
 
-  # Push the branch if the agent committed but did not push. A PR cannot be
-  # opened against a ref the server has never seen, and "commit but never push" is
-  # the single largest measured failure mode in this pipeline.
-  if ! remote_branch_exists "$HEAD_BRANCH"; then
-    printf 'pushing  : %s (agent committed but did not push)\n' "$HEAD_BRANCH"
-    if ! push_branch "$HEAD_BRANCH"; then
+  # Push unless the server already has exactly our HEAD. A PR cannot be opened
+  # against a ref the server has never seen, and "commit but never push" is the
+  # single largest measured failure mode in this pipeline. A different remote tip
+  # is an earlier attempt's leftover under the same name: replace it, but only
+  # that exact state.
+  local remote_sha
+  remote_sha="$(remote_branch_sha "$HEAD_BRANCH")"
+  if [[ "$remote_sha" != "$(git rev-parse HEAD)" ]]; then
+    printf 'pushing  : %s (the server does not have this commit)\n' "$HEAD_BRANCH"
+    if ! push_branch "$HEAD_BRANCH" "$remote_sha"; then
       ATTEMPT_ERROR="could not push $HEAD_BRANCH"
       printf 'error: could not push %s\n' "$HEAD_BRANCH" >&2
       return 1
@@ -323,16 +339,39 @@ post_report() {
 # keeps ISSUE_COMMENTS_JSON current). Returns 0 to proceed, 1 when it parked the
 # item; a failure of the script itself stops the run.
 check_cap() {
-  local out="$WORK_DIR/cap.out" proceed
+  run_cap_script "$ISSUE_COMMENTS_JSON" 0 || exit 1
+  CAP_ATTEMPT="$CAP_SCRIPT_ATTEMPT"
+  [[ "$CAP_SCRIPT_PROCEED" == true ]]
+}
+
+# Sets CAP_SCRIPT_ATTEMPT / CAP_SCRIPT_PROCEED for the given comments. With
+# DRY_RUN=1 the script decides but parks nothing; its chatter is dropped then.
+run_cap_script() {
+  local comments="$1" dry="$2" out="$WORK_DIR/cap.out" rc=0
   : > "$out"
-  if ! GITHUB_OUTPUT="$out" REPO="$REPO" ISSUE_COMMENTS_JSON="$ISSUE_COMMENTS_JSON" \
-       MAX_ATTEMPTS="${MAX_ATTEMPTS:-2}" bash "$HERE/check-attempt-cap.sh"; then
-    printf 'error: the attempt cap check failed\n' >&2
-    exit 1
+  if [[ "$dry" == 1 ]]; then
+    GITHUB_OUTPUT="$out" REPO="$REPO" ISSUE_COMMENTS_JSON="$comments" DRY_RUN=1 \
+      MAX_ATTEMPTS="${MAX_ATTEMPTS:-2}" bash "$HERE/check-attempt-cap.sh" >/dev/null || rc=$?
+  else
+    GITHUB_OUTPUT="$out" REPO="$REPO" ISSUE_COMMENTS_JSON="$comments" DRY_RUN=0 \
+      MAX_ATTEMPTS="${MAX_ATTEMPTS:-2}" bash "$HERE/check-attempt-cap.sh" || rc=$?
   fi
-  CAP_ATTEMPT="$(sed -n 's/^attempt=//p' "$out" | tail -1)"
-  proceed="$(sed -n 's/^proceed=//p' "$out" | tail -1)"
-  [[ "$proceed" == true ]]
+  if [[ "$rc" -ne 0 ]]; then
+    printf 'error: the attempt cap check failed\n' >&2
+    return 1
+  fi
+  CAP_SCRIPT_ATTEMPT="$(sed -n 's/^attempt=//p' "$out" | tail -1)"
+  CAP_SCRIPT_PROCEED="$(sed -n 's/^proceed=//p' "$out" | tail -1)"
+}
+
+# Would one more attempt be allowed once the report for the failed one is posted?
+# Asks the cap script itself (dry), so the counting rules live in one place.
+next_attempt_allowed() {
+  local comments
+  comments="$(jq -c --arg b "$(render_report "failed: $ATTEMPT_CLASS" 'next: retrying')" \
+    '. + [{body: $b}]' <<<"$ISSUE_COMMENTS_JSON")" || return 1
+  run_cap_script "$comments" 1 || return 1
+  [[ "$CAP_SCRIPT_PROCEED" == true ]]
 }
 
 # One retry_policy call, so an unknown class warns once.
@@ -369,24 +408,39 @@ finish_success() {
   exit 0
 }
 
+exit_parked() {
+  printf 'parked: cap reached (attempt %s of %s)\n' "$CAP_ATTEMPT" "${MAX_ATTEMPTS:-2}"
+  exit 0
+}
+
+# Posts the report for a failed attempt. Returns 0 when another attempt follows,
+# 1 when the cap forbids it (the caller parks); exits 1 when the class is final.
+report_failed_attempt() {
+  decide_retry "$ATTEMPT_CLASS" "$RUN_ATTEMPT"
+  if [[ "$RETRY_DECISION" != retry ]]; then
+    post_report "failed: $ATTEMPT_CLASS" "next: stopping"
+    printf 'Stopping: %s does not retry (or the retry budget is spent).\n' "$ATTEMPT_CLASS" >&2
+    exit 1
+  fi
+  if ! next_attempt_allowed; then
+    post_report "failed: $ATTEMPT_CLASS" "next: stopping (attempt cap reached)"
+    return 1
+  fi
+  post_report "failed: $ATTEMPT_CLASS" "next: retrying in ${RETRY_DELAY}s"
+}
+
 attempt_loop() {
   RUN_ATTEMPT=1
   while true; do
-    if ! check_cap; then
-      printf 'parked: cap reached (attempt %s of %s)\n' "$CAP_ATTEMPT" "${MAX_ATTEMPTS:-2}"
-      exit 0
-    fi
+    check_cap || exit_parked
     printf 'cap   : attempt %s of %s\n' "$CAP_ATTEMPT" "${MAX_ATTEMPTS:-2}"
     classify_issue
     run_attempt
     [[ "$ATTEMPT_CLASS" != success ]] || finish_success
-    decide_retry "$ATTEMPT_CLASS" "$RUN_ATTEMPT"
-    if [[ "$RETRY_DECISION" != retry ]]; then
-      post_report "failed: $ATTEMPT_CLASS" "next: stopping"
-      printf 'Stopping: %s does not retry (or the retry budget is spent).\n' "$ATTEMPT_CLASS" >&2
-      exit 1
+    if ! report_failed_attempt; then
+      check_cap && { printf 'error: cap preview and cap check disagree\n' >&2; exit 1; }
+      exit_parked
     fi
-    post_report "failed: $ATTEMPT_CLASS" "next: retrying in ${RETRY_DELAY}s"
     sleep "$RETRY_DELAY"
     reset_workspace || { printf 'error: could not reset the workspace; not retrying\n' >&2; exit 1; }
     RUN_ATTEMPT=$((RUN_ATTEMPT + 1))

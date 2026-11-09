@@ -304,7 +304,7 @@ assert_not_contains "retry_task_failure_twice: no PR" "repos pr create" "$AZLOG"
 run_loop api_auth,success
 assert_eq "retry_api_auth_not_retried: rc" "1" "$RC"
 assert_eq "retry_api_auth_not_retried: one report" "1" "$(count_reports "$AZLOG")"
-assert_eq "retry_api_auth_not_retried: one agent call" "1" "$(wc -l <<<"$CLAUDELOG")"
+assert_eq "retry_api_auth_not_retried: one agent call" "1" "$(grep -c . <<<"$CLAUDELOG" || true)"
 
 AZ_COMMENTS=azdo-comments-two-reports.json run_loop success
 assert_eq "cap_reached_at_start: rc" "0" "$RC"
@@ -318,11 +318,23 @@ assert_eq "cap_reached_mid_run: rc" "0" "$RC"
 assert_eq "cap_reached_mid_run: two agent calls" "2" "$(wc -l <<<"$CLAUDELOG")"
 assert_eq "cap_reached_mid_run: two reports" "2" "$(count_reports "$AZLOG")"
 assert_contains "cap_reached_mid_run: parked" "## ai-implement parked" "$AZLOG"
+assert_not_contains "cap_reached_mid_run: no retry promise" "next: retrying in 0s
+- cap: attempt 2" "$AZLOG"
+assert_contains "cap_reached_mid_run: second report stops" "next: stopping (attempt cap reached)" "$AZLOG"
+assert_eq "cap_reached_mid_run: parked comes last" "1" \
+  "$([[ "${AZLOG##*— attempt 2}" == *"## ai-implement parked"* ]] && echo 1 || echo 0)"
 
 run_loop transient-pushed,success
 assert_contains "retry_names_remote_branch" "branch left on the server: ai/7-try-1" "$AZLOG"
 
+run_loop transient-pushed-fixed,success-fixed
+assert_eq "reused_branch: rc" "0" "$RC"
+assert_eq "reused_branch: one PR" "1" "$(grep -c 'repos pr create' <<<"$AZLOG" || true)"
+assert_contains "reused_branch: remote tip is attempt 2" "HELLO.md" "$(git -C "$BARE" ls-tree -r --name-only ai/7-same)"
+assert_not_contains "reused_branch: stale commit gone" "a.txt" "$(git -C "$BARE" ls-tree -r --name-only ai/7-same)"
+
 # reset_workspace keeps ignored files locally and wipes them on a pipeline agent.
+# Clones $BARE, the bare repo of the most recent run_loop (run one first).
 reset_ignored_file_survives() {
   local tf="$1" dir="$TMP/reset-$2"
   git clone -q "$BARE" "$dir" 2>/dev/null
