@@ -17,7 +17,7 @@
 #   MAX_RETRIES_RATE    Default 3.
 #   MAX_RETRIES_TRANS   Default 3.
 #   MAX_RETRIES_TASK    Default 1.
-#   DELAY_OVERRIDE_SEC  Force a specific delay (skips policy computation).
+#   DELAY_OVERRIDE_SEC  Replaces the delay (see lib/retry-policy.sh).
 #                       Used by tests to keep them fast.
 #   DRY_RUN             If "1", print the decision and skip the actual sleep
 #                       and `gh workflow run` call. Default 0.

@@ -39,6 +39,8 @@
 #               (SIGKILL after a 30 s grace) and the attempt counts as transient.
 #   MAX_ATTEMPTS  attempts allowed before the work item is parked. Default 2,
 #               read by check-attempt-cap.sh.
+#   MAX_RETRIES_RATE, MAX_RETRIES_TRANS, MAX_RETRIES_TASK  per-class retry limits
+#               within one run (defaults 3, 3, 1), read by lib/retry-policy.sh.
 #   DRY_RUN=1   resolve, classify and report what WOULD run; invoke no agent
 #               and write nothing. Use this first on any new project.
 #
@@ -48,7 +50,8 @@
 #   plus PIPELINE_FILE_GLOBS, comma-separated). A diff that cannot be computed
 #   also refuses. See lib/pipeline-file-guard.sh.
 #
-# Exit codes: 0 completed; 1 error; 2 required env missing or not an ADO remote.
+# Exit codes: 0 completed, or parked at the attempt cap (also mid-run, after
+# failed attempts); 1 error; 2 required env missing or not an ADO remote.
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -397,12 +400,23 @@ run_cap_script() {
 
 # Would one more attempt be allowed once the report for the failed one is posted?
 # Asks the cap script itself (dry), so the counting rules live in one place.
+# Returns 0 allowed, 1 the cap is reached, 2 the preview itself failed.
 next_attempt_allowed() {
   local comments
   comments="$(jq -c --arg b "$(render_report "failed: $ATTEMPT_CLASS" 'next: retrying')" \
-    '. + [{body: $b}]' <<<"$ISSUE_COMMENTS_JSON")" || return 1
-  run_cap_script "$comments" 1 || return 1
+    '. + [{body: $b}]' <<<"$ISSUE_COMMENTS_JSON")" || return 2
+  run_cap_script "$comments" 1 || return 2
   [[ "$CAP_SCRIPT_PROCEED" == true ]]
+}
+
+# DRY_RUN=1: say what the cap would do for this work item, without writing.
+print_cap_preview() {
+  run_cap_script "$ISSUE_COMMENTS_JSON" 1 || exit 1
+  if [[ "$CAP_SCRIPT_PROCEED" == true ]]; then
+    printf 'cap   : attempt %s of %s\n' "$CAP_SCRIPT_ATTEMPT" "${MAX_ATTEMPTS:-2}"
+  else
+    printf 'cap   : would park (attempt %s of %s)\n' "$CAP_SCRIPT_ATTEMPT" "${MAX_ATTEMPTS:-2}"
+  fi
 }
 
 # One retry_policy call, so an unknown class warns once.
@@ -453,7 +467,13 @@ report_failed_attempt() {
     printf 'Stopping: %s does not retry (or the retry budget is spent).\n' "$ATTEMPT_CLASS" >&2
     exit 1
   fi
-  if ! next_attempt_allowed; then
+  local preview_rc=0
+  next_attempt_allowed || preview_rc=$?
+  if [[ "$preview_rc" -eq 2 ]]; then
+    post_report "failed: $ATTEMPT_CLASS" "next: stopping (could not check the attempt cap)"
+    exit 1
+  fi
+  if [[ "$preview_rc" -ne 0 ]]; then
     post_report "failed: $ATTEMPT_CLASS" "next: stopping (attempt cap reached)"
     return 1
   fi
@@ -489,6 +509,7 @@ main() {
   classify_issue
 
   if [[ "$DRY_RUN" == "1" ]]; then
+    print_cap_preview
     printf 'DRY_RUN=1 — stopping before the agent runs. Nothing was written.\n'
     exit 0
   fi

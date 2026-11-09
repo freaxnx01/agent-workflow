@@ -36,10 +36,6 @@ assert_contains() {
   local name="$1" needle="$2" haystack="$3"
   if [[ "$haystack" == *"$needle"* ]]; then pass "$name"; else fail "$name" "missing: $needle"; fi
 }
-assert_not_contains() {
-  local name="$1" needle="$2" haystack="$3"
-  if [[ "$haystack" != *"$needle"* ]]; then pass "$name"; else fail "$name" "unexpected: $needle"; fi
-}
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -50,7 +46,7 @@ source "$ROOT/scripts/lib/retry-policy.sh"
 # check <name> <class> <attempt> <decision> <delay> — env is inherited from the caller's subshell.
 check() {
   local name="$1" class="$2" attempt="$3" want_decision="$4" want_delay="$5" out
-  out="$(retry_policy "$class" "$attempt" 2>"$TMP/err")"
+  out="$(retry_policy "$class" "$attempt")"
   assert_eq "$name" "decision=$want_decision"$'\n'"delay=$want_delay" "$out"
 }
 
@@ -84,6 +80,11 @@ out="$(DELAY_OVERRIDE_SEC=0 retry_policy rate_limit 1)"
 assert_eq "DELAY_OVERRIDE_SEC=0 rate_limit 1" $'decision=retry\ndelay=0' "$out"
 out="$(DELAY_OVERRIDE_SEC=7 retry_policy api_auth 1)"
 assert_eq "DELAY_OVERRIDE_SEC=7 api_auth 1 overrides on stop" $'decision=stop\ndelay=7' "$out"
+
+out="$(MAX_RETRIES_RATE=1 retry_policy rate_limit 1)"
+assert_eq "MAX_RETRIES_RATE=1 rate_limit 1 stops" $'decision=stop\ndelay=0' "$out"
+out="$(MAX_RETRIES_TRANS=1 retry_policy transient 1)"
+assert_eq "MAX_RETRIES_TRANS=1 transient 1 stops" $'decision=stop\ndelay=0' "$out"
 
 section "usage"
 rc=0; retry_policy >/dev/null 2>&1 || rc=$?

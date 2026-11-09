@@ -62,9 +62,15 @@ printf 'resource comments\t%s/forge-comments-azdo.json\n' "$FIXTURES" >> "$AZ_MA
 RC=0; OUT=''; ERR=''
 run_driver() {
   RC=0
+  local map="$AZ_MAP"
+  if [[ -n "${AZ_COMMENTS:-}" ]]; then   # AZ_COMMENTS=<fixture> feeds other comments
+    map="$TMP/map-comments"
+    { printf 'work-item show\t%s/forge-workitem-azdo.json\n' "$FIXTURES"
+      printf 'resource comments\t%s/%s\n' "$FIXTURES" "$AZ_COMMENTS"; } > "$map"
+  fi
   # shellcheck disable=SC2016  # $1/$2 are for the inner bash, not this one
   env -i HOME="$TMP" PATH="$MOCKS:$PATH" \
-    ISSUE_NUMBER=7 DRY_RUN=1 AZ_MOCK_FIXTURE="$FIXTURES/forge-workitem-azdo.json" AZ_MOCK_MAP="$AZ_MAP" \
+    ISSUE_NUMBER=7 DRY_RUN=1 AZ_MOCK_FIXTURE="$FIXTURES/forge-workitem-azdo.json" AZ_MOCK_MAP="$map" \
     "$@" bash -c 'cd "$1" && bash "$2"' _ "$REPO_AZ" "$ROOT/scripts/implement-azdo.sh" \
     >"$TMP/out" 2>"$TMP/err" || RC=$?
   OUT="$(cat "$TMP/out")"; ERR="$(cat "$TMP/err")"
@@ -177,6 +183,14 @@ assert_not_contains "actions_github_token_never_printed" "$SENTINEL" "$OUT$ERR"
 run_driver
 assert_eq "local_without_pat_exits_2: rc" "2" "$RC"
 assert_contains "local_without_pat_exits_2: message" "AZURE_DEVOPS_EXT_PAT must be set" "$ERR"
+
+run_driver AZURE_DEVOPS_EXT_PAT=pat
+assert_contains "dry_run_cap_preview_proceeds" "cap   : attempt 1 of 2" "$OUT"
+assert_not_contains "dry_run_cap_preview_proceeds: not parked" "would park" "$OUT"
+AZ_COMMENTS=azdo-comments-two-reports.json run_driver AZURE_DEVOPS_EXT_PAT=pat
+assert_eq "dry_run_cap_preview_parks: rc" "0" "$RC"
+assert_contains "dry_run_cap_preview_parks: line" "cap   : would park (attempt" "$OUT"
+assert_not_contains "dry_run_cap_preview_parks: nothing written" "parked comment" "$OUT"
 
 section "run context label"
 
@@ -368,6 +382,21 @@ LOOP_DETACH=1 run_loop success-nobranch
 assert_eq "detached_no_branch_success: rc" "1" "$RC"
 assert_not_contains "detached_no_branch_success: no PR" "repos pr create" "$AZLOG"
 assert_contains "detached_no_branch_success: says why" "did not branch" "$AZLOG"
+# A failing cap preview must not read as "attempt cap reached".
+# shellcheck disable=SC2016  # $1 is for the inner bash, not this one
+preview_out="$(env -i HOME="$TMP" PATH="$PATH" bash -c '
+  source "$1"
+  run_cap_script() { return 2; }
+  WORK_DIR="$(mktemp -d)"; POSTED="$WORK_DIR/posted"
+  forge_issue_comment() { cat "$2" >> "$POSTED"; }
+  trap '"'"'cat "$POSTED"; rm -rf "$WORK_DIR"'"'"' EXIT
+  ISSUE_NUMBER=7 RUN_CONTEXT=local RUN_ATTEMPT=1 ATTEMPT_SECONDS=1 TURNS_BUDGET=80
+  RESULT_FILE=/nonexistent ISSUE_COMMENTS_JSON="[]" ATTEMPT_CLASS=transient
+  report_failed_attempt 2>/dev/null' _ "$ROOT/scripts/implement-azdo.sh")" || preview_rc=$?
+assert_contains "preview_error: report wording" "next: stopping (could not check the attempt cap)" "$preview_out"
+assert_not_contains "preview_error: not cap reached" "attempt cap reached" "$preview_out"
+assert_eq "preview_error: exits 1" "1" "${preview_rc:-0}"
+
 section "agent timeout"
 
 run_loop hang,success IMPLEMENT_TIMEOUT_MIN=0.02

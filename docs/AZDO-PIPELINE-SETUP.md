@@ -346,11 +346,14 @@ Budget:
 
 - 3 × 45 min of attempts;
 - 10 min of delays;
-- 2 × (20 + 10) min of review and self-fix;
+- 2 × (20 + 10) min of review and self-fix, reserved for the AI review step
+  (gap item b), which this path does not run yet;
 - about 205 min in total.
 
 ### 11.5 Unpark a work item
 
 1. Remove the `parked` tag.
-2. If the cap is the reason, raise `MAX_ATTEMPTS` on the pipeline.
+2. If the cap is the reason, raise `MAX_ATTEMPTS` on the pipeline. It is a
+   pipeline variable, so raising it raises the cap for every work item; lower
+   it again afterwards.
 3. Re-add `ai-implement`.
