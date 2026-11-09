@@ -527,6 +527,7 @@ run_loop success-dirty AI_REVIEW=1 SELF_FIX=1 CLAUDE_MOCK_REVIEWS=review-request
 assert_eq "self_fix_skipped_on_dirty_checkout: no fix call" "" "$(cat "$LOOPDIR/fix.log")"
 assert_contains "self_fix_skipped_on_dirty_checkout: not run" "self-fix: not run" "$AZLOG"
 assert_contains "self_fix_skipped_on_dirty_checkout: reported" "self-fix skipped" "$AZLOG"
+assert_contains "self_fix_skipped_on_dirty_checkout: names the leftovers" "?? junk.txt" "$ERR"
 
 run_loop success AI_REVIEW=1 CLAUDE_MOCK_REVIEWS=review-approve.json AZ_THREAD_POST=azdo-pr-thread-error.txt
 assert_eq "review_failure_stays_green: rc" "0" "$RC"

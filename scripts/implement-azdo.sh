@@ -555,6 +555,8 @@ run_self_fix() {
   local model="${MODEL:-claude-sonnet-5}"
   if [[ -n "$(git status --porcelain)" ]]; then
     SELF_FIX_STOP="self-fix skipped: the checkout has uncommitted or untracked files"
+    printf 'self-fix skipped; git status --porcelain (first 20 lines):\n' >&2
+    git status --porcelain | head -n 20 >&2 || true
     return 0
   fi
   : > "$out"; : > "$stop"
