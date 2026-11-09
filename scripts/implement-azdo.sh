@@ -205,13 +205,13 @@ _azdo_auth_header() {
 
 remote_branch_exists() {
   git -c http.extraheader="$(_azdo_auth_header)" \
-    ls-remote --exit-code --heads origin "$1" >/dev/null 2>&1
+    ls-remote --exit-code --heads origin "refs/heads/$1" >/dev/null 2>&1
 }
 
 # Prints the branch's SHA on the server, or nothing when it is absent.
 remote_branch_sha() {
   git -c http.extraheader="$(_azdo_auth_header)" \
-    ls-remote --heads origin "$1" 2>/dev/null | awk 'NR == 1 {print $1}'
+    ls-remote --heads origin "refs/heads/$1" 2>/dev/null | awk 'NR == 1 {print $1}'
 }
 
 # push_branch <branch> [<expected-remote-sha>]: with a SHA, overwrite only that

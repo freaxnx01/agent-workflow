@@ -318,8 +318,9 @@ assert_eq "cap_reached_mid_run: rc" "0" "$RC"
 assert_eq "cap_reached_mid_run: two agent calls" "2" "$(wc -l <<<"$CLAUDELOG")"
 assert_eq "cap_reached_mid_run: two reports" "2" "$(count_reports "$AZLOG")"
 assert_contains "cap_reached_mid_run: parked" "## ai-implement parked" "$AZLOG"
-assert_not_contains "cap_reached_mid_run: no retry promise" "next: retrying in 0s
-- cap: attempt 2" "$AZLOG"
+second_report="$(awk '/— attempt 2/ {f = 1} f && /## ai-implement parked/ {exit} f' <<<"$AZLOG")"
+assert_contains "cap_reached_mid_run: second report found" "— attempt 2" "$second_report"
+assert_not_contains "cap_reached_mid_run: no retry promise" "retrying" "$second_report"
 assert_contains "cap_reached_mid_run: second report stops" "next: stopping (attempt cap reached)" "$AZLOG"
 assert_eq "cap_reached_mid_run: parked comes last" "1" \
   "$([[ "${AZLOG##*— attempt 2}" == *"## ai-implement parked"* ]] && echo 1 || echo 0)"
