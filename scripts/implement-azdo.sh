@@ -88,6 +88,7 @@ TURNS_BUDGET=''
 WORK_DIR=''
 PROMPT_FILE=''
 RESULT_FILE=''
+declare -A RUN_PUSHED=()   # branch -> tip a failed attempt of THIS run left on the server
 
 # --- phases ------------------------------------------------------------------
 
@@ -235,6 +236,37 @@ push_branch() {
   git -c http.extraheader="$(_azdo_auth_header)" push -q -u "${lease[@]}" origin "$1"
 }
 
+# Remembers the tip a failed attempt left on the server, so a later attempt of
+# the same run may replace it. Called before reset_workspace drops the branch.
+record_pushed_tip() {
+  local remote_sha
+  [[ -n "$HEAD_BRANCH" ]] || return 0
+  remote_sha="$(remote_branch_sha "$HEAD_BRANCH")"
+  [[ -n "$remote_sha" && "$remote_sha" == "$(git rev-parse HEAD)" ]] || return 0
+  RUN_PUSHED["$HEAD_BRANCH"]="$remote_sha"
+}
+
+# Gets HEAD onto the server. Absent: plain push. Already HEAD: nothing to do. A
+# different tip is replaced only when this run's own failed attempt left it (and
+# then only that exact state); any other branch of that name is a collision.
+# Sets ATTEMPT_ERROR and returns 1 on failure.
+push_for_pr() {
+  local remote_sha
+  remote_sha="$(remote_branch_sha "$HEAD_BRANCH")"
+  [[ "$remote_sha" != "$(git rev-parse HEAD)" ]] || return 0
+  if [[ -n "$remote_sha" && "${RUN_PUSHED[$HEAD_BRANCH]:-}" != "$remote_sha" ]]; then
+    ATTEMPT_ERROR="branch $HEAD_BRANCH already exists on the server with other commits; not overwriting it"
+    printf 'error: branch %s already exists on the server with other commits; not overwriting it\n' "$HEAD_BRANCH" >&2
+    return 1
+  fi
+  printf 'pushing  : %s (the server does not have this commit)\n' "$HEAD_BRANCH"
+  if ! push_branch "$HEAD_BRANCH" "$remote_sha"; then
+    ATTEMPT_ERROR="could not push $HEAD_BRANCH"
+    printf 'error: could not push %s\n' "$HEAD_BRANCH" >&2
+    return 1
+  fi
+}
+
 # Through the adapter, so the work item and the PR are linked -- Azure DevOps
 # has no "Closes #N" convention, the --work-items association IS the link.
 # Sets PR_ID and returns 0; on failure sets ATTEMPT_ERROR and returns 1.
@@ -265,21 +297,7 @@ open_draft_pr() {
     return 1
   fi
 
-  # Push unless the server already has exactly our HEAD. A PR cannot be opened
-  # against a ref the server has never seen, and "commit but never push" is the
-  # single largest measured failure mode in this pipeline. A different remote tip
-  # is an earlier attempt's leftover under the same name: replace it, but only
-  # that exact state.
-  local remote_sha
-  remote_sha="$(remote_branch_sha "$HEAD_BRANCH")"
-  if [[ "$remote_sha" != "$(git rev-parse HEAD)" ]]; then
-    printf 'pushing  : %s (the server does not have this commit)\n' "$HEAD_BRANCH"
-    if ! push_branch "$HEAD_BRANCH" "$remote_sha"; then
-      ATTEMPT_ERROR="could not push $HEAD_BRANCH"
-      printf 'error: could not push %s\n' "$HEAD_BRANCH" >&2
-      return 1
-    fi
-  fi
+  push_for_pr || return 1
 
   if ! PR_ID="$(forge_pr_create_draft "$HEAD_BRANCH" "$DEFAULT_BRANCH" \
         "Implement #${ISSUE_NUMBER}" "Implements work item #${ISSUE_NUMBER}." \
@@ -450,6 +468,7 @@ attempt_loop() {
     classify_issue
     run_attempt
     [[ "$ATTEMPT_CLASS" != success ]] || finish_success
+    record_pushed_tip
     if ! report_failed_attempt; then
       check_cap && { printf 'error: cap preview and cap check disagree\n' >&2; exit 1; }
       exit_parked

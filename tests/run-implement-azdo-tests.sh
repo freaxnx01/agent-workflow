@@ -111,6 +111,15 @@ run_loop() {
   git init -q -b main "$seed"
   git -C "$seed" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m init
   git -C "$seed" push -q "$BARE" main
+  # LOOP_SEED_BRANCH=<name> puts a foreign commit on that branch of the origin
+  # before the run, as a human's salvage of an earlier run would.
+  if [[ -n "${LOOP_SEED_BRANCH:-}" ]]; then
+    git -C "$seed" checkout -q -b "$LOOP_SEED_BRANCH"
+    printf 'foreign\n' > "$seed/foreign.txt"
+    git -C "$seed" add foreign.txt
+    git -C "$seed" -c user.name=t -c user.email=t@example.invalid commit -q -m foreign
+    git -C "$seed" push -q "$BARE" "$LOOP_SEED_BRANCH"
+  fi
   git clone -q "$BARE" "$WORK" 2>/dev/null
   # Azure Pipelines checks out a detached HEAD; LOOP_DETACH=1 reproduces that.
   [[ -z "${LOOP_DETACH:-}" ]] || git -C "$WORK" checkout -q --detach
@@ -335,6 +344,15 @@ assert_eq "reused_branch: rc" "0" "$RC"
 assert_eq "reused_branch: one PR" "1" "$(grep -c 'repos pr create' <<<"$AZLOG" || true)"
 assert_contains "reused_branch: remote tip is attempt 2" "HELLO.md" "$(git -C "$BARE" ls-tree -r --name-only ai/7-same)"
 assert_not_contains "reused_branch: stale commit gone" "a.txt" "$(git -C "$BARE" ls-tree -r --name-only ai/7-same)"
+
+# A branch that existed on the server before the run is a collision: reported,
+# never overwritten.
+LOOP_SEED_BRANCH=ai/7-same run_loop success-fixed
+assert_eq "preexisting_branch: rc" "1" "$RC"
+assert_not_contains "preexisting_branch: no PR" "repos pr create" "$AZLOG"
+assert_contains "preexisting_branch: foreign commit kept" "foreign.txt" "$(git -C "$BARE" ls-tree -r --name-only ai/7-same)"
+assert_not_contains "preexisting_branch: not overwritten" "HELLO.md" "$(git -C "$BARE" ls-tree -r --name-only ai/7-same)"
+assert_contains "preexisting_branch: report says why" "already exists on the server" "$AZLOG"
 
 # reset_workspace keeps ignored files locally and wipes them on a pipeline agent.
 
