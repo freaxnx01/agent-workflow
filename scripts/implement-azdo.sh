@@ -166,12 +166,19 @@ fi
 # stderr), 2 = the diff could not be computed, which fails closed. Reporting on
 # the work item is left to the pipeline's failure step.
 guard_rc=0
-pipeline_file_guard "origin/$default_branch" || guard_rc=$?
+guard_err="$(mktemp)"
+pipeline_file_guard "origin/$default_branch" 2>"$guard_err" || guard_rc=$?
 if [[ "$guard_rc" -ne 0 ]]; then
-  [[ "$guard_rc" -eq 1 ]] && printf 'error: the agent changed pipeline files; refusing to push or open a PR:\n' >&2
-  [[ "$guard_rc" -ne 1 ]] && printf 'error: could not verify the agent left pipeline files alone; refusing to push or open a PR.\n' >&2
+  if [[ "$guard_rc" -eq 1 ]]; then
+    printf 'error: the agent changed pipeline files; refusing to push or open a PR:\n' >&2
+  else
+    printf 'error: could not verify the agent left pipeline files alone; refusing to push or open a PR.\n' >&2
+  fi
+  cat "$guard_err" >&2
+  rm -f "$guard_err"
   exit 1
 fi
+rm -f "$guard_err"
 
 # Push the branch if the agent committed but did not push. A PR cannot be
 # opened against a ref the server has never seen, and "commit but never push" is

@@ -135,6 +135,10 @@ run_agent_driver CLAUDE_MOCK_TOUCH=azure-pipelines-pr.yml
 assert_eq "pipeline_file_blocks_run: rc" "1" "$RC"
 assert_contains "pipeline_file_blocks_run: message" "refusing to push or open a PR" "$ERR"
 assert_contains "pipeline_file_blocks_run: names file" "azure-pipelines-pr.yml" "$ERR"
+heading_line="$(printf '%s\n' "$ERR" | grep -n 'refusing to push or open a PR' | head -1 | cut -d: -f1)"
+path_line="$(printf '%s\n' "$ERR" | grep -n '^ *azure-pipelines-pr.yml$' | head -1 | cut -d: -f1)"
+assert_eq "pipeline_file_blocks_run: heading precedes path" "1" \
+  "$([[ -n "$heading_line" && -n "$path_line" && "$heading_line" -lt "$path_line" ]] && echo 1 || echo 0)"
 assert_not_contains "pipeline_file_blocks_run: no PR" "repos pr create" "$(cat "$TMP/az.log")"
 assert_not_contains "pipeline_file_blocks_run: no push attempt" "could not push" "$ERR"
 
