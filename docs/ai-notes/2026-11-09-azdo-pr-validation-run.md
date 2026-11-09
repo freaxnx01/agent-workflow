@@ -42,6 +42,15 @@ the maintainer's accepted fallback.
   only matches were agent feature flags such as `SYSTEM_ENABLEACCESSTOKEN`.
   `.git/config` had **0** `extraheader` entries, and the checkout passed the
   token only through `git --config-env`.
+- [x] **7. YAML CI-trigger bypass (found in final review).** Both pipelines in
+  the personal sandbox project had their CI trigger set to "from YAML". A probe
+  branch whose `azure-pipelines-pr.yml` declared a `trigger` for that branch
+  queued the validation pipeline from the push alone, with no PR.
+  - After overriding the YAML CI trigger with CI disabled (the
+    `continuousIntegration` entry removed from the definition's `triggers`), a
+    push to the probe branch queued no run.
+  - PR validation still ran normally through the build-validation policy.
+  - The override was applied to both sandbox pipelines.
 
 ## Discoveries (not acted on)
 
