@@ -28,8 +28,9 @@ The variant is a superset of the default image. It sets
 `AWF_TOOLCHAIN=dotnet`, which section 10 uses to route jobs to it.
 
 Bump `DOTNET_SDK_VERSION` and `DOTNET_SDK_SHA512` together. Read both from the
-channel's `releases.json` (`files[]` entry `dotnet-sdk-linux-x64.tar.gz`,
-field `hash`). A mismatch fails the build.
+channel's `releases.json`: in `releases[].sdk.files[]` (also
+`releases[].sdks[].files[]`), the entry named `dotnet-sdk-linux-x64.tar.gz`,
+field `hash` (SHA-512). A mismatch fails the build.
 
 ## 2. Register the agent once
 
@@ -258,10 +259,16 @@ default image does not. There are two ways to run the variant.
 
 ### 10.1 A second registration
 
-Give the dotnet agent its own `<volume>`, its own one-shot registration from
-section 2 and its own unit from section 3, using `<image>-dotnet`. One pool
+Give the dotnet agent its own `<name>` (for example `<name>-dotnet`), so it
+gets its own `AZP_AGENT_NAME`, unit file and container name, plus its own
+`<volume>`, its own one-shot registration from section 2 and its own unit from
+section 3, using `<image>-dotnet`. One pool
 then holds mixed agents: default jobs run on either, .NET jobs only on the
 dotnet one.
+
+> **Warning:** `scripts/azp-agent-start.sh` registers with `--replace`. Reusing
+> an existing agent's name silently replaces that agent in the pool, and the
+> first agent stops connecting.
 
 ### 10.2 Switch the existing agent
 

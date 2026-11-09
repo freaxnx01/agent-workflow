@@ -18,10 +18,14 @@ ran `dotnet test` green on the variant.
     the build inputs differ: a newer commit, and Claude Code installed at build
     time.
   - Variant image `awf-azp-agent:21d287f-dotnet`.
+  - Default image smoke test (`awf-azp-agent:21d287f`): `id -u` → `1000`;
+    Azure CLI `2.91.0`; `claude --version` → `2.1.270 (Claude Code)`; `dotnet`
+    not present; `AWF_TOOLCHAIN` unset.
 - [x] **2. Negative pin.** A `--target dotnet` build with an all-zero
   `DOTNET_SDK_SHA512` **failed** at `sha512sum -c` (G3).
 - [x] **3. Variant smoke test.** `id -u` → `1000`. `dotnet --version` →
-  `10.0.403`. `AWF_TOOLCHAIN` → `dotnet`. The Azure CLI and Claude Code are
+  `10.0.403`. `dotnet --info` reports `.NET SDK: Version 10.0.403`.
+  `AWF_TOOLCHAIN` → `dotnet`. The Azure CLI and Claude Code are
   present. The pin was checked against the channel's `releases.json`: 10.0.403
   is `latest-sdk`, support phase `active`, and the hash matches.
 - [x] **4. Sample.** The sample `samples/dotnet` (class library and xUnit

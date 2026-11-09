@@ -216,8 +216,7 @@ mutate_drop_final_user() {
     raw_stage "$1" default; } > "$2"
 }
 mutate_toolchain_into_base() {
-  sed 's/AWF_TOOLCHAIN=dotnet/AWF_TOOLCHAIN_MOVED=1/' "$1" \
-    | awk 'BEGIN { done = 0 } { print } /^FROM / && !done { print "ENV AWF_TOOLCHAIN=dotnet"; done = 1 }' > "$2"
+  awk 'BEGIN { done = 0 } { print } /^FROM / && !done { print "ENV AWF_TOOLCHAIN=dotnet"; done = 1 }' "$1" > "$2"
 }
 
 # negative <case-name> <mutator> <check-that-must-fail>
