@@ -1,0 +1,29 @@
+{
+  "value": [
+    {
+      "id": 52,
+      "comments": [
+        {
+          "content": "<!-- review-pr:51e1e76148e5541bc5d7fdb4f5d97603efa7623e -->\n\n## Automated review — verdict: `request_changes`\n\n_agent verdict: request_changes_\n\nThis PR adds a one-line Greeter.Whisper(name) method that lower-cases the existing Greet(name) output. The implementation itself is correct and low-risk (no null-handling regression beyond what Greet already has, no security surface), but the change adds new public behavior without any accompanying test, violating the explicit CLAUDE.md house rule for this directory ('add a test for every behaviour you add'). No automatic-block pattern (ADR-002 §2.4) is triggered — no test files were touched, deleted, skipped, or realigned to a fixture — so this does not rise to block, but it must not merge without a test.\n\n### Concerns\n\n- **high**: samples/dotnet/Sample.Lib/Greeter.cs:6 — new public method Whisper(name) has zero test coverage anywhere in the repo, violating CLAUDE.md's explicit rule to add a test for every behaviour added in samples/dotnet. Add an xUnit test (e.g. in Sample.Tests) asserting Whisper(\"World\") == \"hello, world!\" and run `dotnet test samples/dotnet/Sample.sln` before merge.\n- **low**: samples/dotnet/Sample.Lib/Greeter.cs:6 — Whisper delegates to Greet, so it inherits Greet's behavior on null/empty `name` (e.g. NullReferenceException via string interpolation if ever changed); not a regression here, but worth covering in the same test as a documented behavior if null-handling matters for this API.\n\n_Agent: claude · head: `51e1e76148e5541bc5d7fdb4f5d97603efa7623e`_\n"
+        }
+      ]
+    },
+    {
+      "id": 53,
+      "comments": [
+        {
+          "content": "The reference refs/heads/feature/greeter-whisper was updated."
+        }
+      ]
+    },
+    {
+      "id": 54,
+      "comments": [
+        {
+          "content": "<!-- review-pr:e4c16fb19e8d754265ecebe9d3daa380e1d7e73f -->\n\n## Automated review — verdict: `approve`\n\n_agent verdict: approve_\n\nThis PR adds Greeter.Whisper(name), a thin wrapper that lower-cases the existing Greet(name) output, plus two new xUnit tests covering a normal name and a null name. The null case works correctly because C# string interpolation renders a null argument as an empty string, so Greet(null) yields \"Hello, !\" and Whisper(null) yields \"hello, !\", matching the asserted expectation. The change is a small, test-covered addition with no deletions, skips, or fixture tampering, and no security or house-rule violations were found.\n\n_Agent: claude · head: `e4c16fb19e8d754265ecebe9d3daa380e1d7e73f`_\n"
+        }
+      ]
+    }
+  ],
+  "count": 3
+}

@@ -500,6 +500,12 @@ pr_reset; out="$(AZ_MOCK_FIXTURE="$FIXTURES/azdo-pr-threads-marker.json" pr_run 
 case "$out" in *'<!-- review-pr:abc123 -->'*) pass "pr_comments_json_skips_contentless: marker present" ;; *) fail "pr_comments_json_skips_contentless: marker present" "$out" ;; esac
 case "$out" in *None*|*null*) fail "pr_comments_json_skips_contentless: no None/null" "$out" ;; *) pass "pr_comments_json_skips_contentless: no None/null" ;; esac
 
+# Real threads read back after the live self-fix proof (2026-11-09): a review,
+# a system "reference updated" thread, and the re-review on the fix commit.
+pr_reset; out="$(AZ_MOCK_FIXTURE="$FIXTURES/azdo-pr-threads-live.json" pr_run "$REPO_PR" azdo forge_pr_comments_json 42)"
+case "$out" in *'<!-- review-pr:51e1e76148e5541bc5d7fdb4f5d97603efa7623e -->'*) pass "pr_comments_json_live: first marker" ;; *) fail "pr_comments_json_live: first marker" "$out" ;; esac
+case "$out" in *'<!-- review-pr:e4c16fb19e8d754265ecebe9d3daa380e1d7e73f -->'*) pass "pr_comments_json_live: re-review marker" ;; *) fail "pr_comments_json_live: re-review marker" "$out" ;; esac
+
 # A repo with origin/main and an agent branch that adds src/a.txt.
 REPO_DIFF="$(make_repo 'https://dev.azure.com/contoso/MyProject/_git/my-repo')"
 (
