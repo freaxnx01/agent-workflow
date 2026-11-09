@@ -549,6 +549,78 @@ attempt_body="$(env -i HOME="$TMP" PATH="$PATH" bash -c '
 both_comments="$(jq -s '.[0] + .[1]' <(jq -Rs '[{body: .}]' <<<"$attempt_body") <<<"$verdict_comments")"
 assert_contains "verdict_comment_not_counted_by_cap: with one attempt" "attempt=2" "$(cap_check "$both_comments")"
 
+section "B6: never vote"
+
+# The agent never votes, completes or publishes a PR. Every pattern is a call
+# that would; plain `--draft` (opening the PR as a draft) deliberately matches none.
+FORBIDDEN_PATTERNS=(
+  'set-vote'
+  'repos pr reviewer'
+  'repos pr update'
+  'autoCompleteSetBy'
+  '--auto-complete'
+  'isDraft'
+  '--draft[ =]false'
+  '"vote"'
+  'pullRequestReviewers'
+  '/reviewers'
+  '--resource pullRequests( |$)'
+  '"status" *: *"completed"'
+)
+forbidden_regex() { local IFS='|'; printf '%s' "${FORBIDDEN_PATTERNS[*]}"; }
+# forbidden_hits <file>... — file:line:text per hit in source files; comment lines are skipped.
+forbidden_hits() {
+  grep -nHE -e "$(forbidden_regex)" "$@" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true
+}
+# forbidden_hits_raw <file>... — the same for logs, raw: the az argv log carries
+# multi-line --discussion bodies whose lines start with ##.
+forbidden_hits_raw() {
+  grep -nHE -e "$(forbidden_regex)" "$@" || true
+}
+
+canary_file="$TMP/canaries.txt"
+cat > "$canary_file" <<'CANARIES'
+az repos pr set-vote --id 1 --vote 10
+az repos pr reviewer add --id 1 --reviewers me
+az repos pr update --id 1 --status completed
+{"autoCompleteSetBy": {"id": "x"}}
+az repos pr update --id 1 --auto-complete true
+{"isDraft": false}
+az repos pr create --draft false
+{"vote": 10}
+az devops invoke --area git --resource pullRequestReviewers
+curl -X PUT https://example.invalid/pullRequests/1/reviewers/me
+az devops invoke --area git --resource pullRequests --route-parameters id=1
+{"status": "completed"}
+CANARIES
+canary_commented="$TMP/canaries-commented.txt"
+sed 's/^/  # /' "$canary_file" > "$canary_commented"
+assert_eq "canaries_detected: one hit per pattern" "${#FORBIDDEN_PATTERNS[@]}" "$(forbidden_hits "$canary_file" | grep -c . || true)"
+assert_eq "canaries_detected: raw grep agrees" "${#FORBIDDEN_PATTERNS[@]}" "$(forbidden_hits_raw "$canary_file" | grep -c . || true)"
+assert_eq "canaries_detected: commented source lines are skipped" "" "$(forbidden_hits "$canary_commented")"
+assert_eq "canaries_detected: plain --draft is not a hit" "" "$(printf 'az repos pr create --draft true\n' > "$TMP/draft.txt"; forbidden_hits "$TMP/draft.txt")"
+
+assert_eq "azdo_sources_clean" "" "$(cd "$ROOT" && forbidden_hits \
+  scripts/implement-azdo.sh scripts/azdo-self-fix.sh scripts/lib/forge.sh scripts/lib/azdo.sh \
+  scripts/review-pr.sh scripts/self-fix-loop.sh scripts/self-fix-pr.sh)"
+
+printf '{}\n' > "$TMP/empty.json"
+mkdir -p "$TMP/b6-curl"
+: > "$TMP/b6-curl/argv.log"; : > "$TMP/b6-curl/body.log"
+run_loop success AI_REVIEW=1 SELF_FIX=1 \
+  CLAUDE_MOCK_REVIEWS=review-request-changes.json,review-approve.json \
+  CURL_MOCK_FIXTURE="$TMP/empty.json" \
+  CURL_MOCK_LOG="$TMP/b6-curl/argv.log" CURL_MOCK_BODY_LOG="$TMP/b6-curl/body.log"
+# Positive control: a clean log only means something if the review and fix ran.
+assert_eq "e2e_run_never_votes: rc" "0" "$RC"
+assert_eq "e2e_run_never_votes: control, two thread POSTs" "2" "$(thread_posts)"
+assert_eq "e2e_run_never_votes: control, initial push plus fix push" "1" "$([[ "$(grep -c 'push' "$LOOPDIR/git.log" || true)" -ge 2 ]] && echo 1 || echo 0)"
+assert_contains "e2e_run_never_votes: control, verdict comment" "## ai-review verdict" "$AZLOG"
+assert_eq "e2e_run_never_votes: no forbidden call in any log" "" "$(forbidden_hits_raw \
+  "$LOOPDIR/az.log" "$LOOPDIR/az.stdin" "$TMP/b6-curl/argv.log" "$TMP/b6-curl/body.log" "$LOOPDIR/git.log")"
+assert_eq "e2e_run_never_votes: only repos pr create" "" "$(grep -E 'repos pr' <<<"$AZLOG" | grep -v 'repos pr create' || true)"
+assert_eq "e2e_run_never_votes: every PR is a draft" "" "$(grep 'repos pr create' <<<"$AZLOG" | grep -v -e '--draft' || true)"
+
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"
 printf '  %s%d passed%s' "$C_GREEN" "$PASS" "$C_OFF"
 if [ "$FAIL" -gt 0 ]; then
