@@ -281,6 +281,71 @@ post_out="$(env -i HOME="$TMP" PATH="$PATH" bash -c '
   rm -rf "$WORK_DIR"' _ "$ROOT/scripts/implement-azdo.sh")"
 assert_eq "post_report_failed_post_still_counted" "rc=0 count=1" "$post_out"
 
+section "retry loop"
+
+run_loop transient,success
+assert_eq "retry_transient_then_success: rc" "0" "$RC"
+assert_eq "retry_transient_then_success: two reports" "2" "$(count_reports "$AZLOG")"
+assert_contains "retry_transient_then_success: attempt 1" "— attempt 1" "$AZLOG"
+assert_contains "retry_transient_then_success: attempt 2" "— attempt 2" "$AZLOG"
+assert_contains "retry_transient_then_success: first failed" "failed: transient" "$AZLOG"
+assert_contains "retry_transient_then_success: retry line" "next: retrying in 0s" "$AZLOG"
+assert_contains "retry_transient_then_success: cap line" "- cap: attempt 2 of 2" "$AZLOG"
+assert_eq "retry_transient_then_success: one PR" "1" "$(grep -c 'repos pr create' <<<"$AZLOG" || true)"
+assert_eq "retry_transient_then_success: second call starts clean" "call 2 branch=main dirty=0" "$(sed -n 2p <<<"$CLAUDELOG")"
+assert_eq "retry_transient_then_success: failed branch deleted" "" "$(git -C "$WORK" branch --list 'ai/7-try-1')"
+
+run_loop task_failure,task_failure
+assert_eq "retry_task_failure_twice: rc" "1" "$RC"
+assert_eq "retry_task_failure_twice: two reports" "2" "$(count_reports "$AZLOG")"
+assert_contains "retry_task_failure_twice: second stops" "next: stopping" "$AZLOG"
+assert_not_contains "retry_task_failure_twice: no PR" "repos pr create" "$AZLOG"
+
+run_loop api_auth,success
+assert_eq "retry_api_auth_not_retried: rc" "1" "$RC"
+assert_eq "retry_api_auth_not_retried: one report" "1" "$(count_reports "$AZLOG")"
+assert_eq "retry_api_auth_not_retried: one agent call" "1" "$(wc -l <<<"$CLAUDELOG")"
+
+AZ_COMMENTS=azdo-comments-two-reports.json run_loop success
+assert_eq "cap_reached_at_start: rc" "0" "$RC"
+assert_eq "cap_reached_at_start: no agent call" "" "$CLAUDELOG"
+assert_contains "cap_reached_at_start: parked comment" "## ai-implement parked" "$AZLOG"
+assert_eq "cap_reached_at_start: no attempt report" "0" "$(count_reports "$AZLOG")"
+assert_contains "cap_reached_at_start: output" "parked" "$OUT"
+
+run_loop transient,transient,success MAX_ATTEMPTS=2
+assert_eq "cap_reached_mid_run: rc" "0" "$RC"
+assert_eq "cap_reached_mid_run: two agent calls" "2" "$(wc -l <<<"$CLAUDELOG")"
+assert_eq "cap_reached_mid_run: two reports" "2" "$(count_reports "$AZLOG")"
+assert_contains "cap_reached_mid_run: parked" "## ai-implement parked" "$AZLOG"
+
+run_loop transient-pushed,success
+assert_contains "retry_names_remote_branch" "branch left on the server: ai/7-try-1" "$AZLOG"
+
+# reset_workspace keeps ignored files locally and wipes them on a pipeline agent.
+reset_ignored_file_survives() {
+  local tf="$1" dir="$TMP/reset-$2"
+  git clone -q "$BARE" "$dir" 2>/dev/null
+  if [[ ! -e "$dir/.gitignore" ]]; then
+    printf '.envrc\n' > "$dir/.gitignore"
+    git -C "$dir" add .gitignore
+    git -C "$dir" -c user.name=t -c user.email=t@example.invalid commit -q -m ignore
+    git -C "$dir" update-ref refs/remotes/origin/main main
+  fi
+  git -C "$dir" checkout -q -b ai/x
+  printf 'secret\n' > "$dir/.envrc"; printf 'junk\n' > "$dir/junk.txt"
+  # shellcheck disable=SC2016  # $1..$3 are for the inner bash
+  env -i HOME="$TMP" PATH="$PATH" ${tf:+TF_BUILD="$tf"} bash -c '
+    source "$1"; cd "$2"; DEFAULT_BRANCH=main HEAD_BRANCH=ai/x
+    reset_workspace' _ "$ROOT/scripts/implement-azdo.sh" "$dir" >/dev/null 2>&1 || return 2
+  [[ -e "$dir/.envrc" ]] && printf 'kept' || printf 'removed'
+}
+run_loop success
+assert_eq "reset_local_keeps_ignored_file" "kept" "$(reset_ignored_file_survives '' local)"
+assert_eq "reset_pipeline_removes_ignored_file" "removed" "$(reset_ignored_file_survives True pipe)"
+assert_eq "reset_untracked_file_removed" "" "$([[ -e "$TMP/reset-local/junk.txt" ]] && echo present)"
+assert_eq "reset_branch_deleted" "" "$(git -C "$TMP/reset-local" branch --list ai/x)"
+
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"
 printf '  %s%d passed%s' "$C_GREEN" "$PASS" "$C_OFF"
 if [ "$FAIL" -gt 0 ]; then

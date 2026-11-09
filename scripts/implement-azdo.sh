@@ -58,6 +58,8 @@ source "$HERE/lib/azdo.sh"
 source "$HERE/lib/ci-host.sh"
 # shellcheck source=scripts/lib/pipeline-file-guard.sh
 source "$HERE/lib/pipeline-file-guard.sh"
+# shellcheck source=scripts/lib/retry-policy.sh
+source "$HERE/lib/retry-policy.sh"
 
 # Run state. Initialised here so the file can be sourced under `set -u`.
 DRY_RUN="${DRY_RUN:-0}"
@@ -65,6 +67,9 @@ MODEL="${MODEL:-claude-sonnet-5}"
 RUN_CONTEXT=''       # pipeline | local
 DEFAULT_BRANCH=''
 RUN_ATTEMPT=1        # 1-based attempt number within this run
+CAP_ATTEMPT=''       # attempt number counted from the work item's reports
+RETRY_DECISION=''    # retry | stop, from retry_policy
+RETRY_DELAY=0
 PR_ID=''             # empty until open_draft_pr succeeds
 HEAD_BRANCH=''       # the branch the attempt ended on
 AGENT_RC=''
@@ -285,6 +290,7 @@ render_report() {
   printf '**Outcome:** %s\n' "$outcome"
   report_metrics_line "$RESULT_FILE"
   printf -- '- agent: %s, model: %s\n' "$AGENT_NAME" "$MODEL"
+  printf -- '- cap: attempt %s of %s\n' "${CAP_ATTEMPT:-?}" "${MAX_ATTEMPTS:-2}"
   [[ -z "$PR_ID" ]] || printf -- '- draft PR: !%s\n' "$PR_ID"
   if [[ "$outcome" == failed* && -n "$HEAD_BRANCH" && "$HEAD_BRANCH" != "$DEFAULT_BRANCH" ]] \
      && remote_branch_exists "$HEAD_BRANCH"; then
@@ -311,6 +317,82 @@ post_report() {
   return 0
 }
 
+# --- the attempt loop --------------------------------------------------------
+
+# Runs check-attempt-cap.sh against the reports counted so far (post_report
+# keeps ISSUE_COMMENTS_JSON current). Returns 0 to proceed, 1 when it parked the
+# item; a failure of the script itself stops the run.
+check_cap() {
+  local out="$WORK_DIR/cap.out" proceed
+  : > "$out"
+  if ! GITHUB_OUTPUT="$out" REPO="$REPO" ISSUE_COMMENTS_JSON="$ISSUE_COMMENTS_JSON" \
+       MAX_ATTEMPTS="${MAX_ATTEMPTS:-2}" bash "$HERE/check-attempt-cap.sh"; then
+    printf 'error: the attempt cap check failed\n' >&2
+    exit 1
+  fi
+  CAP_ATTEMPT="$(sed -n 's/^attempt=//p' "$out" | tail -1)"
+  proceed="$(sed -n 's/^proceed=//p' "$out" | tail -1)"
+  [[ "$proceed" == true ]]
+}
+
+# One retry_policy call, so an unknown class warns once.
+decide_retry() {
+  local policy
+  policy="$(retry_policy "$1" "$2")" || policy=''
+  RETRY_DECISION="$(sed -n 's/^decision=//p' <<<"$policy" | tail -1)"
+  RETRY_DELAY="$(sed -n 's/^delay=//p' <<<"$policy" | tail -1)"
+  [[ "$RETRY_DECISION" == retry ]] || RETRY_DECISION=stop
+  [[ "$RETRY_DELAY" =~ ^[0-9]+$ ]] || RETRY_DELAY=0
+}
+
+# Back to a clean default branch so the next attempt starts from scratch. A local
+# run keeps ignored files (.envrc); a pipeline checkout is disposable.
+reset_workspace() {
+  local clean_flags=-ffd
+  [[ "$(ci_host)" != "pipelines" ]] || clean_flags=-ffdx
+  git checkout --force "$DEFAULT_BRANCH" || return 1
+  git reset --hard "origin/$DEFAULT_BRANCH" || return 1
+  git clean "$clean_flags" || return 1
+  if [[ -n "$HEAD_BRANCH" && "$HEAD_BRANCH" != "$DEFAULT_BRANCH" ]]; then
+    git branch -D "$HEAD_BRANCH" || return 1
+  fi
+  return 0
+}
+
+finish_success() {
+  if ! open_draft_pr; then
+    post_report "failed: $ATTEMPT_ERROR" "next: stopping"
+    exit 1
+  fi
+  post_report success "next: review and merge !$PR_ID"
+  printf '\nDone. Review and merge !%s when ready.\n' "$PR_ID"
+  exit 0
+}
+
+attempt_loop() {
+  RUN_ATTEMPT=1
+  while true; do
+    if ! check_cap; then
+      printf 'parked: cap reached (attempt %s of %s)\n' "$CAP_ATTEMPT" "${MAX_ATTEMPTS:-2}"
+      exit 0
+    fi
+    printf 'cap   : attempt %s of %s\n' "$CAP_ATTEMPT" "${MAX_ATTEMPTS:-2}"
+    classify_issue
+    run_attempt
+    [[ "$ATTEMPT_CLASS" != success ]] || finish_success
+    decide_retry "$ATTEMPT_CLASS" "$RUN_ATTEMPT"
+    if [[ "$RETRY_DECISION" != retry ]]; then
+      post_report "failed: $ATTEMPT_CLASS" "next: stopping"
+      printf 'Stopping: %s does not retry (or the retry budget is spent).\n' "$ATTEMPT_CLASS" >&2
+      exit 1
+    fi
+    post_report "failed: $ATTEMPT_CLASS" "next: retrying in ${RETRY_DELAY}s"
+    sleep "$RETRY_DELAY"
+    reset_workspace || { printf 'error: could not reset the workspace; not retrying\n' >&2; exit 1; }
+    RUN_ATTEMPT=$((RUN_ATTEMPT + 1))
+  done
+}
+
 main() {
   preflight
   print_banner
@@ -326,18 +408,7 @@ main() {
   fi
 
   DEFAULT_BRANCH="$(resolve_default_branch)"
-  run_attempt
-  if [[ "$ATTEMPT_CLASS" != success ]]; then
-    post_report "failed: $ATTEMPT_CLASS" "next: stopping"
-    printf 'Stopping: %s does not retry (or the retry budget is spent).\n' "$ATTEMPT_CLASS" >&2
-    exit 1
-  fi
-  if ! open_draft_pr; then
-    post_report "failed: $ATTEMPT_ERROR" "next: stopping"
-    exit 1
-  fi
-  post_report success "next: review and merge !$PR_ID"
-  printf '\nDone. Review and merge !%s when ready.\n' "$PR_ID"
+  attempt_loop
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi
