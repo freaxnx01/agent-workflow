@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- PR build validation template for Azure DevOps (`templates/azdo/pr-validation.yml`, setup guide section 9), and `implement-azdo.sh` refusing to push agent changes to pipeline files (`PIPELINE_FILE_GLOBS`) (#573).
+
 ## [2.1.0](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.1.0) - 2026-10-15
 
 **Upgrading from 2.0.x:** no change to a consumer's `agent.yml` is needed. The

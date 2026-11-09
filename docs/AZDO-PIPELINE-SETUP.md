@@ -117,3 +117,62 @@ each of them.
 
 3. The pipeline YAML calls `scripts/azdo-pipeline-run.sh` and, on failure,
    `scripts/azdo-report-failure.sh`.
+
+## 9. PR build validation
+
+The agent opens a PR; this section makes a **build validation** run gate it
+before a human merges. The pipeline is separate from the `ai-implement` one and
+holds no secrets.
+
+### 9.1 Add the pipeline file
+
+Copy `templates/azdo/pr-validation.yml` to `azure-pipelines-pr.yml` in the repo
+root and edit only the build/test step. Do this through a human PR: the agent
+cannot change pipeline files (see 9.4).
+
+### 9.2 Create the pipeline
+
+1. *Pipelines > New pipeline > Azure Repos Git > Existing YAML file*, and pick
+   `azure-pipelines-pr.yml`.
+2. Create it with **no** variables and link **no** variable group. Never put
+   `CLAUDE_CODE_OAUTH_TOKEN` here. Variables are per pipeline, so this one
+   inherits nothing from the `ai-implement` pipeline.
+3. Turn on *Project settings > Pipelines > Settings > Limit job authorization
+   scope to current project*.
+
+A build service token is still issued to the job, but no step sees it unless it
+is mapped, and the template maps none.
+
+### 9.3 Require it on the default branch
+
+*Repos > Branches > `<default>` > Branch policies > Build validation > +*:
+
+- pick the pipeline;
+- set Trigger to **Automatic**;
+- set Policy requirement to **Required**;
+- set Build expiration to **Immediately when `<default>` is updated**.
+
+`pr:` in YAML is ignored on Azure Repos, which is why the template says
+`pr: none`. The branch policy is what queues the run.
+
+### 9.4 Pipeline files are changed by humans
+
+An `ai-implement` run whose changes touch any of these globs fails before the
+push and opens no PR. Its log names the files:
+
+- `azure-pipelines*.yml`
+- `azure-pipelines*.yaml`
+- `.azure-pipelines/**`
+- `.azuredevops/**`
+
+A glob without `/` matches the file name at any depth; a glob with `/` matches
+the full repo-relative path. To protect more paths, set the pipeline variable
+`PIPELINE_FILE_GLOBS` (comma-separated, for example
+`build/*.yml,deploy/**`). It is additive only: it cannot remove the defaults.
+
+Limitation: if the agent pushed the branch itself, the ref stays on the server,
+but no PR is opened, so no validation run is queued.
+
+### 9.5 Draft PRs
+
+Whether the policy runs on a draft PR: to be confirmed by the live run.
