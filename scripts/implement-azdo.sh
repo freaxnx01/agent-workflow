@@ -34,6 +34,11 @@
 #   ANTHROPIC_API_KEY       or CLAUDE_CODE_OAUTH_TOKEN, for the agent
 #
 # Optional:
+#   IMPLEMENT_TIMEOUT_MIN  wall-clock limit per agent attempt, in minutes
+#               (decimals allowed). Default 45. On expiry the agent is killed
+#               (SIGKILL after a 30 s grace) and the attempt counts as transient.
+#   MAX_ATTEMPTS  attempts allowed before the work item is parked. Default 2,
+#               read by check-attempt-cap.sh.
 #   DRY_RUN=1   resolve, classify and report what WOULD run; invoke no agent
 #               and write nothing. Use this first on any new project.
 #
@@ -94,6 +99,11 @@ preflight() {
   if [[ "$forge" != "azdo" ]]; then
     printf 'error: this entry point is for Azure DevOps remotes; detected "%s".\n' "$forge" >&2
     printf '       On GitHub, label the issue ai-implement and let the pipeline run.\n' >&2
+    exit 2
+  fi
+
+  if [[ ! "${IMPLEMENT_TIMEOUT_MIN:-45}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    printf 'error: IMPLEMENT_TIMEOUT_MIN must be a number of minutes\n' >&2
     exit 2
   fi
 
@@ -171,6 +181,7 @@ run_attempt() {
   AGENT_RC=0
   SECONDS=0
   MODEL="$MODEL" MAX_TURNS="$TURNS_BUDGET" \
+    timeout --kill-after=30s "${IMPLEMENT_TIMEOUT_MIN:-45}m" \
     bash "$HERE/lib/agent-cmd-claude-implement.sh" "$PROMPT_FILE" "$RESULT_FILE" || AGENT_RC=$?
   ATTEMPT_SECONDS="$SECONDS"
 

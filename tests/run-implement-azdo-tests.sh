@@ -335,6 +335,32 @@ assert_contains "reused_branch: remote tip is attempt 2" "HELLO.md" "$(git -C "$
 assert_not_contains "reused_branch: stale commit gone" "a.txt" "$(git -C "$BARE" ls-tree -r --name-only ai/7-same)"
 
 # reset_workspace keeps ignored files locally and wipes them on a pipeline agent.
+section "agent timeout"
+
+run_loop hang,success IMPLEMENT_TIMEOUT_MIN=0.02
+assert_eq "timeout_hang_then_success: rc" "0" "$RC"
+assert_eq "timeout_hang_then_success: two reports" "2" "$(count_reports "$AZLOG")"
+assert_contains "timeout_hang_then_success: first failed transient" "failed: transient" "$AZLOG"
+assert_contains "timeout_hang_then_success: turns unknown" "**Turns:** unknown" "$AZLOG"
+assert_contains "timeout_hang_then_success: cost unknown" "**Cost:** unknown" "$AZLOG"
+
+# A report written after a timeout (empty result file) still counts as an attempt.
+# shellcheck disable=SC2016  # $1/$2 are for the inner bash, not this one
+timeout_body="$(env -i HOME="$TMP" PATH="$PATH" bash -c '
+  source "$1"
+  : > "$2"
+  ATTEMPT_SECONDS=1 TURNS_BUDGET=80 RUN_CONTEXT=pipeline RUN_ATTEMPT=1 RESULT_FILE="$2"
+  render_report "failed: transient" "next: stopping"' _ "$ROOT/scripts/implement-azdo.sh" "$TMP/empty-result.json")"
+timeout_comments="$(jq -Rs '[{body: .}]' <<<"$timeout_body")"
+cap_out="$(env -i HOME="$TMP" PATH="$PATH" ISSUE_NUMBER=7 REPO=contoso/my-repo DRY_RUN=1 \
+  ISSUE_COMMENTS_JSON="$timeout_comments" bash "$ROOT/scripts/check-attempt-cap.sh")"
+assert_contains "timeout_cap_roundtrip: attempt" "attempt=2" "$cap_out"
+assert_contains "timeout_cap_roundtrip: non-starts" "non-starts=0" "$cap_out"
+
+run_driver IMPLEMENT_TIMEOUT_MIN=abc AZURE_DEVOPS_EXT_PAT=pat
+assert_eq "timeout_invalid: rc" "2" "$RC"
+assert_contains "timeout_invalid: message" "IMPLEMENT_TIMEOUT_MIN must be a number of minutes" "$ERR"
+
 # Clones $BARE, the bare repo of the most recent run_loop (run one first).
 reset_ignored_file_survives() {
   local tf="$1" dir="$TMP/reset-$2"
