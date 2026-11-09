@@ -480,7 +480,7 @@ assert_eq "review_posts_thread_and_verdict: one thread POST" "1" "$(thread_posts
 assert_contains "review_posts_thread_and_verdict: pullRequestId" "pullRequestId=42" "$AZLOG"
 assert_eq "review_posts_thread_and_verdict: marker is HEAD" "review-pr:$(git -C "$WORK" rev-parse HEAD)" "$(thread_markers)"
 assert_contains "review_posts_thread_and_verdict: verdict comment" "## ai-review verdict: approve" "$AZLOG"
-assert_contains "review_posts_thread_and_verdict: names PR" "!42" "$AZLOG"
+assert_contains "review_posts_thread_and_verdict: names PR" "- draft PR: !42" "$AZLOG"
 assert_contains "review_posts_thread_and_verdict: output" "ai review : approve" "$OUT"
 assert_contains "review_posts_thread_and_verdict: banner" "ai review        : on, self-fix: off" "$OUT"
 review_line="$(sed -n 1p "$LOOPDIR/review.log")"
@@ -510,10 +510,12 @@ assert_contains "self_fix_bounded: iterations" "self-fix: 2 iteration(s)" "$AZLO
 run_loop success AI_REVIEW=1 SELF_FIX=1 CLAUDE_MOCK_FIX_TOUCH=azure-pipelines.yml CLAUDE_MOCK_REVIEWS=review-request-changes.json
 assert_eq "self_fix_guard_reported: rc" "0" "$RC"
 assert_eq "self_fix_guard_reported: one thread POST" "1" "$(thread_posts)"
+assert_contains "self_fix_guard_reported: not run" "self-fix: not run" "$AZLOG"
 assert_contains "self_fix_guard_reported: names file" "the fix changed pipeline files: azure-pipelines.yml" "$AZLOG"
 
 run_loop success-dirty AI_REVIEW=1 SELF_FIX=1 CLAUDE_MOCK_REVIEWS=review-request-changes.json
 assert_eq "self_fix_skipped_on_dirty_checkout: no fix call" "" "$(cat "$LOOPDIR/fix.log")"
+assert_contains "self_fix_skipped_on_dirty_checkout: not run" "self-fix: not run" "$AZLOG"
 assert_contains "self_fix_skipped_on_dirty_checkout: reported" "self-fix skipped" "$AZLOG"
 
 run_loop success AI_REVIEW=1 CLAUDE_MOCK_REVIEWS=review-approve.json AZ_THREAD_POST=azdo-pr-thread-error.txt

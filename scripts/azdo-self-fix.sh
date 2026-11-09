@@ -58,6 +58,8 @@ stop() {
 run_fix_without_push() {
   SKIP_CLONE=1 SKIP_PUSH=1 WORK_DIR="$PWD" \
     FIX_GIT_NAME=ai-implement FIX_GIT_EMAIL=ai-implement@noreply.invalid \
+    GIT_AUTHOR_NAME=ai-implement GIT_AUTHOR_EMAIL=ai-implement@noreply.invalid \
+    GIT_COMMITTER_NAME=ai-implement GIT_COMMITTER_EMAIL=ai-implement@noreply.invalid \
     HEAD_REF="$SF_HEAD_REF" REPO="$REPO" ITERATION="$ITERATION" \
     timeout --kill-after=30s "$FIX_TIMEOUT" bash "$SF_SCRIPT_DIR/self-fix-pr.sh" "$@"
 }

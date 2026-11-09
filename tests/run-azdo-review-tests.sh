@@ -208,6 +208,13 @@ assert_eq "self_fix_secret_never_persisted: no extraheader in config" "" \
   "$(git -C "$W" config --get-all http.extraheader || true)"
 
 fresh_world
+selffix_azdo self-fix-agent GIT_AUTHOR_NAME=someone GIT_AUTHOR_EMAIL=someone@example.invalid \
+  GIT_COMMITTER_NAME=someone GIT_COMMITTER_EMAIL=someone@example.invalid
+assert_eq "self_fix_identity_survives_env_override: author and committer" \
+  "ai-implement <ai-implement@noreply.invalid> / ai-implement <ai-implement@noreply.invalid>" \
+  "$(git -C "$W" log -1 --format='%an <%ae> / %cn <%ce>')"
+
+fresh_world
 BEFORE="$(git -C "$B" rev-parse agent/x)"
 selffix_azdo self-fix-agent-pipeline
 assert_eq "self_fix_guard_blocks_pipeline_file: exit 3" "3" "$RC"

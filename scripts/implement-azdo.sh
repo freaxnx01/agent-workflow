@@ -24,8 +24,8 @@
 #   * No label-and-walk-away. This is the cost the issue anticipated.
 #
 # So the shape is: invoke -> agent implements -> draft PR opens -> AI review ->
-# (opt-in self-fix) -> a human reviews and merges. That is less than the GitHub path and deliberately so;
-# pretending otherwise would be the expensive mistake.
+# (opt-in self-fix) -> a human reviews and merges. That is less than the GitHub
+# path and deliberately so; pretending otherwise would be the expensive mistake.
 #
 # Required environment:
 #   ISSUE_NUMBER            the work item id
@@ -493,7 +493,7 @@ finish_success() {
     exit 1
   fi
   post_report success "next: review and merge !$PR_ID"
-  review_draft_pr
+  review_draft_pr || printf 'warning: AI review step failed; the PR is open\n' >&2
   printf '\nDone. Review and merge !%s when ready.\n' "$PR_ID"
   exit 0
 }
@@ -550,13 +550,24 @@ run_self_fix() {
   return 0
 }
 
+# "not needed" only when the review did not ask for changes; "not run" when a
+# fix was wanted but no iteration completed (dirty skip, guard refusal, max 0).
+self_fix_line() {
+  if [[ -n "$SELF_FIX_ITERATIONS" && "$SELF_FIX_ITERATIONS" != 0 ]]; then
+    printf '%s iteration(s)\n' "$SELF_FIX_ITERATIONS"
+  elif [[ "$REVIEW_VERDICT" == request_changes ]]; then
+    printf 'not run\n'
+  else
+    printf 'not needed\n'
+  fi
+}
+
 # Starts `## ai-review verdict`, not `## ai-implement run`: the attempt cap
 # counts only the latter, so this comment never costs an attempt.
 render_review_report() {
   local fix_line=off
   if [[ "${SELF_FIX:-0}" == 1 ]]; then
-    fix_line="not needed"
-    [[ -z "$SELF_FIX_ITERATIONS" || "$SELF_FIX_ITERATIONS" == 0 ]] || fix_line="$SELF_FIX_ITERATIONS iteration(s)"
+    fix_line="$(self_fix_line)"
   fi
   printf '## ai-review verdict: %s\n\n' "$REVIEW_VERDICT"
   printf -- '- draft PR: !%s\n' "$PR_ID"
