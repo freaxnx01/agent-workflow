@@ -141,5 +141,106 @@ assert_contains "azdo_loop_head_sha_from_git: head-sha is the checkout HEAD" \
 assert_contains "azdo_loop_head_sha_from_git: verdict=approve" "verdict=approve" "$LOOP_GO"
 assert_contains "azdo_loop_head_sha_from_git: iterations-used=2" "iterations-used=2" "$LOOP_GO"
 
+section "azdo self-fix command"
+
+PAT='tok-SECRET-5e1c'
+PAT_B64="$(printf ':%s' "$PAT" | base64 -w0)"
+
+# fresh_world — bare repo B (main) plus clone W on agent/x with one pushed commit.
+B=''; W=''
+fresh_world() {
+  rm -rf "$T/world"; mkdir "$T/world"
+  B="$T/world/B.git"; W="$T/world/W"
+  git init -q --bare -b main "$B"
+  git clone -q "$B" "$W" 2>/dev/null
+  git -C "$W" config user.name t
+  git -C "$W" config user.email t@example.invalid
+  git -C "$W" checkout -q -b main
+  printf 'base\n' > "$W/file.txt"
+  git -C "$W" add file.txt
+  git -C "$W" commit -q -m base
+  git -C "$W" push -q origin main
+  git -C "$W" checkout -q -b agent/x
+  printf 'work\n' >> "$W/file.txt"
+  git -C "$W" commit -q -am work
+  git -C "$W" push -q origin agent/x
+}
+
+# selffix_azdo <fix-agent-mock> [VAR=value ...] — sets RC, SF_LOG (git argv log),
+# SF_OUT (stdout+stderr) and SF_STOP (stop-file content).
+RC=0; SF_LOG=''; SF_OUT=''; SF_STOP=''
+selffix_azdo() {
+  local agent="$1"; shift
+  RC=0
+  rm -f "$T/git.log" "$T/stop"
+  ( cd "$W" && env \
+      PATH="$MOCKS/git-origin:$MOCKS:$PATH" GIT_MOCK_REAL="$(command -v git)" \
+      GIT_MOCK_ORIGIN_URL='https://dev.azure.com/contoso/MyProject/_git/my-repo' \
+      GIT_MOCK_LOG="$T/git.log" AZURE_DEVOPS_EXT_PAT="$PAT" \
+      HEAD_REF=agent/x ITERATION=1 REPO=MyProject/my-repo DEFAULT_BRANCH=main \
+      SELF_FIX_STOP_FILE="$T/stop" FIX_AGENT_CMD="$MOCKS/$agent" \
+      "$@" \
+      bash "$ROOT/scripts/azdo-self-fix.sh" 42 "$T/concerns.json" ) >"$T/sf.out" 2>&1 || RC=$?
+  SF_LOG="$(cat "$T/git.log" 2>/dev/null || true)"
+  SF_OUT="$(cat "$T/sf.out")"
+  SF_STOP="$(cat "$T/stop" 2>/dev/null || true)"
+}
+
+fresh_world
+selffix_azdo self-fix-agent
+assert_eq "self_fix_pushes_with_extraheader: exit 0" "0" "$RC"
+assert_eq "self_fix_pushes_with_extraheader: remote has the fix commit" \
+  "$(git -C "$W" rev-parse HEAD)" "$(git -C "$B" rev-parse agent/x)"
+assert_eq "self_fix_pushes_with_extraheader: author is ai-implement" \
+  "ai-implement <ai-implement@noreply.invalid>" "$(git -C "$W" log -1 --format='%an <%ae>')"
+assert_contains "self_fix_pushes_with_extraheader: push used the redacted extraheader" \
+  "http.extraheader=Authorization: Basic <redacted>" "$(printf '%s\n' "$SF_LOG" | grep ' push ' || true)"
+assert_eq "self_fix_pushes_with_extraheader: stop file empty" "" "$SF_STOP"
+
+assert_not_contains "self_fix_secret_never_persisted: git log" "$PAT" "$SF_LOG"
+assert_not_contains "self_fix_secret_never_persisted: git log (base64)" "$PAT_B64" "$SF_LOG"
+assert_not_contains "self_fix_secret_never_persisted: output" "$PAT" "$SF_OUT"
+assert_not_contains "self_fix_secret_never_persisted: output (base64)" "$PAT_B64" "$SF_OUT"
+SF_CFG="$(git -C "$W" config --list; git -C "$W" remote -v)"
+assert_not_contains "self_fix_secret_never_persisted: config and remotes" "$PAT" "$SF_CFG"
+assert_not_contains "self_fix_secret_never_persisted: config and remotes (base64)" "$PAT_B64" "$SF_CFG"
+assert_eq "self_fix_secret_never_persisted: no extraheader in config" "" \
+  "$(git -C "$W" config --get-all http.extraheader || true)"
+
+fresh_world
+BEFORE="$(git -C "$B" rev-parse agent/x)"
+selffix_azdo self-fix-agent-pipeline
+assert_eq "self_fix_guard_blocks_pipeline_file: exit 3" "3" "$RC"
+assert_eq "self_fix_guard_blocks_pipeline_file: remote unchanged" "$BEFORE" "$(git -C "$B" rev-parse agent/x)"
+assert_not_contains "self_fix_guard_blocks_pipeline_file: no push" " push " "$SF_LOG"
+assert_contains "self_fix_guard_blocks_pipeline_file: stop file names the path" \
+  "the fix changed pipeline files: azure-pipelines.yml" "$SF_STOP"
+assert_contains "self_fix_guard_blocks_pipeline_file: stderr carries the line" \
+  "self-fix stopped: the fix changed pipeline files: azure-pipelines.yml" "$SF_OUT"
+
+fresh_world
+git -C "$W" update-ref -d refs/remotes/origin/main
+BEFORE="$(git -C "$B" rev-parse agent/x)"
+selffix_azdo self-fix-agent
+assert_eq "self_fix_guard_fails_closed: exit 3" "3" "$RC"
+assert_eq "self_fix_guard_fails_closed: remote unchanged" "$BEFORE" "$(git -C "$B" rev-parse agent/x)"
+assert_not_contains "self_fix_guard_fails_closed: no push" " push " "$SF_LOG"
+
+fresh_world
+selffix_azdo self-fix-agent-fail
+assert_eq "self_fix_agent_failure: exit 1" "1" "$RC"
+assert_not_contains "self_fix_agent_failure: no push" " push " "$SF_LOG"
+assert_eq "self_fix_agent_failure: stop file empty" "" "$SF_STOP"
+
+fresh_world
+RC=0
+( cd "$W" && env REPO=MyProject/my-repo HEAD_REF=agent/x ITERATION=1 SKIP_CLONE=1 SKIP_PUSH=1 \
+    WORK_DIR="$W" FIX_AGENT_CMD="$MOCKS/self-fix-agent" \
+    bash "$ROOT/scripts/self-fix-pr.sh" 42 "$T/concerns.json" ) >/dev/null 2>&1 || RC=$?
+assert_eq "self_fix_pr_default_identity_unchanged: exit 0" "0" "$RC"
+assert_eq "self_fix_pr_default_identity_unchanged: author" \
+  "github-actions[bot] <github-actions[bot]@users.noreply.github.com>" \
+  "$(git -C "$W" log -1 --format='%an <%ae>')"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then printf 'failed: %s\n' "${FAIL_NAMES[*]}"; exit 1; fi
