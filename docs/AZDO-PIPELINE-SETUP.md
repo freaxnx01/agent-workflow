@@ -127,8 +127,9 @@ holds no secrets.
 ### 9.1 Add the pipeline file
 
 Copy `templates/azdo/pr-validation.yml` to `azure-pipelines-pr.yml` in the repo
-root and edit only the build/test step. Do this through a human PR: the agent
-cannot change pipeline files (see 9.4).
+root and edit only the build/test step. Do this through a human PR: the
+driver refuses to push or open a PR for agent changes to pipeline files
+(see 9.4).
 
 ### 9.2 Create the pipeline
 
@@ -139,6 +140,10 @@ cannot change pipeline files (see 9.4).
    inherits nothing from the `ai-implement` pipeline.
 3. Turn on *Project settings > Pipelines > Settings > Limit job authorization
    scope to current project*.
+4. Authorize the pipeline on the agent pool: *Project settings > Agent pools >
+   `<pool>` > Security > Pipeline permissions*, or approve the prompt on its
+   first run. Until it is authorized, every validation build stays *not
+   started*, and the policy waits on it indefinitely.
 
 A build service token is still issued to the job, but no step sees it unless it
 is mapped, and the template maps none.
@@ -175,4 +180,11 @@ but no PR is opened, so no validation run is queued.
 
 ### 9.5 Draft PRs
 
-Whether the policy runs on a draft PR: to be confirmed by the live run.
+The policy does **not** queue a build while the PR is a draft. Its status stays
+*queued* with no build attached. Publishing the PR queues the build at once.
+This was observed live: the agent's draft PR had no build after several
+minutes, and the build started as soon as the PR was published.
+
+The agent's PRs are always drafts, so validation runs when a human publishes
+the PR, which is also when the policy starts to gate completion. This is
+intended. Do not let the agent publish its own PRs to get an earlier build.
