@@ -49,7 +49,8 @@ trap 'rm -rf "$TMP"' EXIT
 
 REPO_AZ="$TMP/repo"
 mkdir "$REPO_AZ"
-git -C "$REPO_AZ" init -q
+git -C "$REPO_AZ" init -q -b main
+git -C "$REPO_AZ" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m init
 git -C "$REPO_AZ" remote add origin 'https://dev.azure.com/contoso/MyProject/_git/my-repo'
 
 AZ_MAP="$TMP/map"
@@ -64,6 +65,30 @@ run_driver() {
   # shellcheck disable=SC2016  # $1/$2 are for the inner bash, not this one
   env -i HOME="$TMP" PATH="$MOCKS:$PATH" \
     ISSUE_NUMBER=7 DRY_RUN=1 AZ_MOCK_FIXTURE="$FIXTURES/forge-workitem-azdo.json" AZ_MOCK_MAP="$AZ_MAP" \
+    "$@" bash -c 'cd "$1" && bash "$2"' _ "$REPO_AZ" "$ROOT/scripts/implement-azdo.sh" \
+    >"$TMP/out" 2>"$TMP/err" || RC=$?
+  OUT="$(cat "$TMP/out")"; ERR="$(cat "$TMP/err")"
+}
+
+# run_agent_driver [VAR=value ...] — runs the driver for real (no DRY_RUN) with the
+# mock claude. GIT_ALLOW_PROTOCOL=file makes ls-remote/push to the fake https
+# origin fail at once, so nothing touches the network. Resets the repo first;
+# DROP_ORIGIN_MAIN=1 (set in the caller's env) deletes origin/main after the
+# reset. Sets RC, OUT and ERR.
+run_agent_driver() {
+  RC=0
+  git -C "$REPO_AZ" checkout -q main
+  git -C "$REPO_AZ" branch -q -D agent/test 2>/dev/null || true
+  git -C "$REPO_AZ" update-ref refs/remotes/origin/main main
+  [[ -z "${DROP_ORIGIN_MAIN:-}" ]] || git -C "$REPO_AZ" update-ref -d refs/remotes/origin/main
+  : > "$TMP/az.log"
+  # shellcheck disable=SC2016  # $1/$2 are for the inner bash, not this one
+  env -i HOME="$TMP" PATH="$MOCKS:$PATH" \
+    ISSUE_NUMBER=7 AZ_MOCK_FIXTURE="$FIXTURES/forge-workitem-azdo.json" AZ_MOCK_MAP="$AZ_MAP" \
+    AZURE_DEVOPS_EXT_PAT=pat CLAUDE_MOCK_RESULT="$FIXTURES/result-success-cheap.json" \
+    AZ_MOCK_LOG="$TMP/az.log" GIT_ALLOW_PROTOCOL=file \
+    GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid \
+    GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid \
     "$@" bash -c 'cd "$1" && bash "$2"' _ "$REPO_AZ" "$ROOT/scripts/implement-azdo.sh" \
     >"$TMP/out" 2>"$TMP/err" || RC=$?
   OUT="$(cat "$TMP/out")"; ERR="$(cat "$TMP/err")"
@@ -103,6 +128,30 @@ assert_contains "pipeline_run_labelled_pipeline" "implement (pipeline, Azure Dev
 
 run_driver AZURE_DEVOPS_EXT_PAT=pat
 assert_contains "local_run_labelled_local" "implement (local, Azure DevOps)" "$OUT"
+
+section "pipeline-file guard"
+
+run_agent_driver CLAUDE_MOCK_TOUCH=azure-pipelines-pr.yml
+assert_eq "pipeline_file_blocks_run: rc" "1" "$RC"
+assert_contains "pipeline_file_blocks_run: message" "refusing to push or open a PR" "$ERR"
+assert_contains "pipeline_file_blocks_run: names file" "azure-pipelines-pr.yml" "$ERR"
+assert_not_contains "pipeline_file_blocks_run: no PR" "repos pr create" "$(cat "$TMP/az.log")"
+assert_not_contains "pipeline_file_blocks_run: no push attempt" "could not push" "$ERR"
+
+run_agent_driver CLAUDE_MOCK_TOUCH=src/app.cs
+assert_not_contains "src_only_proceeds_past_guard: not blocked" "pipeline files" "$ERR"
+assert_contains "src_only_proceeds_past_guard: reached push" "could not push" "$ERR"
+assert_eq "src_only_proceeds_past_guard: rc" "1" "$RC"
+
+run_agent_driver CLAUDE_MOCK_TOUCH=deploy/build.yml PIPELINE_FILE_GLOBS='deploy/**'
+assert_eq "extra_glob_blocks_run: rc" "1" "$RC"
+assert_contains "extra_glob_blocks_run: names file" "deploy/build.yml" "$ERR"
+assert_not_contains "extra_glob_blocks_run: no PR" "repos pr create" "$(cat "$TMP/az.log")"
+
+DROP_ORIGIN_MAIN=1 run_agent_driver CLAUDE_MOCK_TOUCH=src/app.cs
+assert_eq "missing_base_ref_blocks_run: rc" "1" "$RC"
+assert_contains "missing_base_ref_blocks_run: message" "cannot diff" "$ERR"
+assert_not_contains "missing_base_ref_blocks_run: no push attempt" "could not push" "$ERR"
 
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"
 printf '  %s%d passed%s' "$C_GREEN" "$PASS" "$C_OFF"

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+#
+# claude — stand-in for the Claude CLI used by Layer-1 driver tests.
+#
+# Drains stdin, branches ($CLAUDE_MOCK_BRANCH, default agent/test), creates every
+# comma-separated path in $CLAUDE_MOCK_TOUCH and commits them in one commit, then
+# prints $CLAUDE_MOCK_RESULT (a JSON fixture path) to stdout. Always exits 0.
+set -euo pipefail
+IFS=$'\n\t'
+
+cat >/dev/null
+git checkout -q -b "${CLAUDE_MOCK_BRANCH:-agent/test}"
+
+IFS=, read -r -a touched <<< "${CLAUDE_MOCK_TOUCH:-}"
+for path in "${touched[@]}"; do
+  [[ -n "$path" ]] || continue
+  mkdir -p "$(dirname "$path")"
+  printf 'mock change\n' > "$path"
+  git add -- "$path"
+done
+git commit -q --allow-empty -m "mock agent change"
+
+cat "${CLAUDE_MOCK_RESULT:?CLAUDE_MOCK_RESULT must name a JSON fixture}"

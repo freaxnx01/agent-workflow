@@ -36,6 +36,12 @@
 #   DRY_RUN=1   resolve, classify and report what WOULD run; invoke no agent
 #               and write nothing. Use this first on any new project.
 #
+# Pipeline-file guard:
+#   Before pushing, the driver refuses (exit 1) if the agent's commits touch
+#   pipeline definitions (azure-pipelines*.yml, .azure-pipelines/, .azuredevops/,
+#   plus PIPELINE_FILE_GLOBS, comma-separated). A diff that cannot be computed
+#   also refuses. See lib/pipeline-file-guard.sh.
+#
 # Exit codes: 0 completed; 1 error; 2 required env missing or not an ADO remote.
 set -euo pipefail
 IFS=$'\n\t'
@@ -49,6 +55,8 @@ source "$HERE/lib/forge.sh"
 source "$HERE/lib/azdo.sh"
 # shellcheck source=scripts/lib/ci-host.sh
 source "$HERE/lib/ci-host.sh"
+# shellcheck source=scripts/lib/pipeline-file-guard.sh
+source "$HERE/lib/pipeline-file-guard.sh"
 
 : "${ISSUE_NUMBER:?ISSUE_NUMBER must be set (the work item id)}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -150,6 +158,18 @@ default_branch="${default_branch:-main}"
 
 if [[ "$head_branch" == "$default_branch" ]]; then
   printf 'error: still on %s — the agent did not branch, so there is nothing to PR.\n' "$default_branch" >&2
+  exit 1
+fi
+
+# The agent must not alter the pipeline definitions that validate its own PR.
+# Any non-zero is fatal: 1 = a pipeline file changed (the guard lists them on
+# stderr), 2 = the diff could not be computed, which fails closed. Reporting on
+# the work item is left to the pipeline's failure step.
+guard_rc=0
+pipeline_file_guard "origin/$default_branch" || guard_rc=$?
+if [[ "$guard_rc" -ne 0 ]]; then
+  [[ "$guard_rc" -eq 1 ]] && printf 'error: the agent changed pipeline files; refusing to push or open a PR:\n' >&2
+  [[ "$guard_rc" -ne 1 ]] && printf 'error: could not verify the agent left pipeline files alone; refusing to push or open a PR.\n' >&2
   exit 1
 fi
 
