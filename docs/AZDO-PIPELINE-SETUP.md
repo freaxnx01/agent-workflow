@@ -390,10 +390,10 @@ Budget:
 5. **Permissions.** The thread POST uses the *Contribute to pull requests*
    permission from section 5. If it is missing, the run stays green and the
    verdict comment says the review failed.
-6. **Time budget.** The review takes up to 10 min. Each self-fix iteration
-   takes up to 20 min of fix plus 10 min of re-review. That is about 70 min at
-   the default of 2. Each extra iteration adds 30 min against section 11's
-   `timeoutInMinutes: 240`.
+6. **Time budget.** Plan for about 10 min per review and 20 min per fix: about
+   70 min at the default of 2 iterations, and 30 min more per extra iteration.
+   Only the fix has a hard limit (20 min, then SIGKILL after 30 s); a review is
+   bounded only by the job's `timeoutInMinutes: 240` from section 11.
 7. **Failures.** A review or self-fix failure never turns the job red and
    never causes a retry. It is reported in the verdict comment.
 8. **The `self-fix:` line.** The verdict comment ends its header with one of:
