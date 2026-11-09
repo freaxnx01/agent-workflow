@@ -52,12 +52,26 @@ the maintainer's accepted fallback.
   - PR validation still ran normally through the build-validation policy.
   - The override was applied to both sandbox pipelines.
 
+- [x] **8. Build service cannot queue pipelines.** A probe step ran as the
+  build service and POSTed a run of the validation pipeline with the job token.
+  It was refused: `TF215106: Access denied … needs Queue builds permissions`.
+  The CI-trigger override therefore cannot be bypassed by queueing from a
+  pushed branch, as long as that permission stays ungranted (setup guide §5).
+
 ## Discoveries (not acted on)
 
-- **The service hook did not fire** for work items tagged today, including one
-  in the hook's area path. The subscription is enabled, and its last delivery
-  was on 2026-11-02. Steps 4 and 5 used manual runs with `workItemId`, which go
-  through the same guard. This needs a separate look.
+- **The service hook fired for most tag changes but missed one.** It
+  delivered events for the tag on item 13 (run 29) and for the guard's tag
+  removals (runs 26 and 30). It produced **no event** for item 12's first tag,
+  which was added one revision after the item was moved into the hook's area
+  path. The cause is unknown. Steps 4 and 5 used manual runs with
+  `workItemId`, which go through the same guard.
+  - A hook run and a manual run on the same tag raced (runs 28 and 29). The
+    guard let only one through: the second found the tag already consumed
+    (exit 64). One tag gave exactly one agent run.
+  - After the CI-trigger override, a direct POST to the Incoming WebHook still
+    queued the `ai-implement` pipeline (run 33, guard exit 64 on an untagged
+    item). The override does not affect the webhook trigger.
 - **Work-item comments posted with `--discussion` read back as plain text,**
   not HTML. Item a's spec (A4a) assumed HTML from a fixture, so verify this
   before stripping.

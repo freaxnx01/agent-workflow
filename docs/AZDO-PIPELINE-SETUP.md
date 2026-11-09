@@ -86,6 +86,11 @@ Grant the project's build service identity on the repository:
 
 and on the work item area: **Edit work items in this node**.
 
+Do **not** grant it *Queue builds* on any pipeline. That is the default:
+verified live, a queue attempt with the job token was refused with `TF215106`.
+With that permission the agent could run any pipeline's YAML from a branch it
+pushed itself, which bypasses the CI-trigger override in sections 7 and 9.2.
+
 ## 6. Branch policy
 
 On the default branch, **require a pull request** and give the build service
@@ -199,9 +204,14 @@ in the run log. The run also fails, closed, when the diff against the default
 branch cannot be computed (guard return code 2).
 
 Limitation: with the CI-trigger override from 9.2 and section 7 in place, a
-branch the agent pushed itself queues no pipeline. The residual risk is a human
-opening a PR from such a branch, because build validation runs the PR's YAML.
-Check the PR's diff for pipeline files before opening or publishing one.
+branch the agent pushed itself queues no pipeline, and the build service cannot
+queue one (section 5). The residual risk is a PR from such a branch, because
+build validation runs the PR's YAML. A human may open that PR, or the agent may
+open one itself, since section 5 grants it *Contribute to pull requests*. Its
+drafts are not validated until a human publishes them (9.5). So check a PR's
+diff for pipeline files before publishing it. The exposure is small: the
+validation job holds no secret beyond the build-service token the agent already
+has.
 
 ### 9.5 Draft PRs
 
