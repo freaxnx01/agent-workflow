@@ -61,6 +61,7 @@ source "$HERE/lib/pipeline-file-guard.sh"
 
 # Run state. Initialised here so the file can be sourced under `set -u`.
 DRY_RUN="${DRY_RUN:-0}"
+MODEL="${MODEL:-claude-sonnet-5}"
 RUN_CONTEXT=''       # pipeline | local
 DEFAULT_BRANCH=''
 RUN_ATTEMPT=1        # 1-based attempt number within this run
@@ -162,7 +163,7 @@ run_attempt() {
   printf 'running the agent (max %s turns)...\n\n' "$TURNS_BUDGET"
   AGENT_RC=0
   SECONDS=0
-  MODEL="${MODEL:-claude-sonnet-5}" MAX_TURNS="$TURNS_BUDGET" \
+  MODEL="$MODEL" MAX_TURNS="$TURNS_BUDGET" \
     bash "$HERE/lib/agent-cmd-claude-implement.sh" "$PROMPT_FILE" "$RESULT_FILE" || AGENT_RC=$?
   ATTEMPT_SECONDS="$SECONDS"
 
@@ -283,9 +284,10 @@ render_report() {
   printf '## ai-implement run (%s, Azure DevOps) — attempt %s\n\n' "$RUN_CONTEXT" "$RUN_ATTEMPT"
   printf '**Outcome:** %s\n' "$outcome"
   report_metrics_line "$RESULT_FILE"
-  printf -- '- agent: %s, model: %s\n' "$AGENT_NAME" "${MODEL:-claude-sonnet-5}"
+  printf -- '- agent: %s, model: %s\n' "$AGENT_NAME" "$MODEL"
   [[ -z "$PR_ID" ]] || printf -- '- draft PR: !%s\n' "$PR_ID"
-  if [[ "$outcome" == failed* && -n "$HEAD_BRANCH" ]] && remote_branch_exists "$HEAD_BRANCH"; then
+  if [[ "$outcome" == failed* && -n "$HEAD_BRANCH" && "$HEAD_BRANCH" != "$DEFAULT_BRANCH" ]] \
+     && remote_branch_exists "$HEAD_BRANCH"; then
     printf -- '- branch left on the server: %s\n' "$HEAD_BRANCH"
   fi
   printf -- '- %s\n' "$next_line"

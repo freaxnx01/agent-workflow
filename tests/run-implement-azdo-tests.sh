@@ -224,6 +224,8 @@ assert_eq "attempt_api_auth: rc" "1" "$RC"
 assert_eq "attempt_api_auth: one report" "1" "$(count_reports "$AZLOG")"
 assert_contains "attempt_api_auth: outcome" "**Outcome:** failed: api_auth" "$AZLOG"
 assert_not_contains "attempt_api_auth: no PR" "repos pr create" "$AZLOG"
+assert_not_contains "attempt_api_auth: no branch-left line" "branch left on the server" "$AZLOG"
+assert_contains "attempt_api_auth: stop message" "Stopping: api_auth does not retry (or the retry budget is spent)." "$ERR"
 
 run_loop pipeline-file
 assert_eq "attempt_pipeline_file: rc" "1" "$RC"
@@ -255,6 +257,29 @@ assert_contains "cap_roundtrip_max_turns: attempt" "attempt=2" "$cap_out"
 assert_contains "cap_roundtrip_max_turns: non-starts" "non-starts=0" "$cap_out"
 cap_out="$(cap_roundtrip "$FIXTURES/result-api-auth.json")"
 assert_contains "cap_roundtrip_api_auth: attempt" "attempt=2" "$cap_out"
+
+# report_metrics_line writes the word unknown, never 0, when the result has no data.
+printf 'not json' > "$TMP/notjson.txt"
+printf '{"type":"result"}' > "$TMP/nofields.json"
+for case_file in "$TMP/missing.json" "$TMP/notjson.txt" "$TMP/nofields.json"; do
+  # shellcheck disable=SC2016  # $1/$2 are for the inner bash, not this one
+  line="$(env -i HOME="$TMP" PATH="$PATH" bash -c 'source "$1"; ATTEMPT_SECONDS=5 TURNS_BUDGET=80; report_metrics_line "$2"' \
+    _ "$ROOT/scripts/implement-azdo.sh" "$case_file")"
+  assert_contains "metrics_unknown_$(basename "$case_file"): turns" "**Turns:** unknown / cap 80" "$line"
+  assert_contains "metrics_unknown_$(basename "$case_file"): cost" "**Cost:** unknown" "$line"
+done
+
+# post_report fails closed: the report is counted even when the forge refuses it.
+# shellcheck disable=SC2016  # $1 is for the inner bash, not this one
+post_out="$(env -i HOME="$TMP" PATH="$PATH" bash -c '
+  source "$1"
+  forge_issue_comment() { return 1; }
+  WORK_DIR="$(mktemp -d)"; ISSUE_NUMBER=7 RUN_CONTEXT=local RUN_ATTEMPT=1 ATTEMPT_SECONDS=1 TURNS_BUDGET=80
+  RESULT_FILE=/nonexistent ISSUE_COMMENTS_JSON="[]"
+  post_report "failed: bug" "next: stopping" 2>/dev/null; rc=$?
+  printf "rc=%s count=%s\n" "$rc" "$(jq length <<<"$ISSUE_COMMENTS_JSON")"
+  rm -rf "$WORK_DIR"' _ "$ROOT/scripts/implement-azdo.sh")"
+assert_eq "post_report_failed_post_still_counted" "rc=0 count=1" "$post_out"
 
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"
 printf '  %s%d passed%s' "$C_GREEN" "$PASS" "$C_OFF"
