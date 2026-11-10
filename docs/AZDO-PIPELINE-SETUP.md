@@ -121,6 +121,8 @@ Set on the pipeline (not in YAML):
 - `TAGGER_ALLOWLIST` — who may trigger the agent by tagging.
 - `AGENT_WORKFLOW_REF` — the pinned agent-workflow commit SHA to clone.
 - `CLAUDE_CODE_OAUTH_TOKEN` — mark **secret**.
+- `MAX_ATTEMPTS` — optional, default 2. See section 11.
+- `IMPLEMENT_TIMEOUT_MIN` — optional, default 45. See section 11.
 
 Leave *Let users override this value when running this pipeline* **off** for
 each of them.
@@ -281,3 +283,79 @@ is reused, so no new registration is needed.
 The SDK is baked into the image, never installed while a job runs. Do not add
 `UseDotNet@2` to a pipeline: the version is pinned and hash-verified at build
 time.
+
+## 11. Retry, attempt cap and job timeout
+
+A failed attempt is retried inside the same job. The retry policy lives in
+`scripts/lib/retry-policy.sh`.
+
+### 11.1 Retry policy
+
+| Class | Attempts in one run | Delay before the retry |
+|---|---|---|
+| `rate_limit` | 3 | 300 s |
+| `transient` (including a timed-out attempt) | 3 | 10 s, 20 s |
+| `task_failure` | 2 | 10 s |
+| anything else | no retry | — |
+
+A timed-out attempt (exit 124 or 137) is classed `transient`. The per-class
+limits can be tuned with `MAX_RETRIES_RATE`, `MAX_RETRIES_TRANS` and
+`MAX_RETRIES_TASK`.
+
+### 11.2 Attempt cap
+
+`MAX_ATTEMPTS` real attempts are allowed per work item. They are counted from
+the `## ai-implement run` reports across runs. A human re-tag counts toward the
+cap. The cap is checked before every attempt, so it usually ends a run before
+the per-class limit does.
+
+Before posting a "retrying" report, the driver previews the cap. If the next
+attempt would hit it, the report says `next: stopping (attempt cap reached)`
+and the item is parked without waiting.
+
+### 11.3 Workspace
+
+Every retry starts from `origin/<default>`, after `git clean -ffdx`. Pipeline
+runs do this; local runs keep ignored files.
+
+A remote branch that a failed attempt pushed is left in place and named in its
+report. If a later attempt of the same run ends on that branch name with
+different commits, the driver replaces the earlier attempt's tip with
+`--force-with-lease` against the exact tip it saw, so the PR carries the
+successful attempt's commits. A tip that HEAD already contains (the agent
+pushed, then committed more) gets a plain fast-forward push. Any other existing
+branch with that name (one that was on the server before the run, or whose tip
+is not the one the run left) is a collision: the attempt fails and nothing is
+pushed.
+
+### 11.4 Timeouts
+
+`IMPLEMENT_TIMEOUT_MIN` bounds each agent attempt. It accepts decimals. `0`
+disables the per-attempt limit (GNU `timeout` semantics), and the job's
+`timeoutInMinutes` is then the only bound. The agent gets SIGKILL 30 s after
+the limit.
+
+Set the job limit above the worst-case total. A pipeline that lists only
+`steps:` has no place for it, so wrap the steps in a job:
+
+```yaml
+jobs:
+  - job: implement
+    timeoutInMinutes: 240
+```
+
+Budget:
+
+- 3 × 45 min of attempts;
+- 10 min of delays;
+- 2 × (20 + 10) min of review and self-fix, reserved for the AI review step
+  (gap item b), which this path does not run yet;
+- about 205 min in total.
+
+### 11.5 Unpark a work item
+
+1. Remove the `parked` tag.
+2. If the cap is the reason, raise `MAX_ATTEMPTS` on the pipeline. It is a
+   pipeline variable, so raising it raises the cap for every work item; lower
+   it again afterwards.
+3. Re-add `ai-implement`.

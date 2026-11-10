@@ -122,26 +122,24 @@ print(f.get("System.Title", "") + "\n" + f.get("System.Description", ""))')"
       # Both documents go via temp files, not one stream: `az` pretty-prints
       # JSON across many lines, so any attempt to separate two responses on
       # stdin by a newline parses the first brace as the whole document.
+      # Convert before mktemp: a failing helper must not leave temp files behind.
+      ISSUE_COMMENTS_JSON="$(printf '%s' "$comments" | _forge_azdo_comments_text)" \
+        || { printf 'forge.sh: cannot read the azdo comments document\n' >&2; return 1; }
       local _wf _cf
       _wf="$(mktemp)"; _cf="$(mktemp)"
       printf '%s' "$wi" > "$_wf"
-      printf '%s' "$comments" > "$_cf"
+      printf '%s' "$ISSUE_COMMENTS_JSON" > "$_cf"
       ISSUE_JSON="$(python3 -c '
 import json, sys
 wi = json.load(open(sys.argv[1]))
-cm = json.load(open(sys.argv[2]))
+bodies = json.load(open(sys.argv[2]))
 f = wi.get("fields", {})
 print(json.dumps({
     "title": f.get("System.Title", ""),
     "body": f.get("System.Description", ""),
-    "comments": [{"body": c.get("text", "")} for c in cm.get("comments", [])],
+    "comments": bodies,
 }))' "$_wf" "$_cf")"
       rm -f "$_wf" "$_cf"
-
-      ISSUE_COMMENTS_JSON="$(printf '%s' "$comments" | python3 -c '
-import sys, json
-print(json.dumps([{"body": c.get("text", "")}
-                  for c in json.load(sys.stdin).get("comments", [])]))')"
       ;;
     *)
       printf 'forge.sh: no read adapter for forge "%s" yet (see #253)\n' "$forge" >&2
@@ -150,6 +148,27 @@ print(json.dumps([{"body": c.get("text", "")}
   esac
 
   export ISSUE_LABELS ISSUE_BODY ISSUE_JSON ISSUE_COMMENTS_JSON
+}
+
+# _forge_azdo_comments_text  reads an Azure DevOps comments document on stdin and
+# prints a JSON array [{"body": <plain text>}] in API order.
+# The comments API returns HTML (<div> wrappers, &nbsp;, entities), while
+# check-attempt-cap.sh matches `startswith("## ai-implement run")`; without this
+# conversion no report is ever counted. Tags are stripped BEFORE unescaping, so
+# an escaped `&lt;b&gt;` stays the text `<b>`.
+_forge_azdo_comments_text() {
+  python3 -c '
+import html, json, re, sys
+
+def plain(text):
+    text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?i)</(div|p)>", "\n", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    return html.unescape(text).replace("\u00a0", " ").strip()
+
+doc = json.load(sys.stdin)
+print(json.dumps([{"body": plain(c.get("text") or "")}
+                  for c in doc.get("comments") or []]))'
 }
 
 # _forge_azdo_tags <work-item-id>  echoes the item's current tags, one per line.
