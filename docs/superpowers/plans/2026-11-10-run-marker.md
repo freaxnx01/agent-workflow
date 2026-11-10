@@ -195,7 +195,7 @@ git commit -m "feat(report): pass attempt, retry decision and PR into the run re
 ### Task 4: Record the contract
 
 **Files:**
-- Modify: `docs/DECISIONS.md` — append `## ADR-021 — The run report carries a machine-readable run marker (2026-11-10)` after the last ADR. ADR-021 is already reserved by #535 / PR #571 (agent isolation gate jobs, referenced from docs on main), so this one is ADR-021
+- Modify: `docs/DECISIONS.md` — append `## ADR-021 — The run report carries a machine-readable run marker (2026-11-10)` after the last ADR. ADR-020 is already reserved by #535 / PR #571 (agent isolation gate jobs, referenced from docs on main), so this one is ADR-021
 - Modify: `docs/superpowers/specs/2026-09-23-attempt-cap-nonstarts-design.md:47` — note under the D2 row
 - Modify: `CHANGELOG.md` — `## [Unreleased]`
 
