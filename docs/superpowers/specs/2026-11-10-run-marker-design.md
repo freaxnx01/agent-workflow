@@ -180,12 +180,12 @@ pattern within the body, so a trailing line is invisible to them as well.
 
 ## Azure DevOps
 
-On main today, `implement-azdo.sh` does not use `post-run-report.sh`. It writes its
-own short `## implement run (…, Azure DevOps)` comment only on success, exits before
-reporting on failure (`azdo-report-failure.sh` posts one sentence), and has no retry
+Before PR #584, `implement-azdo.sh` did not use `post-run-report.sh`. It wrote its
+own short `## implement run (…, Azure DevOps)` comment only on success, exited before
+reporting on failure (`azdo-report-failure.sh` posts one sentence), and had no retry
 and no attempt cap.
 
-Open PR #584 (#573 gap item a) changes that: an in-job retry with the shared
+PR #584 (#573 gap item a, merged 2026-11-10) changed that: an in-job retry with the shared
 decision table (`scripts/lib/retry-policy.sh`, `retry-dispatch.sh` output
 unchanged), a `## ai-implement run (…, Azure DevOps) — attempt N` report after every
 attempt, `check-attempt-cap.sh` counting those reports, and `forge.sh` turning ADO
@@ -195,7 +195,7 @@ and #584's HTML-to-text read path would have to preserve it.
 
 **v1 does not emit the marker on Azure DevOps**, and DECISIONS.md says so
 explicitly, with the reasons above. A consumer reading an ADO work item finds no
-marker and falls back to "no run record". Follow-up issue, once #584 has merged: attach the same marker to its per-attempt
+marker and falls back to "no run record". Follow-up issue: attach the same marker to its per-attempt
 report, after a live check that an HTML comment survives the round-trip. *(Decided by the user, 2026-11-10.)*
 
 ## Relation to D2 (attempt-cap-nonstarts)
