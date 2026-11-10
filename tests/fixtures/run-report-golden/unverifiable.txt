@@ -1,0 +1,20 @@
+## ai-implement run
+
+**Outcome:** :white_check_mark: success
+**Duration:** 32s · **Turns:** 4 · **Cost:** $0.0042
+
+**Plan coverage:** not checked — no plan headings
+
+| Metric | Value |
+|---|---|
+| Input tokens | 320 |
+| Output tokens | 850 |
+| Cache read | 18,400 (77% hit rate) |
+| Cache create | 5,200 |
+| Total tokens | 24,770 |
+| Max context per turn | n/a (no execution log provided) |
+
+[View workflow run](https://example/run/test)
+
+---
+LABELS: ai:done
