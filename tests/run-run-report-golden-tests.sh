@@ -295,6 +295,64 @@ json="$(marker_json "$(render_case success RESULT_FILE="$TINY")")"
 assert_jq "$json" '(.cost_usd | type) == "number"' "tiny cost — cost_usd is a number"
 assert_jq "$json" '.cost_usd == 0.000042'          "tiny cost — cost_usd round-trips"
 
+# --- workflow wiring (#585) -------------------------------------------------
+
+# The marker's four new inputs are useless unless the workflow passes them, and
+# a typo in a `${{ steps.… }}` expression fails silently — the field is simply
+# absent from every marker. Guard the wiring here, where it is cheap.
+
+IMPLEMENT="$ROOT/.github/workflows/agent-implement.yml"
+POST_RUN_STEP='- name: Post run report'
+
+# post_run_env — the Post run report step's lines, leading indent stripped.
+post_run_env() {
+  awk -v want="$POST_RUN_STEP" '
+    index($0, want) && $0 ~ /^[[:space:]]*- name: / { inside = 1; next }
+    inside && /^[[:space:]]*- name: / { inside = 0 }
+    inside { sub(/^[[:space:]]+/, ""); print }
+  ' "$IMPLEMENT"
+}
+
+# line_of <regex> — line number of the first match, or 0.
+line_of() {
+  awk -v re="$1" '$0 ~ re { print NR; exit }' "$IMPLEMENT"
+}
+
+# enclosing_job <line> — line number of the job header the line sits under.
+enclosing_job() {
+  awk -v limit="$1" 'NR < limit && /^  [a-zA-Z_][a-zA-Z0-9_-]*:$/ { n = NR } END { print n + 0 }' "$IMPLEMENT"
+}
+
+section "workflow wiring — the marker inputs reach Post run report"
+
+STEP_ENV="$(post_run_env)"
+for wiring in \
+  'ATTEMPT: ${{ steps.attempt_cap.outputs.attempt }}' \
+  'RETRY_ATTEMPT: ${{ inputs.attempt }}' \
+  'RETRY_DECISION: ${{ steps.retry.outputs.decision }}' \
+  'PR_NUMBER: ${{ steps.verify_pr.outputs.pr-number }}'
+do
+  name="wiring: ${wiring%%:*}"
+  if printf '%s\n' "$STEP_ENV" | grep -qxF -- "$wiring"; then
+    pass "$name"
+  else
+    fail "$name" "no '$wiring' in the Post run report step"
+  fi
+done
+
+POST_RUN_LINE="$(line_of "^[[:space:]]*$POST_RUN_STEP\$")"
+POST_RUN_JOB="$(enclosing_job "$POST_RUN_LINE")"
+for step_id in attempt_cap retry verify_pr; do
+  name="wiring: step '$step_id' is defined before Post run report, in the same job"
+  id_line="$(line_of "^[[:space:]]*id: $step_id\$")"
+  if (( id_line > 0 && id_line < POST_RUN_LINE )) \
+     && [[ "$(enclosing_job "$id_line")" == "$POST_RUN_JOB" ]]; then
+    pass "$name"
+  else
+    fail "$name" "id line $id_line vs Post run report line $POST_RUN_LINE (job header $POST_RUN_JOB)"
+  fi
+done
+
 # --- summary ----------------------------------------------------------------
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
