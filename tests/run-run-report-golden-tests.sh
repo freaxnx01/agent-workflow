@@ -149,6 +149,152 @@ for name in "${CASES[@]}"; do
   fi
 done
 
+# --- the run marker (#585) --------------------------------------------------
+
+# marker_lines <rendered> — every marker line in a rendered report.
+marker_lines() { printf '%s\n' "$1" | sed -n '/^<!-- ai-run: .* -->$/p'; }
+
+# marker_json <rendered> — the JSON between the marker's prefix and suffix.
+marker_json() { printf '%s\n' "$1" | sed -n 's/^<!-- ai-run: \(.*\) -->$/\1/p'; }
+
+# assert_jq <json> <filter> <name> — the filter must hold on the marker JSON.
+assert_jq() {
+  local out rc=0
+  out="$(printf '%s' "$1" | jq -e "$2" 2>&1)" || rc=$?
+  if (( rc == 0 )); then pass "$3"; else fail "$3" "jq '$2' → rc=$rc, out=$out, json=$1"; fi
+}
+
+# assert_one_marker <rendered> <name>
+assert_one_marker() {
+  local count
+  count="$(marker_lines "$1" | grep -c . || true)"
+  if [[ "$count" == "1" ]]; then pass "$2"; else fail "$2" "found $count marker lines"; fi
+}
+
+# assert_marker_tail <rendered> <name> — the marker is the last line of the
+# comment: directly after the run link, directly before the RENDER_ONLY trailer.
+assert_marker_tail() {
+  local -a lines
+  mapfile -t lines <<< "$1"
+  local n=${#lines[@]}
+  if (( n < 5 )); then fail "$2" "only $n lines rendered"; return 0; fi
+  local link="${lines[n - 5]}" marker="${lines[n - 4]}" blank="${lines[n - 3]}"
+  local rule="${lines[n - 2]}" labels="${lines[n - 1]}"
+  if [[ "$link" == '[View workflow run](https://example/run/test)' \
+     && "$marker" == '<!-- ai-run: '*' -->' \
+     && -z "$blank" && "$rule" == '---' && "$labels" == 'LABELS:'* ]]; then
+    pass "$2"
+  else
+    fail "$2" "tail was: [$link] [$marker] [$blank] [$rule] [$labels]"
+  fi
+}
+
+section "run marker — on every case"
+
+for name in "${CASES[@]}"; do
+  out="$(render_case "$name")"
+  assert_one_marker "$out" "marker: $name — exactly one marker line"
+  assert_marker_tail "$out" "marker: $name — last line, right after the run link"
+  json="$(marker_json "$out")"
+  assert_jq "$json" '.v == 1' "marker: $name — v is 1"
+  assert_jq "$json" '.run_url == "https://example/run/test"' "marker: $name — run_url"
+done
+
+section "run marker — fields"
+
+json="$(marker_json "$(render_case success)")"
+assert_jq "$json" '.status == "ai:done"'   "success — status"
+assert_jq "$json" '.subtype == "success"'  "success — subtype"
+assert_jq "$json" '.turns == 4'            "success — turns"
+assert_jq "$json" '.cost_usd == 0.0042'    "success — cost_usd"
+assert_jq "$json" '.counts == true'        "success — counts"
+assert_jq "$json" 'has("decision") | not'  "success — no decision (Plan retry did not run)"
+assert_jq "$json" 'has("attempt") | not'   "success — no attempt (cap step did not run)"
+assert_jq "$json" 'has("pr") | not'        "success — no pr (none passed)"
+assert_jq "$json" 'has("class") | not'     "success — no class (classifier did not run)"
+
+json="$(marker_json "$(render_case success-full ATTEMPT=2 RETRY_ATTEMPT=1 PR_NUMBER=42)")"
+assert_jq "$json" '.attempt == 2'                 "success-full — attempt (the cap's lifetime count)"
+assert_jq "$json" '.retry_attempt == 1'           "success-full — retry_attempt (the chain position)"
+assert_jq "$json" '.pr == 42'                     "success-full — pr"
+assert_jq "$json" '.agent == "claude"'            "success-full — agent"
+assert_jq "$json" '.model == "claude-sonnet-5"'   "success-full — model"
+assert_jq "$json" '.max_turns == 80'              "success-full — max_turns"
+assert_jq "$json" '.plan_coverage == "complete"'  "success-full — plan_coverage"
+assert_jq "$json" 'has("has_plan") | not'         "success-full — no has_plan (#532)"
+
+json="$(marker_json "$(render_case failed-max-turns RETRY_DECISION=stop ATTEMPT=2)")"
+assert_jq "$json" '.class == "task_failure"'       "failed-max-turns — class"
+assert_jq "$json" '.decision == "stop"'            "failed-max-turns — decision"
+assert_jq "$json" '.status == "ai:failed"'         "failed-max-turns — status"
+assert_jq "$json" '.subtype == "error_max_turns"'  "failed-max-turns — subtype"
+assert_jq "$json" '.turns == 60'                   "failed-max-turns — turns"
+assert_jq "$json" '.attempt == 2'                  "failed-max-turns — attempt"
+assert_jq "$json" '.counts == true'                "failed-max-turns — counts"
+assert_jq "$json" '.duration_ms == 612000'         "failed-max-turns — duration_ms"
+
+json="$(marker_json "$(render_case paused ATTEMPT=3)")"
+assert_jq "$json" '.class == "out_of_credits"' "paused — class"
+assert_jq "$json" '.counts == false'           "paused — counts is false for a pause class"
+assert_jq "$json" 'has("attempt") | not'       "paused — no attempt even with ATTEMPT set"
+assert_jq "$json" 'has("status") | not'        "paused — no status (no label is stamped)"
+
+json="$(marker_json "$(render_case model-not-found ATTEMPT=3)")"
+assert_jq "$json" '.class == "model_not_found"' "model-not-found — class"
+assert_jq "$json" '.status == "ai:failed"'      "model-not-found — status"
+assert_jq "$json" '.turns == 0'                 "model-not-found — turns"
+assert_jq "$json" '.cost_usd == 0'              "model-not-found — cost_usd"
+assert_jq "$json" '.counts == false'            "model-not-found — counts is false for a non-start"
+assert_jq "$json" 'has("attempt") | not'        "model-not-found — no attempt on a non-start"
+
+json="$(marker_json "$(render_case partial)")"
+assert_jq "$json" '.status == "ai:partial"'      "partial — status"
+assert_jq "$json" '.plan_coverage == "partial"'  "partial — plan_coverage"
+
+section "run marker — no free text (ADR-019)"
+
+json="$(marker_json "$(render_case model-not-found)")"
+assert_jq "$json" 'has("result") | not' "model-not-found — no result key"
+if [[ "$json" != *"not on OpenRouter's model list"* && "$json" != *api_error* ]]; then
+  pass "model-not-found — the fixture's free text is nowhere in the marker"
+else
+  fail "model-not-found — the fixture's free text is nowhere in the marker" "json=$json"
+fi
+
+section "run marker — a model id cannot break out of the HTML comment"
+
+out="$(render_case success MODEL='x-->y<z')"
+line="$(marker_lines "$out")"
+arrows="$(printf '%s' "$line" | grep -o -- '-->' | grep -c . || true)"
+if [[ "$arrows" == "1" ]]; then
+  pass "escaping — the marker line contains '-->' exactly once"
+else
+  fail "escaping — the marker line contains '-->' exactly once" "found $arrows in: $line"
+fi
+if [[ "${line:4}" != *'<'* ]]; then
+  pass "escaping — no '<' after the comment's own opener"
+else
+  fail "escaping — no '<' after the comment's own opener" "line=$line"
+fi
+assert_jq "$(marker_json "$out")" '.model == "x-->y<z"' "escaping — the model id decodes back exactly"
+
+section "run marker — invalid and awkward numbers"
+
+json="$(marker_json "$(render_case success ATTEMPT=abc RETRY_ATTEMPT= PR_NUMBER=3a)")"
+assert_jq "$json" 'type == "object"'         "invalid numbers — still valid JSON"
+assert_jq "$json" 'has("attempt") | not'     "invalid numbers — ATTEMPT=abc is omitted"
+assert_jq "$json" 'has("retry_attempt")|not' "invalid numbers — an empty RETRY_ATTEMPT is omitted"
+assert_jq "$json" 'has("pr") | not'          "invalid numbers — PR_NUMBER=3a is omitted"
+
+# jq prints 0.000042 as 4.2e-05 — still a JSON number, and it must not be
+# dropped or turned into a string on the way through.
+TINY="$(mktemp)"
+trap 'rm -f "$TINY"' EXIT
+jq '.total_cost_usd = 0.000042' "$FIXTURES/result-success-cheap.json" > "$TINY"
+json="$(marker_json "$(render_case success RESULT_FILE="$TINY")")"
+assert_jq "$json" '(.cost_usd | type) == "number"' "tiny cost — cost_usd is a number"
+assert_jq "$json" '.cost_usd == 0.000042'          "tiny cost — cost_usd round-trips"
+
 # --- summary ----------------------------------------------------------------
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
