@@ -17,6 +17,18 @@
 #                                         ISSUE_BODY          classify-turns
 #                                         ISSUE_JSON          build-agent-prompt
 #                                         ISSUE_COMMENTS_JSON check-attempt-cap
+#   forge_pr_diff <pr>                  unified diff to stdout. azdo: the three-dot
+#                                       diff of the checkout against
+#                                       origin/$DEFAULT_BRANCH (must be set).
+#   forge_pr_head_sha <pr>              the PR head SHA. azdo: HEAD of the checkout.
+#   forge_pr_comment <pr> <body-file>   post the file as a PR comment (azdo: one
+#                                       active thread).
+#   forge_pr_comments_json <pr>         NOTE THE NAME: echoes every PR comment
+#                                       body as TEXT, not JSON, because that is
+#                                       what review-pr.sh's marker check reads.
+#                                       The mismatch is deliberate.
+#
+# FORGE, when set, overrides detect_forge for the four PR verbs (see _forge_kind).
 #
 # Requires: detect-forge.sh sourced first (for detect_forge), and REPO set.
 #
@@ -344,5 +356,137 @@ forge_pr_create_draft() {
       printf 'forge.sh: no PR adapter for this forge yet (#253)\n' >&2
       return 2
       ;;
+  esac
+}
+
+# --- PR verbs ----------------------------------------------------------------
+#
+# What the shared review / self-fix scripts need from a pull request. The github
+# branch of each is the gh call those scripts make today, character for
+# character; azdo reads the job's own checkout where it can, since the pipeline
+# agent has already checked the branch out.
+
+# _forge_kind  echoes the forge: $FORGE when set and non-empty, otherwise the
+# first word of detect_forge. The override lets a caller that already knows its
+# forge skip the git-remote probe (and run outside a git repo).
+_forge_kind() {
+  if [[ -n "${FORGE:-}" ]]; then printf '%s\n' "$FORGE"; return 0; fi
+  detect_forge | awk '{print $1}'
+}
+
+# _forge_no_pr_adapter  the refusal every PR verb gives an unknown forge.
+_forge_no_pr_adapter() {
+  printf 'forge.sh: no PR adapter for this forge yet (#253)\n' >&2
+  return 2
+}
+
+# _forge_azdo_thread_bodies  reads an Azure DevOps pullRequestThreads document on
+# stdin and prints the content of every comment of every thread, one after
+# another. System threads carry comments without `content`; those are skipped,
+# not printed as "None".
+_forge_azdo_thread_bodies() {
+  python3 -c '
+import json, sys
+for thread in json.load(sys.stdin).get("value") or []:
+    for comment in thread.get("comments") or []:
+        content = comment.get("content")
+        if content:
+            print(content)'
+}
+
+# _forge_azdo_threads <pr> [az args...]  the pullRequestThreads call shared by
+# forge_pr_comment (POST) and forge_pr_comments_json (GET); the caller's extra
+# arguments pick the method, the input and the output format.
+_forge_azdo_threads() {
+  local pr="$1"; shift
+  _forge_source_azdo; resolve_azdo_context || return 1
+  az devops invoke --org "$(azdo_org_url)" --area git \
+    --resource pullRequestThreads \
+    --route-parameters project="$AZDO_PROJECT" repositoryId="$AZDO_REPO" \
+      pullRequestId="$pr" \
+    --api-version 7.1 --only-show-errors "$@"
+}
+
+# forge_pr_diff <pr>
+#
+# Writes the unified diff to stdout. On azdo it is the three-dot diff of the
+# checkout against origin/$DEFAULT_BRANCH, with the prefixes and external diff
+# pinned so a user's diff.noprefix / diff.external cannot change its shape.
+# DEFAULT_BRANCH is never guessed: a wrong base reviews the wrong change.
+forge_pr_diff() {
+  local pr="${1:?forge_pr_diff requires a PR number}"
+  case "$(_forge_kind)" in
+    github)
+      : "${REPO:?REPO must be set}"
+      gh pr diff "$pr" --repo "$REPO"
+      ;;
+    azdo)
+      if [[ -z "${DEFAULT_BRANCH:-}" ]]; then
+        printf 'forge_pr_diff: DEFAULT_BRANCH must be set on azdo\n' >&2
+        return 1
+      fi
+      git diff --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ \
+        "origin/${DEFAULT_BRANCH}...HEAD"
+      ;;
+    *) _forge_no_pr_adapter ;;
+  esac
+}
+
+# forge_pr_head_sha <pr>
+#
+# Echoes the PR's head SHA. On azdo the job's checkout IS the PR branch, so HEAD
+# is the answer, and it moves with a self-fix commit, which is what makes the
+# re-review's marker differ from the first review's.
+forge_pr_head_sha() {
+  local pr="${1:?forge_pr_head_sha requires a PR number}"
+  case "$(_forge_kind)" in
+    github)
+      : "${REPO:?REPO must be set}"
+      gh pr view "$pr" --repo "$REPO" --json headRefOid --jq '.headRefOid'
+      ;;
+    azdo) git rev-parse HEAD ;;
+    *) _forge_no_pr_adapter ;;
+  esac
+}
+
+# forge_pr_comment <pr> <body-file>
+#
+# Takes a FILE, as forge_issue_comment does. On azdo a PR comment is a thread:
+# one active thread holding the file's text. The body is built with jq so
+# backticks, `$` and newlines reach the API untouched, and goes over stdin like
+# the other plain-JSON calls (azdo_wiql / azdo_fields).
+forge_pr_comment() {
+  local pr="${1:?forge_pr_comment requires a PR number}"
+  local f="${2:?forge_pr_comment requires a body file}"
+  case "$(_forge_kind)" in
+    github)
+      : "${REPO:?REPO must be set}"
+      gh pr comment "$pr" --repo "$REPO" --body-file "$f"
+      ;;
+    azdo)
+      jq -n --rawfile c "$f" \
+        '{comments: [{parentCommentId: 0, content: $c, commentType: 1}], status: "active"}' \
+      | _forge_azdo_threads "$pr" --http-method POST --in-file /dev/stdin --output none
+      ;;
+    *) _forge_no_pr_adapter ;;
+  esac
+}
+
+# forge_pr_comments_json <pr>
+#
+# Despite the name this echoes the comment BODIES AS TEXT, not JSON: that is
+# what review-pr.sh's marker check greps. The name is kept from the spec; the
+# contract is documented in the header. On azdo, every comment of every thread.
+forge_pr_comments_json() {
+  local pr="${1:?forge_pr_comments_json requires a PR number}"
+  case "$(_forge_kind)" in
+    github)
+      : "${REPO:?REPO must be set}"
+      gh pr view "$pr" --repo "$REPO" --json comments --jq '.comments[].body'
+      ;;
+    azdo)
+      _forge_azdo_threads "$pr" --output json | _forge_azdo_thread_bodies
+      ;;
+    *) _forge_no_pr_adapter ;;
   esac
 }

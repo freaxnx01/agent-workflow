@@ -43,6 +43,9 @@
 #                  caller job sets those to the fixed review-agent
 #                  identity (AGENT=claude), which is intentionally
 #                  independent of FIX_AGENT.
+#   FORGE          github (default) | azdo. Selects how the head SHA is read
+#                  after each fix (forge_pr_head_sha) and is exported to the
+#                  FIX_CMD / REVIEW_SCRIPT children.
 #   NEW_HEAD_SHA   Skip the `gh pr view --json headRefOid` lookup after
 #                  each fix and use this value instead. Used by Layer-1
 #                  tests.
@@ -67,6 +70,14 @@ set -euo pipefail
 IFS=$'\n\t'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# shellcheck source=scripts/lib/detect-forge.sh
+source "$SCRIPT_DIR/lib/detect-forge.sh"
+# shellcheck source=scripts/lib/forge.sh
+source "$SCRIPT_DIR/lib/forge.sh"
+# Exported so the REVIEW_SCRIPT / FIX_CMD children inherit the forge.
+FORGE="${FORGE:-github}"
+export FORGE
 
 require_env() {
   if [[ -z "${!1:-}" ]]; then
@@ -154,7 +165,7 @@ else
 
     if [[ -n "${NEW_HEAD_SHA:-}" ]]; then
       head_sha="$NEW_HEAD_SHA"
-    elif ! head_sha="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid --jq '.headRefOid')"; then
+    elif ! head_sha="$(forge_pr_head_sha "$PR_NUMBER")"; then
       abort_iteration "gh pr view failed after fix" "$i"
       break
     fi

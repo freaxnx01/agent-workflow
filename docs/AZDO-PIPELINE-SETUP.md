@@ -123,6 +123,10 @@ Set on the pipeline (not in YAML):
 - `CLAUDE_CODE_OAUTH_TOKEN` — mark **secret**.
 - `MAX_ATTEMPTS` — optional, default 2. See section 11.
 - `IMPLEMENT_TIMEOUT_MIN` — optional, default 45. See section 11.
+- `AI_REVIEW` — optional, default 1. `0` skips the AI review. See section 12.
+- `SELF_FIX` — optional, default 0. `1` lets the agent fix what the review
+  found. See section 12.
+- `SELF_FIX_MAX_ITERATIONS` — optional, default 2. See section 12.
 
 Leave *Let users override this value when running this pipeline* **off** for
 each of them.
@@ -348,9 +352,10 @@ Budget:
 
 - 3 × 45 min of attempts;
 - 10 min of delays;
-- 2 × (20 + 10) min of review and self-fix, reserved for the AI review step
-  (gap item b), which this path does not run yet;
-- about 205 min in total.
+- 2 × (20 + 10) min of self-fix and re-review, only with `SELF_FIX=1` (see
+  section 12);
+- 10 min for the first review;
+- about 215 min in total.
 
 ### 11.5 Unpark a work item
 
@@ -359,3 +364,57 @@ Budget:
    pipeline variable, so raising it raises the cap for every work item; lower
    it again afterwards.
 3. Re-add `ai-implement`.
+
+## 12. AI review and self-fix
+
+1. **What runs.** After the draft PR opens, the same `review-pr.sh` reviews it
+   (`AI_REVIEW`, default 1). One PR thread is posted per head commit, carrying
+   the verdict and the concerns. The work item gets a comment that starts
+   `## ai-review verdict: <verdict>` and links the PR. That comment is not
+   counted by the attempt cap (section 11.2).
+2. **Self-fix.** It is off by default. With `SELF_FIX=1` and a
+   `request_changes` verdict, up to `SELF_FIX_MAX_ITERATIONS` (default 2)
+   fix and re-review passes run. Fixes are authored and committed as
+   `ai-implement <ai-implement@noreply.invalid>`, even if the environment sets
+   git identity variables. The agent pushes them to the PR branch with the
+   same extraheader auth as the PR branch itself. The token is never written
+   into the remote URL or `.git/config`, and the fix agent runs without it:
+   the push happens afterwards, outside the agent. The fix is skipped when the checkout
+   is not clean.
+3. **Never votes.** The PR stays a draft. The agent never votes, approves,
+   completes or publishes it; a human does. Merge gates stay branch policies
+   (sections 6 and 9).
+4. **Pipeline files.** A fix that touches a section 9.4 glob is not pushed. The
+   loop stops, and the verdict comment names the files. A guard result of 2
+   (the diff could not be computed) also stops the push. No variable can skip
+   this guard.
+5. **Permissions.** The thread POST uses the *Contribute to pull requests*
+   permission from section 5. If it is missing, the run stays green and the
+   verdict comment says the review failed.
+6. **Time budget.** Plan for about 10 min per review and 20 min per fix: about
+   70 min at the default of 2 iterations, and 30 min more per extra iteration.
+   Both agent calls have hard limits. The fix runs under
+   `timeout --kill-after=30s 20m`. Each review agent call is bounded by
+   `AGENT_TIMEOUT_SECONDS` of `review-pr.sh` (default 600 s, SIGKILL 30 s
+   later); its first try and its retry share that one deadline. Only the API
+   and git calls around the agents are bounded just by the job's
+   `timeoutInMinutes: 240` from section 11.
+7. **Failures.** A review or self-fix failure never turns the job red and
+   never causes a retry. It is reported in the verdict comment.
+8. **The `self-fix:` line.** The verdict comment ends its header with one of:
+   - `off` — `SELF_FIX` is not 1;
+   - `not needed` — the verdict did not ask for changes;
+   - `not run` — a fix was wanted, but no iteration completed. The comment
+     names the cause when there is one: a dirty checkout (`self-fix skipped`),
+     a failed, timed-out or no-op fix (`self-fix stopped: the fix failed, timed
+     out or made no change`), a fix that left the PR branch (`the fix left the
+     checkout off <branch>`), a guard refusal (`the fix changed pipeline
+     files: ...`), a guard that could not check (`could not check the fix for
+     pipeline files`) or a failed push. `SELF_FIX_MAX_ITERATIONS=0` has no
+     line, because no pass was attempted;
+   - `N iteration(s)` — N fix passes were pushed.
+
+   If the loop aborts after a fix was pushed (the head lookup or the
+   re-review failed), the verdict above is for an earlier commit. The loop's
+   outputs cannot tell this apart from a normal run, so the comment does not
+   say so: compare its `head:` line with the PR's tip.

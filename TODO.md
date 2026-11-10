@@ -7,6 +7,17 @@
       event was delivered. Other tag changes the same day fired normally.
       Find out whether the area filter evaluates the old area for that
       update. Details: `docs/ai-notes/2026-11-09-azdo-pr-validation-run.md`.
+      The items a and b proofs saw it four more times on freshly created
+      items; manual `workItemId` runs went through the same guard.
+- [ ] **Agent commits carry the agent image's git identity.** The implement
+      agent's commits use whatever identity the image configures; self-fix
+      commits use `ai-implement`. Decide whether the implement commit should
+      use a neutral identity too. Details:
+      `docs/ai-notes/2026-11-09-azdo-ai-review-run.md`.
+- [ ] **`tests/run-enrich-batch-doc-tests.sh` is flaky under a full sweep.**
+      It failed four times in `tests/run-all.sh` and passed alone every time.
+- [ ] **`tests/run-implement-azdo-tests.sh` takes about 20 s.** Layer 1
+      aims for under 5 s; `run_loop` builds a bare repo and clone per case.
 
 ## Session 2026-10-01/02 (consumer permissions + model-not-found retry) — 3 issues shipped, rollout and #449 open
 

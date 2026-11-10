@@ -106,7 +106,7 @@ run_agent_driver() {
 # see an Azure DevOps remote while pushes go to the bare repo. Sets RC, OUT, ERR,
 # AZLOG (az argv log), CLAUDELOG (agent call log), WORK and BARE.
 LOOP_N=0
-RC=0; OUT=''; ERR=''; AZLOG=''; CLAUDELOG=''; WORK=''; BARE=''
+RC=0; OUT=''; ERR=''; AZLOG=''; CLAUDELOG=''; WORK=''; BARE=''; LOOPDIR=''
 run_loop() {
   local steps="$1" dir seed
   shift
@@ -127,14 +127,21 @@ run_loop() {
     git -C "$seed" push -q "$BARE" "$LOOP_SEED_BRANCH"
   fi
   git clone -q "$BARE" "$WORK" 2>/dev/null
+  # Identity lives in the clone's config, not GIT_AUTHOR_* env: the environment
+  # would override the `-c user.name` the self-fix commit sets.
+  git -C "$WORK" config user.name test
+  git -C "$WORK" config user.email t@example.invalid
   # Azure Pipelines checks out a detached HEAD; LOOP_DETACH=1 reproduces that.
   [[ -z "${LOOP_DETACH:-}" ]] || git -C "$WORK" checkout -q --detach
   tr ',' '\n' <<<"$steps" > "$dir/steps"
-  : > "$dir/az.log"; : > "$dir/claude.log"
+  : > "$dir/az.log"; : > "$dir/claude.log"; : > "$dir/az.stdin"
+  : > "$dir/fix.log"; : > "$dir/review.log"
   {
     printf 'work-item show\t%s/forge-workitem-azdo.json\n' "$FIXTURES"
     printf 'work-item update\t%s/forge-workitem-azdo.json\n' "$FIXTURES"
     printf 'repos pr create\t%s/azdo-pr-create.tsv\n' "$FIXTURES"
+    printf -- '--http-method POST\t%s/%s\n' "$FIXTURES" "${AZ_THREAD_POST:-azdo-pr-thread-created.json}"
+    printf 'pullRequestThreads\t%s/azdo-pr-threads-empty.json\n' "$FIXTURES"
     printf 'resource comments\t%s/%s\n' "$FIXTURES" "${AZ_COMMENTS:-forge-comments-azdo.json}"
   } > "$dir/map"
   RC=0
@@ -143,14 +150,16 @@ run_loop() {
     GIT_MOCK_REAL="$(command -v git)" \
     GIT_MOCK_ORIGIN_URL=https://dev.azure.com/contoso/MyProject/_git/my-repo \
     AZURE_DEVOPS_EXT_PAT=pat ISSUE_NUMBER=7 DELAY_OVERRIDE_SEC=0 \
-    GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=t@example.invalid \
-    GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=t@example.invalid \
+    AZ_MOCK_STDIN_LOG="$dir/az.stdin" GIT_MOCK_LOG="$dir/git.log" \
+    CLAUDE_MOCK_FIX_LOG="$dir/fix.log" CLAUDE_MOCK_REVIEW_LOG="$dir/review.log" \
+    CLAUDE_MOCK_REVIEW_DIR="$dir" \
     AZ_MOCK_FIXTURE="$FIXTURES/forge-workitem-azdo.json" AZ_MOCK_MAP="$dir/map" AZ_MOCK_LOG="$dir/az.log" \
     CLAUDE_MOCK_STEPS="$dir/steps" CLAUDE_MOCK_STATE="$dir/claude.state" CLAUDE_MOCK_LOG="$dir/claude.log" \
-    "$@" bash -c 'cd "$1" && bash "$2"' _ "$WORK" "$ROOT/scripts/implement-azdo.sh" \
+    AI_REVIEW=0 "$@" bash -c 'cd "$1" && bash "$2"' _ "$WORK" "$ROOT/scripts/implement-azdo.sh" \
     >"$dir/out" 2>"$dir/err" || RC=$?
   OUT="$(cat "$dir/out")"; ERR="$(cat "$dir/err")"
   AZLOG="$(cat "$dir/az.log")"
+  LOOPDIR="$dir"
   # shellcheck disable=SC2034  # CLAUDELOG is read by the retry-loop tests
   CLAUDELOG="$(cat "$dir/claude.log")"
 }
@@ -390,6 +399,22 @@ LOOP_DETACH=1 run_loop success-nobranch
 assert_eq "detached_no_branch_success: rc" "1" "$RC"
 assert_not_contains "detached_no_branch_success: no PR" "repos pr create" "$AZLOG"
 assert_contains "detached_no_branch_success: says why" "did not branch" "$AZLOG"
+
+# Found live (run 50): the agent branched, left its edits uncommitted and
+# reported success. The driver pushed the empty branch and opened an empty PR.
+run_loop success-nocommit
+assert_eq "no_commit_success: rc" "1" "$RC"
+assert_not_contains "no_commit_success: no PR" "repos pr create" "$AZLOG"
+assert_contains "no_commit_success: says why" "committed nothing" "$AZLOG"
+assert_contains "no_commit_success: mentions leftovers" "uncommitted changes" "$AZLOG"
+assert_eq "no_commit_success: branch not pushed" "" "$(git -C "$BARE" branch --list 'ai/7-nc-1')"
+assert_contains "no_commit_success: logs what the agent said" "Added the requested hello.md file" "$ERR"
+# The agent succeeds but origin/main is gone: no_new_commits falls through and
+# the pipeline-file guard fails closed with its own message.
+run_loop success CLAUDE_MOCK_DROP_ORIGIN_MAIN=1 MAX_ATTEMPTS=1
+assert_not_contains "no_base_ref_fails_closed: not a no-commit verdict" "committed nothing" "$AZLOG$ERR"
+assert_contains "no_base_ref_fails_closed: guard message" "could not verify the agent left pipeline files alone" "$AZLOG"
+assert_not_contains "no_base_ref_fails_closed: no PR" "repos pr create" "$AZLOG"
 # A failing cap preview must not read as "attempt cap reached".
 # shellcheck disable=SC2016  # $1 is for the inner bash, not this one
 preview_out="$(env -i HOME="$TMP" PATH="$PATH" bash -c '
@@ -454,6 +479,169 @@ assert_eq "reset_local_keeps_ignored_file" "kept" "$(reset_ignored_file_survives
 assert_eq "reset_pipeline_removes_ignored_file" "removed" "$(reset_ignored_file_survives True pipe)"
 assert_eq "reset_untracked_file_removed" "" "$([[ -e "$TMP/reset-local/junk.txt" ]] && echo present)"
 assert_eq "reset_branch_deleted" "" "$(git -C "$TMP/reset-local" branch --list ai/x)"
+
+section "AI review"
+
+# Thread POSTs carry the review marker in their body; the bodies are in az.stdin.
+thread_posts() { grep -c 'pullRequestThreads.*--http-method POST' <<<"$AZLOG" || true; }
+thread_markers() { grep -o 'review-pr:[0-9a-f]\{40\}' "$LOOPDIR/az.stdin" || true; }
+
+run_loop success
+assert_not_contains "review_off_by_default_in_harness: no thread" "pullRequestThreads" "$AZLOG"
+assert_eq "review_off_by_default_in_harness: no review call" "" "$(cat "$LOOPDIR/review.log")"
+
+run_loop success AI_REVIEW=1 CLAUDE_MOCK_REVIEWS=review-approve.json
+assert_eq "review_posts_thread_and_verdict: rc" "0" "$RC"
+assert_eq "review_posts_thread_and_verdict: one thread POST" "1" "$(thread_posts)"
+assert_contains "review_posts_thread_and_verdict: pullRequestId" "pullRequestId=42" "$AZLOG"
+assert_eq "review_posts_thread_and_verdict: marker is HEAD" "review-pr:$(git -C "$WORK" rev-parse HEAD)" "$(thread_markers)"
+assert_contains "review_posts_thread_and_verdict: verdict comment" "## ai-review verdict: approve" "$AZLOG"
+assert_contains "review_posts_thread_and_verdict: names PR" "- draft PR: !42" "$AZLOG"
+assert_contains "review_posts_thread_and_verdict: output" "ai review : approve" "$OUT"
+assert_contains "review_posts_thread_and_verdict: banner" "ai review        : on, self-fix: off" "$OUT"
+review_line="$(sed -n 1p "$LOOPDIR/review.log")"
+assert_contains "review_call_has_no_tools: print" "--print" "$review_line"
+assert_not_contains "review_call_has_no_tools: no allowedTools" "--allowedTools" "$review_line"
+assert_not_contains "review_call_has_no_tools: no bypass" "bypassPermissions" "$review_line"
+assert_not_contains "review_never_votes" "--vote" "$AZLOG"
+
+run_loop success AI_REVIEW=1 SELF_FIX=1 CLAUDE_MOCK_REVIEWS=review-request-changes.json,review-approve.json
+assert_eq "self_fix_round_trip: rc" "0" "$RC"
+assert_eq "self_fix_round_trip: two thread POSTs" "2" "$(thread_posts)"
+assert_eq "self_fix_round_trip: second marker is post-fix HEAD" "review-pr:$(git -C "$WORK" rev-parse HEAD)" "$(thread_markers | sed -n 2p)"
+assert_eq "self_fix_round_trip: markers differ" "2" "$(thread_markers | sort -u | wc -l)"
+assert_contains "self_fix_round_trip: re-review sees the fix" "FIX.md" "$(cat "$LOOPDIR/review-2.md")"
+assert_not_contains "self_fix_round_trip: first review does not" "FIX.md" "$(cat "$LOOPDIR/review-1.md")"
+assert_eq "self_fix_round_trip: server tip is HEAD" "$(git -C "$WORK" rev-parse HEAD)" "$(git -C "$BARE" rev-parse ai/7-ok-1)"
+assert_eq "self_fix_round_trip: fix author" "ai-implement" "$(git -C "$BARE" log -1 --format=%an ai/7-ok-1)"
+assert_contains "self_fix_round_trip: verdict approve" "## ai-review verdict: approve" "$AZLOG"
+assert_contains "self_fix_round_trip: iterations" "self-fix: 1 iteration(s)" "$AZLOG"
+
+run_loop success AI_REVIEW=1 SELF_FIX=1 SELF_FIX_MAX_ITERATIONS=2 CLAUDE_MOCK_REVIEWS=review-request-changes.json
+assert_eq "self_fix_bounded: three thread POSTs" "3" "$(thread_posts)"
+assert_eq "self_fix_bounded: two fixes" "2" "$(grep -c . "$LOOPDIR/fix.log" || true)"
+assert_contains "self_fix_bounded: verdict" "## ai-review verdict: request_changes" "$AZLOG"
+assert_contains "self_fix_bounded: iterations" "self-fix: 2 iteration(s)" "$AZLOG"
+
+run_loop success AI_REVIEW=1 SELF_FIX=1 CLAUDE_MOCK_FIX_TOUCH=azure-pipelines.yml CLAUDE_MOCK_REVIEWS=review-request-changes.json
+assert_eq "self_fix_guard_reported: rc" "0" "$RC"
+assert_eq "self_fix_guard_reported: one thread POST" "1" "$(thread_posts)"
+assert_contains "self_fix_guard_reported: not run" "self-fix: not run" "$AZLOG"
+assert_contains "self_fix_guard_reported: names file" "the fix changed pipeline files: azure-pipelines.yml" "$AZLOG"
+
+run_loop success AI_REVIEW=1 SELF_FIX=1 CLAUDE_MOCK_FIX_FAIL=1 CLAUDE_MOCK_REVIEWS=review-request-changes.json
+assert_eq "self_fix_failure_explained: rc" "0" "$RC"
+assert_contains "self_fix_failure_explained: not run" "self-fix: not run" "$AZLOG"
+assert_contains "self_fix_failure_explained: reason" "self-fix stopped: the fix failed" "$AZLOG"
+
+run_loop success-dirty AI_REVIEW=1 SELF_FIX=1 CLAUDE_MOCK_REVIEWS=review-request-changes.json
+assert_eq "self_fix_skipped_on_dirty_checkout: no fix call" "" "$(cat "$LOOPDIR/fix.log")"
+assert_contains "self_fix_skipped_on_dirty_checkout: not run" "self-fix: not run" "$AZLOG"
+assert_contains "self_fix_skipped_on_dirty_checkout: reported" "self-fix skipped" "$AZLOG"
+assert_contains "self_fix_skipped_on_dirty_checkout: names the leftovers" "?? junk.txt" "$ERR"
+
+run_loop success AI_REVIEW=1 CLAUDE_MOCK_REVIEWS=review-approve.json AZ_THREAD_POST=azdo-pr-thread-error.txt
+assert_eq "review_failure_stays_green: rc" "0" "$RC"
+assert_eq "review_failure_stays_green: one attempt report" "1" "$(count_reports "$AZLOG")"
+assert_contains "review_failure_stays_green: verdict comment" "## ai-review verdict:" "$AZLOG"
+assert_eq "review_failure_stays_green: no retry" "1" "$(grep -c . <<<"$CLAUDELOG" || true)"
+
+for bad in AI_REVIEW=yes SELF_FIX=2 SELF_FIX_MAX_ITERATIONS=-1; do
+  run_driver "$bad" AZURE_DEVOPS_EXT_PAT=pat
+  assert_eq "config_rejected_${bad}: rc" "2" "$RC"
+  assert_contains "config_rejected_${bad}: message" "${bad%%=*} must be" "$ERR"
+done
+
+# shellcheck disable=SC2016  # $1 is for the inner bash, not this one
+verdict_body="$(env -i HOME="$TMP" PATH="$PATH" bash -c '
+  source "$1"
+  REVIEW_VERDICT=approve PR_ID=42 REVIEW_HEAD_SHA=abc SELF_FIX=0
+  render_review_report' _ "$ROOT/scripts/implement-azdo.sh")"
+verdict_comments="$(jq -Rs '[{body: .}]' <<<"$verdict_body")"
+cap_check() {
+  env -i HOME="$TMP" PATH="$PATH" ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 \
+    ISSUE_COMMENTS_JSON="$1" bash "$ROOT/scripts/check-attempt-cap.sh"
+}
+assert_contains "verdict_comment_not_counted_by_cap: alone" "attempt=1" "$(cap_check "$verdict_comments")"
+# shellcheck disable=SC2016  # $1/$2 are for the inner bash, not this one
+attempt_body="$(env -i HOME="$TMP" PATH="$PATH" bash -c '
+  source "$1"
+  ATTEMPT_SECONDS=5 TURNS_BUDGET=80 RUN_CONTEXT=local RUN_ATTEMPT=1 RESULT_FILE="$2"
+  render_report success "next: x"' _ "$ROOT/scripts/implement-azdo.sh" "$FIXTURES/result-max-turns.json")"
+both_comments="$(jq -s '.[0] + .[1]' <(jq -Rs '[{body: .}]' <<<"$attempt_body") <<<"$verdict_comments")"
+assert_contains "verdict_comment_not_counted_by_cap: with one attempt" "attempt=2" "$(cap_check "$both_comments")"
+
+section "B6: never vote"
+
+# The agent never votes, completes or publishes a PR. Every pattern is a call
+# that would; plain `--draft` (opening the PR as a draft) deliberately matches none.
+FORBIDDEN_PATTERNS=(
+  'set-vote'
+  'repos pr reviewer'
+  'repos pr update'
+  'autoCompleteSetBy'
+  '--auto-complete'
+  'isDraft'
+  '--draft[ =]false'
+  '"vote"'
+  'pullRequestReviewers'
+  '/reviewers'
+  '--resource pullRequests( |$)'
+  '"status" *: *"completed"'
+)
+forbidden_regex() { local IFS='|'; printf '%s' "${FORBIDDEN_PATTERNS[*]}"; }
+# forbidden_hits <file>... — file:line:text per hit in source files; comment lines are skipped.
+forbidden_hits() {
+  grep -nHE -e "$(forbidden_regex)" "$@" | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true
+}
+# forbidden_hits_raw <file>... — the same for logs, raw: the az argv log carries
+# multi-line --discussion bodies whose lines start with ##.
+forbidden_hits_raw() {
+  grep -nHE -e "$(forbidden_regex)" "$@" || true
+}
+
+canary_file="$TMP/canaries.txt"
+cat > "$canary_file" <<'CANARIES'
+az repos pr set-vote --id 1 --vote 10
+az repos pr reviewer add --id 1 --reviewers me
+az repos pr update --id 1 --status completed
+{"autoCompleteSetBy": {"id": "x"}}
+az repos pr update --id 1 --auto-complete true
+{"isDraft": false}
+az repos pr create --draft false
+{"vote": 10}
+az devops invoke --area git --resource pullRequestReviewers
+curl -X PUT https://example.invalid/pullRequests/1/reviewers/me
+az devops invoke --area git --resource pullRequests --route-parameters id=1
+{"status": "completed"}
+CANARIES
+canary_commented="$TMP/canaries-commented.txt"
+sed 's/^/  # /' "$canary_file" > "$canary_commented"
+assert_eq "canaries_detected: one hit per pattern" "${#FORBIDDEN_PATTERNS[@]}" "$(forbidden_hits "$canary_file" | grep -c . || true)"
+assert_eq "canaries_detected: raw grep agrees" "${#FORBIDDEN_PATTERNS[@]}" "$(forbidden_hits_raw "$canary_file" | grep -c . || true)"
+assert_eq "canaries_detected: commented source lines are skipped" "" "$(forbidden_hits "$canary_commented")"
+assert_eq "canaries_detected: plain --draft is not a hit" "" "$(printf 'az repos pr create --draft true\n' > "$TMP/draft.txt"; forbidden_hits "$TMP/draft.txt")"
+
+assert_eq "azdo_sources_clean" "" "$(cd "$ROOT" && forbidden_hits \
+  scripts/implement-azdo.sh scripts/azdo-self-fix.sh scripts/lib/forge.sh scripts/lib/azdo.sh \
+  scripts/review-pr.sh scripts/self-fix-loop.sh scripts/self-fix-pr.sh)"
+
+printf '{}\n' > "$TMP/empty.json"
+mkdir -p "$TMP/b6-curl"
+: > "$TMP/b6-curl/argv.log"; : > "$TMP/b6-curl/body.log"
+run_loop success AI_REVIEW=1 SELF_FIX=1 \
+  CLAUDE_MOCK_REVIEWS=review-request-changes.json,review-approve.json \
+  CURL_MOCK_FIXTURE="$TMP/empty.json" \
+  CURL_MOCK_LOG="$TMP/b6-curl/argv.log" CURL_MOCK_BODY_LOG="$TMP/b6-curl/body.log"
+# Positive control: a clean log only means something if the review and fix ran.
+assert_eq "e2e_run_never_votes: rc" "0" "$RC"
+assert_eq "e2e_run_never_votes: control, two thread POSTs" "2" "$(thread_posts)"
+assert_eq "e2e_run_never_votes: control, initial push plus fix push" "1" "$([[ "$(grep -c 'push' "$LOOPDIR/git.log" || true)" -ge 2 ]] && echo 1 || echo 0)"
+assert_contains "e2e_run_never_votes: control, verdict comment" "## ai-review verdict" "$AZLOG"
+assert_eq "e2e_run_never_votes: no forbidden call in any log" "" "$(forbidden_hits_raw \
+  "$LOOPDIR/az.log" "$LOOPDIR/az.stdin" "$TMP/b6-curl/argv.log" "$TMP/b6-curl/body.log" "$LOOPDIR/git.log")"
+assert_eq "e2e_run_never_votes: only repos pr create" "" "$(grep -E 'repos pr' <<<"$AZLOG" | grep -v 'repos pr create' || true)"
+assert_eq "e2e_run_never_votes: every PR is a draft" "" "$(grep 'repos pr create' <<<"$AZLOG" | grep -v -e '--draft' || true)"
 
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"
 printf '  %s%d passed%s' "$C_GREEN" "$PASS" "$C_OFF"

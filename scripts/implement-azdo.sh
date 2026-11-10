@@ -14,15 +14,18 @@
 #
 # WHAT THIS DOES NOT DO, and cannot:
 #
-#   * No AI review and no auto-merge. check-merge-envelope.sh is GitHub-specific
-#     reasoning about required status checks and review decisions; Azure DevOps
-#     expresses those as branch policies and reviewer votes, which is a different
-#     model and its own design. The run opens a draft PR and stops.
+#   * No auto-merge. check-merge-envelope.sh is GitHub-specific reasoning about
+#     required status checks and review decisions; Azure DevOps expresses those
+#     as branch policies and reviewer votes, which is a different model and its
+#     own design. The run opens a draft PR, reviews it (AI_REVIEW), optionally
+#     fixes what the review found (SELF_FIX), and stops. The agent NEVER votes,
+#     approves, completes or publishes the PR: the review is a PR thread plus a
+#     work-item comment, and a human reviews, votes and completes.
 #   * No label-and-walk-away. This is the cost the issue anticipated.
 #
-# So the shape is: invoke -> agent implements -> draft PR opens -> a human
-# reviews and merges. That is less than the GitHub path and deliberately so;
-# pretending otherwise would be the expensive mistake.
+# So the shape is: invoke -> agent implements -> draft PR opens -> AI review ->
+# (opt-in self-fix) -> a human reviews and merges. That is less than the GitHub
+# path and deliberately so; pretending otherwise would be the expensive mistake.
 #
 # Required environment:
 #   ISSUE_NUMBER            the work item id
@@ -41,6 +44,13 @@
 #               read by check-attempt-cap.sh.
 #   MAX_RETRIES_RATE, MAX_RETRIES_TRANS, MAX_RETRIES_TASK  per-class retry limits
 #               within one run (defaults 3, 3, 1), read by lib/retry-policy.sh.
+#   AI_REVIEW   1 (default) reviews the draft PR once it is open; 0 skips it.
+#   SELF_FIX    0 (default) | 1: on a request_changes verdict, fix and re-review.
+#   SELF_FIX_MAX_ITERATIONS  bound on fix/re-review cycles. Default 2.
+#               These only reduce or bound work; none of them reaches the
+#               pipeline-file guard, which runs before every self-fix push.
+#               The review runs after the PR opens and never changes the exit
+#               code or triggers a retry: a failure is reported as a verdict.
 #   DRY_RUN=1   resolve, classify and report what WOULD run; invoke no agent
 #               and write nothing. Use this first on any new project.
 #
@@ -89,11 +99,36 @@ ATTEMPT_ERROR=''     # why a PR step failed, one line
 AGENT_NAME=''
 TURNS_BUDGET=''
 WORK_DIR=''
+REVIEW_VERDICT=''
+REVIEW_NOTE=''
+REVIEW_SUMMARY_FILE=''
+REVIEW_HEAD_SHA=''
+SELF_FIX_ITERATIONS=''
+SELF_FIX_STOP=''
 PROMPT_FILE=''
 RESULT_FILE=''
 declare -A RUN_PUSHED=()   # branch -> tip a failed attempt of THIS run left on the server
 
 # --- phases ------------------------------------------------------------------
+
+# Applies the review defaults and rejects values that are not what they say.
+validate_review_config() {
+  AI_REVIEW="${AI_REVIEW:-1}"
+  SELF_FIX="${SELF_FIX:-0}"
+  SELF_FIX_MAX_ITERATIONS="${SELF_FIX_MAX_ITERATIONS:-2}"
+  if [[ ! "$AI_REVIEW" =~ ^[01]$ ]]; then
+    printf 'error: AI_REVIEW must be 0 or 1\n' >&2
+    exit 2
+  fi
+  if [[ ! "$SELF_FIX" =~ ^[01]$ ]]; then
+    printf 'error: SELF_FIX must be 0 or 1\n' >&2
+    exit 2
+  fi
+  if [[ ! "$SELF_FIX_MAX_ITERATIONS" =~ ^[0-9]+$ ]]; then
+    printf 'error: SELF_FIX_MAX_ITERATIONS must be a non-negative integer\n' >&2
+    exit 2
+  fi
+}
 
 preflight() {
   : "${ISSUE_NUMBER:?ISSUE_NUMBER must be set (the work item id)}"
@@ -110,6 +145,8 @@ preflight() {
     printf 'error: IMPLEMENT_TIMEOUT_MIN must be a number of minutes\n' >&2
     exit 2
   fi
+
+  validate_review_config
 
   ci_host_export_azdo_pat || exit 2
   if [[ -z "${AZURE_DEVOPS_EXT_PAT:-}" ]]; then
@@ -129,7 +166,10 @@ print_banner() {
   printf '   org/project/repo : %s / %s / %s\n' "$AZDO_ORG" "$AZDO_PROJECT" "$AZDO_REPO"
   printf '   work item        : #%s\n' "$ISSUE_NUMBER"
   printf '   retry            : in-job, per lib/retry-policy.sh (cap MAX_ATTEMPTS=%s)\n' "${MAX_ATTEMPTS:-2}"
-  printf '   review / merge   : human, after the draft PR opens\n\n'
+  printf '   review / merge   : human, after the draft PR opens\n'
+  printf '   ai review        : %s, self-fix: %s\n\n' \
+    "$([[ "$AI_REVIEW" == 1 ]] && echo on || echo off)" \
+    "$([[ "$SELF_FIX" == 1 ]] && echo "on (max $SELF_FIX_MAX_ITERATIONS)" || echo off)"
 }
 
 # Fills ISSUE_LABELS / ISSUE_BODY / ISSUE_JSON / ISSUE_COMMENTS_JSON, which is
@@ -274,6 +314,29 @@ push_for_pr() {
   fi
 }
 
+# True (and sets ATTEMPT_ERROR) when the branch holds no commit beyond the
+# default branch. Found live: an agent branched, left its edits uncommitted and
+# reported success, and an empty PR opened.
+no_new_commits() {
+  local leftovers='' ahead
+  # No base ref to count against: leave it to the pipeline-file guard, which
+  # fails closed on that and says so.
+  ahead="$(git rev-list --count "origin/$DEFAULT_BRANCH..HEAD" 2>/dev/null)" || return 1
+  [[ "$ahead" == 0 ]] || return 1
+  [[ -z "$(git status --porcelain)" ]] || leftovers=' (uncommitted changes were left in the checkout)'
+  ATTEMPT_ERROR="the agent committed nothing on $HEAD_BRANCH$leftovers; nothing to PR"
+  printf 'error: %s.\n' "$ATTEMPT_ERROR" >&2
+  print_agent_summary
+}
+
+# The agent's own closing message, so a run that ends without a commit says why.
+print_agent_summary() {
+  local text
+  text="$(jq -r '.result // empty' "$RESULT_FILE" 2>/dev/null | head -c 2000)" || text=''
+  [[ -n "$text" ]] || return 0
+  printf -- '--- agent summary (first 2000 bytes) ---\n%s\n--- end ---\n' "$text" >&2
+}
+
 # Through the adapter, so the work item and the PR are linked -- Azure DevOps
 # has no "Closes #N" convention, the --work-items association IS the link.
 # Sets PR_ID and returns 0; on failure sets ATTEMPT_ERROR and returns 1.
@@ -284,6 +347,7 @@ open_draft_pr() {
     printf 'error: still on %s — the agent did not branch, so there is nothing to PR.\n' "${HEAD_BRANCH:-a detached HEAD}" >&2
     return 1
   fi
+  no_new_commits && return 1
 
   # The agent must not alter the pipeline definitions that validate its own PR.
   # Any non-zero is fatal: 1 = a pipeline file changed (the guard lists them on
@@ -453,8 +517,110 @@ finish_success() {
     exit 1
   fi
   post_report success "next: review and merge !$PR_ID"
+  review_draft_pr || printf 'warning: AI review step failed; the PR is open\n' >&2
   printf '\nDone. Review and merge !%s when ready.\n' "$PR_ID"
   exit 0
+}
+
+# --- AI review of the draft PR -----------------------------------------------
+
+# Reads one key from a GITHUB_OUTPUT-style file.
+_output_value() {
+  sed -n "s/^$1=//p" "$2" 2>/dev/null | tail -1
+}
+
+# Reviews the PR with review-pr.sh, which posts the thread. Always returns 0.
+run_review() {
+  local rc=0 out="$WORK_DIR/review.out"
+  mkdir -p "$WORK_DIR/review"
+  : > "$out"
+  REVIEW_HEAD_SHA="$(forge_pr_head_sha "$PR_ID")" || REVIEW_HEAD_SHA=''
+  FORGE=azdo DEFAULT_BRANCH="$DEFAULT_BRANCH" REPO="$REPO" PR_NUMBER="$PR_ID" \
+    HEAD_SHA="$REVIEW_HEAD_SHA" AGENT=claude AGENT_CMD="$HERE/lib/agent-cmd-claude.sh" \
+    MODEL="${MODEL:-claude-sonnet-5}" RUNNER_TEMP="$WORK_DIR/review" GITHUB_OUTPUT="$out" \
+    bash "$HERE/review-pr.sh" >/dev/null || rc=$?
+  REVIEW_VERDICT="$(_output_value verdict "$out")"
+  REVIEW_SUMMARY_FILE="$(_output_value summary-file "$out")"
+  if [[ "$rc" -ne 0 || -z "$REVIEW_VERDICT" ]]; then
+    REVIEW_VERDICT=review_failed
+    REVIEW_NOTE="review-pr.sh exited $rc"
+  fi
+  return 0
+}
+
+# Fixes what the review found, then re-reviews, up to the bound. Always returns 0.
+# A checkout with leftovers is skipped: the fix commits with `git add -A`.
+run_self_fix() {
+  local out="$WORK_DIR/self-fix.out" stop="$WORK_DIR/self-fix-stop" value
+  local model="${MODEL:-claude-sonnet-5}"
+  if [[ -n "$(git status --porcelain)" ]]; then
+    SELF_FIX_STOP="self-fix skipped: the checkout has uncommitted or untracked files"
+    printf 'self-fix skipped; git status --porcelain (first 20 lines):\n' >&2
+    git status --porcelain | head -n 20 >&2 || true
+    return 0
+  fi
+  : > "$out"; : > "$stop"
+  FORGE=azdo DEFAULT_BRANCH="$DEFAULT_BRANCH" PR_NUMBER="$PR_ID" REPO="$REPO" \
+    HEAD_SHA="$REVIEW_HEAD_SHA" HEAD_REF="$HEAD_BRANCH" INITIAL_VERDICT="$REVIEW_VERDICT" \
+    CONCERNS_FILE="$REVIEW_SUMMARY_FILE" MAX_ITERATIONS="$SELF_FIX_MAX_ITERATIONS" \
+    FIX_CMD="$HERE/azdo-self-fix.sh" FIX_AGENT=claude FIX_MODEL="$model" \
+    AGENT=claude AGENT_CMD="$HERE/lib/agent-cmd-claude.sh" MODEL="$model" \
+    RUNNER_TEMP="$WORK_DIR/review" SELF_FIX_STOP_FILE="$stop" GITHUB_OUTPUT="$out" \
+    bash "$HERE/self-fix-loop.sh" >/dev/null || true
+  value="$(_output_value verdict "$out")"
+  [[ -z "$value" ]] || REVIEW_VERDICT="$value"
+  SELF_FIX_ITERATIONS="$(_output_value iterations-used "$out")"
+  value="$(_output_value head-sha "$out")"
+  [[ -z "$value" ]] || REVIEW_HEAD_SHA="$value"
+  SELF_FIX_STOP="$(head -n1 "$stop" 2>/dev/null || true)"
+  return 0
+}
+
+# "not needed" only when the review did not ask for changes; "not run" when a
+# fix was wanted but no iteration completed (dirty skip, guard refusal, max 0).
+self_fix_line() {
+  if [[ -n "$SELF_FIX_ITERATIONS" && "$SELF_FIX_ITERATIONS" != 0 ]]; then
+    printf '%s iteration(s)\n' "$SELF_FIX_ITERATIONS"
+  elif [[ "$REVIEW_VERDICT" == request_changes ]]; then
+    printf 'not run\n'
+  else
+    printf 'not needed\n'
+  fi
+}
+
+# Starts `## ai-review verdict`, not `## ai-implement run`: the attempt cap
+# counts only the latter, so this comment never costs an attempt.
+render_review_report() {
+  local fix_line=off
+  if [[ "${SELF_FIX:-0}" == 1 ]]; then
+    fix_line="$(self_fix_line)"
+  fi
+  printf '## ai-review verdict: %s\n\n' "$REVIEW_VERDICT"
+  printf -- '- draft PR: !%s\n' "$PR_ID"
+  printf -- '- head: %s\n' "$REVIEW_HEAD_SHA"
+  printf -- '- self-fix: %s\n' "$fix_line"
+  [[ -z "$REVIEW_NOTE" ]] || printf -- '- %s\n' "$REVIEW_NOTE"
+  [[ -z "$SELF_FIX_STOP" ]] || printf -- '- %s\n' "$SELF_FIX_STOP"
+  printf -- '- The PR stays a draft; a human reviews, votes and completes it.\n'
+}
+
+# Never changes the exit code and is never part of the retry decision. Its
+# comment is not appended to ISSUE_COMMENTS_JSON.
+review_draft_pr() {
+  [[ "${AI_REVIEW:-0}" == 1 && -n "$PR_ID" ]] || return 0
+  local report_file
+  run_review
+  if [[ "${SELF_FIX:-0}" == 1 && "$REVIEW_VERDICT" == request_changes \
+        && "$SELF_FIX_MAX_ITERATIONS" -gt 0 ]]; then
+    run_self_fix
+  fi
+  report_file="$(mktemp -p "$WORK_DIR")"
+  render_review_report > "$report_file"
+  if ! forge_issue_comment "$ISSUE_NUMBER" "$report_file" >/dev/null; then
+    printf 'warning: could not post the review verdict on #%s\n' "$ISSUE_NUMBER" >&2
+  fi
+  printf 'ai review : %s\n' "$REVIEW_VERDICT"
+  return 0
 }
 
 exit_parked() {

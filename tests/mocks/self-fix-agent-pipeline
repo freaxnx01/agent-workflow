@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#
+# self-fix-agent-pipeline — self-fix-pr.sh FIX_AGENT_CMD mock that edits a CI
+# pipeline definition, which the pipeline-file guard must refuse to push.
+set -euo pipefail
+IFS=$'\n\t'
+printf 'trigger: none\n' > azure-pipelines.yml
