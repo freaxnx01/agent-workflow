@@ -118,13 +118,17 @@
 - [ ] **Step 1: Write the fixture and the failing tests.** The fixture `azdo-comments-report-html.json` holds three comments:
   - `<div>##&nbsp;ai-implement run (pipeline, Azure DevOps) — attempt 1</div><div><br></div><div>**Outcome:** failed: transient</div><div>**Duration:** 3s · **Turns:** 12 / cap 80 · **Cost:** $0.41</div>`;
   - the same with `**Turns:** 0 / cap 80 · **Cost:** $0.00`;
-  - `<p>a &lt;b&gt; tag &amp; text</p>`.
+  - `<p>a &lt;b&gt; tag &amp; text</p>`;
+  - **the live payload** (read back 2026-11-09 from a report posted through `forge_issue_comment`; `format: "html"`, no wrapper tags, newlines kept, entities escaped): `"## ai-implement run (pipeline, Azure DevOps) \u2014 attempt 1\n\n- **Outcome:** success\n- **Turns:** 0\n- **Cost:** $0.00\n- note: a &lt; b &amp;&amp; c &gt; d"`.
+
+  > **Ruling (controller, 2026-11-09, live):** comments the pipeline posts come back as markdown with HTML entities escaped and **no** `<div>` wrapper; comments typed in the web UI come back wrapped in `<div>`. Both shapes are real, so the text rules below stay as written (tags first, then unescape — a raw `<` in `text` is always a tag, because literal text arrives escaped).
 
   Assertions in a new section, "azdo comments become plain text":
   - `ISSUE_COMMENTS_JSON[0].body` starts with `## ai-implement run (pipeline, Azure DevOps) — attempt 1`;
   - `[0].body` contains `\n**Outcome:** failed: transient`;
   - `[2].body` equals `a <b> tag & text`;
   - `ISSUE_JSON.comments[0].body` equals `ISSUE_COMMENTS_JSON[0].body`;
+  - `[3].body` keeps its newlines, starts with `## ai-implement run (pipeline, Azure DevOps) — attempt 1`, and ends with `- note: a < b && c > d`;
   - **end to end:** `ISSUE_COMMENTS_JSON` passed to `check-attempt-cap.sh` (`ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1`) prints `attempt=2` and `non-starts=1`;
   - the existing case `comments are normalised from .text to .body` still passes.
 

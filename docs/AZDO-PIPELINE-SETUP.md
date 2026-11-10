@@ -86,6 +86,11 @@ Grant the project's build service identity on the repository:
 
 and on the work item area: **Edit work items in this node**.
 
+Do **not** grant it *Queue builds* on any pipeline. That is the default:
+verified live, a queue attempt with the job token was refused with `TF215106`.
+With that permission the agent could run any pipeline's YAML from a branch it
+pushed itself, which bypasses the CI-trigger override in sections 7 and 9.2.
+
 ## 6. Branch policy
 
 On the default branch, **require a pull request** and give the build service
@@ -103,6 +108,14 @@ Set on the pipeline (not in YAML):
 Leave *Let users override this value when running this pipeline* **off** for
 each of them.
 
+Also override the YAML CI trigger on this pipeline: *Pipelines > (pipeline) >
+Edit > ... > Triggers > Continuous integration*, tick **Override the YAML
+continuous integration trigger from here** and leave **Enable continuous
+integration** unticked. Without it, the pipeline's CI trigger is read from the
+YAML on the pushed branch, so a branch the agent pushed could queue this
+pipeline with its own YAML, and this pipeline holds the Claude token. The
+webhook resource trigger is not the CI trigger and is unaffected.
+
 ## 8. Service hook and webhook connection
 
 1. *Project settings > Service connections*: create an **Incoming WebHook**
@@ -117,3 +130,96 @@ each of them.
 
 3. The pipeline YAML calls `scripts/azdo-pipeline-run.sh` and, on failure,
    `scripts/azdo-report-failure.sh`.
+
+## 9. PR build validation
+
+The agent opens a PR; this section makes a **build validation** run gate it
+before a human merges. The pipeline is separate from the `ai-implement` one and
+holds no secrets.
+
+### 9.1 Add the pipeline file
+
+Copy `templates/azdo/pr-validation.yml` to `azure-pipelines-pr.yml` in the repo
+root and edit only the build/test step. Do this through a human PR: the
+driver refuses to push or open a PR for agent changes to pipeline files
+(see 9.4).
+
+### 9.2 Create the pipeline
+
+1. *Pipelines > New pipeline > Azure Repos Git > Existing YAML file*, and pick
+   `azure-pipelines-pr.yml`.
+2. Create it with **no** variables and link **no** variable group. Never put
+   `CLAUDE_CODE_OAUTH_TOKEN` here. Variables are per pipeline, so this one
+   inherits nothing from the `ai-implement` pipeline.
+3. Turn on *Project settings > Pipelines > Settings > Limit job authorization
+   scope to current project*.
+4. Authorize the pipeline on the agent pool: *Project settings > Agent pools >
+   `<pool>` > Security > Pipeline permissions*, or approve the prompt on its
+   first run. Until it is authorized, every validation build stays *not
+   started*, and the policy waits on it indefinitely.
+5. *Pipelines > (pipeline) > Edit > ... > Triggers > Continuous integration*:
+   tick **Override the YAML continuous integration trigger from here** and
+   leave **Enable continuous integration** unticked. Through the REST API this
+   means removing the `continuousIntegration` entry from the build definition's
+   `triggers`. Otherwise the CI trigger is read from the YAML on the pushed
+   branch, and an agent-pushed branch could queue this pipeline with no PR.
+
+A build service token is still issued to the job, but no step sees it unless it
+is mapped, and the template maps none.
+
+### 9.3 Require it on the default branch
+
+*Repos > Branches > `<default>` > Branch policies > Build validation > +*:
+
+- pick the pipeline;
+- set Trigger to **Automatic**;
+- set Policy requirement to **Required**;
+- set Build expiration to **Immediately when `<default>` is updated**.
+
+`pr:` in YAML is ignored on Azure Repos, which is why the template says
+`pr: none`. The branch policy is what queues the run.
+
+### 9.4 Pipeline files are changed by humans
+
+An `ai-implement` run whose changes touch any of these globs fails before the
+push and opens no PR. Its log names the files:
+
+- `azure-pipelines*.yml`
+- `azure-pipelines*.yaml`
+- `.azure-pipelines/**`
+- `.azuredevops/**`
+
+A glob without `/` matches the file name at any depth; a glob with `/` matches
+the full repo-relative path. To protect more paths, set the pipeline variable
+`PIPELINE_FILE_GLOBS` (comma-separated, for example
+`build/*.yml,deploy/**`). It is additive only: it cannot remove the defaults.
+
+Files pulled in with `template:` are as privileged as the root YAML, so add
+their paths to `PIPELINE_FILE_GLOBS`. It must be a plain (non-secret)
+variable: secret variables are not mapped into the script's environment, so a
+secret value is silently ignored.
+
+The work-item failure comment only links the run; the offending files are named
+in the run log. The run also fails, closed, when the diff against the default
+branch cannot be computed (guard return code 2).
+
+Limitation: with the CI-trigger override from 9.2 and section 7 in place, a
+branch the agent pushed itself queues no pipeline, and the build service cannot
+queue one (section 5). The residual risk is a PR from such a branch, because
+build validation runs the PR's YAML. A human may open that PR, or the agent may
+open one itself, since section 5 grants it *Contribute to pull requests*. Its
+drafts are not validated until a human publishes them (9.5). So check a PR's
+diff for pipeline files before publishing it. The exposure is small: the
+validation job holds no secret beyond the build-service token the agent already
+has.
+
+### 9.5 Draft PRs
+
+The policy does **not** queue a build while the PR is a draft. Its status stays
+*queued* with no build attached. Publishing the PR queues the build at once.
+This was observed live: the agent's draft PR had no build after several
+minutes, and the build started as soon as the PR was published.
+
+The agent's PRs are always drafts, so validation runs when a human publishes
+the PR, which is also when the policy starts to gate completion. This is
+intended. Do not let the agent publish its own PRs to get an earlier build.

@@ -1,5 +1,13 @@
 # TODO
 
+## Azure DevOps track (#573) — found during the item-c live proof (2026-11-09)
+
+- [ ] **The service hook missed one `ai-implement` tag.** Work item 12 was
+      tagged one revision after it was moved into the hook's area path, and no
+      event was delivered. Other tag changes the same day fired normally.
+      Find out whether the area filter evaluates the old area for that
+      update. Details: `docs/ai-notes/2026-11-09-azdo-pr-validation-run.md`.
+
 ## Session 2026-10-01/02 (consumer permissions + model-not-found retry) — 3 issues shipped, rollout and #449 open
 
 Shipped: #439 (PR #443), #434 (PR #442), #441 (PR #448). Specs in PR #440 / #447.

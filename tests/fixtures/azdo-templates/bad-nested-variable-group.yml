@@ -1,0 +1,16 @@
+trigger: none
+pr: none
+
+pool: <pool>
+
+jobs:
+  - job: build
+    variables:
+      - group: x
+    steps:
+      - checkout: self
+        persistCredentials: false
+      - script: |
+          dotnet build
+          dotnet test --no-build
+        displayName: Build and test
