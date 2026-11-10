@@ -308,6 +308,12 @@ additions are the optional `NTFY_TOKEN` secret and the
 
 ### Added
 
+- **report:** Every GitHub run report ends with one hidden `<!-- ai-run: {…} -->`
+  marker carrying the run's attempt number, failure class, retry decision, PR and
+  whether it counts as an attempt, so a consumer no longer regexes the Markdown.
+  The visible report is byte-identical (golden-file tested) and the attempt cap
+  and `/ai-stats` keep reading it unchanged. Azure DevOps emits no marker in v1.
+  Schema, versioning and the consumer trust rule: ADR-021 in `docs/DECISIONS.md` (#585)
 - **commands:** `/integration` — per-repo or fleet-wide report of how a repo is wired
   into agent-workflow and ai-instructions: pinned ref against the current release,
   agent/model, flow, timeouts, and the repo-side state a run silently depends on

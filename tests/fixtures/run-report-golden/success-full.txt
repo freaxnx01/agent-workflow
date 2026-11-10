@@ -1,0 +1,19 @@
+## ai-implement run
+
+**Outcome:** :white_check_mark: success
+**Duration:** 8m 2s · **Turns:** 31 / cap 80 · **Cost:** $1.87
+**Model:** claude-sonnet-5 · **Agent:** claude · **Plan:** enriched
+
+| Metric | Value |
+|---|---|
+| Input tokens | 8,500 |
+| Output tokens | 22,400 |
+| Cache read | 452,000 (93% hit rate) |
+| Cache create | 28,000 |
+| Total tokens | 510,900 |
+| Max context per turn | n/a (no execution log provided) |
+
+[View workflow run](https://example/run/test)
+
+---
+LABELS: ai:done
