@@ -537,7 +537,7 @@ for verb in forge_pr_diff forge_pr_head_sha forge_pr_comment forge_pr_comments_j
 done
 
 # `:?` exits the shell it runs in, so the verb runs in a nested subshell.
-# shellcheck disable=SC2317  # called through pr_run
+# shellcheck disable=SC2317,SC2329  # called through pr_run
 without_repo() { ( unset REPO; "$@" ); }
 for verb in forge_pr_diff forge_pr_head_sha forge_pr_comment forge_pr_comments_json; do
   pr_reset
