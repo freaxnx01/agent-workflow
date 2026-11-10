@@ -200,9 +200,9 @@ would change the record `/ai-stats` parses and break the cap's promise to count
 is untouched, the cap and `/ai-stats` keep parsing it, and the marker is
 additive. The amendment is recorded in two places:
 
-- a new ADR in `docs/DECISIONS.md` (*Run marker*: schema, versioning, trust rule,
+- a new ADR-021 in `docs/DECISIONS.md` (ADR-020 is reserved by #535 / PR #571) (*Run marker*: schema, versioning, trust rule,
   ADO non-emission, relation to D2 and ADR-019);
-- a one-line "Amended by ADR-0xx (#585)" note under D2 in the 2026-09-23 spec.
+- a one-line "Amended by ADR-021 (#585)" note under D2 in the 2026-09-23 spec.
 
 ## Versioning
 
@@ -230,5 +230,5 @@ additive. The amendment is recorded in two places:
   (additive, no `v` bump).
 - #567 — a timeout posts no report, hence no marker.
 - #532 — `Plan: none` bug; the reason `has_plan` is not in the marker.
-- #535 — isolating the pipeline from the agent; the trust rule's known gap.
+- #535 / PR #571 — isolating the pipeline from the agent; the trust rule's known gap. #571 moves `Post run report` into an `implement_gate` job; the marker inputs then travel as job outputs. Whichever lands second rebases.
 - Consumers: freaxnx01/bridge#367, freaxnx01/bridge#368.
