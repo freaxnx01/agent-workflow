@@ -326,6 +326,8 @@ enclosing_job() {
 section "workflow wiring — the marker inputs reach Post run report"
 
 STEP_ENV="$(post_run_env)"
+# shellcheck disable=SC2016  # `${{ … }}` is an Actions expression matched
+# literally against the workflow file — expanding it is the opposite of the point.
 for wiring in \
   'ATTEMPT: ${{ steps.attempt_cap.outputs.attempt }}' \
   'RETRY_ATTEMPT: ${{ inputs.attempt }}' \
