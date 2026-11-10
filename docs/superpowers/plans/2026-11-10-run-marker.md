@@ -4,7 +4,7 @@
 
 **Goal:** Append one hidden `<!-- ai-run: {...} -->` line to every GitHub run report so consumers (bridge #367/#368) can read attempt, class, retry decision and PR without regexes, while the visible report stays byte-identical.
 
-**Architecture:** First freeze today's rendered report as golden files and test exact equality. Then `post-run-report.sh` gains a `render_run_marker` function whose output is the last line of `render_comment`; four new env vars feed it from steps that already run before `Post run report` in `agent-implement.yml`. Docs: a new ADR-020 (schema, versioning, trust rule, Azure DevOps non-emission), a D2 amendment note, CHANGELOG.
+**Architecture:** First freeze today's rendered report as golden files and test exact equality. Then `post-run-report.sh` gains a `render_run_marker` function whose output is the last line of `render_comment`; four new env vars feed it from steps that already run before `Post run report` in `agent-implement.yml`. Docs: a new ADR-021 (schema, versioning, trust rule, Azure DevOps non-emission), a D2 amendment note, CHANGELOG.
 
 **Tech Stack:** Bash 5 (`set -euo pipefail`, `IFS=$'\n\t'`), `jq`, GitHub Actions YAML, Layer-1 fixture tests (`tests/run-*-tests.sh`, discovered by `tests/run-all.sh`), `shellcheck`.
 
@@ -178,6 +178,8 @@ Expected: FAIL on the four wiring checks; order checks PASS.
 
 - [ ] **Step 3: Add the four env lines** to `Post run report`, after `FAILURE_CLASS`, with a short comment `# #585: run marker inputs — all from steps that run before this one.`
 
+  **If `Post run report` is no longer in the same job as `attempt_cap` / `verify_pr` / `retry`** (PR #571 for #535 moves the post-run decisions into an `implement_gate` job): expose each missing value as an output of the job that computes it and read it as `needs.<job>.outputs.<name>` instead, keeping the env names unchanged; adapt the Step 1 order check to "defined in this job or in a job listed under `needs:`". Do not move steps between jobs to make the test pass.
+
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `bash tests/run-run-report-golden-tests.sh && bash tests/run-all.sh`
@@ -193,24 +195,24 @@ git commit -m "feat(report): pass attempt, retry decision and PR into the run re
 ### Task 4: Record the contract
 
 **Files:**
-- Modify: `docs/DECISIONS.md` — append `## ADR-020 — The run report carries a machine-readable run marker (2026-11-10)` after the last ADR (use the next free number if 020 is taken by then; keep every `ADR-020` reference in this task consistent with it)
+- Modify: `docs/DECISIONS.md` — append `## ADR-021 — The run report carries a machine-readable run marker (2026-11-10)` after the last ADR. ADR-021 is already reserved by #535 / PR #571 (agent isolation gate jobs, referenced from docs on main), so this one is ADR-021
 - Modify: `docs/superpowers/specs/2026-09-23-attempt-cap-nonstarts-design.md:47` — note under the D2 row
 - Modify: `CHANGELOG.md` — `## [Unreleased]`
 
-- [ ] **Step 1: Write ADR-020** — Status accepted; sections Context / Decision / Consequences like ADR-019. Decision must state, taken from the spec: the line format; the field table (name, type, source, presence rule); omission rule; no free text; the `\u003c`/`\u003e` escaping; versioning (optional field added = no bump, rename/remove/type or meaning change = bump `v`, unknown `v` = no marker); `attempt` is the cap's lifetime count and omitted when `counts` is false, `retry_attempt` is the chain position; the consumer trust rule (only comments authored by `github-actions[bot]`, the identity `Post run report` posts as via `github.token`; marker from the last line only; actions it triggers bounded by the same caps as manual ones; known gap → #535); Azure DevOps emits no marker in v1 and why; relation to D2 (amended, not reversed: visible record stays the source for `check-attempt-cap.sh` and `/ai-stats`) and to ADR-019. Consequences: retry dispatch happens before the report is posted (existing undercount window); `decision: retry` even when the re-dispatch call failed; no report → no marker (#567); #559 extends the schema additively; `check-attempt-cap.sh` does not filter by author (fails safe, recorded, not changed).
+- [ ] **Step 1: Write ADR-021** — Status accepted; sections Context / Decision / Consequences like ADR-019. Decision must state, taken from the spec: the line format; the field table (name, type, source, presence rule); omission rule; no free text; the `\u003c`/`\u003e` escaping; versioning (optional field added = no bump, rename/remove/type or meaning change = bump `v`, unknown `v` = no marker); `attempt` is the cap's lifetime count and omitted when `counts` is false, `retry_attempt` is the chain position; the consumer trust rule (only comments authored by `github-actions[bot]`, the identity `Post run report` posts as via `github.token`; marker from the last line only; actions it triggers bounded by the same caps as manual ones; known gap → #535); Azure DevOps emits no marker in v1 and why; relation to D2 (amended, not reversed: visible record stays the source for `check-attempt-cap.sh` and `/ai-stats`) and to ADR-019. Consequences: retry dispatch happens before the report is posted (existing undercount window); `decision: retry` even when the re-dispatch call failed; no report → no marker (#567); #559 extends the schema additively; `check-attempt-cap.sh` does not filter by author (fails safe, recorded, not changed).
 
-- [ ] **Step 2: D2 note** — append to the D2 row's rationale cell: `Amended by ADR-020 (#585): the marker is now emitted, additively; the visible record this decision protects is unchanged and remains what the cap and /ai-stats read.`
+- [ ] **Step 2: D2 note** — append to the D2 row's rationale cell: `Amended by ADR-021 (#585): the marker is now emitted, additively; the visible record this decision protects is unchanged and remains what the cap and /ai-stats read.`
 
-- [ ] **Step 3: CHANGELOG** — under `## [Unreleased]` → `### Added`: one line on the run marker, pointing at ADR-020.
+- [ ] **Step 3: CHANGELOG** — under `## [Unreleased]` → `### Added`: one line on the run marker, pointing at ADR-021.
 
 - [ ] **Step 4: Verify**
 
-Run: `bash tests/run-all.sh && grep -c '^## ADR-020' docs/DECISIONS.md`
+Run: `bash tests/run-all.sh && grep -c '^## ADR-021' docs/DECISIONS.md`
 Expected: suite green; `1`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add docs/DECISIONS.md docs/superpowers/specs/2026-09-23-attempt-cap-nonstarts-design.md CHANGELOG.md
-git commit -m "docs(report): record the run marker contract as ADR-020 (#585)"
+git commit -m "docs(report): record the run marker contract as ADR-021 (#585)"
 ```
