@@ -1,10 +1,14 @@
 # Self-hosted Azure Pipelines agent image. Build context is the repo root:
 #   docker build -f docker/azp-agent/Dockerfile -t azp-agent:poc .
+# Targets: `base` (shared layers), `dotnet` (base + a pinned .NET SDK, advertises
+# AWF_TOOLCHAIN=dotnet) and `default` (= base, the last stage, so a build with no
+# --target is the plain image). Build the variant with `--target dotnet`.
+# Bump DOTNET_SDK_VERSION and DOTNET_SDK_SHA512 together.
 # The agent version and its SHA-256 are pinned below: bump both together. The
 # base-image digest is bumped by hand (keep the tag for readability). Register
 # once with AZP_URL, AZP_TOKEN and AZP_POOL at `docker run` time (see
 # docs/AZDO-PIPELINE-SETUP.md); the credential is never baked in.
-FROM debian:13-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4
+FROM debian:13-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS base
 
 ENV AZP_AGENT_VERSION=5.281.1 \
     AZP_AGENT_SHA256=c9579f76fd71a013e3b9010155454e20592d935134e4fcd04adc5283a820167e
@@ -39,3 +43,29 @@ RUN az extension add --name azure-devops --yes \
 
 WORKDIR /azp
 ENTRYPOINT ["/usr/local/bin/azp-agent-start.sh"]
+
+# .NET SDK variant. The pin comes from the official release metadata
+# (https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json,
+# read 2026-11-09, SDK 10.0.403 of release 10.0.14); the SHA-512 is that file's
+# `hash` for dotnet-sdk-linux-x64.tar.gz and matched a fresh download.
+FROM base AS dotnet
+ARG DOTNET_SDK_VERSION=10.0.403
+ARG DOTNET_SDK_SHA512=b7b3d8461cf98b07d2552ce9199702fa3ad010ac2671a5f8cd5136f7534e50f6855ba7bbb02b11494563f1d04156276a31cda1103b900e5eecd0d9473dc7b9c5
+USER 0
+# The checksum is verified, with no pipe and no `|| true`, before the tarball is
+# extracted: a mismatch fails the build.
+RUN curl -fsSL -o /tmp/dotnet-sdk.tar.gz "https://builds.dotnet.microsoft.com/dotnet/Sdk/${DOTNET_SDK_VERSION}/dotnet-sdk-${DOTNET_SDK_VERSION}-linux-x64.tar.gz" \
+ && printf '%s  %s\n' "${DOTNET_SDK_SHA512}" /tmp/dotnet-sdk.tar.gz > /tmp/dotnet-sdk.sha512 \
+ && sha512sum -c /tmp/dotnet-sdk.sha512 \
+ && mkdir -p /usr/share/dotnet \
+ && tar -xzf /tmp/dotnet-sdk.tar.gz -C /usr/share/dotnet \
+ && ln -s /usr/share/dotnet/dotnet /usr/local/bin/dotnet \
+ && rm -f /tmp/dotnet-sdk.tar.gz /tmp/dotnet-sdk.sha512
+ENV DOTNET_ROOT=/usr/share/dotnet \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_NOLOGO=1 \
+    AWF_TOOLCHAIN=dotnet
+USER 1000
+
+# Last stage, so a build with no --target is the plain image.
+FROM base AS default
