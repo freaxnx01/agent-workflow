@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.2.1) - 2026-11-11
+
+Hotfix on top of 2.2.0; no change to a consumer's `agent.yml` is needed.
+
+### Bug Fixes
+
+- *(pipeline)* Fall back to the ripgrep release binary when apt is unreachable (#598). An Ubuntu mirror failing DNS no longer fails every dispatch at "Ensure toolchain".
+
 ## [2.2.0](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.2.0) - 2026-11-10
 
 **Upgrading from 2.1.x:** no change to a consumer's `agent.yml` is needed; the
