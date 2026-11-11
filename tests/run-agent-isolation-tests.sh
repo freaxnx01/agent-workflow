@@ -44,6 +44,14 @@ for name, job in jobs.items():
         refs = [s for s in steps if (s.get("with") or {}).get("ref") == "${{ inputs.pipeline-ref }}"]
         if not refs:
             problems.append(f"{name}: decides but has no pipeline-ref checkout of its own")
+# F5 (#571): the agent's job must not be able to cancel its own run, and the
+# gate must still run (and report) when the run is cancelled.
+perms = (jobs["implement"].get("permissions") or {})
+if perms.get("actions"):
+    problems.append("implement: holds actions: permission, the agent could cancel its own run")
+gate_if = str(jobs["implement_gate"].get("if", ""))
+if "always()" not in gate_if or "agent-eligible" not in gate_if or "cancelled()" in gate_if:
+    problems.append("implement_gate: if: must be always() keyed on agent-eligible, got: " + gate_if)
 print("\n".join(problems))
 PY
 )"

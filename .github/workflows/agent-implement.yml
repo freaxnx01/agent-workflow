@@ -423,11 +423,9 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
-      # retry-dispatch.sh ends in `gh workflow run` against the consumer's
-      # agent.yml. A job-level permissions block REPLACES the inherited set,
-      # so granting actions: write in the caller alone is silently dropped
-      # here and every retry dies on HTTP 403 (#351).
-      actions: write
+      # No actions: write — this job runs the agent, which must not be able to
+      # `gh run cancel` its own run and skip the gate's verdict (#571).
+      # retry-dispatch.sh runs in implement_gate, which holds it (#351).
     outputs:
       ai-review-ai-merge-enabled:    ${{ steps.ai_merge_gate.outputs.enabled || steps.ai_merge_gate_stub.outputs.enabled }}
       ai-review-human-merge-enabled: ${{ steps.human_merge_gate.outputs.enabled || steps.human_merge_gate_stub.outputs.enabled }}
@@ -1028,7 +1026,7 @@ jobs:
     # pre-agent ones are trusted, result-json / execution-usage are evidence.
     name: Judge implement run — issue #${{ inputs.issue-number }}
     needs: implement
-    if: ${{ !cancelled() && needs.implement.outputs.agent-eligible == 'true' }}
+    if: ${{ always() && needs.implement.outputs.agent-eligible == 'true' }}
     runs-on: ${{ fromJSON(inputs.gate-runner-labels != '' && inputs.gate-runner-labels || inputs.runner-labels) }}
     timeout-minutes: 15
     permissions:
