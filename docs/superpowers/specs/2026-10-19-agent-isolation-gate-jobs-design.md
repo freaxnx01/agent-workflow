@@ -76,14 +76,20 @@ The implement job's new `Export result for the gate` step (`scripts/export-resul
 emits:
 
 - `result-json` — the canonical result object (`ADR-001 §2`), compact, with `.result`
-  elided to its first and last 4000 characters;
-- `execution-usage` — a compact array holding only the usage-bearing events
-  (`assistant` → `message.usage`, `step_finish` → `part.tokens`), which is all
-  `post-run-report.sh:240-300` reads from `EXECUTION_FILE`;
-- `is-error` — local hint for `verify-or-recover-pr.sh`'s salvage decision only.
+  elided to its first and last 4000 characters and capped at 64 KiB in bytes (past the
+  cap only the fields the gate's scripts read are kept, strings truncated), so it
+  fits the 128 KiB env-string limit (#571);
+- `execution-usage` — one fixed-size `usage_aggregate` object (max per-event prompt,
+  summed input/output/cache tokens, event count) computed from the usage-bearing events
+  (`assistant` → `message.usage`, `step_finish` → `part.tokens`), the same figures
+  `post-run-report.sh` derives from `EXECUTION_FILE`; empty when the stream holds none;
+- `is-error` — `.is_error == true` only (empty or non-canonical result → `true`), the
+  pre-#535 flag; a local hint for `verify-or-recover-pr.sh`'s salvage decision, never a
+  verdict.
 
-`implement_gate` writes them back to files with `scripts/import-result-output.sh`, which
-validates the shape (object, `type == "result"`, boolean `is_error`). Anything else —
+`implement_gate` captures them in a `continue-on-error` `result_raw` step and writes them
+back to files with `scripts/import-result-output.sh` (env `RESULT_JSON_FILE`,
+`EXECUTION_USAGE_FILE`), which validates the shape (object, `type == "result"`, boolean `is_error`). Anything else —
 including an empty output because GitHub dropped one it believed held a secret — becomes
 a synthetic `error_invalid_evidence` result, classified `bug`, reported `ai:failed`.
 Outputs reach `run:` steps only through `env:`, never as `${{ }}` inside a script
@@ -95,12 +101,18 @@ job outputs (1 MB per job) carry the few KB needed.
 
 ### When `implement_gate` runs
 
-`if: !cancelled() && needs.implement.outputs.agent-eligible == 'true'`. `agent-eligible`
+`if: always() && needs.implement.outputs.agent-eligible == 'true'` (`always()`, not
+`!cancelled()`, so an operator or concurrency cancel still gets its report and label, as
+before the split). `agent-eligible`
 is computed from trusted pre-agent outputs: a new marker step `agent_reached` placed
 directly before the agent steps, plus `pause_gate.paused != 'true'` and
 `attempt_cap.proceed != 'false'`. So a paused or parked dispatch produces no report (as
 today), and a run where the agent was due but no result came back now gets an
 `ai:failed` report instead of silence.
+
+The `implement` job holds no `actions:` permission: `retry-dispatch.sh` runs only in the
+gate, which keeps `actions: write`, so the agent cannot `gh run cancel` its own run to
+dodge the verdict.
 
 ### Salvage stays in the implement job
 
