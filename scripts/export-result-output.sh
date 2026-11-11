@@ -37,7 +37,10 @@ emit() {
 
 # The gate gets every value through env:, and Linux caps one env string at
 # 128 KiB (#571). Unknown fields can be any size, so past the cap the result is
-# cut to the fields the gate's scripts read, each string truncated.
+# cut to the fields the gate's scripts read, each string truncated: .result and
+# .api_error to $half characters, the rest to 256. At 4 bytes a character that
+# stays near 41 KiB however the strings are encoded. Measured in bytes, since
+# MAX_ARG_STRLEN is a byte limit.
 max_result_bytes=65536
 
 compact_result() {
@@ -51,12 +54,14 @@ compact_result() {
 
 essential_result() {
   printf '%s' "$1" | jq -c --argjson h "$half" '
-    def cut: if type == "string" then .[0:($h * 2)] else . end;
+    def cut($n): if type == "string" then .[0:$n] else . end;
     def num: if type == "number" then . else 0 end;
     (if (.usage | type) == "object" then .usage else {} end) as $u
     | { type, subtype, is_error, duration_ms, num_turns, total_cost_usd, session_id,
         result, api_error, api_error_status, api_error_host }
-    | with_entries(select(.value != null) | .value |= cut)
+    | with_entries(select(.value != null)
+        | (if .key == "result" or .key == "api_error" then $h else 256 end) as $n
+        | .value |= cut($n))
     + { usage: { input_tokens: ($u.input_tokens | num), output_tokens: ($u.output_tokens | num),
                  cache_read_input_tokens: ($u.cache_read_input_tokens | num),
                  cache_creation_input_tokens: ($u.cache_creation_input_tokens | num) } }'
@@ -65,7 +70,7 @@ essential_result() {
 bounded_result() {
   local json
   json="$(compact_result)"
-  if (( ${#json} < max_result_bytes )); then printf '%s' "$json"; return; fi
+  if (( $(printf '%s' "$json" | wc -c) < max_result_bytes )); then printf '%s' "$json"; return; fi
   essential_result "$json"
 }
 

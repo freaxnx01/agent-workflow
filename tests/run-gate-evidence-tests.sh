@@ -80,7 +80,9 @@ jq '.permission_denials = [range(5000) | {tool_name:"Bash", tool_use_id:"toolu_\
     | .modelUsage = ([range(3000) | {key:"model-\(.)", value:{inputTokens:1, outputTokens:1, costUSD:0.1}}] | from_entries)' \
   "$FIX/result-success-cheap.json" > "$T/huge.json"
 rj="$(field "$(RESULT_FILE="$T/huge.json" bash "$EXPORT")" result-json)"
-if (( ${#rj} < 65536 )); then pass "huge permission_denials/modelUsage → under 64 KiB (${#rj} B)"; else fail "huge permission_denials/modelUsage → under 64 KiB" "${#rj} bytes"; fi
+bytes() { printf '%s' "$1" | wc -c | tr -d ' '; }
+n="$(bytes "$rj")"
+if (( n < 65536 )); then pass "huge permission_denials/modelUsage → under 64 KiB ($n B)"; else fail "huge permission_denials/modelUsage → under 64 KiB" "$n bytes"; fi
 assert_eq "bounded result keeps what the gate reads" \
   "$(jq -c '{type, subtype, is_error, num_turns, total_cost_usd, usage}' "$FIX/result-success-cheap.json")" \
   "$(printf '%s' "$rj" | jq -c '{type, subtype, is_error, num_turns, total_cost_usd, usage}')"
@@ -88,9 +90,24 @@ head -c 200000 /dev/zero | tr '\0' 'E' > "$T/big.txt"
 jq --rawfile t "$T/big.txt" '.api_error = $t | .extra_blob = $t' \
   "$FIX/result-opencode-rate-limit.json" > "$T/huge-strings.json"
 rj="$(field "$(RESULT_FILE="$T/huge-strings.json" bash "$EXPORT")" result-json)"
-if (( ${#rj} < 65536 )); then pass "huge unknown string fields → under 64 KiB (${#rj} B)"; else fail "huge unknown string fields → under 64 KiB" "${#rj} bytes"; fi
+assert_eq "huge unknown string fields → still a result" "result" "$(printf '%s' "$rj" | jq -r .type)"
+n="$(bytes "$rj")"
+if (( n < 65536 )); then pass "huge unknown string fields → under 64 KiB ($n B)"; else fail "huge unknown string fields → under 64 KiB" "$n bytes"; fi
 assert_eq "a bounded rate limit still classifies" "class=rate_limit" \
   "$(printf '%s' "$rj" > "$T/rl.json"; RESULT_FILE="$T/rl.json" bash "$ROOT/scripts/classify-failure.sh" | tail -1)"
+# Bytes, not characters: MAX_ARG_STRLEN is a byte limit, and a 4-byte UTF-8
+# character counts once in ${#var} under a UTF-8 locale.
+jq -n '[range(20000) | "\ud83d\ude00"] | join("")' > "$T/emoji.json"
+jq --slurpfile e "$T/emoji.json" '.extra_blob = $e[0]' "$FIX/result-success-cheap.json" > "$T/mb1.json"
+rj="$(field "$(RESULT_FILE="$T/mb1.json" bash "$EXPORT")" result-json)"; n="$(bytes "$rj")"
+assert_eq "multibyte unknown field → still a result" "result success" "$(printf '%s' "$rj" | jq -r '"\(.type) \(.subtype)"')"
+if (( n < 65536 )); then pass "multibyte unknown field → under 64 KiB in bytes ($n B)"; else fail "multibyte unknown field → under 64 KiB in bytes" "$n bytes"; fi
+jq --slurpfile e "$T/emoji.json" '.extra_blob = $e[0] | .result = $e[0] | .api_error = $e[0] | .subtype = $e[0]
+    | .session_id = $e[0] | .api_error_host = $e[0] | .api_error_status = $e[0] | .type = "result"' \
+  "$FIX/result-success-cheap.json" > "$T/mb2.json"
+rj="$(field "$(RESULT_FILE="$T/mb2.json" bash "$EXPORT")" result-json)"; n="$(bytes "$rj")"
+assert_eq "every kept string multibyte → still a result" "result false" "$(printf '%s' "$rj" | jq -r '"\(.type) \(.is_error)"')"
+if (( n < 65536 )); then pass "every kept string multibyte → under 64 KiB in bytes ($n B)"; else fail "every kept string multibyte → under 64 KiB in bytes" "$n bytes"; fi
 
 section "export: the report renders the same from the aggregate as from the raw stream"
 render() { RESULT_FILE="$FIX/$1" ISSUE_NUMBER=42 WORKFLOW_RUN_URL=https://example.test/run/1 \
