@@ -16,9 +16,10 @@ Applies to any mail drafted for me to send, in any language.
 - **Enumerate what you need from them**, briefly, so it can be answered point by
   point — and say which points actually matter if not all do.
 
-Detail is not deleted, it is *held back*. Offer it („Details gerne auf Anfrage")
-rather than pre-emptively pasting it, and keep the long version on disk so it can
-be sent if asked.
+Detail is not deleted, it is *held back*: leave it out rather than pre-emptively
+pasting it, and keep the long version on disk so it can be sent if asked. Don't
+append an offer line for it — no „Details gerne auf Anfrage" or similar. The
+recipient knows they can ask; the line only pads the mail.
 
 ## Relation to the answer-formatting rule
 
