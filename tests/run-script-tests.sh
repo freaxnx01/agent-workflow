@@ -3683,6 +3683,23 @@ assert_contains "$out" 'surely_no_such_tool_xyz'                "DRY_RUN report 
 ec="$(run_capture_ec env DRY_RUN=1 TOOLS="surely_no_such_tool_xyz" bash "$ENSURE")"
 assert_equals "$ec" "0" "DRY_RUN with missing tool → exit 0 (no install attempted)"
 
+# #594: an unreachable apt mirror must not abort before the release-binary
+# fallback runs. A fake sudo fails apt-get the way the runner's DNS did.
+FAKE594="$(mktemp -d)"
+cat > "$FAKE594/sudo" <<'SUDO'
+#!/bin/bash
+[[ "$1" == apt-get ]] && { echo "E: Temporary failure resolving" >&2; exit 100; }
+exit 0
+SUDO
+chmod +x "$FAKE594/sudo"
+out="$(PATH="$FAKE594:$PATH" TOOLS="surely_no_such_tool_xyz" bash "$ENSURE" 2>&1 || true)"
+assert_contains "$out" 'apt install failed, trying release-binary fallbacks' "apt failure → falls through to the fallbacks (#594)"
+assert_contains "$out" 'surely_no_such_tool_xyz still missing after install' "no fallback for an unknown tool → still reported missing"
+ec="$(run_capture_ec env PATH="$FAKE594:$PATH" TOOLS="surely_no_such_tool_xyz" bash "$ENSURE")"
+assert_equals "$ec" "1" "apt failure + no fallback → exit 1"
+rm -rf "$FAKE594"
+assert_contains "$(cat "$ENSURE")" 'sha256sum -c' "the rg fallback verifies its download by checksum"
+
 # AGENT unset → OpenCode install NEVER attempted (Claude path stays zero-cost)
 out="$(TOOLS="bash sh" bash "$ENSURE")"
 assert_not_contains "$out" 'opencode' "AGENT unset → no opencode message at all"

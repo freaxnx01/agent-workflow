@@ -50,6 +50,33 @@ fi
 
 declare -A APT_PKG=( [rg]=ripgrep [jq]=jq [gh]=gh )
 
+# Fallback when apt is unreachable (#594): the runner's Ubuntu mirror failing
+# DNS took every dispatch down at this step for hours while github.com stayed
+# reachable. Pinned release binaries, verified by checksum; tools without an
+# entry here have no fallback.
+RG_VERSION="14.1.1"
+declare -A RG_SHA256=(
+  [x86_64]=4cf9f2741e6c465ffdb7c26f38056a59e2a2544b51f7cc128ef28337eeae4d8e
+  [aarch64]=c827481c4ff4ea10c9dc7a4022c8de5db34a5737cb74484d62eb94a95841ab2f
+)
+declare -A RG_TARGET=( [x86_64]=x86_64-unknown-linux-musl [aarch64]=aarch64-unknown-linux-gnu )
+
+install_release_binary() {
+  local tool="$1" arch dir name
+  [[ "$tool" == rg ]] || return 1
+  arch="$(uname -m)"
+  [[ -n "${RG_TARGET[$arch]:-}" ]] || return 1
+  name="ripgrep-${RG_VERSION}-${RG_TARGET[$arch]}"
+  dir="$(mktemp -d)"
+  printf 'installing rg %s from the GitHub release\n' "$RG_VERSION"
+  curl -fsSL --retry 3 -o "$dir/$name.tar.gz" \
+    "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/${name}.tar.gz" || return 1
+  echo "${RG_SHA256[$arch]}  $dir/$name.tar.gz" | sha256sum -c --quiet - || return 1
+  tar -xzf "$dir/$name.tar.gz" -C "$dir" "$name/rg" || return 1
+  sudo install -m 0755 "$dir/$name/rg" /usr/local/bin/rg
+}
+
+MISSING=()
 MISSING=()
 for t in "${TOOLS_LIST[@]}"; do
   command -v "$t" >/dev/null 2>&1 || MISSING+=("$t")
@@ -66,8 +93,12 @@ else
   done
 
   printf 'installing missing tools via apt: %s\n' "${PKGS[*]}"
-  sudo apt-get update -qq
-  sudo apt-get install -y -qq "${PKGS[@]}"
+  if ! { sudo apt-get update -qq && sudo apt-get install -y -qq "${PKGS[@]}"; }; then
+    printf 'warning: apt install failed, trying release-binary fallbacks\n' >&2
+    for t in "${MISSING[@]}"; do
+      command -v "$t" >/dev/null 2>&1 || install_release_binary "$t" || true
+    done
+  fi
 
   for t in "${MISSING[@]}"; do
     if ! command -v "$t" >/dev/null 2>&1; then
