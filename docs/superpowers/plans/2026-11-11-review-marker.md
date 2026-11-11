@@ -214,5 +214,5 @@ git commit -m "feat(review): append a machine-readable ai-review marker to the r
 ### Task 4: Full verification
 
 - [ ] **Step 1:** `bash tests/run-all.sh` passes; `shellcheck scripts/review-pr.sh scripts/self-fix-loop.sh` clean.
-- [ ] **Step 2:** Render a comment by hand with `DRY_RUN=1` and confirm `tail -n1` is the marker and `sed '$d'` of the new comment equals the comment produced by `git stash`-free comparison against `origin/main`'s script (run the old script from `git show origin/main:scripts/review-pr.sh` into a temp file) — visible text identical.
+- [ ] **Step 2:** Render a comment by hand with `DRY_RUN=1` and confirm `tail -n1` is the marker and `sed '$d'` of the new comment equals the comment produced by `origin/main`'s script (run the old script from `git show origin/main:scripts/review-pr.sh` into a temp file) — visible text identical.
 - [ ] **Step 3:** Open the PR (`feat(review): machine-readable ai-review marker (#593)`), `Closes #593`.
