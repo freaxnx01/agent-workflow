@@ -66,11 +66,15 @@ REPO=<owner>/<repo> bash scripts/pipeline-resume.sh
 `pipeline-resume.sh` closes the alarm **before** it re-dispatches: a dispatch
 sent while the alarm is still open is stopped by the gate.
 
-The script re-dispatches the **open issues labelled `ai:paused`** and removes
-the label from each. One that lost its `ai-implement` label in the meantime is
-not dispatched and only loses `ai:paused`; one whose dispatch fails keeps
-`ai:paused`, so running the script again retries it. Closing the alarm by hand
-first is fine — the script still finds the labelled issues. Nothing is
+The script re-dispatches the **open issues labelled `ai:paused`**. For each one
+it removes the label **first** and dispatches second, so an issue that is in
+flight is never still on the list a later resume reads (#536). If the label
+cannot be removed, the issue is not dispatched this time and the script says
+so — run it again. If the dispatch fails, the label is put back, so running the
+script again retries it; if even that fails, the script names the issue so it
+can be re-dispatched by hand. One that lost its `ai-implement` label in the
+meantime is not dispatched and only loses `ai:paused`. Closing the alarm by
+hand first is fine — the script still finds the labelled issues. Nothing is
 dispatched with `-f attempt=`, so each one runs as attempt 1 on the default
 agent — a paused run did no work, and nothing was learned that would justify
 escalating the next one.
@@ -112,12 +116,16 @@ left".
 
 | Name | Kind | Value |
 |---|---|---|
-| `NTFY_URL` | repo/org **variable** | `https://ntfy.home.freaxnx01.ch` |
+| `NTFY_URL` | repo/org **secret** | the ntfy server's base URL (Passbolt, next to the token) |
 | `NTFY_TOPIC` | repo/org **variable** | `pipeline-alerts` |
 | `NTFY_TOKEN` | repo/org **secret** | the `pipeline` publisher token (Passbolt: "ntfy – pipeline publisher token (topic pipeline-alerts)") |
 
 The publisher user `pipeline` has write-only access to `pipeline-alerts`, so a
 leaked token can publish noise and read nothing.
+
+`NTFY_URL` is a secret, not a variable, so the server address never appears
+in a public repo's run logs: GitHub masks it as `***`. Don't write it into a
+committed file either.
 
 Missing any of the three → the push is skipped and the alarm issue is still
 raised. A failed push never fails a run: `notify-ntfy.sh` always exits 0.
@@ -127,7 +135,7 @@ argv — argv is world-readable in `/proc` and shows up in `ps`.
 
 ### Is the server reachable from GitHub's runners?
 
-The home server is behind a residential line with public DNS, so this has to be
+The home server is behind a residential line, so this has to be
 measured rather than assumed:
 
 ```bash
@@ -138,9 +146,9 @@ The run's step summary reports the `/v1/health` status and names the verdict.
 
 > **Status: not yet measured.** The probe ships with this change; the live run
 > is a post-merge step for the maintainer (the variables and the secret have to
-> be set first). Record the result here.
+> be set first). Record the result here, without the address.
 
-**Fallback if it is unreachable:** set `NTFY_URL` to `https://ntfy.sh` and use
+**Fallback if it is unreachable:** set the `NTFY_URL` secret to `https://ntfy.sh` and use
 a long, unguessable topic name (`ntfy.sh` has no accounts on the free tier —
 the topic name *is* the credential). Keep `NTFY_TOPIC` out of anything public.
 

@@ -47,6 +47,11 @@
 #     opencode surfaces the AI SDK's APICallError) — its `.error.data.statusCode`
 #     and the host of `.error.data.metadata.url`. classify-failure.sh trusts
 #     only those two for out_of_credits.
+#   A stream with no error event whose LAST step_finish has reason
+#   "tool-calls" was cut off before the model answered (#558): subtype
+#   error_agent_cut_off, is_error true, a fixed result naming the model.
+#   classify-failure.sh retries it as transient. Earlier tool-calls steps are
+#   normal — only the last one counts.
 # On a parse failure (opencode errored before emitting events and wrote plain
 # text) we emit an error_during_execution result with the raw bytes inlined so
 # classify-failure.sh can bucket it and an operator can diagnose.
@@ -108,13 +113,17 @@ jq -s -c \
   (map(select(.type == "step_finish"))) as $steps |
   (map(select(.type == "text")))        as $texts |
   (map(.timestamp // empty))            as $ts    |
+  (($errs | length) == 0
+   and (($steps | last | .part.reason?) // "") == "tool-calls") as $cut |
   ([ $errs[] | .error
      | select(.name? == "APIError")
      | select((.data.statusCode? | type) == "number") ] | first) as $call |
   {
     type: "result",
-    subtype: (if ($errs | length) > 0 then "error_during_execution" else "success" end),
-    is_error: (($errs | length) > 0),
+    subtype: (if ($errs | length) > 0 then "error_during_execution"
+              elif $cut then "error_agent_cut_off"
+              else "success" end),
+    is_error: ((($errs | length) > 0) or $cut),
     duration_ms: (if ($ts | length) > 0 then (($ts | max) - ($ts | min)) else 0 end),
     num_turns: ($steps | length),
     total_cost_usd: ([ $steps[] | (.part.cost // 0) ] | add // 0),
@@ -130,11 +139,15 @@ jq -s -c \
                      | ascii_downcase),
     session_id: ((.[0].sessionID // null) // ("opencode-" + ($model | gsub("/"; "-")))),
     result: (
-      ($texts | last | .part.text)
-      // (if ($errs | length) > 0
-          then [ $errs[] | (.error.data.message // .error.name // empty) ] | join("\n")
-          else null end)
-      // ""
+      if $cut
+      then "OpenCode stopped after a tool-calls step, before the model answered (agent loop cut off). Model: " + $model
+      else
+        ($texts | last | .part.text)
+        // (if ($errs | length) > 0
+            then [ $errs[] | (.error.data.message // .error.name // empty) ] | join("\n")
+            else null end)
+        // ""
+      end
     ),
     usage: {
       input_tokens:  ([ $steps[] | (.part.tokens.input  // 0) ] | add // 0),

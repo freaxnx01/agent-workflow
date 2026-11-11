@@ -1,0 +1,16 @@
+{
+  "type": "result",
+  "subtype": "error_during_execution",
+  "is_error": true,
+  "duration_ms": 4000,
+  "num_turns": 3,
+  "total_cost_usd": 0.05,
+  "session_id": "sess_transient_01",
+  "result": "API Error: 529 Overloaded",
+  "usage": {
+    "input_tokens": 400,
+    "output_tokens": 120,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 0
+  }
+}

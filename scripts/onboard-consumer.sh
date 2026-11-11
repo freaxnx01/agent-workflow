@@ -332,6 +332,7 @@ build_agent_yml() {
   # raise its issue and silently never push (#517). Optional everywhere —
   # unset, the push is skipped and nothing fails.
   secrets_block+=$'\n      NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}'
+  secrets_block+=$'\n      NTFY_URL: ${{ secrets.NTFY_URL }}'
 
   with_block=$'      issue-number: ${{ github.event.issue.number }}'
   with_block+=$'\n      runner-labels: '"'$RUNNER_LABELS'"
@@ -396,6 +397,7 @@ jobs:
     secrets:
       OPENROUTER_API_KEY: \${{ secrets.OPENROUTER_API_KEY }}
       NTFY_TOKEN: \${{ secrets.NTFY_TOKEN }}
+      NTFY_URL: \${{ secrets.NTFY_URL }}
 YAML
 }
 
