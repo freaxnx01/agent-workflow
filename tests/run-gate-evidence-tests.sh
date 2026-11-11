@@ -160,11 +160,20 @@ imp() {
 }
 AGG='{"type":"usage_aggregate","events":3,"max_prompt_tokens":15500,"input_tokens":4100,"output_tokens":2100,"cache_read_input_tokens":12000,"cache_creation_input_tokens":12000}'
 
-section "import: a valid result round-trips"
+# The fields the gate's consumers read (classify-failure.sh, post-run-report.sh,
+# the workflow's alarm and `Extract job outputs` steps), nulls dropped.
+ALLOWED='{type, subtype, is_error, duration_ms, num_turns, total_cost_usd, session_id,
+  result, api_error, api_error_status, api_error_host,
+  usage: (.usage | if type == "object" then {input_tokens, output_tokens,
+    cache_read_input_tokens, cache_creation_input_tokens} | with_entries(select(.value != null)) else null end)}
+  | with_entries(select(.value != null))'
+
+section "import: a valid result round-trips as its allowlisted fields (#571 N1, deliberate contract change)"
 rj="$(jq -c . "$FIX/result-success-cheap.json")"
 out="$(imp imp1 "$rj" "$AGG")"
 assert_eq "valid=true" "true" "$(field "$out" valid)"
-assert_eq "result file holds the result" "$rj" "$(jq -c . "$(field "$out" result-file)")"
+assert_eq "result file holds the result's allowlisted fields" "$(jq -c "$ALLOWED" <<< "$rj")" \
+  "$(jq -c . "$(field "$out" result-file)")"
 assert_eq "an aggregate yields an execution file holding it" "$AGG" "$(jq -c . "$(field "$out" execution-file)")"
 
 section "import: no usage data → no execution file (#571 F3, deliberate contract change)"
@@ -209,6 +218,86 @@ assert_eq "missing RESULT_JSON_FILE → error_invalid_evidence" "error_invalid_e
 out="$(OUT_DIR="$T/imp-noenv" bash "$IMPORT" 2>/dev/null)"
 assert_eq "no input env at all → valid=false" "false" "$(field "$out" valid)"
 assert_eq "no input env at all → no execution file" "" "$(field "$out" execution-file)"
+
+section "import → post-run-report: a hostile result field never reaches the shell (#571 N1)"
+# report_from <import-output> — render the gate's report from what import wrote.
+report_from() {
+  RESULT_FILE="$(field "$1" result-file)" EXECUTION_FILE="$(field "$1" execution-file)" \
+    ISSUE_NUMBER=42 WORKFLOW_RUN_URL=https://example.test/run/1 RENDER_ONLY=1 \
+    MODEL=claude-sonnet-5 AGENT=claude bash "$ROOT/scripts/post-run-report.sh" >/dev/null 2>&1 || true
+}
+for path in duration_ms num_turns total_cost_usd usage.input_tokens usage.output_tokens \
+            usage.cache_read_input_tokens usage.cache_creation_input_tokens; do
+  marker="$T/pwned-import-$path"
+  # shellcheck disable=SC2016  # the literal $(…) is the payload under test
+  evil="$(jq -c --arg p "$path" --arg v "HOME[\$(touch $marker)]" 'setpath($p | split("."); $v)' <<< "$rj")"
+  out="$(imp "imp-evil-$path" "$evil" -)"
+  report_from "$out"
+  if [[ ! -e "$marker" ]]; then pass "$path payload is not executed"; else fail "$path payload is not executed"; fi
+  assert_eq "$path payload → valid=false" "false" "$(field "$out" valid)"
+  assert_eq "$path payload → error_invalid_evidence" "error_invalid_evidence" \
+    "$(jq -r .subtype "$(field "$out" result-file)")"
+done
+
+section "post-run-report: a hostile raw result never reaches shell arithmetic (#571 N1, defence in depth)"
+for path in duration_ms usage.input_tokens usage.output_tokens \
+            usage.cache_read_input_tokens usage.cache_creation_input_tokens; do
+  marker="$T/pwned-raw-$path"
+  # shellcheck disable=SC2016  # the literal $(…) is the payload under test
+  jq --arg p "$path" --arg v "HOME[\$(touch $marker)]" 'setpath($p | split("."); $v)' \
+    "$FIX/result-success-cheap.json" > "$T/evil-raw.json"
+  RESULT_FILE="$T/evil-raw.json" ISSUE_NUMBER=42 WORKFLOW_RUN_URL=https://example.test/run/1 \
+    RENDER_ONLY=1 MODEL=claude-sonnet-5 AGENT=claude EXECUTION_FILE='' \
+    bash "$ROOT/scripts/post-run-report.sh" >/dev/null 2>&1 || true
+  if [[ ! -e "$marker" ]]; then pass "raw $path payload is not executed"; else fail "raw $path payload is not executed"; fi
+done
+
+section "import: every kept field is strictly typed, else a synthetic failure (#571 N1)"
+for bad in '.duration_ms = -1' '.duration_ms = 1.5' '.duration_ms = 1e300' '.duration_ms = "1500"' \
+           '.num_turns = true' '.num_turns = [1]' '.usage = "x"' '.usage.output_tokens = {}' \
+           '.total_cost_usd = -0.5' '.total_cost_usd = "0.1"' \
+           '.subtype = 1' '.result = {}' '.session_id = []' '.api_error = 5' '.api_error_host = 1' \
+           '.api_error_status = "402"' '.api_error_status = 402.5'; do
+  out="$(imp imp-type "$(jq -c "$bad" <<< "$rj")" -)"
+  assert_eq "valid=false for: $bad" "false" "$(field "$out" valid)"
+  assert_eq "synthetic failure for: $bad" "error_invalid_evidence" "$(jq -r .subtype "$(field "$out" result-file)")"
+done
+
+section "import: \$GITHUB_OUTPUT line injection does not survive (#571 N3)"
+for path in total_cost_usd num_turns; do
+  out="$(imp "imp-nl-$path" "$(jq -c --arg p "$path" 'setpath([$p]; "1\noutcome=success")' <<< "$rj")" -)"
+  assert_eq "newline-bearing $path → valid=false" "false" "$(field "$out" valid)"
+  assert_eq "newline-bearing $path → not in the result file" "0" \
+    "$(jq -r --arg p "$path" '.[$p]' "$(field "$out" result-file)")"
+done
+
+section "import: unknown fields are dropped, absent and null ones stay absent (#571 N1)"
+out="$(imp imp-extra-res "$(jq -c '.note = "$(id)" | .permission_denials = [1] | .usage.server_tool_use = {x: 1}
+  | .api_error_status = null' <<< "$rj")" -)"
+assert_eq "valid=true with unknown fields" "true" "$(field "$out" valid)"
+assert_eq "unknown fields are not passed through" "$(jq -c "$ALLOWED" <<< "$rj")" \
+  "$(jq -c . "$(field "$out" result-file)")"
+out="$(imp imp-minimal '{"type":"result","is_error":true,"subtype":"error_max_turns","num_turns":30}' -)"
+assert_eq "a minimal result (no usage, no result text) is valid" "true" "$(field "$out" valid)"
+assert_eq "a minimal result keeps exactly its fields" \
+  '{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":30}' \
+  "$(jq -c . "$(field "$out" result-file)")"
+
+section "import: every real result shape stays valid and classifies the same (#571 N1)"
+for f in "$FIX"/result-*.json; do
+  out="$(imp "imp-fix-$(basename "$f")" "$(jq -c . "$f")" -)"
+  assert_eq "$(basename "$f") → valid=true" "true" "$(field "$out" valid)"
+  assert_eq "$(basename "$f") → same class" "$(RESULT_FILE="$f" bash "$ROOT/scripts/classify-failure.sh" | tail -1)" \
+    "$(RESULT_FILE="$(field "$out" result-file)" bash "$ROOT/scripts/classify-failure.sh" | tail -1)"
+done
+for f in "$FIX"/opencode-*.json; do
+  EXECUTION_FILE="$f" MODEL=x/y bash "$ROOT/scripts/adapt-opencode-result.sh" > "$T/adapted.json"
+  out="$(imp "imp-adapt-$(basename "$f")" "$(jq -c . "$T/adapted.json")" -)"
+  assert_eq "adapter output for $(basename "$f") → valid=true" "true" "$(field "$out" valid)"
+  assert_eq "adapter output for $(basename "$f") → same class" \
+    "$(RESULT_FILE="$T/adapted.json" bash "$ROOT/scripts/classify-failure.sh" | tail -1)" \
+    "$(RESULT_FILE="$(field "$out" result-file)" bash "$ROOT/scripts/classify-failure.sh" | tail -1)"
+done
 
 section "export → import end to end"
 ex="$(RESULT_FILE="$FIX/result-opencode-rate-limit.json" bash "$EXPORT")"

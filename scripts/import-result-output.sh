@@ -12,6 +12,22 @@
 # output fails that step before it starts (E2BIG), never this one, so a missing
 # file is just a missing result (#571).
 #
+# The result is rebuilt from an allowlist, never copied (#571 N1): the agent can
+# write export-result-output.sh, so every value is hostile until typed. Kept are
+# only the fields the gate reads (classify-failure.sh, post-run-report.sh, the
+# alarm and `Extract job outputs` steps); everything else is dropped. An absent
+# or null field stays absent, so its consumer falls back to its own default. A
+# present field of the wrong type makes the whole result invalid — a synthetic
+# failure, never a nulled field — because a value that reaches `$(( ))` as
+# `HOME[$(cmd)]` runs `cmd`, and one with a newline forges `$GITHUB_OUTPUT` lines:
+#   type             "result"                  is_error        boolean (required)
+#   duration_ms, num_turns, usage.{input,output,cache_read_input,
+#     cache_creation_input}_tokens, api_error_status
+#                    integer, 0 ≤ n ≤ 2^53 − 1
+#   total_cost_usd   number, 0 ≤ n ≤ 2^53 − 1
+#   subtype, result, session_id, api_error, api_error_host     string
+#   usage            object; its other keys are dropped
+#
 # Optional env:
 #   RESULT_JSON_FILE      file holding export-result-output.sh's result-json
 #   EXECUTION_USAGE_FILE  file holding its execution-usage (a usage_aggregate)
@@ -42,10 +58,28 @@ read_input() {
 result_json="$(read_input "${RESULT_JSON_FILE:-}")"
 usage_json="$(read_input "${EXECUTION_USAGE_FILE:-}")"
 
-# Exactly one JSON value: `{..}{..}` would pass a plain `jq -e` on its last one.
-is_canonical() {
-  printf '%s' "$result_json" | jq -e -s 'length == 1 and (.[0]
-    | type == "object" and .type == "result" and (.is_error | type) == "boolean")' >/dev/null 2>&1
+# rebuilt_result — the result rebuilt from its allowlisted, typed fields (see
+# the header); nothing unless it is exactly one JSON value (`{..}{..}` would
+# pass a plain `jq -e` on its last one) and every kept field has its type.
+rebuilt_result() {
+  printf '%s' "$result_json" | jq -c -s '
+    def count: type == "number" and . >= 0 and . == floor and . <= 9007199254740991;
+    def amount: type == "number" and . >= 0 and . <= 9007199254740991;
+    def ok(f): . == null or f;
+    def present: with_entries(select(.value != null));
+    select(length == 1) | .[0]
+    | select(type == "object" and .type == "result" and (.is_error | type) == "boolean")
+    | select(.usage | ok(type == "object"))
+    | {type, subtype, is_error, duration_ms, num_turns, total_cost_usd, session_id,
+       result, api_error, api_error_status, api_error_host,
+       usage: (.usage | if . == null then null else
+         {input_tokens, output_tokens, cache_read_input_tokens, cache_creation_input_tokens}
+         | present end)}
+    | present
+    | select(all(.duration_ms, .num_turns, .api_error_status, (.usage // {})[]; ok(count)))
+    | select(.total_cost_usd | ok(amount))
+    | select(all(.subtype, .result, .session_id, .api_error, .api_error_host; ok(type == "string")))' \
+    2>/dev/null || true
 }
 
 # rebuilt_aggregate — the usage_aggregate rebuilt from its validated fields only
@@ -69,8 +103,9 @@ write_synthetic() {
                   cache_creation_input_tokens: 0, cache_read_input_tokens: 0}}' > "$result_file"
 }
 
-if is_canonical; then
-  printf '%s' "$result_json" | jq . > "$result_file"
+result="$(rebuilt_result)"
+if [[ -n "$result" ]]; then
+  printf '%s' "$result" | jq . > "$result_file"
   valid=true
 else
   write_synthetic

@@ -194,8 +194,16 @@ fi
 
 # --- formatters -------------------------------------------------------------
 
+# non_negative_int <value> — the value when it is a plain non-negative integer,
+# else 0. Every value read from RESULT_FILE goes through this before shell
+# arithmetic: bash evaluates array subscripts there, so `HOME[$(cmd)]` runs
+# `cmd` (#571 N1). Valid input is unchanged.
+non_negative_int() {
+  if [[ "$1" =~ ^[0-9]+$ ]]; then printf '%s' "$1"; else printf '0'; fi
+}
+
 format_duration_ms() {
-  local total_s=$(( ${1:-0} / 1000 ))
+  local total_s=$(( $(non_negative_int "${1:-0}") / 1000 ))
   local m=$(( total_s / 60 ))
   local s=$(( total_s % 60 ))
   if (( m > 0 )); then printf '%dm %ds' "$m" "$s"
@@ -351,6 +359,13 @@ elif [[ -n "$EXECUTION_FILE" && -r "$EXECUTION_FILE" ]]; then
 fi
 
 # --- derived values ---------------------------------------------------------
+
+# The token counts come from RESULT_FILE or the execution file, both
+# agent-reachable; only plain integers may reach the arithmetic below (#571 N1).
+INPUT_TOKENS="$(non_negative_int "$INPUT_TOKENS")"
+OUTPUT_TOKENS="$(non_negative_int "$OUTPUT_TOKENS")"
+CACHE_READ="$(non_negative_int "$CACHE_READ")"
+CACHE_CREATE="$(non_negative_int "$CACHE_CREATE")"
 
 CONTEXT_PCT="$(pct "$MAX_PROMPT_TOKENS" "$CONTEXT_WINDOW_SIZE")"
 CACHE_DENOM=$(( CACHE_READ + INPUT_TOKENS + CACHE_CREATE ))
