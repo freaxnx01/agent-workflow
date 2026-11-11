@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.2.0) - 2026-11-10
+
+**Upgrading from 2.1.x:** no change to a consumer's `agent.yml` is needed; the
+reusable workflow's inputs, secrets and permissions are unchanged. New behaviour
+a consumer will see:
+
+- Every run report ends with a hidden, machine-readable `<!-- ai-run: {...} -->`
+  line (ADR-021, #585). The visible report is byte-identical to 2.1.x. bridge
+  reads it to decide retry vs. human (freaxnx01/bridge#367).
+- A resume clears `ai:paused` before dispatching, so it cannot double-dispatch
+  (#536), and an opencode run cut off after a tool-calls step is retried instead
+  of reported as success (#565).
+- The Azure DevOps pipeline (#573) is new and opt-in; GitHub consumers are
+  unaffected.
+
+### Added
+
+- **skills:** Add /retitle — name Herdr tab and Claude Code session together (#541)
+- **partials:** Add decision-interview — ask decisions via AskUserQuestion (#543)
+- **azdo:** Tag-triggered ai-implement pipeline PoC (#573) (#576)
+- **azdo:** Harden the Azure Pipelines ai-implement agent (#573) (#577)
+- **azdo:** PR build validation for agent PRs (#573) (#581)
+- **azdo:** Opt-in .NET tool-chain variant of the agent image (#573) (#582)
+- **azdo:** In-job retry and attempt cap for ai-implement (#573) (#584)
+- **azdo:** AI review and opt-in self-fix after the draft PR opens (#573) (#586)
+- **report:** Machine-readable run marker in post-run-report.sh (#588)
+
+### Fixed
+
+- **commands:** Send milestone due_on at midday UTC, not midnight (#542)
+- **new:** Send general-<month> milestone due_on at midday too (#544)
+- **opencode:** Refresh the pinned installer checksum (#546)
+- **handoff:** Allow committing on main in trunk-based repos
+- **opencode:** A run cut off after a tool-calls step is retried, not called success (#565)
+- **resume:** Clear ai:paused before dispatching so a resume cannot double-dispatch (#536) (#555)
+- **autopilot:** Load GH_TOKEN through direnv instead of a second PAT copy (#509) (#557)
+
+### Documentation
+
+- **autonomy:** Add specs and plans for #535, #536, #509, #549, #550 (#552)
+- **spec:** Path-scoped rules for consumer repos
+- **plan:** Path-scoped rules — ai-instructions, sync, /integration
+- **plan:** Gate the pointer swap behind the sync release
+- **opencode:** Add spec and plan for #558 (#564)
+- **review:** Add spec and plan for #568 (#569)
+- **pipeline:** Add spec and plan for #567 (#570)
+- **azdo:** Specs and plans for the Azure DevOps gap items (#573) (#580)
+- **report:** Add run marker design spec (#585)
+- **report:** Add run marker implementation plan (#585)
+- **report:** Number the run marker ADR 021, survive the #571 gate-job split (#585)
+- **report:** Fix ADR reservation note in run marker plan (#585)
+- **report:** Account for #584's Azure DevOps run reports in the marker spec (#585)
+- **report:** #584 has merged — update the Azure DevOps notes (#585)
+- **todo:** Park 2026-10-16 claude-md follow-ups (#545)
+
 ## [2.1.0](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.1.0) - 2026-10-15
 
 **Upgrading from 2.0.x:** no change to a consumer's `agent.yml` is needed. The
