@@ -46,6 +46,13 @@
 #                burning dispatches silently (#517). ai:paused marks each
 #                issue a pause stopped — the list pipeline-resume.sh
 #                re-dispatches (ADR-019); defined in lib/paused-issues.sh
+#   intake     needs-enrichment
+#              — the intake stamp: written by issue-intake.sh when an issue is
+#                opened by hand, by bridge and by /new at creation time, and
+#                read by autopilot-candidates.sh as the lane's entry ticket.
+#                Defined in lib/intake-label.sh so the two writers cannot
+#                drift; seeded here so the per-issue create in issue-intake.sh
+#                is a fallback rather than the only definition (#549)
 #   coordination enrichment-ongoing, needs-human
 #              — enrichment-ongoing is read/written by /enrich (Step 1.5 / 2.5 / 6)
 #                to prevent two sessions from concurrently enriching the same issue.
@@ -79,6 +86,8 @@ source "$_EIL_HERE/lib/detect-forge.sh"
 source "$_EIL_HERE/lib/forge.sh"
 # shellcheck source=scripts/lib/paused-issues.sh
 source "$_EIL_HERE/lib/paused-issues.sh"
+# shellcheck source=scripts/lib/intake-label.sh
+source "$_EIL_HERE/lib/intake-label.sh"
 
 if [[ -z "${REPO:-}" ]]; then
   printf 'error: REPO must be set\n' >&2
@@ -131,6 +140,8 @@ create ai:review-blocked D73A4A 'Auto-review left the PR draft; human action req
 create ai:review-failed D73A4A 'Review could not run to a verdict; human look needed'
 create ai:runner-blocked D73A4A 'Review never started — runner toolchain unmet'
 create ai:checks-blocked D73A4A 'Required checks cannot run on the pipeline PR'
+
+create "$INTAKE_LABEL" "$INTAKE_LABEL_COLOR" "$INTAKE_LABEL_DESC"
 
 create enrichment-ongoing FBCA04 'Another /enrich session is actively enriching this issue — do not start a second one'
 create needs-human D93F0B 'Autopilot could not decide this unattended — a human must resolve it'
