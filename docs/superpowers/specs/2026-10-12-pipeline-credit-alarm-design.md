@@ -100,7 +100,7 @@ add the line — documented). The health check needs a small consumer stub
 
 ### 8. Reachability of ntfy from GitHub-hosted runners (unverified)
 
-`ntfy.home.freaxnx01.ch` points at the home line; GitHub runners may not reach it
+The ntfy server points at the home line; GitHub runners may not reach it
 (firewall/NAT, or tunnel). Plan includes `pipeline-ntfy-probe` (workflow_dispatch):
 publishes a `min`-priority test message and prints the HTTP code. Fallback
 documented: a private high-entropy topic on `https://ntfy.sh` (anonymous publish,

@@ -849,7 +849,7 @@ with
         continue-on-error: true
         if: always() && steps.classify_failure.outputs.class == 'model_not_found'
         env:
-          NTFY_URL: ${{ vars.NTFY_URL }}
+          NTFY_URL: ${{ secrets.NTFY_URL }}
           NTFY_TOPIC: ${{ vars.NTFY_TOPIC }}
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
           NTFY_TITLE: ${{ format('{0}: model not found', github.repository) }}

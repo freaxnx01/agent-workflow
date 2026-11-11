@@ -312,9 +312,15 @@ on:
         description: |
           Bearer token for a write-restricted ntfy topic. Used to push the
           pipeline-paused alarm (#517) and the model-not-found alert (#518).
-          Optional: with no token (or no `NTFY_URL` / `NTFY_TOPIC` variable) the
-          push is skipped and the alarm issue is still raised — the push never
-          fails a run.
+          Optional: with no token (or no `NTFY_URL` secret / `NTFY_TOPIC`
+          variable) the push is skipped and the alarm issue is still raised —
+          the push never fails a run.
+        required: false
+      NTFY_URL:
+        description: |
+          Base URL of the ntfy server. A secret, not a variable, so a public
+          repo's run logs mask it as `***` instead of printing the address.
+          Optional, like NTFY_TOKEN.
         required: false
     outputs:
       outcome:
@@ -1001,7 +1007,7 @@ jobs:
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           RESULT_FILE: ${{ steps.claude.outputs.result-file || steps.opencode_adapt.outputs.result-file || steps.stub_run.outputs.result-file }}
           GH_TOKEN: ${{ steps.app_token.outputs.token || github.token }}
-          NTFY_URL: ${{ vars.NTFY_URL }}
+          NTFY_URL: ${{ secrets.NTFY_URL }}
           NTFY_TOPIC: ${{ vars.NTFY_TOPIC }}
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
         run: |
@@ -1019,12 +1025,12 @@ jobs:
         continue-on-error: true
         # `!inputs.stub-claude` for the same reason as `Fail the job when the
         # agent run failed`: agent-implement.test.yml drives the classifier to
-        # exactly this class on every PR touching scripts/, and NTFY_URL /
-        # NTFY_TOPIC are read here from the callee's own `vars` — without the
+        # exactly this class on every PR touching scripts/, and the ntfy settings
+        # are read here from the callee's own `vars`/`secrets` — without the
         # carve-out each self-test run sends a real priority-high push.
         if: always() && !inputs.stub-claude && steps.classify_failure.outputs.class == 'model_not_found'
         env:
-          NTFY_URL: ${{ vars.NTFY_URL }}
+          NTFY_URL: ${{ secrets.NTFY_URL }}
           NTFY_TOPIC: ${{ vars.NTFY_TOPIC }}
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
           # Both quoted: the rendered text contains ": ", which YAML reads as a
