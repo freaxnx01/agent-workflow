@@ -185,6 +185,12 @@ assert_eq "replacing shrinks the list" "alpha" \
 assert_eq "an empty value CLEARS rather than no-ops" "" \
   "$(run_set_tags azdo-set-tags-cleared.json 4 '')"
 
+# A tags value that is not a string must fail, not be printed as a repr that a
+# caller would then read as "the tag is gone".
+rc=0; out=$(run_set_tags azdo-set-tags-not-text.json 7 'parked' 2>/dev/null) || rc=$?
+assert_eq "set_tags_non_string_tags_in_response_exits_1" "1" "$rc"
+assert_eq "set_tags_non_string_tags_in_response_prints_nothing" "" "$out"
+
 # The request must be a json-patch `replace`, not an `add` -- `add` on this field
 # is what appends, which is the behaviour being escaped.
 assert_eq "sends a json-patch replace on System.Tags" "replace" \
@@ -199,6 +205,79 @@ if grep -q 'not-a-real-token' "$ct_dir/argv.txt"; then
 else
   pass "the PAT never appears on curl's command line"
 fi
+# Revision guard (#573): with an expected revision the PATCH leads with a json-patch
+# `test` on /rev, so the server rejects the write if the item moved since it was read.
+body_op() { # <body-file> <index> <key>
+  python3 -c '
+import json,sys
+b = json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])
+print(b[int(sys.argv[2])][sys.argv[3]])' "$@"
+}
+
+: > "$ct_dir/body.txt"
+run_set_tags azdo-set-tags-replaced.json 4 'alpha' 12 >/dev/null
+assert_eq "set_tags_with_rev_sends_test_op_first" '{"op":"test","path":"/rev","value":12}' \
+  "$(python3 -c '
+import json,sys
+b = json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])
+print(json.dumps(b[0], separators=(",", ":")))' "$ct_dir/body.txt")"
+assert_eq "set_tags_with_rev_then_replace" "replace" "$(body_op "$ct_dir/body.txt" 1 op)"
+
+: > "$ct_dir/body.txt"
+run_set_tags azdo-set-tags-replaced.json 4 'alpha' >/dev/null
+assert_eq "set_tags_without_rev_body_unchanged" "1 replace" \
+  "$(python3 -c '
+import json,sys
+b = json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])
+print(len(b), b[0]["op"])' "$ct_dir/body.txt")"
+
+rc=0; out=$(run_set_tags azdo-set-tags-rev-conflict.json 4 'alpha' 12 2>/dev/null) || rc=$?
+assert_eq "set_tags_rev_conflict_exits_64" "64" "$rc"
+assert_eq "set_tags_rev_conflict_prints_nothing" "" "$out"
+
+rc=0; out=$(run_set_tags azdo-set-tags-bad-request.json 4 'alpha' 12 2>/dev/null) || rc=$?
+assert_eq "set_tags_other_400_is_failure" "1" "$rc"
+
+: > "$ct_dir/body.txt"
+rc=0; run_set_tags azdo-set-tags-replaced.json 4 'alpha' abc >/dev/null 2>&1 || rc=$?
+assert_eq "set_tags_rev_not_integer_exits_2" "2" "$rc"
+assert_eq "set_tags_rev_not_integer_sends_no_request" "0" "$(wc -c < "$ct_dir/body.txt" | tr -d ' ')"
+
+# remove_tag reads the item via az (fields fixture), then writes via curl.
+: > "$ct_dir/body.txt"
+# shellcheck disable=SC2030,SC2031
+(
+  export PATH="$MOCKS:$PATH"
+  export AZ_MOCK_FIXTURE="$FIXTURES/azdo-fields-ai-implement.json"
+  export CURL_MOCK_FIXTURE="$FIXTURES/azdo-set-tags-replaced.json"
+  export CURL_MOCK_BODY_LOG="$ct_dir/body.txt"
+  export AZDO_ORG=contoso AZDO_PROJECT=MyProject AZDO_REPO=my-repo
+  export AZURE_DEVOPS_EXT_PAT=not-a-real-token
+  # shellcheck disable=SC1090
+  source "$LIB"
+  azdo_remove_tag 4 ai-implement 12 >/dev/null
+)
+assert_eq "remove_tag_passes_rev_through" "test 12" \
+  "$(python3 -c '
+import json,sys
+b = json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])
+print(b[0]["op"], b[0]["value"])' "$ct_dir/body.txt")"
+
+assert_eq "latest_rev_echoes_highest" "3" \
+  "$(run_lib azdo-revisions-tag-added.json azdo_latest_rev 5)"
+
+# CURL_MOCK_SEQUENCE: each call pops the first fixture; the last one is reused.
+seq_file="$ct_dir/seq.txt"
+printf '%s\n%s\n' "$FIXTURES/azdo-set-tags-rev-conflict.json" "$FIXTURES/azdo-set-tags-replaced.json" > "$seq_file"
+# shellcheck disable=SC2030,SC2031
+seq_out=$(
+  export PATH="$MOCKS:$PATH" CURL_MOCK_SEQUENCE="$seq_file"
+  curl -s x | python3 -c 'import json,sys; print(json.load(sys.stdin)["typeKey"])'
+  curl -s x | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])'
+  curl -s x | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])'
+)
+assert_eq "curl_mock_sequence_pops_in_order" "TestPatchOperationFailedException,4,4" "${seq_out//$'\n'/,}"
+
 rm -rf "$ct_dir"
 
 section "azdo_description / azdo_set_description — the HTML field"
@@ -369,7 +448,107 @@ run_tag azdo-fields-tagged.json azdo_remove_tag 5 enrichment-ongoing >/dev/null
 assert_eq "removing a non-existent tag is a no-op" "parked; roadmap" \
   "$(sent_value)"
 
+# Tag matching is case-insensitive everywhere; a case-sensitive remove left the
+# trigger tag on the item.
+rm -f "$tg_dir/body.txt"
+run_tag azdo-fields-mixedcase-tagged.json azdo_remove_tag 5 ai-implement >/dev/null
+assert_eq "removing is case-insensitive" "parked" "$(sent_value)"
+
 rm -rf "$tg_dir"
+
+section "azdo_tag_adder — who most recently added the tag"
+
+assert_eq "returns the identity that added it, not a later editor" "owner@example.com" \
+  "$(run_lib azdo-revisions-tag-added.json azdo_tag_adder 5 ai-implement)"
+
+assert_eq "uses the latest addition after a removal" "mallory@example.com" \
+  "$(run_lib azdo-revisions-tag-readded.json azdo_tag_adder 5 ai-implement)"
+
+assert_eq "tag match is case-insensitive" "owner@example.com" \
+  "$(run_lib azdo-revisions-tag-added.json azdo_tag_adder 5 AI-Implement)"
+
+assert_eq "string ChangedBy: the LAST bracket is the identity" "mallory@example.com" \
+  "$(run_lib azdo-revisions-string-changedby-nested.json azdo_tag_adder 5 ai-implement)"
+
+rc=0; out=$(run_lib azdo-revisions-no-tag.json azdo_tag_adder 5 ai-implement 2>/dev/null) || rc=$?
+assert_eq "absent tag exits 64" "64" "$rc"
+assert_eq "absent tag prints nothing" "" "$out"
+
+rc=0; out=$(run_lib azdo-wiql-tf51011.txt azdo_tag_adder 5 ai-implement 2>/dev/null) || rc=$?
+assert_eq "a failed read exits 1" "1" "$rc"
+assert_eq "a failed read prints nothing" "" "$out"
+
+rc=0; run_lib azdo-revisions-tag-added.json azdo_tag_adder >/dev/null 2>&1 || rc=$?
+assert_eq "usage error without arguments" "2" "$rc"
+
+# String-form ChangedBy: "Name <mail>" yields the mail; no <mail> yields no identity.
+tg3=$(mktemp -d)
+printf '{"value":[{"rev":1,"fields":{"System.Tags":"ai-implement","System.ChangedBy":"Owner Person <owner@example.com>"}}]}' > "$tg3/with-mail.json"
+printf '{"value":[{"rev":1,"fields":{"System.Tags":"ai-implement","System.ChangedBy":"Owner Person"}}]}' > "$tg3/no-mail.json"
+printf 'revisions\t%s\n' "$tg3/with-mail.json" > "$tg3/map-mail.tsv"
+printf 'revisions\t%s\n' "$tg3/no-mail.json" > "$tg3/map-nomail.tsv"
+assert_eq "string ChangedBy yields the mail inside <...>" "owner@example.com" \
+  "$(AZ_MOCK_MAP="$tg3/map-mail.tsv" run_lib azdo-revisions-no-tag.json azdo_tag_adder 5 ai-implement)"
+rc=0; out=$(AZ_MOCK_MAP="$tg3/map-nomail.tsv" run_lib azdo-revisions-no-tag.json azdo_tag_adder 5 ai-implement 2>/dev/null) || rc=$?
+assert_eq "string ChangedBy without <mail> exits 64" "64" "$rc"
+assert_eq "string ChangedBy without <mail> prints nothing" "" "$out"
+
+# Paging: page 1 is full (200 revisions, tag absent); the tag is added on page 2.
+python3 - "$tg3" <<'PY'
+import json, sys
+d = sys.argv[1]
+def rev(n, tags, who):
+    f = {"System.ChangedBy": {"uniqueName": who}}
+    if tags: f["System.Tags"] = tags
+    return {"rev": n, "fields": f}
+json.dump({"value": [rev(n, "", "alice@example.com") for n in range(1, 201)]}, open(d + "/p1.json", "w"))
+json.dump({"value": [rev(201, "ai-implement", "late@example.com"),
+                     rev(202, "ai-implement", "bob@example.com")]}, open(d + "/p2.json", "w"))
+PY
+printf 'skip=0\t%s\nskip=200\t%s\n' "$tg3/p1.json" "$tg3/p2.json" > "$tg3/map.tsv"
+assert_eq "finds an addition on the second page" "late@example.com" \
+  "$(AZ_MOCK_MAP="$tg3/map.tsv" run_lib azdo-revisions-no-tag.json azdo_tag_adder 5 ai-implement)"
+
+printf 'skip=0\t%s\nskip=200\t%s\n' "$tg3/p1.json" "$FIXTURES/azdo-wiql-tf51011.txt" > "$tg3/map-fail.tsv"
+rc=0; AZ_MOCK_MAP="$tg3/map-fail.tsv" run_lib azdo-revisions-no-tag.json azdo_tag_adder 5 ai-implement >/dev/null 2>&1 || rc=$?
+assert_eq "a failing second page exits 1" "1" "$rc"
+
+section "azdo_editors_since_tag — who changed the item after the tag was added"
+
+assert_eq "editors_lists_a_later_editor" "bob@example.com" \
+  "$(run_lib azdo-revisions-tag-added.json azdo_editors_since_tag 5 ai-implement)"
+
+assert_eq "editors_lists_a_later_comment_author_once" "owner@example.com
+mallory@example.com" \
+  "$(run_lib azdo-revisions-later-stranger-comment.json azdo_editors_since_tag 5 ai-implement)"
+
+assert_eq "editors_dedupes_case_insensitively" "Owner@Example.com" \
+  "$(run_lib azdo-revisions-tag-added-clean.json azdo_editors_since_tag 5 ai-implement)"
+
+rc=0; out=$(run_lib azdo-revisions-tag-readded.json azdo_editors_since_tag 5 AI-Implement) || rc=$?
+assert_eq "editors_after_the_latest_addition_only: exit" "0" "$rc"
+assert_eq "editors_after_the_latest_addition_only: none" "" "$out"
+
+rc=0; out=$(run_lib azdo-revisions-no-tag.json azdo_editors_since_tag 5 ai-implement 2>/dev/null) || rc=$?
+assert_eq "editors_absent_tag_exits_64" "64" "$rc"
+assert_eq "editors_absent_tag_prints_nothing" "" "$out"
+
+rc=0; out=$(run_lib azdo-wiql-tf51011.txt azdo_editors_since_tag 5 ai-implement 2>/dev/null) || rc=$?
+assert_eq "editors_read_failure_exits_1" "1" "$rc"
+assert_eq "editors_read_failure_prints_nothing" "" "$out"
+
+rc=0; out=$(run_lib azdo-revisions-later-unidentified.json azdo_editors_since_tag 5 ai-implement 2>/dev/null) || rc=$?
+assert_eq "editors_unidentified_later_editor_exits_1" "1" "$rc"
+assert_eq "editors_unidentified_later_editor_prints_nothing" "" "$out"
+
+rc=0; run_lib azdo-revisions-tag-added.json azdo_editors_since_tag 5 >/dev/null 2>&1 || rc=$?
+assert_eq "editors_usage_error_exits_2" "2" "$rc"
+
+assert_eq "editors_reads_every_page" "bob@example.com" \
+  "$(AZ_MOCK_MAP="$tg3/map.tsv" run_lib azdo-revisions-no-tag.json azdo_editors_since_tag 5 ai-implement)"
+rc=0; AZ_MOCK_MAP="$tg3/map-fail.tsv" run_lib azdo-revisions-no-tag.json azdo_editors_since_tag 5 ai-implement >/dev/null 2>&1 || rc=$?
+assert_eq "editors_failing_second_page_exits_1" "1" "$rc"
+rm -rf "$tg3"
 
 # --- summary -------------------------------------------------------------
 

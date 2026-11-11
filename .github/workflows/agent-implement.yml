@@ -1144,6 +1144,13 @@ jobs:
           # stamps no status label, so the run counts as neither an attempt nor
           # a non-start and the issue stays queued for the resume.
           FAILURE_CLASS: ${{ steps.classify_failure.outputs.class }}
+          # #585: run marker inputs — all from steps that run before this one.
+          # Nothing visible reads them; they only reach the hidden `ai-run`
+          # marker at the end of the comment (ADR-021).
+          ATTEMPT: ${{ steps.attempt_cap.outputs.attempt }}
+          RETRY_ATTEMPT: ${{ inputs.attempt }}
+          RETRY_DECISION: ${{ steps.retry.outputs.decision }}
+          PR_NUMBER: ${{ steps.verify_pr.outputs.pr-number }}
         run: bash .claude-pipeline/scripts/post-run-report.sh
 
       - name: Fail the job when the agent run failed

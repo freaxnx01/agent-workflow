@@ -50,6 +50,10 @@ export GH_MOCK_LOG="$TMPDIR_T/gh.log"
 export AUTOPILOT_CACHE_DIR="$TMPDIR_T/cache"
 export AUTOPILOT_DISABLE_FLAG="$TMPDIR_T/disabled"
 
+# The driver refuses to run without GH_TOKEN (#509). A dummy is enough: gh is
+# mocked, and the guard checks presence, never validity.
+export GH_TOKEN=test-token-not-real
+
 # Config: one allowlisted repo.
 printf 'max_per_run=2\nrepo=o/r:ci.yml\n' > "$TMPDIR_T/ap.conf"
 
@@ -84,6 +88,20 @@ case "$out" in
   *--dry-run*) pass "help documents --dry-run" ;;
   *) fail "help documents --dry-run" "help was: $out" ;;
 esac
+# usage() prints a hardcoded line range of this file's own header, so the two
+# edges of that range need pinning or the next header edit shifts them
+# silently: the last documented exit code proves the range still reaches the
+# end of the header, and `set -euo pipefail` (the first line after it) proves
+# it stops there instead of leaking code into the help text.
+case "$out" in
+  *"5  GH_TOKEN is not set"*"Passbolt was unreachable"*)
+    pass "help reaches the last exit code (range not truncated)" ;;
+  *) fail "help reaches the last exit code (range not truncated)" "help was: $out" ;;
+esac
+case "$out" in
+  *"set -euo pipefail"*) fail "help stops at the header (no code leaked)" "help was: $out" ;;
+  *) pass "help stops at the header (no code leaked)" ;;
+esac
 
 section "the disable flag"
 
@@ -97,6 +115,37 @@ case "$out" in
 esac
 assert_eq "disabled makes no gh calls at all" "" "$(cat "$GH_MOCK_LOG")"
 rm -f "$AUTOPILOT_DISABLE_FLAG"
+
+section "GH_TOKEN comes from direnv, never a fallback (#509)"
+
+: > "$GH_MOCK_LOG"
+rc=0; out="$(env -u GH_TOKEN "$DRIVER" --config "$TMPDIR_T/ap.conf" 2>&1)" || rc=$?
+assert_eq "no GH_TOKEN exits 5" "5" "$rc"
+case "$out" in
+  *"GH_TOKEN is not set"*"direnv exec"*) pass "the error names GH_TOKEN and direnv" ;;
+  *) fail "the error names GH_TOKEN and direnv" "output was: $out" ;;
+esac
+assert_eq "no GH_TOKEN makes no gh calls at all" "" "$(cat "$GH_MOCK_LOG")"
+
+rc=0; GH_TOKEN='' "$DRIVER" --config "$TMPDIR_T/ap.conf" >/dev/null 2>&1 || rc=$?
+assert_eq "an empty GH_TOKEN (passbolt unreachable) exits 5" "5" "$rc"
+
+rc=0; env -u GH_TOKEN "$DRIVER" --config "$TMPDIR_T/ap.conf" --dry-run >/dev/null 2>&1 || rc=$?
+assert_eq "a dry run without GH_TOKEN exits 5 too" "5" "$rc"
+
+: > "$AUTOPILOT_DISABLE_FLAG"
+rc=0; out="$(env -u GH_TOKEN "$DRIVER" --config "$TMPDIR_T/ap.conf" 2>&1)" || rc=$?
+assert_eq "the kill switch still works without GH_TOKEN (exit 0)" "0" "$rc"
+case "$out" in
+  *disabled*) pass "the kill switch is logged even without GH_TOKEN" ;;
+  *) fail "the kill switch is logged even without GH_TOKEN" "output was: $out" ;;
+esac
+rm -f "$AUTOPILOT_DISABLE_FLAG"
+
+# A stored gh login must not stand in for the direnv PAT: with GH_TOKEN unset
+# the driver refuses even though `gh` (the mock) would answer every call.
+rc=0; env -u GH_TOKEN GH_MOCK_AUTH_HOSTS=github.com "$DRIVER" --config "$TMPDIR_T/ap.conf" >/dev/null 2>&1 || rc=$?
+assert_eq "an ambient gh login is not a fallback for GH_TOKEN" "5" "$rc"
 
 section "dry run"
 
@@ -702,6 +751,66 @@ assert_eq "the issue edit before the SIGPIPE really landed" "1" \
 # would still pass if the whole AUTOPILOT_WROTE/trap mechanism were deleted
 # and the process just died by the raw signal instead of the trap's `exit 1`.
 assert_eq "SIGPIPE after a write exits exactly 1" "1" "$rc"
+
+section "the unit loads GH_TOKEN through direnv (#509)"
+
+UNIT="$ROOT/setup/agent-autopilot.service"
+exec_start="$(grep -E '^ExecStart=' "$UNIT")"
+case "$exec_start" in
+  *"direnv exec "*"scripts/autopilot.sh"*) pass "ExecStart runs the driver under direnv exec" ;;
+  *) fail "ExecStart runs the driver under direnv exec" "was: $exec_start" ;;
+esac
+case "$exec_start" in
+  *'$'*) fail "ExecStart has no \$ (systemd would expand it)" "was: $exec_start" ;;
+  *) pass "ExecStart has no \$ (systemd would expand it)" ;;
+esac
+case "$exec_start" in
+  *"bash -c"*) fail "ExecStart needs no shell" "was: $exec_start" ;;
+  *) pass "ExecStart needs no shell" ;;
+esac
+# direnv exec imports the whole .envrc environment, so the one variable known
+# to live in the operator's tree and to outrank autopilot.env's OAuth token
+# has to be stripped back out between direnv and the driver.
+case "$exec_start" in
+  *"direnv exec "*"env -u ANTHROPIC_API_KEY"*"scripts/autopilot.sh"*)
+    pass "ExecStart drops ANTHROPIC_API_KEY after direnv" ;;
+  *) fail "ExecStart drops ANTHROPIC_API_KEY after direnv" "was: $exec_start" ;;
+esac
+if grep -qE '^#.*GH_TOKEN=' "$UNIT"; then
+  fail "the unit no longer tells you to copy GH_TOKEN into autopilot.env" "$(grep -nE 'GH_TOKEN=' "$UNIT")"
+else
+  pass "the unit no longer tells you to copy GH_TOKEN into autopilot.env"
+fi
+if grep -q 'direnv allow' "$UNIT"; then
+  pass "the unit documents the direnv allow prerequisite"
+else
+  fail "the unit documents the direnv allow prerequisite"
+fi
+
+DOC="$ROOT/docs/AUTOPILOT.md"
+# Step 2 only: exit BEFORE printing step 3, whose own text says `direnv exec`
+# and would satisfy the assertion below even if step 2 lost the mention.
+creds="$(awk '/\*\*Credentials\.\*\*/{on=1} on && /^3\. /{exit} on{print}' "$DOC")"
+case "$creds" in
+  *'GH_TOKEN='*) fail "AUTOPILOT.md no longer says to put GH_TOKEN= in autopilot.env" "$creds" ;;
+  *) pass "AUTOPILOT.md no longer says to put GH_TOKEN= in autopilot.env" ;;
+esac
+case "$creds" in
+  *'direnv exec'*) pass "AUTOPILOT.md's credentials step names direnv exec" ;;
+  *) fail "AUTOPILOT.md's credentials step names direnv exec" "$creds" ;;
+esac
+# shellcheck disable=SC2016  # the backticks are the docs' markdown code spans
+if grep -qE '^\| `5` \|' "$DOC"; then
+  pass "AUTOPILOT.md documents exit code 5"
+else
+  fail "AUTOPILOT.md documents exit code 5"
+fi
+# shellcheck disable=SC2016  # ditto
+if grep -qE '^- `5`' "$ROOT/commands/autopilot.md"; then
+  pass "/autopilot documents exit code 5"
+else
+  fail "/autopilot documents exit code 5"
+fi
 
 printf '\n%s──────────%s\n' "$C_DIM" "$C_OFF"
 printf 'passed: %d   failed: %d\n' "$PASS" "$FAIL"
