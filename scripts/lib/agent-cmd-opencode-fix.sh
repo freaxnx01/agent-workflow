@@ -13,6 +13,9 @@
 # MODEL is optional; prefixed with openrouter/ unless already prefixed,
 # same rule as the implement job's Run OpenCode step.
 #
+# When MODEL is set, the id is also declared to opencode through
+# OPENCODE_CONFIG_CONTENT (scripts/opencode-model-config.sh, #518).
+#
 # EXPERIMENTAL (see #58): reuses the same unverified opencode agentic-edit
 # surface as the implement job's OpenCode path — not new risk, but not
 # independently re-verified end-to-end either.
@@ -32,6 +35,13 @@ case "$oc_model" in
 esac
 
 args=(run --format json --print-logs)
-[[ -n "$oc_model" ]] && args+=(--model "$oc_model")
+if [[ -n "$oc_model" ]]; then
+  args+=(--model "$oc_model")
+  # Same injection as the implement job's Run OpenCode step (#518): without it
+  # a model newer than the pinned opencode's bundled catalog resolves only when
+  # the catalog download wins a race against startup.
+  OPENCODE_CONFIG_CONTENT="$(MODEL="$oc_model" bash "$(dirname "${BASH_SOURCE[0]}")/../opencode-model-config.sh")"
+  export OPENCODE_CONFIG_CONTENT
+fi
 
 opencode "${args[@]}" -- "$(cat "$prompt")" > "${RUNNER_TEMP:-/tmp}/self-fix-agent-output.log" 2>&1

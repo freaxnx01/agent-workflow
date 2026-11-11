@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#
+# self-fix-agent-switch — self-fix-pr.sh FIX_AGENT_CMD mock that leaves the PR
+# branch: it checks out another branch and commits the fix there.
+set -euo pipefail
+IFS=$'\n\t'
+git checkout -q -b elsewhere
+printf 'fixed\n' >> file.txt

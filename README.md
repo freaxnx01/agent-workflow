@@ -271,6 +271,7 @@ will only ever remove names listed there; a hand-written skill is never touched.
 ```text
 skills/
   processing-test-feedback/SKILL.md   → /processing-test-feedback
+  retitle/SKILL.md                    → /retitle
 ```
 
 These are **not** the plugin skills from `agent-skills` (source 2 above). The split is

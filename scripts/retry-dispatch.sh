@@ -17,7 +17,7 @@
 #   MAX_RETRIES_RATE    Default 3.
 #   MAX_RETRIES_TRANS   Default 3.
 #   MAX_RETRIES_TASK    Default 1.
-#   DELAY_OVERRIDE_SEC  Force a specific delay (skips policy computation).
+#   DELAY_OVERRIDE_SEC  Replaces the delay (see lib/retry-policy.sh).
 #                       Used by tests to keep them fast.
 #   DRY_RUN             If "1", print the decision and skip the actual sleep
 #                       and `gh workflow run` call. Default 0.
@@ -47,53 +47,16 @@ require_env ISSUE_NUMBER
 require_env REPO
 
 CONSUMER_WORKFLOW="${CONSUMER_WORKFLOW:-agent.yml}"
-MAX_RETRIES_RATE="${MAX_RETRIES_RATE:-3}"
-MAX_RETRIES_TRANS="${MAX_RETRIES_TRANS:-3}"
-MAX_RETRIES_TASK="${MAX_RETRIES_TASK:-1}"
 DRY_RUN="${DRY_RUN:-0}"
 
 # --- policy --------------------------------------------------------------
 
-decision=stop
-delay=0
+# shellcheck source=lib/retry-policy.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/retry-policy.sh"
 
-case "$CLASS" in
-  success)
-    decision=stop
-    ;;
-  rate_limit)
-    if (( ATTEMPT < MAX_RETRIES_RATE )); then
-      decision=retry
-      delay=300                  # 5 min — covers most per-minute resets
-    fi
-    ;;
-  transient)
-    if (( ATTEMPT < MAX_RETRIES_TRANS )); then
-      decision=retry
-      delay=$(( 10 * (1 << (ATTEMPT - 1)) ))  # 10, 20, 40, ...
-    fi
-    ;;
-  task_failure)
-    if (( ATTEMPT < MAX_RETRIES_TASK + 1 )); then  # ATTEMPT 1 → retry once
-      decision=retry
-      delay=10
-    fi
-    ;;
-  out_of_credits|api_auth|bug)
-    # operator intervention. out_of_credits is a pause class
-    # (scripts/lib/pause-reasons.sh): retrying it cannot succeed until the key
-    # is topped up, and pipeline-pause.sh re-dispatches the issue on resume.
-    decision=stop
-    ;;
-  *)
-    printf 'warn: unknown CLASS "%s" — defaulting to stop\n' "$CLASS" >&2
-    decision=stop
-    ;;
-esac
-
-if [[ -n "${DELAY_OVERRIDE_SEC:-}" ]]; then
-  delay="$DELAY_OVERRIDE_SEC"
-fi
+policy="$(retry_policy "$CLASS" "$ATTEMPT")"
+decision="$(sed -n 's/^decision=//p' <<<"$policy")"
+delay="$(sed -n 's/^delay=//p' <<<"$policy")"
 
 # --- emit decision -------------------------------------------------------
 

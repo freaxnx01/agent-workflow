@@ -121,8 +121,9 @@ currently `out_of_credits`, listed in `scripts/lib/pause-reasons.sh`. The
 failure is repo-wide (an empty API key fails every dispatch), so the run does
 not retry, does not count as an attempt, and stamps no `ai:*` grade; it reports
 `## ai-implement paused` and raises one alarm issue, which is itself the pause
-state (ADR-018). While that issue is open no new agent run starts in the repo,
-and the queued issues keep their `ai-implement` label. See
+state (ADR-018). While that issue is open no new agent run starts in the repo;
+each stopped issue keeps its `ai-implement` label and gets `ai:paused`, which
+is the list `pipeline-resume.sh` re-dispatches (ADR-019). See
 [ALARMS.md](ALARMS.md).
 
 Distinct from [parked](#parked-issue) — which is about one issue's attempt

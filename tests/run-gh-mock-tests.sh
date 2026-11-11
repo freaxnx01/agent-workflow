@@ -64,6 +64,19 @@ printf 'issue list\t%s\nissue\t/dev/null\n' "$TMPDIR_T/body.json" > "$TMPDIR_T/f
 out="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/first.map" gh issue list --repo o/r)"
 assert_eq "first matching line wins" '{"ok":true}' "$out"
 
+section "GH_MOCK_STDOUT_MAP — first call / later calls"
+
+printf '[]\n' > "$TMPDIR_T/none.json"
+printf '[{"number":5}]\n' > "$TMPDIR_T/later.json"
+printf 'issue list\t%s|%s\n' "$TMPDIR_T/none.json" "$TMPDIR_T/later.json" > "$TMPDIR_T/seq.map"
+
+out="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/seq.map" gh issue list --repo o/r)"
+assert_eq "the first matching call gets the first fixture" '[]' "$out"
+out="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/seq.map" gh issue list --repo o/r)"
+assert_eq "the second matching call gets the second fixture" '[{"number":5}]' "$out"
+out="$(GH_MOCK_STDOUT_MAP="$TMPDIR_T/seq.map" gh issue list --repo o/r)"
+assert_eq "every later call keeps the second fixture" '[{"number":5}]' "$out"
+
 section "GH_MOCK_FAIL_MAP"
 
 printf 'actions/workflows\n' > "$TMPDIR_T/fail.map"

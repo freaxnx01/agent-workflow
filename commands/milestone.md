@@ -89,13 +89,13 @@ PRs). Don't claim truncation when it might be PRs.
 ### new
 
 ```bash
-# with a due date — send the bare YYYY-MM-DD at midnight UTC. GitHub keeps only
-# the date: any time you send is stored as T00:00:00Z (verified 2026-10-04 —
-# a midday write read back as midnight), so sending midnight makes the
-# read-back match the request exactly.
+# with a due date — send the YYYY-MM-DD at MIDDAY UTC. GitHub keeps only the
+# date and reads it back as T00:00:00Z. Observed 2026-10-16: a midnight-UTC
+# write of 2026-11-30 read back as 2026-11-29, one day early (cause not
+# established); a T12:00:00Z write read back as 2026-11-30T00:00:00Z.
 gh api "repos/$repo/milestones" \
   -f title="<name>" \
-  -f due_on="<YYYY-MM-DD>T00:00:00Z"
+  -f due_on="<YYYY-MM-DD>T12:00:00Z"
 
 # no due date given — omit the field entirely, don't pass an empty value
 gh api "repos/$repo/milestones" -f title="<name>"

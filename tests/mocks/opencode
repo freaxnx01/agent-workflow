@@ -3,7 +3,12 @@
 # opencode — minimal stand-in for the OpenCode CLI used by Layer-1 fixture
 # tests of agent-cmd-opencode-fix.sh. Appends each invocation's argv as a
 # single space-joined line to $OPENCODE_MOCK_LOG. Exits 0.
+#
+# When $OPENCODE_MOCK_ENV_LOG is set, also appends the OPENCODE_CONFIG_CONTENT
+# the invocation ran with (an empty line when unset), so a test can assert what
+# config the caller injected (#518).
 set -euo pipefail
 IFS=$'\n\t'
 : "${OPENCODE_MOCK_LOG:?OPENCODE_MOCK_LOG must be set when using the opencode mock}"
 ( IFS=' '; printf '%s\n' "$*" >> "$OPENCODE_MOCK_LOG" )
+[[ -z "${OPENCODE_MOCK_ENV_LOG:-}" ]] || printf '%s\n' "${OPENCODE_CONFIG_CONTENT:-}" >> "$OPENCODE_MOCK_ENV_LOG"

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#
+# git — origin shim for the Azure DevOps driver tests.
+#
+# Intercepts exactly one call, `git remote get-url origin`, and prints
+# $GIT_MOCK_ORIGIN_URL so detect_forge sees an Azure DevOps remote while the
+# real origin stays a local bare repo. Needed because url.*.insteadOf would also
+# rewrite `remote get-url`. Everything else runs the real git ($GIT_MOCK_REAL).
+#
+# When $GIT_MOCK_LOG is set, every call's space-joined argv is appended to it,
+# with the Basic auth header value replaced by "<redacted>" so a test can prove
+# a push used http.extraheader without the log holding the credential.
+set -euo pipefail
+
+if [[ -n "${GIT_MOCK_LOG:-}" ]]; then
+  logged=()
+  for arg in "$@"; do
+    if [[ "$arg" == 'http.extraheader=Authorization: Basic '* ]]; then
+      arg='http.extraheader=Authorization: Basic <redacted>'
+    fi
+    logged+=("$arg")
+  done
+  printf '%s\n' "${logged[*]}" >> "$GIT_MOCK_LOG"
+fi
+
+if [[ "${1:-} ${2:-} ${3:-}" == "remote get-url origin" ]]; then
+  printf '%s\n' "${GIT_MOCK_ORIGIN_URL:?GIT_MOCK_ORIGIN_URL must be set}"
+  exit 0
+fi
+exec "${GIT_MOCK_REAL:?GIT_MOCK_REAL must be set}" "$@"

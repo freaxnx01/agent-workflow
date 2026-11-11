@@ -32,7 +32,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # depends on one of these being absent, present and future.
 unset GITHUB_REPOSITORY GITHUB_OUTPUT GITHUB_ACTIONS GITHUB_TOKEN \
       REPO ISSUE_BODY ISSUE_LABELS ISSUE_JSON ISSUE_COMMENTS_JSON \
-      PR_NUMBER FIX_AGENT FIX_MODEL MODEL
+      PR_NUMBER FIX_AGENT FIX_MODEL MODEL OPENROUTER_API_KEY
 SCRIPT="$ROOT/scripts/post-run-report.sh"
 FIXTURES="$ROOT/tests/fixtures"
 MOCKS="$ROOT/tests/mocks"
@@ -3283,6 +3283,34 @@ assert_contains "$out" '"is_error":true'                       "unparseable → 
 assert_contains "$out" '"subtype":"error_during_execution"'    "unparseable → error_during_execution subtype"
 assert_contains "$out" 'not parseable'                         "unparseable → result names the failure"
 
+# Cut off after a tool-calls step (#558): the last step_finish asked for tool
+# calls and the model never answered. Structure from game-rhyflitzer run
+# 39326381307. Not a success: is_error, its own subtype, usage still summed.
+out="$(MODEL=z-ai/glm-5.3 EXECUTION_FILE="$FIXTURES/opencode-cut-after-tool-calls.json" bash "$ADAPT_OC")"
+assert_equals "$(printf '%s' "$out" | jq -r '.is_error')" "true" "cut after tool-calls → is_error true"
+assert_equals "$(printf '%s' "$out" | jq -r '.subtype')" "error_agent_cut_off" "cut after tool-calls → subtype error_agent_cut_off"
+assert_equals "$(printf '%s' "$out" | jq -r '.num_turns')" "1" "cut after tool-calls → num_turns still counted"
+assert_equals "$(printf '%s' "$out" | jq -r '.usage.input_tokens')" "7133" "cut after tool-calls → tokens still summed"
+assert_equals "$(printf '%s' "$out" | jq -r '.result')" \
+  "OpenCode stopped after a tool-calls step, before the model answered (agent loop cut off). Model: z-ai/glm-5.3" \
+  "cut after tool-calls → result names the cut-off and the model"
+
+# A mid-stream tool-calls step is normal: opencode-success.json ends with
+# reason=stop and must stay a success (#558).
+out="$(EXECUTION_FILE="$FIXTURES/opencode-success.json" bash "$ADAPT_OC")"
+assert_equals "$(printf '%s' "$out" | jq -r '.subtype')" "success" "mid-stream tool-calls, last stop → success"
+
+# Errors win: an error event plus a last tool-calls step keeps the error path,
+# so the provider evidence the classifier needs is not hidden (#558).
+TMP_ERR_CUT="$(mktemp)"
+{ cat "$FIXTURES/opencode-cut-after-tool-calls.json"
+  printf '%s\n' '{"type":"error","timestamp":1800,"sessionID":"ses_cut","error":{"name":"APIError","data":{"message":"Rate limit exceeded"}}}'
+} > "$TMP_ERR_CUT"
+out="$(EXECUTION_FILE="$TMP_ERR_CUT" bash "$ADAPT_OC")"
+rm -f "$TMP_ERR_CUT"
+assert_equals "$(printf '%s' "$out" | jq -r '.subtype')" "error_during_execution" "error event + last tool-calls → error_during_execution"
+assert_contains "$(printf '%s' "$out" | jq -r '.result')" 'Rate limit exceeded' "error event + last tool-calls → result keeps the error"
+
 # End-to-end: adapter output piped into classify-failure.sh produces the
 # expected bucket. Verifies the new classify-failure regex (`403`,
 # `provider.error`, etc.) catches what the adapter passes through.
@@ -3306,11 +3334,15 @@ assert_contains "$out" 'class=api_auth'   "opencode 403 / forbidden → class=ap
 out="$(adapter_to_classifier opencode-missing-key.json)"
 assert_contains "$out" 'class=api_auth' "missing OPENROUTER_API_KEY → api_auth (no retry)"
 
-# Transient opencode catalog miss (#439): 0 turns + "Model not found" is an
-# infrastructure blip, not a bug. Retrying it (and escalating to Claude on
-# attempt 2) is what the operator ended up doing by hand.
+# 0 turns + "Model not found" is its own class since #518: the pipeline now
+# declares the model to opencode, so the catalog miss #439 retried cannot
+# happen and what is left is a wrong id — which a retry cannot fix.
 out="$(adapter_to_classifier opencode-model-not-found.json)"
-assert_contains "$out" 'class=transient' "opencode 0-turn model-not-found → transient (retried)"
+assert_contains "$out" 'class=model_not_found' "opencode 0-turn model-not-found → model_not_found"
+
+# Cut off after a tool-calls step is a hiccup, not a verdict: retry (#558).
+out="$(adapter_to_classifier opencode-cut-after-tool-calls.json)"
+assert_contains "$out" 'class=transient' "opencode cut after tool-calls → class=transient"
 
 # Error paths
 ec="$(run_capture_ec env bash "$ADAPT_OC")"
@@ -3351,6 +3383,9 @@ assert_contains "$out" 'class=rate_limit'   "result-opencode-rate-limit.json →
 out="$(RESULT_FILE="$FIXTURES/result-opencode-task-failure.json" bash "$CLASSIFY_FAIL")"
 assert_contains "$out" 'class=task_failure' "result-opencode-task-failure.json → task_failure"
 
+out="$(RESULT_FILE="$FIXTURES/result-opencode-cut-after-tool-calls.json" bash "$CLASSIFY_FAIL")"
+assert_contains "$out" 'class=transient' "result-opencode-cut-after-tool-calls.json → transient"
+
 # post-run-report.sh renders the OpenCode-flavored success fixture without
 # error. RENDER_ONLY skips the gh comment/label side effects.
 out="$(RENDER_ONLY=1 \
@@ -3364,11 +3399,11 @@ assert_contains "$out" 'success'     "post-run-report shows success outcome"
 
 # The model-not-found branch is guarded by num_turns == 0: a catalog miss can only
 # happen before the first step. The same text after real turns is something else
-# and must still reach the operator as a bug (#439).
+# and must still reach the operator as a bug (#439, #518).
 mnf_tmp="$(mktemp --suffix=.json)"
 jq -nc '{type:"result",subtype:"error_during_execution",is_error:true,duration_ms:0,num_turns:0,total_cost_usd:0,session_id:"s",result:"Model not found: openrouter/z-ai/glm-5.2. Did you mean: z-ai/glm-4.5?",usage:{input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0}}' > "$mnf_tmp"
 out="$(RESULT_FILE="$mnf_tmp" bash "$CLASSIFY_FAIL")"
-assert_contains "$out" 'class=transient' "model-not-found at 0 turns → transient"
+assert_contains "$out" 'class=model_not_found' "model-not-found at 0 turns → model_not_found"
 jq -c '.num_turns = 3' "$mnf_tmp" > "$mnf_tmp.3" && mv "$mnf_tmp.3" "$mnf_tmp"
 out="$(RESULT_FILE="$mnf_tmp" bash "$CLASSIFY_FAIL")"
 assert_contains "$out" 'class=bug' "model-not-found after real turns → still bug"

@@ -378,6 +378,23 @@ Pick the model per issue with a `model:*` label (alongside `agent:opencode`). Th
 
 > **OpenCode requires tool-use.** OpenCode drives edits through function/tool calls, so only OpenRouter models that advertise `tools` in their `supported_parameters` work. Models without it fail with *"No endpoints found that support tool use"* (e.g. `qwen-2.5-coder-32b`); some advertise tools but emit malformed tool calls (e.g. `codestral`) and silently make no edits. Verify tool support before adding a model.
 
+### Adding a new OpenRouter model
+
+Set `default-model` (or map a `model:*` label) to the id exactly as
+[openrouter.ai/models](https://openrouter.ai/models) shows it, e.g.
+`z-ai/glm-5.3`. Nothing else is needed, however new the model is:
+
+- The pipeline declares the id to opencode itself
+  (`scripts/opencode-model-config.sh`), so it does not have to be in the model
+  catalog bundled with the pinned opencode version.
+- Before each run the pipeline refreshes opencode's catalog from models.dev so
+  cost and context limits are reported. A model too new for models.dev still
+  runs; its run report then shows `$0.00`.
+- An id OpenRouter does not list stops the run before the agent starts, as
+  `model_not_found` (see Troubleshooting below).
+
+Check that the model advertises `tools` first — see the note above.
+
 For measured per-model results — which model produced the cleanest code on a real task, and which ones failed — see the living [model-comparison report](model-comparison.md).
 
 Claude-path labels (`model:opus` / `model:sonnet` / `model:haiku` / `model:fable`) are documented in DESIGN.md.
@@ -403,13 +420,13 @@ Claude-path labels (`model:opus` / `model:sonnet` / `model:haiku` / `model:fable
 > fails with an explicit `OPENROUTER_API_KEY is not set` message instead.
 > Verify with `gh secret list -R <owner>/<repo>`.
 >
-> If the key *is* present (the run log shows `OPENROUTER_API_KEY present`) and
-> the run died at **0 turns**, opencode most likely failed to fetch its model
-> catalog at startup and fell back to a bundled snapshot that doesn't know
-> newer models. Since #439 the pipeline classifies that as `transient` and
-> retries it automatically; with `escalate-on-retry` the retry runs on Claude.
-> Only a failure that **recurs** on retry with an `agent:opencode` label points
-> to a genuinely wrong model id.
+> If the key *is* present (the run log shows `OPENROUTER_API_KEY present`), the
+> model id is wrong. Since #518 the pipeline checks the id against
+> [OpenRouter's model list](https://openrouter.ai/models) before the agent
+> starts and fails the run as `model_not_found`: the run report names the model
+> and the fix, the operator gets one ntfy push (when ntfy is configured), and
+> the run is neither retried nor counted as an attempt. Correct `default-model`
+> or the issue's `model:` label and re-dispatch.
 
 - The same `ai-review-ai-merge` opt-in (§2) and chain semantics (§4 — below) apply regardless of which agent ran the implementation.
 

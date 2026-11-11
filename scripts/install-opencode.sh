@@ -41,9 +41,10 @@ IFS=$'\n\t'
 OPENCODE_VERSION="${OPENCODE_VERSION:-1.15.13}"
 INSTALLER_URL="${INSTALLER_URL:-https://opencode.ai/install}"
 
-# SHA-256 of the installer as fetched on 2026-09-23. Refreshing this is a
-# deliberate commit, reviewed like any other dependency bump.
-INSTALLER_SHA256="${INSTALLER_SHA256:-fc3c1b2123f49b6df545a7622e5127d21cd794b15134fc3b66e1ca49f7fb297e}"
+# SHA-256 of the installer as fetched on 2026-10-16 (anomalyco/opencode, v1
+# branch, commit 3be0395, upstream #54904). Refreshing this is a deliberate
+# commit, reviewed like any other dependency bump.
+INSTALLER_SHA256="${INSTALLER_SHA256:-a2dd59522b9a091b6cdb2e4870c0f2135f7da09807cd5a7e04222d4316925b72}"
 
 PURPOSE='install the OpenCode CLI for an AGENT=opencode run'
 

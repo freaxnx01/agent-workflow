@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+#
+# claude — stand-in for the Claude CLI used by Layer-1 driver tests.
+#
+# Drains stdin, branches ($CLAUDE_MOCK_BRANCH, default agent/test), creates every
+# comma-separated path in $CLAUDE_MOCK_TOUCH and commits them in one commit, then
+# prints $CLAUDE_MOCK_RESULT (a JSON fixture path) to stdout. Always exits 0.
+#
+# Step mode, when $CLAUDE_MOCK_STEPS is set: a scripted agent for the retry-loop
+# tests. Line <n> of that file names what call <n> does (state in
+# $CLAUDE_MOCK_STATE, call log in $CLAUDE_MOCK_LOG):
+#   success           branch ai/7-ok-<n>, commit HELLO.md          cheap result, rc 0
+#   transient         branch ai/7-try-<n>, commit a.txt, leave an
+#                     untracked junk.txt                           transient result, rc 1
+#   transient-pushed  as transient, plus `git push origin HEAD`    transient result, rc 1
+#   task_failure      as transient                                 max-turns result, rc 1
+#   api_auth          no git change                                api-auth result, rc 1
+#   pipeline-file     branch ai/7-pf-<n>, commit azure-pipelines.yml  cheap result, rc 0
+#   transient-pushed-fixed / success-fixed
+#                     as transient-pushed / success, but on the same branch
+#                     ai/7-same every call (a reused name across attempts)
+#   hang              no output, sleeps 30 s
+#   success-dirty     as success, plus an untracked junk.txt
+# Step mode also serves the review and self-fix calls, told apart by argv, and
+# they consume no step: `--output-format json` is the implement call;
+# `--allowedTools` is a fix call (logs `fix <n>` to $CLAUDE_MOCK_FIX_LOG and
+# appends to ${CLAUDE_MOCK_FIX_TOUCH:-FIX.md}; with $CLAUDE_MOCK_FIX_FAIL set it
+# exits 1 without changing anything). $CLAUDE_MOCK_DROP_ORIGIN_MAIN makes the
+# `success` step delete origin/main; anything else is a review call
+# (logs `review <n> args=<argv>` to $CLAUDE_MOCK_REVIEW_LOG, saves its stdin as
+# $CLAUDE_MOCK_REVIEW_DIR/review-<n>.md and prints entry <n> of the
+# comma-separated $CLAUDE_MOCK_REVIEWS, a tests/fixtures file; the last repeats).
+set -euo pipefail
+IFS=$'\n\t'
+
+stdin_copy=''
+if [[ -n "${CLAUDE_MOCK_STEPS:-}" ]]; then
+  stdin_copy="$(mktemp)"
+  trap 'rm -f "$stdin_copy"' EXIT
+  cat > "$stdin_copy"
+else
+  cat >/dev/null
+fi
+
+# _step_commit <branch-prefix> <file> — branch ai/7-<prefix>-<n> and commit <file>.
+_step_commit() {
+  if [[ "$1" == same ]]; then git checkout -q -b ai/7-same; else git checkout -q -b "ai/7-$1-$n"; fi
+  printf 'mock change\n' > "$2"
+  git add -- "$2"
+  git commit -q -m "mock agent change"
+}
+
+# _next_count <name> — bumps and prints the call counter for one call kind.
+_next_count() {
+  local f="${CLAUDE_MOCK_STATE}.$1" c
+  c=$(( $(cat "$f" 2>/dev/null || printf 0) + 1 ))
+  printf '%s' "$c" > "$f"
+  printf '%s' "$c"
+}
+
+# Review and fix calls of the AI-review tests; neither consumes an implement step.
+_review_or_fix_call() {
+  local c entry argv
+  argv="$(IFS=' '; printf '%s' "$*")"   # $* joins on the newline IFS set above
+  if [[ " $argv " == *" --allowedTools "* ]]; then
+    c="$(_next_count fix)"
+    printf 'fix %s\n' "$c" >> "${CLAUDE_MOCK_FIX_LOG:-/dev/null}"
+    [[ -z "${CLAUDE_MOCK_FIX_FAIL:-}" ]] || return 1
+    printf 'fix %s\n' "$c" >> "${CLAUDE_MOCK_FIX_TOUCH:-FIX.md}"
+    return 0
+  fi
+  c="$(_next_count review)"
+  printf 'review %s args=%s\n' "$c" "$argv" >> "${CLAUDE_MOCK_REVIEW_LOG:-/dev/null}"
+  [[ -z "${CLAUDE_MOCK_REVIEW_DIR:-}" ]] || cp "$stdin_copy" "$CLAUDE_MOCK_REVIEW_DIR/review-$c.md"
+  entry="$(tr ',' '\n' <<<"${CLAUDE_MOCK_REVIEWS:?CLAUDE_MOCK_REVIEWS must name review fixtures}" | sed -n "${c}p")"
+  [[ -n "$entry" ]] || entry="$(tr ',' '\n' <<<"$CLAUDE_MOCK_REVIEWS" | tail -1)"
+  cat "$fixtures/$entry"
+}
+
+if [[ -n "${CLAUDE_MOCK_STEPS:-}" ]]; then
+  fixtures="$(dirname "$0")/../fixtures"
+  argv="$(IFS=' '; printf '%s' "$*")"
+  if [[ " $argv " != *" --output-format json "* ]]; then
+    _review_or_fix_call "$@"
+    exit 0
+  fi
+  n=$(( $(cat "$CLAUDE_MOCK_STATE" 2>/dev/null || printf 0) + 1 ))
+  printf '%s' "$n" > "$CLAUDE_MOCK_STATE"
+  printf 'call %s branch=%s dirty=%s\n' "$n" "$(git rev-parse --abbrev-ref HEAD)" \
+    "$(git status --porcelain | wc -l)" >> "$CLAUDE_MOCK_LOG"
+  step="$(sed -n "${n}p" "$CLAUDE_MOCK_STEPS")"
+  case "$step" in
+    success)       _step_commit ok HELLO.md
+                   [[ -z "${CLAUDE_MOCK_DROP_ORIGIN_MAIN:-}" ]] || git update-ref -d refs/remotes/origin/main
+                   cat "$fixtures/result-success-cheap.json" ;;
+    success-dirty) _step_commit ok HELLO.md; printf 'junk\n' > junk.txt; cat "$fixtures/result-success-cheap.json" ;;
+    pipeline-file) _step_commit pf azure-pipelines.yml; cat "$fixtures/result-success-cheap.json" ;;
+    success-fixed) _step_commit same HELLO.md; cat "$fixtures/result-success-cheap.json" ;;
+    success-pushed-then-more)
+      _step_commit ok HELLO.md; git push -q origin HEAD
+      printf 'more\n' > MORE.md; git add MORE.md; git commit -q -m "mock follow-up"
+      cat "$fixtures/result-success-cheap.json" ;;
+    success-nocommit)
+      git checkout -q -b "ai/7-nc-$n"; printf 'uncommitted\n' > HELLO.md
+      cat "$fixtures/result-success-cheap.json" ;;
+    success-nobranch)
+      printf 'mock change\n' > HELLO.md; git add HELLO.md; git commit -q -m "mock agent change"
+      cat "$fixtures/result-success-cheap.json" ;;
+    transient|transient-pushed|transient-pushed-fixed|task_failure)
+      if [[ "$step" == transient-pushed-fixed ]]; then _step_commit same a.txt; else _step_commit try a.txt; fi
+      printf 'junk\n' > junk.txt
+      [[ "$step" != transient-pushed ]] || git push -q origin HEAD
+      if [[ "$step" == task_failure ]]; then cat "$fixtures/result-max-turns.json"
+      else cat "$fixtures/result-transient.json"; fi
+      exit 1 ;;
+    transient-nobranch) cat "$fixtures/result-transient.json"; exit 1 ;;
+    api_auth)      cat "$fixtures/result-api-auth.json"; exit 1 ;;
+    hang)          sleep 30; exit 0 ;;
+    *)             printf 'claude mock: unknown step "%s" for call %s\n' "$step" "$n" >&2; exit 64 ;;
+  esac
+  exit 0
+fi
+
+git checkout -q -b "${CLAUDE_MOCK_BRANCH:-agent/test}"
+
+IFS=, read -r -a touched <<< "${CLAUDE_MOCK_TOUCH:-}"
+for path in "${touched[@]}"; do
+  [[ -n "$path" ]] || continue
+  mkdir -p "$(dirname "$path")"
+  printf 'mock change\n' > "$path"
+  git add -- "$path"
+done
+git commit -q --allow-empty -m "mock agent change"
+
+cat "${CLAUDE_MOCK_RESULT:?CLAUDE_MOCK_RESULT must name a JSON fixture}"
