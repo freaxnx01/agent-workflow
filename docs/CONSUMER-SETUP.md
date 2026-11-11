@@ -449,13 +449,13 @@ raised and read; only the push is skipped.
 | Name | Kind | Scope | Purpose |
 |---|---|---|---|
 | `NTFY_TOKEN` | secret | repo or org | Bearer token for a write-restricted ntfy topic. Optional. |
-| `NTFY_URL` | variable | repo or org | ntfy server base URL, e.g. `https://ntfy.home.freaxnx01.ch`. |
+| `NTFY_URL` | secret | repo or org | ntfy server base URL, e.g. `https://ntfy.example.com`. A secret so public run logs mask it. |
 | `NTFY_TOPIC` | variable | repo or org | Topic to publish to, e.g. `pipeline-alerts`. |
 | `AGENT_PAUSED` | variable | repo | **Manual** kill switch. Non-empty → every dispatch stops at the gate. Nothing in the pipeline can set or clear it (ADR-018). |
 
 ```bash
 gh secret   set NTFY_TOKEN --repo <owner>/<repo>          # value from your secrets manager
-gh variable set NTFY_URL   --repo <owner>/<repo> --body 'https://ntfy.home.freaxnx01.ch'
+gh secret   set NTFY_URL   --repo <owner>/<repo>          # your ntfy server's base URL
 gh variable set NTFY_TOPIC --repo <owner>/<repo> --body 'pipeline-alerts'
 ```
 
@@ -463,7 +463,8 @@ Org-level is the better default for a fleet: one key, one topic, one place to
 rotate them.
 
 > **Gotcha — a secret you don't list never arrives.** The consumer stub does not
-> use `secrets: inherit`, so `NTFY_TOKEN` must appear in its `secrets:` block.
+> use `secrets: inherit`, so `NTFY_TOKEN` and `NTFY_URL` must appear in its
+> `secrets:` block.
 > Set on the repo but missing from the stub, the alarm raises its issue and
 > silently never pushes — with no error anywhere. Same failure mode as
 > `PIPELINE_APP_ID` (see PIPELINE-APP-SETUP.md step 7).
@@ -495,11 +496,84 @@ jobs:
     secrets:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+      NTFY_URL: ${{ secrets.NTFY_URL }}
 ```
 
 `scripts/onboard-consumer.sh` generates this stub automatically. A repo with no
 `OPENROUTER_API_KEY` skips the job green — there is no OpenRouter budget to
 report on.
+
+## 3c. Issue intake (recommended)
+
+An issue filed through bridge (flowhub's path) or `/new` is born carrying
+`needs-enrichment`. One opened in the GitHub UI is not, so the autopilot lane
+([`AUTOPILOT.md`](AUTOPILOT.md)) never sees it. The intake stub gives it the
+same start (#549). `scripts/onboard-consumer.sh` writes it on every onboarding.
+
+```yaml
+# .github/workflows/issue-intake.yml
+name: Issue intake
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  intake:
+    uses: freaxnx01/agent-workflow/.github/workflows/issue-intake.yml@v2
+    with:
+      issue-number: ${{ github.event.issue.number }}
+      pipeline-ref: v2
+```
+
+It labels the new issue `needs-enrichment` **unless** the issue was opened by
+a bot, was opened by someone without write access to the repo (see below),
+already carries the label, carries a pipeline label (`ai-implement`,
+`enrichment-ongoing`, `needs-human`, `parked`, `🧊 parked`, `roadmap`,
+`pipeline-paused`, or any `ai:*`), or its body already has a
+`## Implementation Plan` heading. Category labels (`bug`, `area:*`, …) do not
+stop it. To keep an issue out of the lane, remove the label or park it.
+
+### Who may stamp an issue
+
+`needs-enrichment` is the entry ticket to the unattended lane: a labelled
+issue may be enriched by a paid nested session and, with
+`ai-review-ai-merge` on the repo, end as an agent-written PR that merges
+itself. So the stub is fail-closed on the author — it stamps only issues whose
+`author_association` is `OWNER`, `MEMBER` or `COLLABORATOR`. An issue from an
+outside contributor, a first-time contributor, or an author GitHub reported no
+association for is skipped with
+`intake: #<n> skipped (author without write access (NONE))`. That makes the
+stub safe to install in a public repo or one open to outside collaborators:
+anyone can still file an issue, but only someone who can already write to the
+repo starts the lane. A maintainer who wants an outsider's issue enriched
+applies the label by hand.
+
+Existing issues are not touched; the stub only sees issues opened after it is
+merged.
+
+### Reading the decision
+
+The reusable workflow exposes `decision` (`labelled` or `skipped`) and
+`reason` as `workflow_call` outputs, so a caller can gate a later job on them:
+
+```yaml
+jobs:
+  intake:
+    uses: freaxnx01/agent-workflow/.github/workflows/issue-intake.yml@v2
+    with:
+      issue-number: ${{ github.event.issue.number }}
+      pipeline-ref: v2
+  notify:
+    needs: intake
+    if: ${{ needs.intake.outputs.decision == 'skipped' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "not stamped — ${{ needs.intake.outputs.reason }}"
+```
 
 ## 4. Issue chaining (optional, requires ai-review-ai-merge)
 

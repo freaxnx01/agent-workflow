@@ -44,6 +44,7 @@ test:
 test-act:
     act -W .github/workflows/agent-implement.test.yml workflow_dispatch
     act -W .github/workflows/chain-dispatch.test.yml  workflow_dispatch
+    act -W .github/workflows/issue-intake.test.yml    workflow_dispatch
 
 # Format shell scripts in place (needs `shfmt`)
 format:

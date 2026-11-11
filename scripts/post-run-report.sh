@@ -52,6 +52,18 @@
 #   MISSING_TASKS       Comma-separated plan task numbers; read when partial.
 #   PLAN_COVERAGE_REASON
 #                       Why coverage could not be checked; read when unverifiable.
+#   ATTEMPT             The cap's lifetime attempt number for this run
+#                       (steps.attempt_cap.outputs.attempt). Run marker only
+#                       (#585); emitted as `attempt` when this run counts as an
+#                       attempt, omitted otherwise — see ADR-021.
+#   RETRY_ATTEMPT       Position in the automatic retry chain (inputs.attempt).
+#                       Run marker only, as `retry_attempt`. Not the same number
+#                       as ATTEMPT: a fresh label dispatch restarts the chain.
+#   RETRY_DECISION      "retry" | "stop" from steps.retry.outputs.decision. Run
+#                       marker only, as `decision`. Empty when Plan retry was
+#                       skipped (no failure class, or success).
+#   PR_NUMBER           The run's PR number (steps.verify_pr.outputs.pr-number).
+#                       Run marker only, as `pr`.
 #
 # Exit codes:
 #   0   success
@@ -99,6 +111,11 @@ PLAN_COVERAGE_REASON="${PLAN_COVERAGE_REASON:-}"  # why coverage was unverifiabl
 CHECKS_RUNNABLE="${CHECKS_RUNNABLE:-}"              # "false" → checks cannot run (#364)
 CHECKS_BLOCKED_REASON="${CHECKS_BLOCKED_REASON:-}"  # no-app-token | rollup-empty
 FAILURE_CLASS="${FAILURE_CLASS:-}"                  # classify-failure.sh class (#517)
+# Run marker inputs (#585). Nothing visible reads these — see render_run_marker.
+ATTEMPT="${ATTEMPT:-}"                 # the cap's lifetime attempt number
+RETRY_ATTEMPT="${RETRY_ATTEMPT:-}"     # position in the automatic retry chain
+RETRY_DECISION="${RETRY_DECISION:-}"   # retry | stop, from Plan retry
+PR_NUMBER="${PR_NUMBER:-}"             # the run's PR number
 
 # Rendered into the comment, and gates the ai:checks-blocked label. Built here
 # rather than inside render_comment so labels_csv can test one variable.
@@ -399,6 +416,101 @@ else
   CONTEXT_ROW="n/a (no execution log provided)"
 fi
 
+# --- run marker (#585) ------------------------------------------------------
+
+# One hidden HTML comment at the end of the report, carrying the facts a
+# consumer (bridge) would otherwise have to regex out of the Markdown: the
+# attempt number, the failure class, the retry decision, the PR. The visible
+# report stays byte-identical — an HTML comment does not render, and every
+# existing parser matches by prefix or by pattern within the body. Schema,
+# versioning and the consumer trust rule: ADR-021 in docs/DECISIONS.md.
+
+# Does check-attempt-cap.sh count this run as an attempt? Answering it here
+# keeps consumers from re-implementing the cap's rule and disagreeing with the
+# counter that actually parks issues.
+run_counts() {
+  if is_pause_class "$FAILURE_CLASS"; then
+    printf 'false'
+    return 0
+  fi
+  # The cap's non-start rule: no turns AND no cost. awk, not (( )), because
+  # cost is a decimal.
+  if awk -v t="$NUM_TURNS" -v c="$COST_USD" 'BEGIN { exit !(t + 0 == 0 && c + 0 == 0) }'; then
+    printf 'false'
+    return 0
+  fi
+  printf 'true'
+}
+
+# The marker object is accumulated as jq arguments plus object entries, so a
+# field whose source is empty or malformed is left out of the JSON entirely —
+# never emitted as null or 0. Insertion order is the field order in ADR-021.
+MARKER_ARGS=()
+MARKER_ENTRIES=()
+
+marker_add_string() {  # <key> <value> — emitted when non-empty
+  [[ -n "$2" ]] || return 0
+  MARKER_ARGS+=(--arg "$1" "$2")
+  MARKER_ENTRIES+=("\"$1\": \$$1")
+}
+
+marker_add_int() {  # <key> <value> — emitted only for a non-negative integer
+  [[ "$2" =~ ^[0-9]+$ ]] || return 0
+  MARKER_ARGS+=(--argjson "$1" "$2")
+  MARKER_ENTRIES+=("\"$1\": \$$1")
+}
+
+marker_add_number() {  # <key> <value> — emitted only for a JSON number
+  printf '%s' "$2" | jq -e 'type == "number"' >/dev/null 2>&1 || return 0
+  MARKER_ARGS+=(--argjson "$1" "$2")
+  MARKER_ENTRIES+=("\"$1\": \$$1")
+}
+
+marker_add_json() {  # <key> <literal> — for values that are their own JSON
+  MARKER_ARGS+=(--argjson "$1" "$2")
+  MARKER_ENTRIES+=("\"$1\": \$$1")
+}
+
+render_run_marker() {
+  local counts
+  counts="$(run_counts)"
+
+  MARKER_ARGS=()
+  MARKER_ENTRIES=()
+  marker_add_json v 1
+  # The cap computes its number before the agent runs, so a non-start or a
+  # pause would carry the same number as the next real run. Omitting it means
+  # every attempt number appears on exactly one marker.
+  if [[ "$counts" == "true" ]]; then
+    marker_add_int attempt "$ATTEMPT"
+  fi
+  marker_add_json counts "$counts"
+  marker_add_int retry_attempt "$RETRY_ATTEMPT"
+  marker_add_string class "$FAILURE_CLASS"
+  marker_add_string decision "$RETRY_DECISION"
+  marker_add_string status "$STATUS_LABEL"
+  marker_add_string subtype "$SUBTYPE"
+  marker_add_string agent "$AGENT"
+  marker_add_string model "$MODEL"
+  marker_add_int turns "$NUM_TURNS"
+  marker_add_int max_turns "$MAX_TURNS"
+  marker_add_number cost_usd "$COST_USD"
+  marker_add_int duration_ms "$DURATION_MS"
+  marker_add_int pr "$PR_NUMBER"
+  marker_add_string run_url "$WORKFLOW_RUN_URL"
+  marker_add_string plan_coverage "$PLAN_COVERAGE"
+
+  # jq escapes quotes and control characters but not `<` / `>`. Compact JSON
+  # has neither outside string values, so replacing both with their JSON
+  # escapes is lossless — and it is what makes a `-->` inside a model id
+  # unable to close the HTML comment early (ADR-019: run text is never state).
+  local json entries
+  entries="$(IFS=,; printf '%s' "${MARKER_ENTRIES[*]}")"
+  json="$(jq -nc "${MARKER_ARGS[@]}" "{$entries}" \
+    | sed -e 's/</\\u003c/g' -e 's/>/\\u003e/g')"
+  printf '<!-- ai-run: %s -->' "$json"
+}
+
 # --- render comment ---------------------------------------------------------
 
 render_comment() {
@@ -419,6 +531,7 @@ ${META_LINES}
 | Max context per turn | ${CONTEXT_ROW} |
 ${CHECKS_BLOCKED_BLOCK}${MODEL_FIX_BLOCK}
 [View workflow run](${WORKFLOW_RUN_URL})
+$(render_run_marker)
 EOF
 }
 

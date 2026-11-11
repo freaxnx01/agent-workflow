@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+#
+# self-fix-agent-env — self-fix-pr.sh FIX_AGENT_CMD mock that makes an edit and
+# records whether the push credentials reached the agent's environment.
+set -euo pipefail
+IFS=$'\n\t'
+printf '%s/%s\n' "${AZURE_DEVOPS_EXT_PAT:-unset}" "${SYSTEM_ACCESSTOKEN:-unset}" > "${ENV_RECORD:?ENV_RECORD must be set}"
+printf 'fixed\n' >> file.txt

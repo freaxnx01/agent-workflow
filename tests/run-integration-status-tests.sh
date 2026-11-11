@@ -148,6 +148,80 @@ assert_contains "$out_bridge" "drifted" "a blob mismatch is worded as drifted"
 assert_not_contains "$out_bridge" "commits behind" \
   "a blob mismatch does not claim a commit distance it cannot know"
 
+# --- path-scoped rules ------------------------------------------------------
+
+section "path-scoped rules"
+
+# opencode reads AGENTS.md and opencode.json, never .claude/rules. Rules that
+# are not listed in opencode.json therefore reach a Claude run and no other, and
+# nothing in the run says so.
+assert_finding freaxnx01/rules-opencode rules-invisible-to-opencode \
+  "rules unlisted in opencode.json on an opencode repo are reported"
+assert_eq "$(verdict_of freaxnx01/rules-opencode)" "broken" \
+  "  → and the configured agent cannot see them, so it is broken"
+
+assert_finding freaxnx01/rules-claude rules-invisible-to-opencode \
+  "the same gap on a claude repo is reported"
+assert_eq "$(verdict_of freaxnx01/rules-claude)" "degraded" \
+  "  → but it only bites under a per-issue agent:opencode label, so degraded"
+
+# That label can only ever produce an opencode run where the key is available:
+# classify-agent.sh's credential guard forces claude otherwise. Grading those
+# repos degraded for a condition that cannot occur is the false-positive class
+# that makes an audit tool worth less than nothing.
+assert_no_finding freaxnx01/rules-no-key rules-invisible-to-opencode \
+  "uncovered rules on a repo with no OpenRouter key produce no finding"
+assert_eq "$(verdict_of freaxnx01/rules-no-key)" "healthy" \
+  "  → and the repo stays healthy"
+
+# A key set on the repo but not forwarded to the run is just as unavailable.
+assert_no_finding freaxnx01/rules-unforwarded rules-invisible-to-opencode \
+  "the same holds when the key is set but never forwarded"
+assert_eq "$(verdict_of freaxnx01/rules-unforwarded)" "degraded" \
+  "  → the repo is degraded for the unforwarded key alone"
+
+# Listing the rules by explicit path is as good as the glob — what matters is
+# that opencode is told to read them at all.
+assert_no_finding freaxnx01/rules-explicit rules-invisible-to-opencode \
+  "rules listed by explicit path count as covered"
+assert_eq "$(verdict_of freaxnx01/rules-explicit)" "healthy" \
+  "  → and the repo stays healthy"
+
+assert_no_finding freaxnx01/agent-workflow rules-invisible-to-opencode \
+  "rules listed by glob count as covered"
+assert_eq "$(verdict_of freaxnx01/agent-workflow)" "healthy" \
+  "  → and the repo stays healthy"
+
+# A repo with no stub runs nothing, so there is no run for the rules to be
+# invisible to.
+assert_eq "$(verdict_of freaxnx01/rules-partial)" "partial" \
+  "uncovered rules on a repo with no workflow leave the verdict partial"
+
+# A record from an older --json dump has no instructions.rules key at all.
+assert_no_finding freaxnx01/bridge rules-invisible-to-opencode \
+  "a record without a rules key produces no finding"
+
+# A .claude/rules that holds only non-.md files (a lone .gitkeep) counts 0 —
+# there is nothing for opencode to miss.
+assert_no_finding freaxnx01/rules-gitkeep rules-invisible-to-opencode \
+  "an empty .claude/rules produces no finding"
+assert_eq "$(verdict_of freaxnx01/rules-gitkeep)" "healthy" \
+  "  → and the repo stays healthy"
+
+# The collector normalises instructions to the record contract, but --from
+# replays dumps that predate it, and a hand-edited opencode.json can hold a
+# string where opencode's schema wants an array. Iterating that raw aborts the
+# whole graded report with a jq error, after every API call has been paid for.
+assert_finding freaxnx01/rules-string rules-invisible-to-opencode \
+  "a non-array instructions lists nothing, so the finding stands"
+assert_eq "$(verdict_of freaxnx01/rules-string)" "broken" \
+  "  → and grading the fleet survives the malformed record"
+
+rules_out="$("$SCRIPT" --from "$FIXTURE" --repo freaxnx01/agent-workflow)"
+assert_contains "$rules_out" "rules 3" "the instructions line shows the rules count"
+assert_not_contains "$("$SCRIPT" --from "$FIXTURE" --repo freaxnx01/bridge)" "·  rules " \
+  "a repo with no rules says nothing about them"
+
 # --- rendering --------------------------------------------------------------
 
 section "report rendering"
@@ -270,8 +344,10 @@ assert_eq "$(printf '%s' 'ci' | drop_api_error)" "ci" \
 
 section "progress never pollutes the data stream"
 
-# --json is a pipe into jq; a progress line on stdout would break it.
-assert_eq "$("$SCRIPT" --from "$FIXTURE" --json 2>/dev/null | jq -r 'length')" "8" \
+# --json is a pipe into jq; a progress line on stdout would break it. The count
+# is read off the fixture so adding a record does not fail an unrelated test.
+assert_eq "$("$SCRIPT" --from "$FIXTURE" --json 2>/dev/null | jq -r 'length')" \
+  "$(jq -r 'length' "$FIXTURE")" \
   "--json emits parseable JSON and nothing else"
 
 section "an unforwarded secret is graded by what it actually costs"
@@ -397,6 +473,114 @@ rec="$(PATH="$MOCKS:$PATH" GH_MOCK_STDOUT_MAP="$COLLECT_TMP/stdout.map" \
        GH_MOCK_FAIL_MAP="$COLLECT_TMP/fail.map" GH_RETRY_MAX=1 collect_one o/r v3.0.0)"
 assert_eq "$(jq -r '.unreadable' <<< "$rec")" "false" \
   "a clean read is not marked unreadable"
+
+section "the collector reads the rules state"
+
+# The gh mock ignores --jq, so each fixture below holds the value the real
+# filter would have produced: a count for the directory listing, base64 for the
+# contents API's .content. The filters themselves are therefore asserted here
+# against canned payloads — otherwise nothing at any layer covers them.
+rules_listing='[{"type":"file","name":"bash-conventions.md"},
+                {"type":"file","name":".gitkeep"},
+                {"type":"dir","name":"archive"},
+                {"type":"file","name":"github-actions.md"}]'
+assert_eq "$(jq -r "$RULES_COUNT_JQ" <<< "$rules_listing")" "2" \
+  "the count filter takes the .md files and neither .gitkeep nor a subdirectory"
+assert_eq "$(jq -r "$RULES_COUNT_JQ" <<< '[{"type":"file","name":".gitkeep"}]')" "0" \
+  "a .claude/rules holding only a .gitkeep counts 0, so there is nothing to miss"
+
+# opencode's schema wants an array of paths; the record contract is the same.
+# Anything else is normalised to null here rather than reaching the grader.
+assert_eq "$(jq -c "$RULES_LISTED_JQ" <<< '{"instructions":[".claude/rules/*.md","AGENTS.md"]}')" \
+  '[".claude/rules/*.md","AGENTS.md"]' "an array of paths is recorded as listed"
+assert_eq "$(jq -c "$RULES_LISTED_JQ" <<< '{"instructions":"docs/x.md"}')" "null" \
+  "a string instructions is normalised to nothing listed"
+assert_eq "$(jq -c "$RULES_LISTED_JQ" <<< '{"instructions":[1]}')" "[]" \
+  "a non-string entry is dropped rather than compared as a string"
+assert_eq "$(jq -c "$RULES_LISTED_JQ" <<< '{}')" "null" \
+  "an opencode.json with no instructions key lists nothing"
+
+RULES_TMP="$(mktemp -d)"
+printf '3\n' > "$RULES_TMP/count"
+printf '%s' '{"instructions":[".claude/rules/*.md"]}' | base64 > "$RULES_TMP/listed"
+printf '%s' '{"instructions": [' | base64 > "$RULES_TMP/unparseable"
+printf '%s' '{"instructions":".claude/rules/*.md"}' | base64 > "$RULES_TMP/non-array"
+# Valid JSON followed by garbage: jq prints the first value, then exits
+# non-zero. A fallback inside the command substitution appended to that
+# output and handed `["…"]\nnull` to --argjson (#563 review).
+printf '%s' '{"instructions":[".claude/rules/*.md"]}}' | base64 > "$RULES_TMP/trailing"
+
+collect_rules() {  # <opencode.json fixture>
+  { printf 'contents/.github/workflows/agent.yml\t%s\n' "$ROOT/tests/fixtures/autopilot/agent-yml-good.yml"
+    printf 'contents/.claude/rules\t%s\n' "$RULES_TMP/count"
+    printf 'contents/opencode.json\t%s\n' "$1"; } > "$RULES_TMP/stdout.map"
+  GH_MOCK_LOG="$RULES_TMP/gh.log" PATH="$MOCKS:$PATH" \
+    GH_MOCK_STDOUT_MAP="$RULES_TMP/stdout.map" GH_RETRY_MAX=1 collect_one o/r v3.0.0
+}
+
+rec="$(collect_rules "$RULES_TMP/listed")"
+assert_eq "$(jq -r '.instructions.rules.count' <<< "$rec")" "3" \
+  "the .md files under .claude/rules are counted"
+assert_eq "$(jq -c '.instructions.rules.opencode_instructions' <<< "$rec")" \
+  '[".claude/rules/*.md"]' "opencode.json's instructions are recorded"
+
+# A hand-edited instructions of the wrong type must not reach the grader as
+# itself: one record whose value cannot be iterated takes down the whole
+# fleet-wide graded report, not just this repo's.
+rec="$(collect_rules "$RULES_TMP/non-array")"
+assert_eq "$(jq -r '.instructions.rules.opencode_instructions' <<< "$rec")" "null" \
+  "a non-array instructions is collected as nothing listed"
+assert_eq "$(jq -r '.unreadable' <<< "$rec")" "false" \
+  "  → and the repo is still collected rather than marked unreadable"
+
+# A hand-edited opencode.json that no longer parses lists nothing, which is
+# exactly what the finding is for. Aborting the repo's collection over it would
+# turn a reportable state into an unreadable repo.
+rec="$(collect_rules "$RULES_TMP/unparseable")"
+assert_eq "$(jq -r '.instructions.rules.opencode_instructions' <<< "$rec")" "null" \
+  "an unparseable opencode.json lists nothing"
+assert_eq "$(jq -r '.instructions.rules.count' <<< "$rec")" "3" \
+  "  → and the rest of the repo is still collected"
+assert_eq "$(jq -r '.unreadable' <<< "$rec")" "false" \
+  "  → and the repo is not marked unreadable"
+
+# Most repos have neither file. A 404 is "no rules", not a failed read — the
+# distinction this whole tool exists to keep.
+printf 'contents/.claude/rules\tHTTP 404: Not Found\n' > "$RULES_TMP/fail.map"
+rec="$(GH_MOCK_LOG="$RULES_TMP/gh.log" PATH="$MOCKS:$PATH" \
+       GH_MOCK_STDOUT_MAP="$RULES_TMP/stdout.map" GH_MOCK_FAIL_MAP="$RULES_TMP/fail.map" \
+       GH_RETRY_MAX=1 collect_one o/r v3.0.0)"
+assert_eq "$(jq -r '.unreadable' <<< "$rec")" "false" \
+  "an absent .claude/rules is not unreadable"
+assert_eq "$(jq -r '.instructions.rules.count' <<< "$rec")" "0" \
+  "  → it is simply no rules"
+rec="$(collect_rules "$RULES_TMP/trailing")"
+assert_eq "$(jq -r '.instructions.rules.opencode_instructions' <<< "$rec")" "null" \
+  "an opencode.json with trailing garbage lists nothing, not the parsed prefix"
+assert_eq "$(jq -r '.instructions.rules.count' <<< "$rec")" "3" \
+  "  → and the record is still built (count 3)"
+
+# The common case: rules exist, opencode.json does not.
+printf 'contents/opencode.json\tHTTP 404: Not Found\n' > "$RULES_TMP/fail.map"
+rec="$(GH_MOCK_LOG="$RULES_TMP/gh.log" PATH="$MOCKS:$PATH" \
+       GH_MOCK_STDOUT_MAP="$RULES_TMP/stdout.map" GH_MOCK_FAIL_MAP="$RULES_TMP/fail.map" \
+       GH_RETRY_MAX=1 collect_one o/r v3.0.0)"
+assert_eq "$(jq -r '.instructions.rules.opencode_instructions' <<< "$rec")" "null" \
+  "an absent opencode.json lists nothing"
+assert_eq "$(jq -r '.instructions.rules.count' <<< "$rec")" "3" \
+  "  → while the rules are still counted"
+assert_eq "$(jq -r '.unreadable' <<< "$rec")" "false" \
+  "  → and the repo is not marked unreadable"
+
+# A repo with neither half takes the phase-1 shortcut; its record must carry
+# the same instructions shape as a fully collected one.
+printf 'contents/\tHTTP 404: Not Found\n' > "$RULES_TMP/fail.map"
+rec="$(GH_MOCK_LOG="$RULES_TMP/gh.log" PATH="$MOCKS:$PATH" \
+       GH_MOCK_STDOUT_MAP="$RULES_TMP/stdout.map" GH_MOCK_FAIL_MAP="$RULES_TMP/fail.map" \
+       GH_RETRY_MAX=1 collect_one o/r v3.0.0)"
+assert_eq "$(jq -c '.instructions.rules' <<< "$rec")" '{"count":0,"opencode_instructions":null}' \
+  "a not-integrated record carries the empty rules shape"
+rm -rf "$RULES_TMP"
 
 section "remaining instances of the quote and forwarding classes"
 

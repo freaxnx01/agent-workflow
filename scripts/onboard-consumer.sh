@@ -11,8 +11,9 @@
 #   3. Labels       — run ensure-issue-labels.sh against the target repo.
 #   4. Repo settings— enable "Actions can create PRs"; for --ai-review-ai-merge also
 #                     enable allow-auto-merge + allow-squash-merge.
-#   5. Consumer stub— commit .github/workflows/agent.yml (and chain-dispatch.yml
-#                     with --chain) — via the GitHub API, no local clone
+#   5. Consumer stub— commit .github/workflows/agent.yml, pipeline-health.yml
+#                     and issue-intake.yml (and chain-dispatch.yml with
+#                     --chain) — via the GitHub API, no local clone
 #                     required. Idempotent. Commits DIRECTLY to the repo's
 #                     default branch by default (this is operator-invoked,
 #                     one-shot infra bootstrapping, not day-to-day app code);
@@ -332,6 +333,7 @@ build_agent_yml() {
   # raise its issue and silently never push (#517). Optional everywhere —
   # unset, the push is skipped and nothing fails.
   secrets_block+=$'\n      NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}'
+  secrets_block+=$'\n      NTFY_URL: ${{ secrets.NTFY_URL }}'
 
   with_block=$'      issue-number: ${{ github.event.issue.number }}'
   with_block+=$'\n      runner-labels: '"'$RUNNER_LABELS'"
@@ -396,6 +398,30 @@ jobs:
     secrets:
       OPENROUTER_API_KEY: \${{ secrets.OPENROUTER_API_KEY }}
       NTFY_TOKEN: \${{ secrets.NTFY_TOKEN }}
+      NTFY_URL: \${{ secrets.NTFY_URL }}
+YAML
+}
+
+# The intake stamp (#549). A consumer gets it unconditionally, like the health
+# stub: /new and bridge already label every issue they file needs-enrichment,
+# and this gives an issue opened in the GitHub UI the same start.
+build_intake_yml() {
+  cat <<YAML
+name: Issue intake
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write   # applies needs-enrichment to the new issue
+
+jobs:
+  intake:
+    uses: $PIPELINE_REPO/.github/workflows/issue-intake.yml@$REF
+    with:
+      issue-number: \${{ github.event.issue.number }}
+      pipeline-ref: $REF
 YAML
 }
 
@@ -477,6 +503,8 @@ elif [[ "$DIRECT_TO_MAIN" == true ]]; then
     "ci(agent-workflow): add consumer stub"
   build_health_yml | put_file ".github/workflows/pipeline-health.yml" \
     "ci(agent-workflow): add pipeline health stub"
+  build_intake_yml | put_file ".github/workflows/issue-intake.yml" \
+    "ci(agent-workflow): add issue intake stub"
   if [[ "$CHAIN" == true ]]; then
     build_chain_yml | put_file ".github/workflows/chain-dispatch.yml" \
       "ci(agent-workflow): add chain-dispatch stub"
@@ -488,6 +516,8 @@ else
     "ci(agent-workflow): add consumer stub"
   build_health_yml | put_file ".github/workflows/pipeline-health.yml" \
     "ci(agent-workflow): add pipeline health stub"
+  build_intake_yml | put_file ".github/workflows/issue-intake.yml" \
+    "ci(agent-workflow): add issue intake stub"
   if [[ "$CHAIN" == true ]]; then
     build_chain_yml | put_file ".github/workflows/chain-dispatch.yml" \
       "ci(agent-workflow): add chain-dispatch stub"
