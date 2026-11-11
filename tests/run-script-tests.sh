@@ -3686,7 +3686,11 @@ assert_equals "$ec" "0" "DRY_RUN with missing tool → exit 0 (no install attemp
 # #594: an unreachable apt mirror must not abort before the release-binary
 # fallback runs. A fake sudo fails apt-get the way the runner's DNS did.
 FAKE594="$(mktemp -d)"
-printf '#!/bin/bash\n[[ "$1" == apt-get ]] && { echo "E: Temporary failure resolving" >&2; exit 100; }\nexit 0\n' > "$FAKE594/sudo"
+cat > "$FAKE594/sudo" <<'SUDO'
+#!/bin/bash
+[[ "$1" == apt-get ]] && { echo "E: Temporary failure resolving" >&2; exit 100; }
+exit 0
+SUDO
 chmod +x "$FAKE594/sudo"
 out="$(PATH="$FAKE594:$PATH" TOOLS="surely_no_such_tool_xyz" bash "$ENSURE" 2>&1 || true)"
 assert_contains "$out" 'apt install failed, trying release-binary fallbacks' "apt failure → falls through to the fallbacks (#594)"
