@@ -732,6 +732,16 @@ assert_contains "$(cat "$d/gh")" 'issue edit 99 --repo freaxnx01/game-rhyflitzer
   "a dispatch that proceeds leaves the paused list"
 rm -rf "$d"
 
+# #536: the gate's clear is best-effort. A repo that was never paused has no
+# ai:paused label at all, and the gate's verdict must not depend on it.
+d="$(mktemp -d)"
+printf -- '--remove-label ai:paused\n' > "$d/fail-map"
+ec=0
+out="$(gate_run "$d" alarm-list-empty.json GH_MOCK_FAIL_MAP="$d/fail-map")" || ec=$?
+assert_equals "$ec" 0 "gate proceeds when its clear fails (#536)"
+assert_contains "$out" 'paused=false' "gate still reports not paused when its clear fails (#536)"
+rm -rf "$d"
+
 d="$(mktemp -d)"
 out="$(gate_run "$d" alarm-list-empty.json \
   AGENT_PAUSED_VAR='out_of_credits 2026-10-12T01:43Z')"
@@ -783,6 +793,26 @@ assert_contains "$wf" 'pipeline-pause.sh' "the alarm is raised from the implemen
 assert_contains "$wf" 'NTFY_TOKEN' "the ntfy token is wired through"
 assert_contains "$(cat "$ROOT/.github/workflows/agent.yml")" 'NTFY_TOKEN' \
   "the dogfood consumer forwards the ntfy token"
+
+# --- #536: paused_issue_clear reports failure --------------------------------
+
+section "paused_issue_clear — a failed removal is reported, not swallowed"
+
+# clear_rc <dir> [extra env...] — sources the library and prints the clear's rc.
+clear_rc() {
+  local dir="$1"; shift
+  # shellcheck disable=SC2016  # $1 is the inner bash's argument, not this shell's
+  env PATH="$MOCKS:$PATH" GH_MOCK_LOG="$dir/gh" REPO=freaxnx01/game-rhyflitzer "$@" \
+    bash -c 'source "$1"; rc=0; paused_issue_clear 12 || rc=$?; printf "%s" "$rc"' _ \
+    "$ROOT/scripts/lib/paused-issues.sh"
+}
+
+d="$(mktemp -d)"
+assert_equals "$(clear_rc "$d")" 0 "paused_issue_clear returns 0 when gh succeeds (#536)"
+printf -- '--remove-label ai:paused\n' > "$d/fail-map"
+assert_equals "$(clear_rc "$d" GH_MOCK_FAIL_MAP="$d/fail-map")" 1 \
+  "paused_issue_clear returns 1 when gh fails (#536)"
+rm -rf "$d"
 
 # --- Task 6: pipeline-resume.sh ---------------------------------------------
 
@@ -876,12 +906,60 @@ assert_contains "$(cat "$d/gh")" 'issue-number=12' "no open alarm -> labelled is
 assert_equals "$(grep -c 'issue close' "$d/gh" || true)" 0 "no open alarm -> nothing to close"
 rm -rf "$d"
 
-# A dispatch that fails keeps the label, so a second run retries it.
+# A dispatch that fails ends with the label back on, so a second run retries it.
+# The label was removed before the dispatch (#536), so it is re-added.
 d="$(mktemp -d)"
 printf 'workflow run\n' > "$d/fail-map"
 out="$(resume_run "$d" resume-alarm.json resume-paused-issues.json GH_MOCK_FAIL_MAP="$d/fail-map")"
-assert_not_contains "$(cat "$d/gh")" 'issue edit 12' "failed dispatch -> the issue keeps ai:paused"
+assert_contains "$(grep 'issue edit 12 ' "$d/gh" | tail -1)" '--add-label ai:paused' \
+  "failed dispatch -> the issue ends up labelled ai:paused again (#536)"
 assert_contains "$out" 'could not re-dispatch #12' "failed dispatch -> says so"
+rm -rf "$d"
+
+# #536: the label comes off BEFORE the dispatch, so a dispatched issue is never
+# still on the list a second resume reads.
+d="$(mktemp -d)"
+resume_run "$d" resume-alarm.json resume-paused-issues.json >/dev/null
+clear_line="$(grep -n 'issue edit 12 .*--remove-label ai:paused' "$d/gh" | head -1 | cut -d: -f1)"
+run_line="$(grep -n 'issue-number=12' "$d/gh" | head -1 | cut -d: -f1)"
+if [[ -n "$clear_line" && -n "$run_line" ]] && (( clear_line < run_line )); then
+  pass "ai:paused is removed before the issue is re-dispatched (#536)"
+else
+  fail "ai:paused is removed before the issue is re-dispatched (#536)" \
+    "clear at ${clear_line:-none}, dispatch at ${run_line:-none}"
+fi
+rm -rf "$d"
+
+# #536: a clear that fails means no dispatch — the next resume retries it,
+# instead of a second resume dispatching an issue already in flight.
+d="$(mktemp -d)"
+printf -- 'issue edit 12 --repo freaxnx01/game-rhyflitzer --remove-label ai:paused\n' > "$d/fail-map"
+ec=0
+out="$(resume_run "$d" resume-alarm.json resume-paused-issues.json GH_MOCK_FAIL_MAP="$d/fail-map")" || ec=$?
+assert_equals "$ec" 0 "failed clear -> still exit 0 (#536)"
+assert_not_contains "$(cat "$d/gh")" 'issue-number=12' "failed clear -> the issue is not dispatched (#536)"
+assert_contains "$out" 'could not remove ai:paused from #12' "failed clear -> says so (#536)"
+assert_contains "$out" 'cannot double-dispatch' "failed clear -> says why it was not dispatched (#536)"
+rm -rf "$d"
+
+# #536: dispatch fails AND the re-mark fails — paused_issue_mark's own warning
+# names the issue, so it is not silently dropped from the list.
+d="$(mktemp -d)"
+printf 'workflow run\n--add-label ai:paused\n' > "$d/fail-map"
+out="$(resume_run "$d" resume-alarm.json resume-paused-issues.json GH_MOCK_FAIL_MAP="$d/fail-map")"
+assert_contains "$out" 'could not re-dispatch #12' "dispatch + re-mark fail -> the dispatch failure is reported (#536)"
+assert_contains "$out" 'warning: could not label issue #12' "dispatch + re-mark fail -> the lost label is reported (#536)"
+rm -rf "$d"
+
+# #536: the skipped path (no ai-implement) dispatches nothing either way, but
+# a failed clear there is still reported.
+d="$(mktemp -d)"
+printf -- 'issue edit 34 --repo freaxnx01/game-rhyflitzer --remove-label ai:paused\n' > "$d/fail-map"
+# `|| true`: a regression that makes the resume abort here should fail these two
+# assertions, not kill the whole suite before they are reached.
+out="$(resume_run "$d" resume-alarm.json resume-paused-issues.json GH_MOCK_FAIL_MAP="$d/fail-map")" || true
+assert_contains "$out" 'could not remove ai:paused from #34' "skipped issue, failed clear -> says so (#536)"
+assert_not_contains "$(cat "$d/gh")" 'issue-number=34' "skipped issue, failed clear -> still not dispatched (#536)"
 rm -rf "$d"
 
 # An unreadable paused list is not an empty one: resuming on it would close the

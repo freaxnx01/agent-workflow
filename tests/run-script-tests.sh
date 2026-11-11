@@ -3283,6 +3283,34 @@ assert_contains "$out" '"is_error":true'                       "unparseable → 
 assert_contains "$out" '"subtype":"error_during_execution"'    "unparseable → error_during_execution subtype"
 assert_contains "$out" 'not parseable'                         "unparseable → result names the failure"
 
+# Cut off after a tool-calls step (#558): the last step_finish asked for tool
+# calls and the model never answered. Structure from game-rhyflitzer run
+# 39326381307. Not a success: is_error, its own subtype, usage still summed.
+out="$(MODEL=z-ai/glm-5.3 EXECUTION_FILE="$FIXTURES/opencode-cut-after-tool-calls.json" bash "$ADAPT_OC")"
+assert_equals "$(printf '%s' "$out" | jq -r '.is_error')" "true" "cut after tool-calls → is_error true"
+assert_equals "$(printf '%s' "$out" | jq -r '.subtype')" "error_agent_cut_off" "cut after tool-calls → subtype error_agent_cut_off"
+assert_equals "$(printf '%s' "$out" | jq -r '.num_turns')" "1" "cut after tool-calls → num_turns still counted"
+assert_equals "$(printf '%s' "$out" | jq -r '.usage.input_tokens')" "7133" "cut after tool-calls → tokens still summed"
+assert_equals "$(printf '%s' "$out" | jq -r '.result')" \
+  "OpenCode stopped after a tool-calls step, before the model answered (agent loop cut off). Model: z-ai/glm-5.3" \
+  "cut after tool-calls → result names the cut-off and the model"
+
+# A mid-stream tool-calls step is normal: opencode-success.json ends with
+# reason=stop and must stay a success (#558).
+out="$(EXECUTION_FILE="$FIXTURES/opencode-success.json" bash "$ADAPT_OC")"
+assert_equals "$(printf '%s' "$out" | jq -r '.subtype')" "success" "mid-stream tool-calls, last stop → success"
+
+# Errors win: an error event plus a last tool-calls step keeps the error path,
+# so the provider evidence the classifier needs is not hidden (#558).
+TMP_ERR_CUT="$(mktemp)"
+{ cat "$FIXTURES/opencode-cut-after-tool-calls.json"
+  printf '%s\n' '{"type":"error","timestamp":1800,"sessionID":"ses_cut","error":{"name":"APIError","data":{"message":"Rate limit exceeded"}}}'
+} > "$TMP_ERR_CUT"
+out="$(EXECUTION_FILE="$TMP_ERR_CUT" bash "$ADAPT_OC")"
+rm -f "$TMP_ERR_CUT"
+assert_equals "$(printf '%s' "$out" | jq -r '.subtype')" "error_during_execution" "error event + last tool-calls → error_during_execution"
+assert_contains "$(printf '%s' "$out" | jq -r '.result')" 'Rate limit exceeded' "error event + last tool-calls → result keeps the error"
+
 # End-to-end: adapter output piped into classify-failure.sh produces the
 # expected bucket. Verifies the new classify-failure regex (`403`,
 # `provider.error`, etc.) catches what the adapter passes through.
@@ -3311,6 +3339,10 @@ assert_contains "$out" 'class=api_auth' "missing OPENROUTER_API_KEY → api_auth
 # happen and what is left is a wrong id — which a retry cannot fix.
 out="$(adapter_to_classifier opencode-model-not-found.json)"
 assert_contains "$out" 'class=model_not_found' "opencode 0-turn model-not-found → model_not_found"
+
+# Cut off after a tool-calls step is a hiccup, not a verdict: retry (#558).
+out="$(adapter_to_classifier opencode-cut-after-tool-calls.json)"
+assert_contains "$out" 'class=transient' "opencode cut after tool-calls → class=transient"
 
 # Error paths
 ec="$(run_capture_ec env bash "$ADAPT_OC")"
@@ -3350,6 +3382,9 @@ assert_contains "$out" 'class=rate_limit'   "result-opencode-rate-limit.json →
 
 out="$(RESULT_FILE="$FIXTURES/result-opencode-task-failure.json" bash "$CLASSIFY_FAIL")"
 assert_contains "$out" 'class=task_failure' "result-opencode-task-failure.json → task_failure"
+
+out="$(RESULT_FILE="$FIXTURES/result-opencode-cut-after-tool-calls.json" bash "$CLASSIFY_FAIL")"
+assert_contains "$out" 'class=transient' "result-opencode-cut-after-tool-calls.json → transient"
 
 # post-run-report.sh renders the OpenCode-flavored success fixture without
 # error. RENDER_ONLY skips the gh comment/label side effects.

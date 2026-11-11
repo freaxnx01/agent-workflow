@@ -1,0 +1,25 @@
+# Copy into your repo as `azure-pipelines-pr.yml`.
+#
+# Triggered by a build-validation branch policy on the target branch, not by
+# YAML: both CI and PR triggers are disabled below.
+#
+# This pipeline runs agent-written code. Never link a variable group, never map
+# the job access token into a step, and never pass secrets in `env:`.
+# See docs/AZDO-PIPELINE-SETUP.md section 9.
+trigger: none
+pr: none
+
+pool: <pool>
+
+steps:
+  - checkout: self
+    persistCredentials: false
+
+  # --- BUILD/TEST: edit this step only ---
+  # Default is .NET. Non-.NET repos replace the script (`true` is the minimal placeholder).
+  - script: |
+      dotnet build
+      dotnet test --no-build
+    displayName: Build and test
+    env:
+      TOKEN: $(System.AccessToken)

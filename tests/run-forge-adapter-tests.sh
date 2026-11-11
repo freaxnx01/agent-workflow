@@ -329,6 +329,7 @@ az_read() {
     printf 'L<<\n%s\n>>\n' "${ISSUE_LABELS:-}"
     printf 'B<<\n%s\n>>\n' "${ISSUE_BODY:-}"
     printf 'J<<\n%s\n>>\n' "${ISSUE_JSON:-}"
+    printf 'C<<\n%s\n>>\n' "${ISSUE_COMMENTS_JSON:-}"
   )
 }
 az_block() { az_read | sed -n "/^$1<</,/^>>$/p" | sed '1d;$d'; }
@@ -350,6 +351,63 @@ assert_eq "comments are normalised from .text to .body" "A discussion comment." 
   "$(az_block J | python3 -c 'import sys,json; print(json.load(sys.stdin)["comments"][0]["body"])')"
 
 rm -rf "$az_dir" "$REPO_AZ"
+
+section "azdo comments become plain text"
+
+# The comments API returns HTML; check-attempt-cap matches on a leading
+# "## ai-implement run", so a <div> wrapper hides every report from the cap.
+az_dir="$(mktemp -d)"
+az_map="$az_dir/map"
+printf 'work-item show\t%s/forge-workitem-azdo.json\n' "$FIXTURES" > "$az_map"
+printf 'resource comments\t%s/azdo-comments-report-html.json\n' "$FIXTURES" >> "$az_map"
+REPO_AZ="$(make_repo 'https://dev.azure.com/contoso/MyProject/_git/my-repo')"
+
+cbody() { az_block C | python3 -c 'import sys,json; print(json.load(sys.stdin)[int(sys.argv[1])]["body"], end="")' "$1"; }
+REPORT_HEAD='## ai-implement run (pipeline, Azure DevOps) — attempt 1'
+
+assert_eq "web-UI report body starts with the report heading" "$REPORT_HEAD" \
+  "$(cbody 0 | head -n1)"
+case "$(cbody 0)" in
+  *$'\n**Outcome:** failed: transient'*) pass "report body keeps its outcome line on its own line" ;;
+  *) fail "report body keeps its outcome line on its own line" ;;
+esac
+assert_eq "entities are unescaped after tags are stripped" "a <b> tag & text" "$(cbody 2)"
+assert_eq "ISSUE_JSON comments match ISSUE_COMMENTS_JSON" "$(cbody 0)" \
+  "$(az_block J | python3 -c 'import sys,json; print(json.load(sys.stdin)["comments"][0]["body"], end="")')"
+assert_eq "pipeline-posted body keeps its newlines and heading" "$REPORT_HEAD" \
+  "$(cbody 3 | head -n1)"
+assert_eq "pipeline-posted body ends with the unescaped note" "- note: a < b && c > d" \
+  "$(cbody 3 | tail -n1)"
+
+cap_out="$(ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 ISSUE_COMMENTS_JSON="$(az_block C)" \
+  bash "$ROOT/scripts/check-attempt-cap.sh" 2>/dev/null)"
+assert_eq "attempt cap counts the real attempt" "attempt=2" "$(grep '^attempt=' <<<"$cap_out")"
+assert_eq "attempt cap counts both non-starts" "non-starts=2" "$(grep '^non-starts=' <<<"$cap_out")"
+
+rm -rf "$az_dir" "$REPO_AZ"
+
+# A null or empty text, or a null comments list, must degrade to empty -- the
+# conversion may not crash the export (the old mapping passed null through).
+text_of() {
+  # shellcheck disable=SC1090
+  ( source "$LIB"; printf '%s' "$1" | _forge_azdo_comments_text )
+}
+assert_eq "null comment text yields an empty body" '[{"body": ""}]' \
+  "$(text_of '{"comments":[{"text":null}]}')"
+assert_eq "empty comment text yields an empty body" '[{"body": ""}]' \
+  "$(text_of '{"comments":[{"text":""}]}')"
+assert_eq "null comments list yields an empty array" '[]' \
+  "$(text_of '{"comments":null}')"
+
+# A real report, read back from the comments API after the in-job retry proof
+# (2026-11-09): markdown with no wrapper tags, format "html".
+live_comments="$(text_of "$(cat "$FIXTURES/azdo-comments-report-live.json")")"
+assert_eq "live report body starts with the report heading" "$REPORT_HEAD" \
+  "$(python3 -c 'import sys,json; print(json.load(sys.stdin)[0]["body"].splitlines()[0])' <<<"$live_comments")"
+live_cap="$(ISSUE_NUMBER=42 REPO=o/r DRY_RUN=1 ISSUE_COMMENTS_JSON="$live_comments" \
+  bash "$ROOT/scripts/check-attempt-cap.sh" 2>/dev/null)"
+assert_eq "live report counts as one real attempt" "attempt=2" "$(grep '^attempt=' <<<"$live_cap")"
+assert_eq "live report is not a non-start" "non-starts=0" "$(grep '^non-starts=' <<<"$live_cap")"
 
 section "azdo tag arithmetic — read-modify-write, since set_tags REPLACES"
 
@@ -374,6 +432,126 @@ assert_eq "add is idempotent"      "a;b"    "$(retag "$(printf 'a\nb')" 'b' '')"
 assert_eq "remove drops one"       "b"      "$(retag "$(printf 'a\nb')" '' 'a')"
 assert_eq "add and remove together" "b;c"   "$(retag "$(printf 'a\nb')" 'c' 'a')"
 assert_eq "removing everything clears" ""   "$(retag "$(printf 'a\nb')" '' 'a,b')"
+
+section "PR verbs"
+
+# pr_run <repo-dir> <forge> <fn> [args...] — runs one PR verb in a subshell with
+# both mocks on PATH and the logs in $PR_LOG_DIR. Echoes stdout; stderr goes to
+# $PR_LOG_DIR/err; the verb's status is written to $PR_LOG_DIR/rc.
+# shellcheck disable=SC2030,SC2031
+pr_run() {
+  local dir="$1" forge="$2"; shift 2
+  (
+    cd "$dir"
+    export PATH="$MOCKS:$PATH"
+    export GH_MOCK_LOG="$PR_LOG_DIR/gh.log" AZ_MOCK_LOG="$PR_LOG_DIR/az.log"
+    export AZ_MOCK_STDIN_LOG="$PR_LOG_DIR/az.stdin"
+    export FORGE="$forge" REPO=o/r
+    # shellcheck disable=SC1090
+    source "$ROOT/scripts/lib/detect-forge.sh"
+    # shellcheck disable=SC1090
+    source "$LIB"
+    rc=0
+    "$@" 2>"$PR_LOG_DIR/err" || rc=$?
+    printf '%s' "$rc" > "$PR_LOG_DIR/rc"
+  )
+}
+pr_reset() { rm -f "$PR_LOG_DIR"/{gh.log,az.log,az.stdin,err,rc}; : > "$PR_LOG_DIR/gh.log"; : > "$PR_LOG_DIR/az.log"; : > "$PR_LOG_DIR/az.stdin"; }
+pr_rc() { cat "$PR_LOG_DIR/rc"; }
+
+PR_LOG_DIR="$(mktemp -d)"
+PR_NOGIT="$(mktemp -d)"   # not a git repo: proves github never calls detect_forge
+PR_BODY="$PR_LOG_DIR/body.md"
+# shellcheck disable=SC2016  # literal backtick and $ are the point
+printf 'First line with `backtick` and $HOME\nsecond line\n' > "$PR_BODY"
+
+pr_reset; pr_run "$PR_NOGIT" github forge_pr_diff 42 >/dev/null
+assert_eq "github pr diff argv" "pr diff 42 --repo o/r" "$(cat "$PR_LOG_DIR/gh.log")"
+pr_reset; pr_run "$PR_NOGIT" github forge_pr_head_sha 42 >/dev/null
+assert_eq "github pr head sha argv" "pr view 42 --repo o/r --json headRefOid --jq .headRefOid" "$(cat "$PR_LOG_DIR/gh.log")"
+pr_reset; pr_run "$PR_NOGIT" github forge_pr_comment 42 "$PR_BODY" >/dev/null
+assert_eq "github pr comment argv" "pr comment 42 --repo o/r --body-file $PR_BODY" "$(cat "$PR_LOG_DIR/gh.log")"
+pr_reset; pr_run "$PR_NOGIT" github forge_pr_comments_json 42 >/dev/null
+assert_eq "github pr comments argv" "pr view 42 --repo o/r --json comments --jq .comments[].body" "$(cat "$PR_LOG_DIR/gh.log")"
+assert_eq "github PR verbs never ask for an auth token" "0" "$(grep -c 'auth token' "$PR_LOG_DIR/gh.log" || true)"
+
+REPO_PR="$(make_repo 'https://dev.azure.com/contoso/MyProject/_git/my-repo')"
+
+pr_reset; AZ_MOCK_FIXTURE="$FIXTURES/azdo-pr-thread-created.json" pr_run "$REPO_PR" azdo forge_pr_comment 42 "$PR_BODY" >/dev/null
+assert_eq "pr_comment_posts_one_active_thread: one az call" "1" "$(wc -l < "$PR_LOG_DIR/az.log" | tr -d ' ')"
+for needle in '--area git --resource pullRequestThreads' 'pullRequestId=42' 'repositoryId=my-repo' '--http-method POST'; do
+  case "$(cat "$PR_LOG_DIR/az.log")" in
+    *"$needle"*) pass "pr_comment argv has $needle" ;;
+    *) fail "pr_comment argv has $needle" "$(cat "$PR_LOG_DIR/az.log")" ;;
+  esac
+done
+assert_eq "pr_comment thread is active" "active" "$(jq -r '.status' "$PR_LOG_DIR/az.stdin")"
+jq -j '.comments[0].content' "$PR_LOG_DIR/az.stdin" > "$PR_LOG_DIR/posted.md"
+if cmp -s "$PR_LOG_DIR/posted.md" "$PR_BODY"; then pass "pr_comment body arrives byte for byte"; else fail "pr_comment body arrives byte for byte"; fi
+
+# Round trip: what was POSTed, served back by the GET, must still carry the
+# marker line the review script greps for.
+jq -s '{value: ., count: length}' "$PR_LOG_DIR/az.stdin" > "$PR_LOG_DIR/round-trip.json"
+pr_reset; out="$(AZ_MOCK_FIXTURE="$PR_LOG_DIR/round-trip.json" pr_run "$REPO_PR" azdo forge_pr_comments_json 42)"
+# shellcheck disable=SC2016
+case "$out" in *'First line with `backtick` and $HOME'*) pass "pr_comments_json_round_trip" ;; *) fail "pr_comments_json_round_trip" "$out" ;; esac
+
+pr_reset; out="$(AZ_MOCK_FIXTURE="$FIXTURES/azdo-pr-threads-marker.json" pr_run "$REPO_PR" azdo forge_pr_comments_json 42)"
+case "$out" in *'<!-- review-pr:abc123 -->'*) pass "pr_comments_json_skips_contentless: marker present" ;; *) fail "pr_comments_json_skips_contentless: marker present" "$out" ;; esac
+case "$out" in *None*|*null*) fail "pr_comments_json_skips_contentless: no None/null" "$out" ;; *) pass "pr_comments_json_skips_contentless: no None/null" ;; esac
+
+# Real threads read back after the live self-fix proof (2026-11-09): a review,
+# a system "reference updated" thread, and the re-review on the fix commit.
+pr_reset; out="$(AZ_MOCK_FIXTURE="$FIXTURES/azdo-pr-threads-live.json" pr_run "$REPO_PR" azdo forge_pr_comments_json 42)"
+case "$out" in *'<!-- review-pr:51e1e76148e5541bc5d7fdb4f5d97603efa7623e -->'*) pass "pr_comments_json_live: first marker" ;; *) fail "pr_comments_json_live: first marker" "$out" ;; esac
+case "$out" in *'<!-- review-pr:e4c16fb19e8d754265ecebe9d3daa380e1d7e73f -->'*) pass "pr_comments_json_live: re-review marker" ;; *) fail "pr_comments_json_live: re-review marker" "$out" ;; esac
+
+# A repo with origin/main and an agent branch that adds src/a.txt.
+REPO_DIFF="$(make_repo 'https://dev.azure.com/contoso/MyProject/_git/my-repo')"
+(
+  cd "$REPO_DIFF"
+  git config user.email t@example.invalid; git config user.name t
+  git checkout -q -b main
+  printf 'base\n' > base.txt; git add base.txt; git commit -q -m base
+  git update-ref refs/remotes/origin/main HEAD
+  git checkout -q -b agent/x
+  mkdir src; printf 'new\n' > src/a.txt; git add src/a.txt; git commit -q -m feature
+  git config diff.noprefix true
+)
+pr_reset; out="$(DEFAULT_BRANCH=main pr_run "$REPO_DIFF" azdo forge_pr_diff 42)"
+case "$out" in *'diff --git a/src/a.txt b/src/a.txt'*) pass "pr_diff_azdo_three_dot (diff.noprefix ignored)" ;; *) fail "pr_diff_azdo_three_dot (diff.noprefix ignored)" "$out" ;; esac
+
+pr_reset; pr_run "$REPO_DIFF" azdo forge_pr_diff 42 >/dev/null
+assert_eq "pr_diff_azdo_requires_default_branch: rc 1" "1" "$(pr_rc)"
+case "$(cat "$PR_LOG_DIR/err")" in *'DEFAULT_BRANCH must be set'*) pass "pr_diff_azdo_requires_default_branch: message" ;; *) fail "pr_diff_azdo_requires_default_branch: message" "$(cat "$PR_LOG_DIR/err")" ;; esac
+
+pr_reset; out="$(pr_run "$REPO_DIFF" azdo forge_pr_head_sha 42)"
+assert_eq "pr_head_sha_azdo equals git rev-parse HEAD" "$(git -C "$REPO_DIFF" rev-parse HEAD)" "$out"
+assert_eq "pr_head_sha_azdo makes no az call" "0" "$(wc -c < "$PR_LOG_DIR/az.log" | tr -d ' ')"
+
+# IFS is newline/tab here, so the verb and its arguments go in as separate words.
+for verb in forge_pr_diff forge_pr_head_sha forge_pr_comment forge_pr_comments_json; do
+  pr_reset
+  DEFAULT_BRANCH=main pr_run "$REPO_PR" forgejo "$verb" 42 "$PR_BODY" >/dev/null
+  assert_eq "pr_verbs_refuse_unknown_forge: $verb" "2" "$(pr_rc)"
+done
+
+# `:?` exits the shell it runs in, so the verb runs in a nested subshell.
+# shellcheck disable=SC2317,SC2329  # called through pr_run
+without_repo() { ( unset REPO; "$@" ); }
+for verb in forge_pr_diff forge_pr_head_sha forge_pr_comment forge_pr_comments_json; do
+  pr_reset
+  pr_run "$PR_NOGIT" github without_repo "$verb" 42 "$PR_BODY" >/dev/null
+  if [[ "$(pr_rc)" -ne 0 ]]; then pass "pr_verbs_github_need_repo: $verb"; else fail "pr_verbs_github_need_repo: $verb" "rc 0"; fi
+done
+
+printf '{"value":[{"id":1,"status":"active"}],"count":1}' > "$PR_LOG_DIR/no-comments-key.json"
+pr_reset; out="$(AZ_MOCK_FIXTURE="$PR_LOG_DIR/no-comments-key.json" pr_run "$REPO_PR" azdo forge_pr_comments_json 42)"
+assert_eq "pr_comments_json_thread_without_comments: no output" "" "$out"
+assert_eq "pr_comments_json_thread_without_comments: rc 0" "0" "$(pr_rc)"
+assert_eq "pr_comments_json_thread_without_comments: no error" "" "$(cat "$PR_LOG_DIR/err")"
+
+rm -rf "$PR_LOG_DIR" "$PR_NOGIT" "$REPO_PR" "$REPO_DIFF"
 
 # --- summary -------------------------------------------------------------
 

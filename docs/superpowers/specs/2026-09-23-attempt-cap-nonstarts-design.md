@@ -44,7 +44,7 @@ was consumed by a run the cheap model never began.
 | # | Decision | Rejected alternative |
 |---|---|---|
 | D1 | A non-start is `turns == 0` **and** `cost == 0` | Either alone. A run that burned turns but cost nothing, or vice versa, did something; the `&&` stops this quietly excusing genuine failures |
-| D2 | Parse both fields from the report body, reusing `ai-stats.sh:190-191`'s regexes | Having `post-run-report.sh` emit a machine-readable marker. Cleaner in the abstract, but it changes the record `/ai-stats` already parses, and the cap's header promises it "counts exactly what the statistics count" |
+| D2 | Parse both fields from the report body, reusing `ai-stats.sh:190-191`'s regexes | Having `post-run-report.sh` emit a machine-readable marker. Cleaner in the abstract, but it changes the record `/ai-stats` already parses, and the cap's header promises it "counts exactly what the statistics count". Amended by ADR-021 (#585): the marker is now emitted, additively; the visible record this decision protects is unchanged and remains what the cap and `/ai-stats` read |
 | D3 | Non-starts get their own higher ceiling (`MAX_NON_STARTS`, default 5) | Not bounding them at all — a broken secret would produce `$0.00` runs forever and never park. A single total-dispatch backstop was also rejected: it cannot tell "the plan keeps failing" from "the runner is broken", which is the distinction this issue exists to draw |
 | D4 | The two ceilings produce **different park messages** | One shared message. Today's text says the issue "usually needs re-enrichment", which was actively wrong for #302 — the plan was fine and the agent selection was not |
 

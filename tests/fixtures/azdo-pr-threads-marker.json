@@ -1,0 +1,30 @@
+{
+  "value": [
+    {
+      "id": 1,
+      "status": "unknown",
+      "comments": [
+        {
+          "id": 1,
+          "author": {
+            "displayName": "Microsoft.VisualStudio.Services.TFS"
+          },
+          "commentType": "system"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "status": "active",
+      "comments": [
+        {
+          "id": 1,
+          "parentCommentId": 0,
+          "commentType": "text",
+          "content": "<!-- review-pr:abc123 -->\n\n## Automated review — verdict: `approve`"
+        }
+      ]
+    }
+  ],
+  "count": 2
+}

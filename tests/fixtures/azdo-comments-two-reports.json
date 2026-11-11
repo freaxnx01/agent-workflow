@@ -1,0 +1,16 @@
+{
+  "count": 2,
+  "totalCount": 2,
+  "comments": [
+    {
+      "id": 1,
+      "text": "<div>##&nbsp;ai-implement run (pipeline, Azure DevOps) — attempt 1</div><div><br></div><div>**Outcome:** failed: transient</div><div>**Duration:** 3s · **Turns:** 12 / cap 80 · **Cost:** $0.41</div>",
+      "format": "html"
+    },
+    {
+      "id": 2,
+      "text": "<div>##&nbsp;ai-implement run (pipeline, Azure DevOps) — attempt 2</div><div><br></div><div>**Outcome:** failed: transient</div><div>**Duration:** 3s · **Turns:** 9 / cap 80 · **Cost:** $0.30</div>",
+      "format": "html"
+    }
+  ]
+}
