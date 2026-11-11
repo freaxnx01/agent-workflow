@@ -89,7 +89,10 @@ emits:
 
 `implement_gate` captures them in a `continue-on-error` `result_raw` step and writes them
 back to files with `scripts/import-result-output.sh` (env `RESULT_JSON_FILE`,
-`EXECUTION_USAGE_FILE`), which validates the shape (object, `type == "result"`, boolean `is_error`). Anything else —
+`EXECUTION_USAGE_FILE`), which rebuilds the result from the fields the gate reads, each
+strictly typed (object, `type == "result"`, boolean `is_error`, counts as non-negative
+integers, cost as a non-negative number, text fields as strings); unknown fields are
+dropped, because a value like `HOME[$(cmd)]` would run in shell arithmetic. Anything else —
 including an empty output because GitHub dropped one it believed held a secret — becomes
 a synthetic `error_invalid_evidence` result, classified `bug`, reported `ai:failed`.
 Outputs reach `run:` steps only through `env:`, never as `${{ }}` inside a script
