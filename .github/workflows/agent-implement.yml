@@ -436,6 +436,7 @@ jobs:
       # Trusted: every step above finished before the first agent step (#535).
       max-turns:           ${{ steps.triage_turns.outputs.turns }}
       has-plan:            ${{ steps.issue.outputs.has-plan }}
+      attempt:             ${{ steps.attempt_cap.outputs.attempt }}
       agent-eligible:      ${{ steps.agent_reached.outputs.reached == 'true' && steps.pause_gate.outputs.paused != 'true' && steps.attempt_cap.outputs.proceed != 'false' }}
       # Evidence: produced after the agent ran, re-validated by implement_gate.
       result-json:         ${{ steps.export_result.outputs.result-json }}
@@ -1278,13 +1279,15 @@ jobs:
           # stamps no status label, so the run counts as neither an attempt nor
           # a non-start and the issue stays queued for the resume.
           FAILURE_CLASS: ${{ steps.classify_failure.outputs.class }}
-          # #585: run marker inputs — all from steps that run before this one.
-          # Nothing visible reads them; they only reach the hidden `ai-run`
-          # marker at the end of the comment (ADR-021).
-          ATTEMPT: ${{ steps.attempt_cap.outputs.attempt }}
+          # #585: run marker inputs. Nothing visible reads them; they only
+          # reach the hidden `ai-run` marker at the end of the comment
+          # (ADR-021). ATTEMPT is a trusted pre-agent output of implement;
+          # RETRY_DECISION and PR_NUMBER come from this job's own steps, never
+          # from verify_pr, which runs after the agent (#535).
+          ATTEMPT: ${{ needs.implement.outputs.attempt }}
           RETRY_ATTEMPT: ${{ inputs.attempt }}
           RETRY_DECISION: ${{ steps.retry.outputs.decision }}
-          PR_NUMBER: ${{ steps.verify_pr.outputs.pr-number }}
+          PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}
         run: bash .claude-pipeline/scripts/post-run-report.sh
 
       - name: Fail the job when the agent run failed
