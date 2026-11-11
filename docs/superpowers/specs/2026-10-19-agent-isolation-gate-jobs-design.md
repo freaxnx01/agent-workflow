@@ -101,9 +101,12 @@ job outputs (1 MB per job) carry the few KB needed.
 
 ### When `implement_gate` runs
 
-`if: always() && needs.implement.outputs.agent-eligible == 'true'` (`always()`, not
-`!cancelled()`, so an operator or concurrency cancel still gets its report and label, as
-before the split). `agent-eligible`
+`if: !cancelled() && needs.implement.outputs.agent-eligible == 'true'` (`!cancelled()`,
+not `always()`: a run superseded through the per-issue concurrency group, which cancels
+in progress, must not be judged — its empty evidence would stamp `ai:failed` while the
+newer run is active, and a retryable class would dispatch a run that cancels the newer
+one. The known cost: a cancelled run, by an operator or by concurrency, gets no report
+and no label, unlike before the split). `agent-eligible`
 is computed from trusted pre-agent outputs: a new marker step `agent_reached` placed
 directly before the agent steps, plus `pause_gate.paused != 'true'` and
 `attempt_cap.proceed != 'false'`. So a paused or parked dispatch produces no report (as

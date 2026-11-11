@@ -1024,9 +1024,13 @@ jobs:
     # #535 / ADR-020: every decision about the implement run. Own runner, own
     # fresh checkouts, never an agent. Inputs are the implement job's outputs:
     # pre-agent ones are trusted, result-json / execution-usage are evidence.
+    # !cancelled(), not always() (#571 N2): a run superseded through the
+    # per-issue concurrency group must not report or retry — it would stamp
+    # ai:failed over the newer run, and a retry would cancel it. The cost: a
+    # cancelled run gets no report.
     name: Judge implement run — issue #${{ inputs.issue-number }}
     needs: implement
-    if: ${{ always() && needs.implement.outputs.agent-eligible == 'true' }}
+    if: ${{ !cancelled() && needs.implement.outputs.agent-eligible == 'true' }}
     runs-on: ${{ fromJSON(inputs.gate-runner-labels != '' && inputs.gate-runner-labels || inputs.runner-labels) }}
     timeout-minutes: 15
     permissions:
