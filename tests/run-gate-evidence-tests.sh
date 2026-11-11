@@ -27,6 +27,12 @@ assert_eq "result-json is the compact result" "$(jq -c . "$FIX/result-success-ch
 assert_eq "is-error=false on success" "false" "$(field "$out" is-error)"
 assert_eq "no execution file → empty usage (#571 F3)" "" "$(field "$out" execution-usage)"
 
+section "export: is-error is the .is_error hint only (salvage, pre-#535 semantics)"
+out="$(RESULT_FILE="$FIX/result-max-turns-unflagged.json" bash "$EXPORT")"
+assert_eq "error_max_turns with is_error:false → is-error=false" "false" "$(field "$out" is-error)"
+out="$(RESULT_FILE="$FIX/result-max-turns.json" bash "$EXPORT")"
+assert_eq "is_error:true result → is-error=true" "$(jq -r '.is_error == true' "$FIX/result-max-turns.json")" "$(field "$out" is-error)"
+
 section "export: a long result text is elided head+tail"
 jq --arg t "$(printf 'A%.0s' $(seq 1 6000))$(printf 'Z%.0s' $(seq 1 6000))" '.result = $t' \
   "$FIX/result-success-cheap.json" > "$T/long.json"

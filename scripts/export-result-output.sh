@@ -16,7 +16,8 @@
 #   execution-usage   one fixed-size usage_aggregate object (#571), the same
 #                     max/sums post-run-report.sh computes from a raw stream;
 #                     empty when the stream holds no usage events
-#   is-error          true|false — a local hint for salvage, never a verdict
+#   is-error          true|false — .is_error only, a local hint for salvage, never
+#                     a verdict; true too when the result is not a JSON object
 # Exit: 0; 2 RESULT_FILE unset.
 set -euo pipefail
 IFS=$'\n\t'
@@ -100,7 +101,7 @@ usage_aggregate() {
 result_json="$(bounded_result)"
 is_error=true
 if [[ -n "$result_json" ]]; then
-  is_error="$(printf '%s' "$result_json" | jq -r '(.is_error == true) or ((.subtype // "") | startswith("error_"))')"
+  is_error="$(printf '%s' "$result_json" | jq -r '.is_error == true')"
 fi
 
 emit result-json "$result_json"
