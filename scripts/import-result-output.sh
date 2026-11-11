@@ -26,6 +26,8 @@
 #                    integer, 0 ≤ n ≤ 2^53 − 1
 #   total_cost_usd   number, 0 ≤ n ≤ 2^53 − 1
 #   subtype, result, session_id, api_error, api_error_host     string
+#   subtype additionally ^[A-Za-z0-9_]{1,64}$: it is an enum and the run marker
+#   (ADR-021) and the report read it back line by line.
 #   usage            object; its other keys are dropped
 #
 # Optional env:
@@ -78,7 +80,8 @@ rebuilt_result() {
     | present
     | select(all(.duration_ms, .num_turns, .api_error_status, (.usage // {})[]; ok(count)))
     | select(.total_cost_usd | ok(amount))
-    | select(all(.subtype, .result, .session_id, .api_error, .api_error_host; ok(type == "string")))' \
+    | select(all(.subtype, .result, .session_id, .api_error, .api_error_host; ok(type == "string")))
+    | select(.subtype | ok(test("^[A-Za-z0-9_]{1,64}$")))' \
     2>/dev/null || true
 }
 

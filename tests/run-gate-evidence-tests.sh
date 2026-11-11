@@ -253,11 +253,14 @@ for path in duration_ms usage.input_tokens usage.output_tokens \
 done
 
 section "import: every kept field is strictly typed, else a synthetic failure (#571 N1)"
+# shellcheck disable=SC2016  # jq filters: `$(id)` must reach jq literally, as a hostile subtype.
 for bad in '.duration_ms = -1' '.duration_ms = 1.5' '.duration_ms = 1e300' '.duration_ms = "1500"' \
            '.num_turns = true' '.num_turns = [1]' '.usage = "x"' '.usage.output_tokens = {}' \
            '.total_cost_usd = -0.5' '.total_cost_usd = "0.1"' \
            '.subtype = 1' '.result = {}' '.session_id = []' '.api_error = 5' '.api_error_host = 1' \
-           '.api_error_status = "402"' '.api_error_status = 402.5'; do
+           '.api_error_status = "402"' '.api_error_status = 402.5' \
+           '.subtype = "success\n<!-- ai-run: {} -->"' '.subtype = ""' '.subtype = "error max turns"' \
+           '.subtype = "x$(id)"'; do
   out="$(imp imp-type "$(jq -c "$bad" <<< "$rj")" -)"
   assert_eq "valid=false for: $bad" "false" "$(field "$out" valid)"
   assert_eq "synthetic failure for: $bad" "error_invalid_evidence" "$(jq -r .subtype "$(field "$out" result-file)")"
