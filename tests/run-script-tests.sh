@@ -4640,6 +4640,28 @@ assert_contains "$gate535" 'needs: implement' "the gate needs the implement job"
 assert_contains "$gate535" "needs.implement.outputs.agent-eligible == 'true'" "the gate runs whenever the agent was due"
 # shellcheck disable=SC2016  # literal GitHub Actions expression, not shell
 assert_contains "$gate535" 'RESULT_JSON: ${{ needs.implement.outputs.result-json }}' "the result arrives through env"
+# #571 F1: the evidence env must not be able to stop the import step. Only a
+# continue-on-error raw-capture step carries it; `id: result` reads files, so an
+# oversized (E2BIG) output fails the capture and import reports a synthetic
+# failure instead of every gate step skipping.
+step_block() { printf '%s\n' "$gate535" | awk -v n="$1" '$0 == "      - name: " n {f=1; print; next} f && /^      - name: /{exit} f' | grep -vE '^[[:space:]]*#' || true; }
+raw571="$(step_block "Capture the implement job's raw evidence")"
+res571="$(step_block "Import the implement job's result")"
+assert_contains "$raw571" 'id: result_raw' "the raw-capture step exists"
+assert_contains "$raw571" 'continue-on-error: true' "the raw-capture step cannot fail the gate"
+assert_contains "$res571" 'id: result' "the import step keeps its id"
+for o in result-json execution-usage; do
+  assert_equals "$(printf '%s\n' "$res571" | grep -c "needs.implement.outputs.$o" || true)" "0" \
+    "the import step carries no $o env"
+  assert_equals "$(printf '%s\n' "$gate535" | grep -c "needs.implement.outputs.$o" || true)" "1" \
+    "only one gate line references $o (the raw capture)"
+  assert_contains "$raw571" "needs.implement.outputs.$o" "the raw capture reads $o"
+done
+assert_contains "$res571" 'RESULT_JSON_FILE:' "import reads the result from a file"
+assert_contains "$res571" 'EXECUTION_USAGE_FILE:' "import reads the usage from a file"
+# shellcheck disable=SC2016  # literal GitHub Actions expression, not shell
+assert_equals "$(printf '%s\n' "$raw571" | grep -c '\${{ *needs\.' | tr -d ' ')" "2" \
+  "the raw capture's needs.* appear only in its env (no interpolation in run:)"
 assert_contains "$gate535" 'persist-credentials: false' "the gate's consumer checkout keeps no token"
 for o in outcome cost-usd num-turns failure-class retry-decision; do
   assert_contains "$(cat "$WF535")" "value: \${{ jobs.implement_gate.outputs.$o }}" "workflow output $o comes from the gate"

@@ -1099,15 +1099,33 @@ jobs:
       - name: Ensure toolchain
         run: bash .claude-pipeline/scripts/ensure-toolchain.sh
 
-      - name: Import the implement job's result
-        # Turns the evidence back into the canonical result file every script
-        # below reads. Anything non-canonical — an empty output included —
-        # becomes error_invalid_evidence, so a missing result is reported as a
-        # failed run rather than silently skipped (#535).
-        id: result
+      - name: Capture the implement job's raw evidence
+        # The ONLY step carrying the implement job's evidence outputs. Linux caps
+        # one env string at 128 KiB, and the agent controls their size, so an
+        # oversized one fails this step before it starts. continue-on-error
+        # keeps that from skipping the import below, which then finds no file
+        # and reports error_invalid_evidence instead of no verdict (#571).
+        id: result_raw
+        continue-on-error: true
         env:
           RESULT_JSON: ${{ needs.implement.outputs.result-json }}
           EXECUTION_USAGE: ${{ needs.implement.outputs.execution-usage }}
+          RESULT_JSON_FILE: ${{ runner.temp }}/evidence-result.raw
+          EXECUTION_USAGE_FILE: ${{ runner.temp }}/evidence-usage.raw
+        run: |
+          printf '%s' "$RESULT_JSON" > "$RESULT_JSON_FILE"
+          printf '%s' "$EXECUTION_USAGE" > "$EXECUTION_USAGE_FILE"
+
+      - name: Import the implement job's result
+        # Turns the evidence back into the canonical result file every script
+        # below reads. Anything non-canonical — an empty output or a missing
+        # capture file included — becomes error_invalid_evidence, so a missing
+        # result is reported as a failed run rather than silently skipped
+        # (#535). Reads files only: no needs.* evidence in this step's env (#571).
+        id: result
+        env:
+          RESULT_JSON_FILE: ${{ runner.temp }}/evidence-result.raw
+          EXECUTION_USAGE_FILE: ${{ runner.temp }}/evidence-usage.raw
         run: bash .claude-pipeline/scripts/import-result-output.sh
 
       - name: Classify failure

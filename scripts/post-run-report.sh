@@ -15,7 +15,9 @@
 #
 # Optional environment variables:
 #   EXECUTION_FILE      NDJSON of all SDK messages. Required for "Max context
-#                       per turn"; otherwise that row reads 0.
+#                       per turn"; otherwise that row reads 0. May instead
+#                       hold one usage_aggregate object (export-result-output.sh,
+#                       #571): its max and totals are used as-is.
 #   MAX_TURNS           The configured turn budget for this run (e.g.
 #                       steps.triage_turns.outputs.turns). When set, the
 #                       Turns metric reads "N / cap M" instead of just "N" —
@@ -254,7 +256,36 @@ read_result_metrics() {
 
 HAS_EXECUTION_DATA=0
 MAX_PROMPT_TOKENS=0
-if [[ -n "$EXECUTION_FILE" && -r "$EXECUTION_FILE" ]]; then
+
+# is_usage_aggregate — EXECUTION_FILE holds exactly one usage_aggregate object.
+# Checked before the raw-stream detection: a single object is valid NDJSON too,
+# and the raw path would sum its zero events into a table of zeros (#571 F3).
+is_usage_aggregate() {
+  jq -e -s 'length == 1 and (.[0] | type == "object" and .type == "usage_aggregate")' \
+    "$EXECUTION_FILE" >/dev/null 2>&1
+}
+
+# read_usage_aggregate — "max in out cache_read cache_create", or nothing when
+# any field is not a non-negative integer. The file can come from an
+# agent-writable tree, so nothing that is not a plain integer may reach the
+# shell arithmetic below.
+read_usage_aggregate() {
+  jq -r -s '
+    .[0] as $a
+    | [ "max_prompt_tokens", "input_tokens", "output_tokens",
+        "cache_read_input_tokens", "cache_creation_input_tokens" ]
+    | map($a[.])
+    | select(all(.[]; type == "number" and . >= 0 and . == floor))
+    | map(tostring) | join(" ")' "$EXECUTION_FILE" 2>/dev/null || true
+}
+
+if [[ -n "$EXECUTION_FILE" && -r "$EXECUTION_FILE" ]] && is_usage_aggregate; then
+  AGGREGATE="$(read_usage_aggregate)"
+  if [[ "$AGGREGATE" =~ ^[0-9]+( [0-9]+){4}$ ]]; then
+    HAS_EXECUTION_DATA=1
+    IFS=' ' read -r MAX_PROMPT_TOKENS INPUT_TOKENS OUTPUT_TOKENS CACHE_READ CACHE_CREATE <<< "$AGGREGATE"
+  fi
+elif [[ -n "$EXECUTION_FILE" && -r "$EXECUTION_FILE" ]]; then
   # Accept either a JSON array (claude-code-base-action's current shape) or
   # NDJSON (the SDK's --output-format stream-json). Detect the shape first; if
   # the file is neither valid JSON nor valid NDJSON, skip the context metric and
