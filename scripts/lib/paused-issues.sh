@@ -19,7 +19,10 @@
 #                                 and returns 1 — the issue is then on no list,
 #                                 so the caller decides where else to name it.
 #                                 Callers that cannot add anything use `|| true`.
-#   paused_issue_clear <issue>    remove the label; a silent no-op when absent
+#   paused_issue_clear <issue>    remove the label. Returns 1 when gh could not
+#                                 remove it, silently — the caller decides what
+#                                 that means (#536). Removing a label the issue
+#                                 does not carry is not a failure.
 #   paused_issues_open            JSON array of {number, labels[].name} for the
 #                                 open labelled issues; returns 1 when it cannot
 #                                 read — an unreadable list is not an empty one
@@ -49,7 +52,7 @@ paused_issue_mark() {
 
 paused_issue_clear() {
   local issue="${1:?paused_issue_clear requires an issue number}"
-  gh issue edit "$issue" --repo "$REPO" --remove-label "$PAUSED_ISSUE_LABEL" >/dev/null 2>&1 || true
+  gh issue edit "$issue" --repo "$REPO" --remove-label "$PAUSED_ISSUE_LABEL" >/dev/null 2>&1
 }
 
 paused_issues_open() {

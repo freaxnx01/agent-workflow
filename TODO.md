@@ -1,5 +1,43 @@
 # TODO
 
+## Azure DevOps track (#573) — found during the item-c live proof (2026-11-09)
+
+- [ ] **The service hook missed one `ai-implement` tag.** Work item 12 was
+      tagged one revision after it was moved into the hook's area path, and no
+      event was delivered. Other tag changes the same day fired normally.
+      Find out whether the area filter evaluates the old area for that
+      update. Details: `docs/ai-notes/2026-11-09-azdo-pr-validation-run.md`.
+      The items a and b proofs saw it four more times on freshly created
+      items; manual `workItemId` runs went through the same guard.
+- [ ] **Agent commits carry the agent image's git identity.** The implement
+      agent's commits use whatever identity the image configures; self-fix
+      commits use `ai-implement`. Decide whether the implement commit should
+      use a neutral identity too. Details:
+      `docs/ai-notes/2026-11-09-azdo-ai-review-run.md`.
+- [ ] **`tests/run-enrich-batch-doc-tests.sh` is flaky under a full sweep.**
+      It failed four times in `tests/run-all.sh` and passed alone every time.
+- [ ] **`tests/run-implement-azdo-tests.sh` takes about 20 s.** Layer 1
+      aims for under 5 s; `run_loop` builds a bare repo and clone per case.
+
+## Session 2026-10-16 (claude-md sync, decision-interview partial) — parked threads
+
+Shipped: #543 (`decision-interview` partial), #544 (general-month `due_on` at midday,
+guard widened, a `typos` false positive on a past-tense "PATCH" removed from `main`).
+
+- [ ] **`tests/run-all.sh` hangs on WSL2** — killed twice by a 280 s `timeout`
+      (exit 143), while the same suite passes in ~40 s in CI. Find which
+      runner blocks locally (network/`gh`/credential prompt?) and make it fail
+      fast or skip.
+
+- [ ] **claude-md skill: native pwsh on Windows.** The skill drives Windows via
+      Git Bash and only hops from pwsh to WSL2. Collect what is actually
+      missing in a pwsh session before changing anything.
+
+- [ ] **Promote overlapping local CLAUDE.md sections to partials.** GitHub
+      auth / `.envrc` PAT exists on all three machines in different wording;
+      Obsidian Vaults on WSL2 + Windows. Genericise (public repo), show the
+      redacted text for approval, then remove the local copies.
+
 ## Session 2026-10-01/02 (consumer permissions + model-not-found retry) — 3 issues shipped, rollout and #449 open
 
 Shipped: #439 (PR #443), #434 (PR #442), #441 (PR #448). Specs in PR #440 / #447.

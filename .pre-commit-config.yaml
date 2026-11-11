@@ -14,8 +14,12 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      # run-report-golden/ holds byte-exact renders of post-run-report.sh
+      # (#585); a paused run's empty `LABELS: ` trailer ends in a space.
       - id: trailing-whitespace
+        exclude: ^tests/fixtures/run-report-golden/
       - id: end-of-file-fixer
+        exclude: ^tests/fixtures/run-report-golden/
       - id: check-yaml
       - id: check-json
         # tests/fixtures/ holds deliberately-malformed JSON/JSONL used to test

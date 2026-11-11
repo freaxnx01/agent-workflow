@@ -39,6 +39,10 @@
 #                      integer; default 600.
 #   PROMPT_TEMPLATE    Override path to the review prompt template.
 #                      Default: <script-dir>/lib/review-prompt.md
+#   FORGE              github (default) | azdo. Routes the PR diff, existing
+#                      comments and the posted comment through the forge verbs
+#                      in lib/forge.sh. On azdo, DEFAULT_BRANCH must also be
+#                      set: the diff is the checkout against origin/$DEFAULT_BRANCH.
 #   DIFF_FILE          Pre-fetched diff path. If set, skips `gh pr diff`.
 #                      Used by Layer-1 tests.
 #   EXISTING_COMMENTS  Newline-separated comment bodies. If set, skips the
@@ -66,6 +70,14 @@ set -euo pipefail
 IFS=$'\n\t'
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# shellcheck source=scripts/lib/detect-forge.sh
+source "$SCRIPT_DIR/lib/detect-forge.sh"
+# shellcheck source=scripts/lib/forge.sh
+source "$SCRIPT_DIR/lib/forge.sh"
+# Exported so the REVIEW_SCRIPT / FIX_CMD children inherit the forge.
+FORGE="${FORGE:-github}"
+export FORGE
 
 # --- env validation -------------------------------------------------------
 
@@ -174,8 +186,7 @@ post_or_skip() {
   if [[ -n "${EXISTING_COMMENTS:-}" ]]; then
     existing="$EXISTING_COMMENTS"
   else
-    existing="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json comments \
-      --jq '.comments[].body' 2>/dev/null || true)"
+    existing="$(forge_pr_comments_json "$PR_NUMBER" 2>/dev/null || true)"
   fi
 
   if printf '%s' "$existing" | grep -qF "$(marker)"; then
@@ -190,7 +201,7 @@ post_or_skip() {
     return 0
   fi
 
-  gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file "$COMMENT_FILE" >/dev/null
+  forge_pr_comment "$PR_NUMBER" "$COMMENT_FILE" >/dev/null
   emit_output posted true
 }
 
@@ -231,7 +242,7 @@ else
   # commit messages with the diff, and a message carrying a forged
   # `diff --git … @@ … +x` block would read as reviewable content to the
   # elided-content guard below (#490 security review).
-  gh pr diff "$PR_NUMBER" --repo "$REPO" > "$DIFF_FILE"
+  forge_pr_diff "$PR_NUMBER" > "$DIFF_FILE"
 fi
 
 # #490: one minified data line (e.g. a 2.6 MB JSON file) turns a small change

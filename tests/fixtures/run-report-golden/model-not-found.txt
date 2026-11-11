@@ -1,0 +1,25 @@
+## ai-implement run
+
+**Outcome:** :x: failed: model_not_found
+**Duration:** 0s · **Turns:** 0 · **Cost:** $0.00
+**Model:** z-ai/glm-9 · **Agent:** opencode
+
+| Metric | Value |
+|---|---|
+| Input tokens | 0 |
+| Output tokens | 0 |
+| Cache read | 0 (0% hit rate) |
+| Cache create | 0 |
+| Total tokens | 0 |
+| Max context per turn | n/a (no execution log provided) |
+
+> [!WARNING]
+> **Model `z-ai/glm-9` is not on OpenRouter's model list.**
+> Set the `default-model` input in the consumer workflow, or the `model:` label
+> on this issue, to an id from <https://openrouter.ai/models>, then re-dispatch.
+> The run stopped before the agent started, so it does not count as an attempt.
+
+[View workflow run](https://example/run/test)
+
+---
+LABELS: ai:failed

@@ -1,0 +1,16 @@
+{
+  "type": "result",
+  "subtype": "error_agent_cut_off",
+  "is_error": true,
+  "duration_ms": 700,
+  "num_turns": 1,
+  "total_cost_usd": 0.002024,
+  "session_id": "ses_cut",
+  "result": "OpenCode stopped after a tool-calls step, before the model answered (agent loop cut off). Model: z-ai/glm-5.3",
+  "usage": {
+    "input_tokens": 7133,
+    "output_tokens": 0,
+    "cache_creation_input_tokens": 0,
+    "cache_read_input_tokens": 17344
+  }
+}

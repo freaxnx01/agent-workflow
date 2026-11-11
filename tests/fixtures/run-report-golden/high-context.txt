@@ -1,0 +1,19 @@
+## ai-implement run
+
+**Outcome:** :white_check_mark: success
+**Duration:** 3m 38s · **Turns:** 6 · **Cost:** $0.85
+
+
+| Metric | Value |
+|---|---|
+| Input tokens | 108,000 |
+| Output tokens | 15,700 |
+| Cache read | 201,500 (54% hit rate) |
+| Cache create | 60,500 |
+| Total tokens | 385,700 |
+| Max context per turn | 165,000 / 200,000 (82%) |
+
+[View workflow run](https://example/run/test)
+
+---
+LABELS: ai:done,ctx:high

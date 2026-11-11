@@ -1,0 +1,19 @@
+## ai-implement paused
+
+**Outcome:** :warning: paused: OpenRouter key limit / credits exhausted — the issue stays queued
+**Duration:** 2m 4s · **Turns:** 11 · **Cost:** $0.18
+
+
+| Metric | Value |
+|---|---|
+| Input tokens | 2,100 |
+| Output tokens | 4,200 |
+| Cache read | 81,000 (89% hit rate) |
+| Cache create | 8,400 |
+| Total tokens | 95,700 |
+| Max context per turn | n/a (no execution log provided) |
+
+[View workflow run](https://example/run/test)
+
+---
+LABELS: 

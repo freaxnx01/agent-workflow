@@ -37,6 +37,10 @@
 #   SKIP_CLONE        "1" to skip `gh repo clone` / `git fetch` and operate
 #                     directly in WORK_DIR (already a checked-out git repo
 #                     on HEAD_REF). Used by Layer-1 tests.
+#   FIX_GIT_NAME      Author/committer name of the fix commit.
+#                     Default: github-actions[bot].
+#   FIX_GIT_EMAIL     Author/committer email of the fix commit.
+#                     Default: github-actions[bot]@users.noreply.github.com.
 #   SKIP_PUSH         "1" to skip `git push` (Layer-1 tests assert the
 #                     local commit instead of a network push).
 #
@@ -151,7 +155,9 @@ if [[ -z "$( cd "$WORK_DIR" && git status --porcelain )" ]]; then
   exit 1
 fi
 
-( cd "$WORK_DIR" && git add -A && git -c user.name='github-actions[bot]' -c user.email='github-actions[bot]@users.noreply.github.com' commit --quiet -m "address self-review (iteration $ITERATION)" )
+FIX_GIT_NAME="${FIX_GIT_NAME:-github-actions[bot]}"
+FIX_GIT_EMAIL="${FIX_GIT_EMAIL:-github-actions[bot]@users.noreply.github.com}"
+( cd "$WORK_DIR" && git add -A && git -c user.name="$FIX_GIT_NAME" -c user.email="$FIX_GIT_EMAIL" commit --quiet -m "address self-review (iteration $ITERATION)" )
 
 if [[ "${SKIP_PUSH:-0}" != "1" ]]; then
   ( cd "$WORK_DIR" && git push --quiet origin "HEAD:$HEAD_REF" )

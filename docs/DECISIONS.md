@@ -1633,6 +1633,18 @@ dependency the guardrails forbid adding unasked, and makes the write lossy.
 **Consequence.** `/enrich` reports the paths and stops; it never claims the item
 is dispatchable, because nothing dispatches it.
 
+**Amendment (2026-11-02, #573).** A pipeline now runs on this forge: tagging a
+work item `ai-implement` dispatches `scripts/azdo-pipeline-run.sh` from an Azure
+Pipeline. The "no pipeline agent here" reason above no longer holds, but the
+decision stands. The pipeline agent runs inside a checkout of the target
+repository and reads the spec and plan the work item points to, exactly as a
+local `/work` session does; the PoC's test item was written in that shape and
+the agent implemented it from the pointed-to files
+(`docs/ai-notes/2026-10-30-azdo-pipeline-poc-run.md`). The plan stays out of
+the HTML field. The consequence changes accordingly: an enriched item **is**
+dispatchable where the pipeline is installed; `/enrich`'s own wording is not
+changed by the PoC.
+
 ## ADR-018 — The pause state is an open labelled issue, not a repo variable (2026-10-12)
 
 **Status:** accepted
@@ -1718,3 +1730,155 @@ agent runs as the same user as the post-run steps, so it can append a forged
 `APIError` line to opencode's output file, or rewrite the pipeline's own
 scripts in the checked-out workspace before they run. Isolating the pipeline
 from the agent is tracked in #535.
+
+## ADR-021 — The run report carries a machine-readable run marker (2026-11-10)
+
+**Status:** accepted
+
+**Context.** The run report `post-run-report.sh` leaves on the issue is the
+pipeline's natural run record: it lives on the issue and survives the session.
+It was human-readable only. `check-attempt-cap.sh` and `/ai-stats` recover what
+they need by regexing the visible Markdown — D2 of
+`docs/superpowers/specs/2026-09-23-attempt-cap-nonstarts-design.md` chose that
+deliberately — and several facts a consumer needs were not in the comment at
+all: the attempt number, the failure class as its own field, the retry
+decision, the PR number, and whether the run counts as an attempt. The
+consumers are bridge's issue-centric dispatcher (freaxnx01/bridge#368) and its
+retry model, which takes the pipeline as the single source of truth
+(freaxnx01/bridge#367).
+
+**Decision.**
+
+1. **One hidden line, at the end.** Every run report the GitHub pipeline posts
+   ends with exactly one marker line, directly after the
+   `[View workflow run](…)` line and separated from it by one newline. The
+   prefix is the literal `<!-- ai-run:` plus one space, the suffix one space
+   plus `-->`, and in between is a single compact JSON object:
+
+   ```text
+   <!-- ai-run: {"v":1,"attempt":2,"counts":true,"retry_attempt":1,"class":"task_failure","decision":"stop","status":"ai:failed","subtype":"error_max_turns","agent":"claude","model":"claude-sonnet-5","turns":60,"max_turns":60,"cost_usd":2.341,"duration_ms":612000,"pr":42,"run_url":"https://…","plan_coverage":"complete"} -->
+   ```
+
+2. **The fields of `v: 1`.**
+
+   | Field | Type | Source | Present when |
+   |---|---|---|---|
+   | `v` | int | constant `1` | always |
+   | `attempt` | int | `steps.attempt_cap.outputs.attempt` → `ATTEMPT` | the cap step ran **and** `counts` is `true` |
+   | `counts` | bool | derived in the script | always |
+   | `retry_attempt` | int | `inputs.attempt` → `RETRY_ATTEMPT` | always on GitHub (the input defaults to 1) |
+   | `class` | string | `steps.classify_failure.outputs.class` → `FAILURE_CLASS` | the classifier ran |
+   | `decision` | `retry`\|`stop` | `steps.retry.outputs.decision` → `RETRY_DECISION` | `Plan retry` ran (not on success) |
+   | `status` | string | `$STATUS_LABEL` (`ai:done`/`ai:failed`/`ai:partial`) | non-empty; absent for a pause |
+   | `subtype` | string | result JSON `.subtype` | always (`"unknown"` fallback, as the visible report) |
+   | `agent` | string | `AGENT` | set |
+   | `model` | string | `MODEL` | set |
+   | `turns` | int | result JSON `.num_turns` | always |
+   | `max_turns` | int | `MAX_TURNS` | set |
+   | `cost_usd` | number | result JSON `.total_cost_usd` | always |
+   | `duration_ms` | int | result JSON `.duration_ms` | always |
+   | `pr` | int | `steps.verify_pr.outputs.pr-number` → `PR_NUMBER` | non-empty |
+   | `run_url` | string | `WORKFLOW_RUN_URL` | always |
+   | `plan_coverage` | string | `PLAN_COVERAGE` | non-empty |
+
+3. **Omitted, never faked.** A field whose source is empty, or not the type the
+   table names, is left out of the object. No `null`, no `0` stand-ins.
+   Integers are emitted only for `^[0-9]+$`, `cost_usd` only for a value jq
+   reads as a number.
+
+4. **No free text.** No field carries `.result`, an error message, the issue
+   title, or anything else an issue author or the agent writes. Every string is
+   an enum the pipeline produces (`class`, `decision`, `status`, `subtype`,
+   `agent`, `plan_coverage`), a model id from triage, or the run URL.
+   `has_plan` is deliberately absent from v1 — it would inherit #532.
+
+5. **The marker cannot break out of its comment.** It is built with `jq -nc`
+   from `--arg` / `--argjson` values, then every `<` and `>` in the compact
+   JSON is replaced with the JSON escapes `<` / `>`. Compact JSON has
+   neither character outside string values, so the substitution is lossless and
+   a parser decodes the original back exactly; the result can never contain a
+   second `-->`. jq escapes quotes and control characters but not `<` / `>`,
+   which is why this step exists (ADR-019: run text is never state).
+
+6. **`attempt` vs `retry_attempt` vs `counts`.** `attempt` is the **cap's
+   lifetime count** — the number counted from prior `## ai-implement run`
+   reports, excluding non-starts and pauses, which is the one that parks the
+   issue. `retry_attempt` is the position in the **automatic retry chain**
+   started by one dispatch (`inputs.attempt`, restarted by a fresh label
+   dispatch), which drives the retry-policy caps. They are different numbers
+   and carry different names so neither can be mistaken for the other.
+   `counts` answers the cap's own question, so consumers need not re-implement
+   it: `false` for a pause class, `false` for a non-start (`turns == 0` **and**
+   `cost_usd == 0`), `true` otherwise. `attempt` is omitted when `counts` is
+   `false`, because the cap computes its number before the agent runs and a
+   non-start or pause would otherwise carry the same number as the next real
+   run — this way every attempt number appears on exactly one marker. It is
+   also omitted when the cap step did not run (stub runs, `max-attempts: 0`, a
+   pause gate); consumers then fall back to counting reports.
+
+7. **Versioning.** Adding an optional field is not a bump — consumers ignore
+   unknown fields, and that is how #559's context and cost fields will land.
+   Renaming a field, removing one, or changing its type or meaning bumps `v`.
+   A consumer that meets an unknown `v` treats the comment as having no marker
+   and falls back to the visible report.
+
+8. **Trust rule for consumers.** A marker is only as trustworthy as the comment
+   it sits in, and on a public repo anyone can comment. Consumers MUST:
+   (a) read markers only from comments authored by the pipeline's report
+   identity — `Post run report` runs with `GH_TOKEN: ${{ github.token }}`, so
+   that is `github-actions[bot]`; if the step ever switches to the App token the
+   author becomes the App bot and this rule changes with it; (b) take the marker
+   from the **last** line of the comment only, and at most one per comment;
+   (c) treat an unknown `v` as no marker; (d) use the marker to display and to
+   decide *not* to act, and treat any action it would trigger (a re-dispatch) as
+   bounded by the same caps as a manual one.
+
+9. **Azure DevOps emits no marker in v1.** PR #584 (merged 2026-11-10) gave the
+   ADO path an in-job retry on the shared decision table and a
+   `## ai-implement run (…, Azure DevOps) — attempt N` report after every
+   attempt, which `check-attempt-cap.sh` counts via `forge.sh`'s HTML-to-text
+   read path. The discussion field is HTML and Azure DevOps sanitizes stored
+   HTML: whether an HTML comment survives the round trip is unverified, and
+   #584's HTML-to-text read would have to preserve it. A consumer reading an
+   ADO work item therefore finds no marker and falls back to "no run record".
+   Attaching the same marker there is a separate issue, gated on a live
+   round-trip check.
+
+**Relation to D2 (attempt-cap non-starts).** D2 rejected a machine-readable
+marker because it would change the record `/ai-stats` parses and break the
+cap's promise to count "exactly what the statistics count". This decision
+**amends D2, it does not reverse it**: the visible report is byte-identical —
+golden files in `tests/run-run-report-golden-tests.sh` prove it, and the marker
+is deleted before the comparison — and `check-attempt-cap.sh` and
+`scripts/lib/ai-stats.sh` are unchanged and keep parsing it. The marker is
+purely additive.
+
+**Rejected: changing the cap and `/ai-stats` to read the marker.** That would
+create a second attempt counter able to disagree with the one that parks
+issues. They keep parsing the visible record; moving them is a later, separate
+choice.
+
+**Rejected: writing the marker as a second comment, or editing the report
+afterwards.** Both multiply the comments a consumer and the cap must reconcile,
+and an edit can fail independently of the post.
+
+**Consequences.**
+
++ `Post run report` runs after `Plan retry` has already slept and dispatched
+  the next run, so the next run's cap check can read the comments before this
+  report is posted and undercount by one. That is today's behaviour, not
+  introduced here; the marker inherits it.
++ `decision: "retry"` means the *policy* chose to retry. If the re-dispatch
+  call itself failed (`gh workflow run` 403), `Plan retry` exits 1 after
+  writing its output, so the marker still says `retry`. The job log carries the
+  error.
++ A run that posts no report has no marker (#567, a timeout). Consumers must
+  treat "no marker for this run" as normal.
++ The raw comment body grows by roughly 400 bytes per run. Nothing a human sees
+  changes: an HTML comment does not render.
++ Known gap, inherited from ADR-019: the agent runs with a token that may be
+  able to post as `github-actions[bot]`, so the author filter in the trust rule
+  holds against third parties, not against the agent (#535).
++ Recorded, not fixed here: `check-attempt-cap.sh` counts any comment starting
+  with `## ai-implement run` regardless of author. A forged one can only *raise*
+  the count — park sooner — so it fails safe.
