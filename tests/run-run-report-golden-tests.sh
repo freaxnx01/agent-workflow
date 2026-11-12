@@ -329,10 +329,10 @@ STEP_ENV="$(post_run_env)"
 # shellcheck disable=SC2016  # `${{ … }}` is an Actions expression matched
 # literally against the workflow file — expanding it is the opposite of the point.
 for wiring in \
-  'ATTEMPT: ${{ steps.attempt_cap.outputs.attempt }}' \
+  'ATTEMPT: ${{ needs.implement.outputs.attempt }}' \
   'RETRY_ATTEMPT: ${{ inputs.attempt }}' \
   'RETRY_DECISION: ${{ steps.retry.outputs.decision }}' \
-  'PR_NUMBER: ${{ steps.verify_pr.outputs.pr-number }}'
+  'PR_NUMBER: ${{ steps.find_pr.outputs.pr-number }}'
 do
   name="wiring: ${wiring%%:*}"
   if printf '%s\n' "$STEP_ENV" | grep -qxF -- "$wiring"; then
@@ -344,16 +344,34 @@ done
 
 POST_RUN_LINE="$(line_of "^[[:space:]]*$POST_RUN_STEP\$")"
 POST_RUN_JOB="$(enclosing_job "$POST_RUN_LINE")"
-for step_id in attempt_cap retry verify_pr; do
+for step_id in retry find_pr; do
   name="wiring: step '$step_id' is defined before Post run report, in the same job"
-  id_line="$(line_of "^[[:space:]]*id: $step_id\$")"
-  if (( id_line > 0 && id_line < POST_RUN_LINE )) \
-     && [[ "$(enclosing_job "$id_line")" == "$POST_RUN_JOB" ]]; then
+  id_line="$(awk -v limit="$POST_RUN_LINE" -v re="^[[:space:]]*id: $step_id\$" \
+    'NR < limit && $0 ~ re { n = NR } END { print n + 0 }' "$IMPLEMENT")"
+  if (( id_line > 0 )) && [[ "$(enclosing_job "$id_line")" == "$POST_RUN_JOB" ]]; then
     pass "$name"
   else
     fail "$name" "id line $id_line vs Post run report line $POST_RUN_LINE (job header $POST_RUN_JOB)"
   fi
 done
+
+# #535 splits judging into implement_gate, so the attempt number crosses the
+# job boundary. It must come from attempt_cap, a pre-agent (trusted) step, and
+# the gate job must list implement under needs.
+# shellcheck disable=SC2016  # literal Actions expression, as above.
+name="wiring: implement exposes attempt from the pre-agent attempt_cap step"
+if grep -qE '^[[:space:]]+attempt:[[:space:]]+\$\{\{ steps\.attempt_cap\.outputs\.attempt \}\}$' "$IMPLEMENT"; then
+  pass "$name"
+else
+  fail "$name" "no 'attempt: \${{ steps.attempt_cap.outputs.attempt }}' job output"
+fi
+name="wiring: the Post run report job needs implement"
+if awk -v start="$POST_RUN_JOB" -v stop="$POST_RUN_LINE" \
+     'NR > start && NR < stop && /^    needs:/ && /implement([^_]|$)/ { f = 1 } END { exit !f }' "$IMPLEMENT"; then
+  pass "$name"
+else
+  fail "$name" "Post run report's job (line $POST_RUN_JOB) has no needs: implement"
+fi
 
 # --- summary ----------------------------------------------------------------
 

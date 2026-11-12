@@ -318,11 +318,11 @@ else
   fail "the implement job runs the coverage step"
 fi
 if grep -qE '^ +plan-coverage: +\$\{\{ steps\.plan_coverage\.outputs\.coverage \}\}' "$WF"; then
-  pass "the implement job exports plan-coverage"
+  pass "the implement gate exports plan-coverage"
 else
-  fail "the implement job exports plan-coverage"
+  fail "the implement gate exports plan-coverage"
 fi
-if grep -qF "&& (inputs.dry-run || needs.implement.outputs.plan-coverage == 'complete')" "$WF"; then
+if grep -qF "&& (inputs.dry-run || needs.implement_gate.outputs.plan-coverage == 'complete')" "$WF"; then
   pass "AI-merge requires complete coverage outside dry-run"
 else
   fail "AI-merge requires complete coverage outside dry-run"
