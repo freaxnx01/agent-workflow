@@ -12,6 +12,10 @@ Formatting rules for how answers should look, not what they say.
   copies say the same thing — don't split the summary across them. On an answer
   that fits a single screen, the leading `TL;DR:` alone is enough; repeating it
   there is just noise.
+- **This includes `/btw` side answers.** A `/btw` reply is rendered in a
+  separate overlay and is easy to treat as a throwaway aside, but it gets the
+  same leading `TL;DR:` once it runs past two sentences — at the very top,
+  before anything else.
 - **Write the marker bold *and* backticked** — the literal source is
   ``**`TL;DR:`**``, never a bare `TL;DR:`. Bold alone reads as ordinary
   emphasis and the code span alone is easy to skim past; together the marker
