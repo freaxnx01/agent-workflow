@@ -371,6 +371,14 @@ additions are the optional `NTFY_TOKEN` secret and the
 
 ### Added
 
+- **review:** Every GitHub review comment ends with one hidden
+  `<!-- ai-review: {…} -->` marker carrying the verdict, the full head SHA it
+  applies to, the blocking/nit concern counts and — only where `self-fix` is
+  enabled — the self-fix state, so a consumer can gate Merge on the verdict for
+  a PR's current head without regexing prose. The
+  visible comment and the `<!-- review-pr:<sha> -->` idempotency marker are
+  byte-identical. Azure DevOps emits no marker in v1. Schema, versioning and the
+  consumer trust rule: ADR-022 in `docs/DECISIONS.md` (#593)
 - **report:** Every GitHub run report ends with one hidden `<!-- ai-run: {…} -->`
   marker carrying the run's attempt number, failure class, retry decision, PR and
   whether it counts as an attempt, so a consumer no longer regexes the Markdown.
