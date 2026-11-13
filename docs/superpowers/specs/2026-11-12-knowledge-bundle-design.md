@@ -20,7 +20,7 @@ current.
 
 - Changing the source docs, or anything in bridge or ai-instructions (issue).
 - Weakening branch protection (issue; decision 1 below).
-- Splitting the bundle by topic, or trimming sources (see open question 1).
+- Splitting the bundle by topic, or trimming sources (see author call 1).
 
 ## Decisions (operator)
 
@@ -192,15 +192,14 @@ fetched 2026-11-12). Nothing is missing. Last-touching vs HEAD, for instance:
    Task 1.
 4. Lint exclusions cover every hook that would touch the generated file. Task 4.
 
-## Open questions
+## Author calls (accepted by the operator with the design, 2026-11-12)
 
-1. **Bundle size.** 357 KB now, `DECISIONS.md` 29 percent of it, and I did not
-   verify the Claude Project's per-file limit. Recommendation: ship as is,
+1. **Bundle size.** 357 KB now, `DECISIONS.md` 29 percent of it; the Claude
+   Project's per-file limit is unverified. Call: ship as is,
    dispatch once and watch the Project's sync; trim or split only if it
    complains.
 2. **Stale PR.** If the bundle becomes identical to `main` again while the
-   PR is open (a revert), the no-diff exit leaves that PR open. Recommendation:
-   accept; it merges to a no-op diff or is closed by hand.
+   PR is open (a revert), the no-diff exit leaves that PR open. Call: accept; it merges to a no-op diff or is closed by hand.
 
 ## Discovered, not acted on
 
