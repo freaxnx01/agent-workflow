@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- *(pipeline)* A failure of the implement job **before the agent starts** now posts a run report on the issue naming the failed step, stamps `ai:failed`, and carries an `ai-run` marker with `class: "pre_agent"` (ADR-023, #597). It does not count as an attempt, so a repeated outage is bounded by `MAX_NON_STARTS` rather than burning the issue's budget.
+
+### Fixed
+
+- *(pipeline)* `ensure-toolchain.sh` retries transient apt failures (3 attempts, 5s/10s backoff, `APT_ATTEMPTS` / `APT_RETRY_DELAY`) before the release-binary fallback (#597). A mirror failing DNS for one attempt no longer fails the run.
+
 ## [2.2.1](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.2.1) - 2026-11-11
 
 Hotfix on top of 2.2.0; no change to a consumer's `agent.yml` is needed.
