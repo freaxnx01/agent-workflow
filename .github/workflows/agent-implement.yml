@@ -1020,6 +1020,114 @@ jobs:
           AUTHOR_ALLOWLIST: ${{ inputs.pipeline-author-allowlist }}
         run: bash .claude-pipeline/scripts/verify-or-recover-pr.sh
 
+  implement_prefail:
+    # #597: the implement job died BEFORE the agent started — a toolchain
+    # install, a checkout, the token mint, the implement timeout. agent-eligible
+    # never became 'true', so implement_gate was skipped by design and nothing
+    # told the issue: it kept `ai-implement` and read as "still running" while
+    # the only record was the Actions list (bridge#366, run 43042982652).
+    #
+    # The condition is the exact complement of implement_gate's, so a given
+    # failure is reported by exactly one of the two, never both; an agent-phase
+    # failure keeps its existing report. `result == 'failure'`, not
+    # `!= 'success'`: a parked or paused run finishes GREEN and must stay silent
+    # here — it did no work and the issue is still queued (#517).
+    #
+    # Its own job rather than an `if: failure()` step in implement: the failure
+    # is often the runner itself, and a step there would share it. Same reason
+    # the gate is its own job (#535, ADR-020). A best-effort net, not a
+    # guarantee — if the issue API is what failed, this job goes red too.
+    name: "Report pre-agent failure — issue #${{ inputs.issue-number }}"
+    needs: implement
+    if: ${{ !cancelled() && !inputs.stub-claude
+            && needs.implement.result == 'failure'
+            && needs.implement.outputs.agent-eligible != 'true' }}
+    runs-on: ${{ fromJSON(inputs.gate-runner-labels != '' && inputs.gate-runner-labels || inputs.runner-labels) }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      # find-failed-step.sh reads this run's own jobs. Read-only: this job
+      # reports, it never dispatches. The caller already grants `actions: write`
+      # for the gate's retry, so no consumer needs a new permission.
+      actions: read
+    steps:
+      # No App-token mint: nothing here needs one. post-run-report.sh runs on
+      # `github.token` in the gate too — `issues: write` is all a comment and a
+      # label take, and one fewer secret on the path that exists to be reliable.
+      - name: Checkout consumer repo
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          # This job reports; it pushes nothing. Same rule as the gate (#535).
+          persist-credentials: false
+
+      - name: Checkout agent-workflow scripts
+        if: ${{ !inputs.local-scripts }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ inputs.pipeline-ref }}
+          path: .claude-pipeline
+          sparse-checkout: |
+            scripts
+            tests/mocks
+            tests/fixtures
+
+      - name: Mirror local scripts to .claude-pipeline (self-test mode)
+        if: ${{ inputs.local-scripts }}
+        run: |
+          mkdir -p .claude-pipeline/scripts \
+                   .claude-pipeline/tests/mocks \
+                   .claude-pipeline/tests/fixtures
+          cp -r scripts/. .claude-pipeline/scripts/
+          if [[ -d tests/mocks ]]; then
+            cp -r tests/mocks/. .claude-pipeline/tests/mocks/
+          fi
+          if [[ -d tests/fixtures ]]; then
+            cp -r tests/fixtures/. .claude-pipeline/tests/fixtures/
+          fi
+
+      - name: Ensure toolchain
+        # Only what reporting needs. `rg` is left out on purpose: installing it
+        # is the step that failed in the run this job exists to report, and
+        # post-run-report.sh never calls it. continue-on-error for the same
+        # reason — a toolchain this job cannot fix must not stop it trying.
+        continue-on-error: true
+        env:
+          TOOLS: jq gh
+        run: bash .claude-pipeline/scripts/ensure-toolchain.sh
+
+      - name: Find the failed step
+        id: failed_step
+        env:
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          GH_TOKEN: ${{ github.token }}
+          # The implement job's `name:` is unquoted, so YAML ends the scalar at
+          # the ` #` comment marker and the job GitHub reports is literally
+          # "Implement issue". run-script-tests.sh asserts the two stay equal.
+          JOB_NAME_SUFFIX: Implement issue
+        run: printf 'step=%s\n' "$(bash .claude-pipeline/scripts/find-failed-step.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Post the pre-agent failure report
+        env:
+          # Synthetic, because there is no agent run to have produced one. Zero
+          # turns and $0.00 are check-attempt-cap.sh's own non-start rule, so
+          # this costs the issue no attempt — only one of its MAX_NON_STARTS,
+          # which is what bounds a repeated outage.
+          RESULT_FILE: ${{ runner.temp }}/prefail-result.json
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          WORKFLOW_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RENDER_ONLY: ${{ inputs.dry-run && '1' || '0' }}
+          PRE_AGENT_STEP: ${{ steps.failed_step.outputs.step }}
+          RETRY_ATTEMPT: ${{ inputs.attempt }}
+        run: |
+          printf '%s' '{"is_error":true,"subtype":"pre_agent_failure","num_turns":0,"total_cost_usd":0,"duration_ms":0}' > "$RESULT_FILE"
+          bash .claude-pipeline/scripts/post-run-report.sh
+
   implement_gate:
     # #535 / ADR-020: every decision about the implement run. Own runner, own
     # fresh checkouts, never an agent. Inputs are the implement job's outputs:

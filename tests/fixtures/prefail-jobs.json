@@ -1,0 +1,29 @@
+{
+  "total_count": 3,
+  "jobs": [
+    {
+      "name": "agent / Preflight",
+      "conclusion": "success",
+      "steps": [
+        { "name": "Set up job", "number": 1, "conclusion": "success" },
+        { "name": "Resolve inputs", "number": 2, "conclusion": "success" }
+      ]
+    },
+    {
+      "name": "agent / Implement issue #7",
+      "conclusion": "failure",
+      "steps": [
+        { "name": "Set up job", "number": 1, "conclusion": "success" },
+        { "name": "Checkout consumer repo", "number": 2, "conclusion": "success" },
+        { "name": "Ensure toolchain", "number": 3, "conclusion": "failure" },
+        { "name": "Triage model", "number": 4, "conclusion": "skipped" },
+        { "name": "Post-job cleanup", "number": 5, "conclusion": null }
+      ]
+    },
+    {
+      "name": "agent / Judge implement run — issue #7",
+      "conclusion": "skipped",
+      "steps": []
+    }
+  ]
+}

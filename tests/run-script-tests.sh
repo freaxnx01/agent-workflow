@@ -4737,6 +4737,74 @@ out="$(render_only result-success-cheap.json)"
 assert_not_contains "$out" 'before the agent started' "PRE_AGENT_STEP unset → no pre-agent wording"
 assert_contains "$out" 'LABELS: ai:done' "PRE_AGENT_STEP unset → the usual grade is untouched"
 
+section "find-failed-step — name the step that failed (#597)"
+
+FIND597="$ROOT/scripts/find-failed-step.sh"
+JOBS597="$(cat "$ROOT/tests/fixtures/prefail-jobs.json")"
+
+out="$(JOBS_JSON="$JOBS597" JOB_NAME_SUFFIX='Implement issue #7' bash "$FIND597")"
+assert_equals "$out" "Ensure toolchain" "names the FIRST failed step of the implement job"
+
+out="$(JOBS_JSON="$JOBS597" JOB_NAME_SUFFIX='Implement issue #8' bash "$FIND597")"
+assert_equals "$out" "unknown" "no job matches the suffix → unknown"
+
+out="$(JOBS_JSON="$JOBS597" JOB_NAME_SUFFIX='Preflight' bash "$FIND597")"
+assert_equals "$out" "unknown" "a job that succeeded contributes no step"
+
+out="$(JOBS_JSON='not json' JOB_NAME_SUFFIX='x' bash "$FIND597")"
+assert_equals "$out" "unknown" "garbage payload → unknown"
+ec="$(run_capture_ec env JOBS_JSON='not json' JOB_NAME_SUFFIX='x' bash "$FIND597")"
+assert_equals "$ec" "0" "garbage payload → still exit 0, the report is posted either way"
+
+# The API itself failing (no token, no network, a renamed job) must not take
+# the report down with it: the run URL is the substance, the step name a
+# convenience. A stub `gh` that always fails stands in for the outage.
+FAKEGH597="$(mktemp -d)"
+printf '#!/bin/bash\nexit 1\n' > "$FAKEGH597/gh"
+chmod +x "$FAKEGH597/gh"
+out="$(PATH="$FAKEGH597:$PATH" REPO=owner/repo RUN_ID=1 JOB_NAME_SUFFIX='x' bash "$FIND597")"
+assert_equals "$out" "unknown" "the jobs API failing → unknown, not an error"
+rm -rf "$FAKEGH597"
+
+# The caller writes the output to $GITHUB_OUTPUT, where a second line would be
+# a second key=value pair.
+hostile597="$(jq -c '.jobs[1].steps[2].name = "a\nstep=injected"' "$ROOT/tests/fixtures/prefail-jobs.json")"
+out="$(JOBS_JSON="$hostile597" JOB_NAME_SUFFIX='Implement issue #7' bash "$FIND597")"
+assert_equals "$(printf '%s' "$out" | wc -l | tr -d ' ')" "0" "a step name with a newline still prints ONE line"
+
+section "agent-implement.yml — implement_prefail reports a pre-agent failure (#597)"
+
+WF597="$ROOT/.github/workflows/agent-implement.yml"
+# Comments stripped: the job explains at length why it holds the permissions it
+# does, and a rationale naming `actions: write` must not read as granting it.
+pf597="$(awk '/^  implement_prefail:$/{f=1;next} f && /^  [a-z_]+:$/{exit} f' "$WF597" \
+  | grep -vE '^[[:space:]]*#')"
+assert_contains "$pf597" 'needs: implement' "the job needs the implement job"
+assert_contains "$pf597" "needs.implement.result == 'failure'" "reports only a FAILED implement job (a parked run is green)"
+assert_contains "$pf597" "needs.implement.outputs.agent-eligible != 'true'" "complement of the gate: never double-reports"
+assert_contains "$pf597" '!cancelled()' "a superseded run stays silent (#571)"
+assert_contains "$pf597" '!inputs.stub-claude' "stub runs are tests, never report"
+assert_contains "$pf597" 'PRE_AGENT_STEP' "hands the failed step to post-run-report.sh"
+assert_contains "$pf597" 'post-run-report.sh' "reports through the one reporting script (no bespoke comment)"
+assert_contains "$pf597" 'actions: read' "needs the jobs API, nothing more"
+assert_not_contains "$pf597" 'actions: write' "no dispatch rights: it only reports"
+assert_contains "$pf597" 'persist-credentials: false' "its consumer checkout keeps no token"
+
+# The complement only holds while the gate's own condition is what it was.
+gate597="$(awk '/^  implement_gate:$/{f=1;next} f && /^  [a-z_]+:$/{exit} f' "$WF597")"
+assert_contains "$gate597" "needs.implement.outputs.agent-eligible == 'true'" "the gate's own condition is unchanged"
+
+# The lookup matches the implement job by the name GitHub actually reports —
+# which is the YAML-parsed `name:`, not the source line (the unquoted scalar
+# ends at its ` #` comment marker). Compared post-parse so the two cannot drift.
+assert_equals "$(python3 -c '
+import sys, yaml
+jobs = yaml.safe_load(open(sys.argv[1]))["jobs"]
+suffix = [s["env"]["JOB_NAME_SUFFIX"] for s in jobs["implement_prefail"]["steps"]
+          if "JOB_NAME_SUFFIX" in (s.get("env") or {})]
+print(suffix[0] == jobs["implement"]["name"])
+' "$WF597")" "True" "JOB_NAME_SUFFIX matches the implement job's effective name"
+
 section "no npm anywhere in the pipeline (#395)"
 
 # #302 took the claude path off npm; #395 takes opencode off it. Nothing in
@@ -4792,8 +4860,10 @@ fi
 
 # The pipeline-ref checkouts fetch agent-workflow itself and must keep the
 # default token — scoping the change.
-assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'ref: ..{ inputs.pipeline-ref' || true)" "4" \
-  "the four pipeline-ref checkouts are still present and untouched"
+# The count tracks the number of jobs that check the pipeline out, not the rule
+# — #597's implement_prefail job brought its own and made it five.
+assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'ref: ..{ inputs.pipeline-ref' || true)" "5" \
+  "the five pipeline-ref checkouts are still present and untouched"
 
 # Both review jobs and the implement gate must mint their own token. Passing one
 # between jobs via a job output is not an option: job outputs are not
