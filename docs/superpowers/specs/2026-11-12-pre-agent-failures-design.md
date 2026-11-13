@@ -40,7 +40,7 @@ Two separate gaps:
   inside the step; a persistent failure waits for a human.
 - Azure DevOps. Its pipeline has its own report path (ADR-021 item 9); the step
   lookup below is a GitHub Actions API call.
-- Skipping `rg` when it cannot be installed (see Open questions).
+- Skipping `rg` when it cannot be installed (operator decision 2).
 - A new label. `ai:failed` already means "the run failed" and is what
   `post-run-report.sh` stamps for every failed run.
 
@@ -110,7 +110,7 @@ implement_prefail:
 - New optional env `PRE_AGENT_STEP`. When set, `render_comment` gets
   `**Outcome:** :x: failed: before the agent started (step: <name>)`, the status
   label is `ai:failed`, and the marker carries `subtype: "pre_agent_failure"`,
-  `class: "pre_agent"` (see Open questions), `status: "ai:failed"`.
+  `class: "pre_agent"` (operator decision 1), `status: "ai:failed"`.
 - `counts` is `false` with no change to `run_counts` (`:477-489`): turns and cost
   are 0, which is the cap's own non-start rule. `attempt` is therefore omitted.
 - **Step name is free text.** It is workflow-authored, not agent-authored, but
@@ -165,17 +165,17 @@ not consume an attempt" with no cap change.
 5. `apt-get` failing twice then succeeding leaves exit 0; failing three times
    still reaches the release-binary fallback.
 
-## Open questions
+## Decisions (operator, 2026-11-12)
 
-1. **Marker `class` for this report.** `pre_agent` (new enum value) vs
-   `transient` (existing). Recommend `pre_agent`: it is not always transient, and
-   bridge's retry model (#367) would read `transient` as "safe to retry".
-   Needs a one-line addition to the ADR-021 enum list and a note to bridge.
-2. **Skip `rg` when apt and the fallback both fail?** The issue floats it.
-   Recommend no: the report now makes the failure visible, and a silently missing
-   `rg` degrades the agent in ways that are harder to see than a red job.
-3. **Report a run killed by the implement timeout before the agent?** Covered
-   (result `failure`); no decision needed unless the operator wants it excluded.
+1. **Marker `class` is a new value, `pre_agent`**, not `transient`. A pre-agent
+   failure is not always transient, and bridge's retry model (#367) reads
+   `transient` as "safe to retry". The new ADR states the additive enum value;
+   ADR-021's list is not edited.
+2. **No skipping `rg`.** If apt and the release-binary fallback both fail, the
+   step fails as today. The report now makes that failure visible, and a silently
+   missing `rg` degrades the agent in ways that are harder to see.
+3. **A run killed by the implement timeout before the agent** is reported too
+   (result `failure`); no exclusion.
 
 ## Discovered, not acted on
 
