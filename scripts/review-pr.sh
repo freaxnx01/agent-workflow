@@ -6,7 +6,9 @@
 # template (scripts/lib/review-prompt.md), validates the structured reply,
 # and posts a single PR comment with the summary. Idempotent per PR head
 # SHA — repeated invocations against the same SHA do not duplicate the
-# comment.
+# comment. On GitHub the comment's last line is a hidden, machine-readable
+# `<!-- ai-review: {...} -->` marker (ADR-022, #593) — see
+# render_review_marker.
 #
 # The verdict is emitted to $GITHUB_OUTPUT for the downstream auto-merge
 # job (#15) to act on. This script intentionally does NOT translate the
@@ -43,6 +45,11 @@
 #                      comments and the posted comment through the forge verbs
 #                      in lib/forge.sh. On azdo, DEFAULT_BRANCH must also be
 #                      set: the diff is the checkout against origin/$DEFAULT_BRANCH.
+#   ITERATION          Self-fix pass number this re-review follows (0 / unset on
+#                      the first review). Reported in the ai-review marker.
+#   SELF_FIX_MAX       The self-fix iteration cap in force. Reported in the
+#                      ai-review marker; when unset or non-numeric the marker's
+#                      `self_fix` object is omitted rather than guessed (#593).
 #   DIFF_FILE          Pre-fetched diff path. If set, skips `gh pr diff`.
 #                      Used by Layer-1 tests.
 #   EXISTING_COMMENTS  Newline-separated comment bodies. If set, skips the
@@ -153,6 +160,49 @@ emit_output() {
 
 marker() { printf '<!-- review-pr:%s -->' "$HEAD_SHA"; }
 
+# #593 / ADR-022: one hidden, machine-readable line at the end of the review
+# comment, so a consumer (bridge#382) reads the verdict for a head SHA without
+# regexing prose. Display data for consumers deciding *not* to act, never a
+# trigger. Fields are omitted, never faked; no free text ever enters the line.
+# `<` and `>` are \u-escaped after jq so a hostile HEAD_SHA or severity cannot
+# add a second `-->` and end the comment early.
+render_review_marker() {
+  local verdict="$1" json_file="$2"
+  [[ "$FORGE" == "github" ]] || return 0
+
+  local sha_arg=() counts='{}' self_fix='{}'
+  if [[ "$HEAD_SHA" =~ ^[0-9a-f]{7,64}$ ]]; then
+    sha_arg=(--arg head_sha "$HEAD_SHA")
+  fi
+  if [[ -s "$json_file" ]]; then
+    # Fail-closed: anything that isn't `low` counts as blocking, so an unknown
+    # severity is never mistaken for a nit.
+    counts="$(jq -c '(.concerns // []) | if type == "array"
+      then {blocking: (map(select((.severity // "") != "low")) | length),
+            nits: (map(select(.severity == "low")) | length)}
+      else {} end' "$json_file" 2>/dev/null || true)"
+    [[ -n "$counts" ]] || counts='{}'
+  fi
+  local max="${SELF_FIX_MAX:-}" iterations="${ITERATION:-0}"
+  [[ "$iterations" =~ ^[0-9]+$ ]] || iterations=0
+  if [[ "$max" =~ ^[0-9]+$ ]]; then
+    self_fix="$(jq -nc --argjson i "$iterations" --argjson m "$max" --arg v "$verdict" \
+      '{iterations: $i, max: $m,
+        exhausted: ($v == "request_changes" and $m > 0 and $i >= $m)}')"
+  fi
+
+  local line
+  line="$(jq -nc --arg verdict "$verdict" "${sha_arg[@]}" \
+    --argjson counts "$counts" --argjson self_fix "$self_fix" \
+    '{v: 1, verdict: $verdict}
+     + (if $ARGS.named.head_sha then {head_sha: $ARGS.named.head_sha} else {} end)
+     + $counts
+     + (if $self_fix == {} then {} else {self_fix: $self_fix} end)')"
+  line="${line//</\\u003c}"
+  line="${line//>/\\u003e}"
+  printf '<!-- ai-review: %s -->\n' "$line"
+}
+
 render_comment() {
   local verdict="$1" reason="$2" json_file="$3"
   # Backticks below are Markdown code spans, not command substitutions.
@@ -178,6 +228,7 @@ render_comment() {
       fi
     fi
     printf '_Agent: %s · head: `%s`_\n' "$AGENT" "$HEAD_SHA"
+    render_review_marker "$verdict" "$json_file"
   } > "$COMMENT_FILE"
 }
 

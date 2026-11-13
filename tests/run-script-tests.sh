@@ -1415,6 +1415,99 @@ else
 fi
 rm -f "$QUOTE_VERDICT"
 
+# --- #593 / ADR-022: the hidden ai-review marker ---------------------------
+# review_run renders the comment into $RUNNER_TEMP, so point that at a scratch
+# directory per case and read the body back.
+marker_run() {
+  # args: <fixture> [extra env assignments...]; prints the rendered comment
+  local fixture="$1"; shift
+  local tmp; tmp="$(mktemp -d)"
+  review_run "$fixture" env RUNNER_TEMP="$tmp" "$@" >/dev/null
+  cat "$tmp/review-comment.md"
+  rm -rf "$tmp"
+}
+marker_line() { tail -n1 <<<"$1"; }
+marker_json() { marker_line "$1" | sed -n 's/^<!-- ai-review: \(.*\) -->$/\1/p'; }
+
+c="$(marker_run review-request-changes.json HEAD_SHA=5b669f4 SELF_FIX_MAX=2 ITERATION=2)"
+assert_contains "$(marker_line "$c")" '<!-- ai-review: {' "request_changes → last line is the marker (#593)"
+j="$(marker_json "$c")"
+assert_equals "$(jq -r '.v' <<<"$j")" "1" "marker v is 1 (#593)"
+assert_equals "$(jq -r '.verdict' <<<"$j")" "request_changes" "marker carries the verdict (#593)"
+assert_equals "$(jq -r '.head_sha' <<<"$j")" "5b669f4" "marker carries head_sha (#593)"
+assert_equals "$(jq -r '.blocking' <<<"$j")" "2" "high+medium concerns → blocking 2 (#593)"
+assert_equals "$(jq -r '.nits' <<<"$j")" "0" "no low concerns → nits 0 (#593)"
+assert_equals "$(jq -c '.self_fix' <<<"$j")" '{"iterations":2,"max":2,"exhausted":true}' \
+  "iterations >= max on request_changes → exhausted (#593)"
+
+c="$(marker_run review-approve.json SELF_FIX_MAX=2)"
+j="$(marker_json "$c")"
+assert_equals "$(jq -r '.verdict' <<<"$j")" "approve" "approve verdict in the marker (#593)"
+assert_equals "$(jq -r '.blocking' <<<"$j")" "0" "approve fixture → blocking 0 (#593)"
+assert_equals "$(jq -r '.nits' <<<"$j")" "1" "one low concern → nits 1 (#593)"
+assert_equals "$(jq -c '.self_fix' <<<"$j")" '{"iterations":0,"max":2,"exhausted":false}' \
+  "first review, ITERATION unset → iterations 0, not exhausted (#593)"
+
+# approve never counts as exhausted, however many passes it took.
+c="$(marker_run review-approve.json SELF_FIX_MAX=2 ITERATION=2)"
+assert_equals "$(jq -r '.self_fix.exhausted' <<<"$(marker_json "$c")")" "false" \
+  "approve at the cap → not exhausted (#593)"
+
+# SELF_FIX_MAX unknown → the whole self_fix object is omitted, never faked.
+for bad in '' abc '3a'; do
+  c="$(marker_run review-approve.json SELF_FIX_MAX="$bad")"
+  assert_equals "$(jq -r 'has("self_fix")' <<<"$(marker_json "$c")")" "false" \
+    "SELF_FIX_MAX='$bad' → self_fix omitted (#593)"
+done
+
+# A non-numeric ITERATION falls back to 0 rather than breaking the JSON.
+c="$(marker_run review-approve.json SELF_FIX_MAX=2 ITERATION='2; rm -rf /')"
+assert_equals "$(jq -c '.self_fix' <<<"$(marker_json "$c")")" '{"iterations":0,"max":2,"exhausted":false}' \
+  "non-numeric ITERATION → iterations 0, JSON still valid (#593)"
+
+# Exactly one marker, and nothing else in the body closes an HTML comment.
+c="$(marker_run review-approve.json)"
+assert_equals "$(grep -c '^<!-- ai-review: ' <<<"$c")" "1" "exactly one ai-review marker line (#593)"
+assert_equals "$(grep -c -- '-->' <<<"$c")" "2" \
+  "only the review-pr marker and the ai-review marker close a comment (#593)"
+
+# The visible body is byte-identical once the marker line is stripped.
+assert_equals "$(sed '$d' <<<"$c")" "$(marker_run review-approve.json FORGE=azdo)" \
+  "stripping the marker leaves the previous body byte-identical (#593)"
+
+# Hostile values cannot break out of the HTML comment.
+c="$(marker_run review-approve.json HEAD_SHA='a-->b<c')"
+assert_equals "$(grep -c '^<!-- ai-review: ' <<<"$c")" "1" "hostile HEAD_SHA → still one marker (#593)"
+assert_equals "$(jq -r 'has("head_sha")' <<<"$(marker_json "$c")")" "false" \
+  "non-hex HEAD_SHA → head_sha omitted (#593)"
+
+# Shorter than git's 7-char minimum abbreviation is not a SHA either — omitted,
+# never faked, so a consumer never matches a head against a guess.
+c="$(marker_run review-approve.json HEAD_SHA=abc123)"
+assert_equals "$(jq -r 'has("head_sha")' <<<"$(marker_json "$c")")" "false" \
+  "6-char HEAD_SHA → head_sha omitted (#593)"
+assert_equals "$(jq -r '.verdict' <<<"$(marker_json "$c")")" "approve" \
+  "a dropped head_sha leaves the rest of the marker intact (#593)"
+
+HOSTILE_SEVERITY="$(mktemp --suffix=.json)"
+jq '.concerns[0].severity = "x-->y<z"' "$FIXTURES/review-request-changes.json" > "$HOSTILE_SEVERITY"
+c="$(marker_run review-request-changes.json AGENT_FIXTURE="$HOSTILE_SEVERITY")"
+rm -f "$HOSTILE_SEVERITY"
+j="$(marker_json "$c")"
+assert_equals "$(jq -r '.blocking' <<<"$j")" "2" "an unknown severity counts as blocking, fail-closed (#593)"
+assert_equals "$(grep -c -- '-->' <<<"$(marker_line "$c")")" "1" \
+  "hostile severity → the marker line still closes exactly once (#593)"
+
+# The marker is GitHub-only.
+c="$(marker_run review-approve.json FORGE=azdo)"
+assert_equals "$(grep -c 'ai-review' <<<"$c")" "0" "FORGE=azdo → no marker (#593)"
+
+# A review_failed result has an empty concerns array — counts are still emitted.
+c="$(marker_run review-malformed.json)"
+j="$(marker_json "$c")"
+assert_equals "$(jq -r '.verdict' <<<"$j")" "review_failed" "review_failed passes through to the marker (#593)"
+assert_equals "$(jq -r '.blocking' <<<"$j")" "0" "review_failed → blocking 0 (#593)"
+
 # Idempotency: existing comment with the head-SHA marker → skip post
 GO="$(mktemp)"
 GITHUB_OUTPUT="$GO" \
