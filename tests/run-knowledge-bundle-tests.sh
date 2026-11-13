@@ -235,7 +235,13 @@ assert_contains "$J" "--subject \"\$SUBJECT [skip ci]\"" "[skip ci] is on the sq
 assert_eq "$(grep -v '^ *#' "$WF" 2>/dev/null | grep -c 'skip ci' || true)" "1" "skip ci occurs once in code: the merge subject"
 commit_line="$(grep -n 'commit -q' "$WF" 2>/dev/null | head -1 || true)"
 assert_not_contains "$commit_line" "skip ci" "the head commit message has no [skip ci]"
-assert_not_contains "$W" "refs/heads/main" "never pushes to main"
+# Scoped to the `git push` lines, not the whole file: the job's `if:` guard
+# legitimately reads `github.ref == 'refs/heads/main'`, and a file-wide
+# assertion would flag that guard while saying nothing about the push target.
+push_lines="$(grep 'git push' "$WF" 2>/dev/null || true)"
+# shellcheck disable=SC2016  # matching the literal `${BRANCH}` in the YAML, not expanding it
+assert_contains "$push_lines" 'HEAD:refs/heads/${BRANCH}' "the push target is the bundle branch"
+assert_not_contains "$push_lines" "refs/heads/main" "never pushes to main"
 assert_contains "$W" "git status --porcelain -- docs/generated/" "change detection sees untracked files"
 
 # --- lint exclusions ----------------------------------------------------
