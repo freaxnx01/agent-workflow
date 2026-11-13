@@ -288,6 +288,27 @@ belongs in `skills/`; a short, explicit action belongs in `commands/`.
 
 ---
 
+## Knowledge bundle
+
+`docs/generated/software-factory-knowledge.md` is one generated file holding the
+docs the "Software Factory" Claude Project needs from agent-workflow, bridge and
+ai-instructions. Add this repo to the Project once through its GitHub
+integration and the Project stays current; nothing is uploaded by hand.
+
+- **Change the set:** edit `docs/knowledge-bundle.txt` (one `<repo>/<path>` per
+  line, `#` comments allowed). That is the only place.
+- **Regeneration:** the `knowledge-bundle` workflow runs nightly, on pushes to
+  `main` touching `README.md` or `docs/`, and on demand. It opens (or updates) a
+  `chore/knowledge-bundle` PR that auto-merges; an unchanged bundle makes no PR.
+  Do not edit the generated file.
+- **Headers:** each section starts `# FILE: <repo>/<path> (@<sha>)`, the last
+  commit that touched that file. There is no timestamp.
+- **Locally:** `scripts/build-knowledge-bundle.sh --root ~/repos/github/freaxnx01/public --out /tmp/bundle.md`
+  (sibling checkouts with full history; a missing source fails, naming it).
+- **Live state** (issues, PRs, runs) is not in the bundle; use the bridge MCP.
+
+---
+
 ## Related repos
 
 | Repo | Role |

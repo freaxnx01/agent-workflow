@@ -16,18 +16,28 @@ repos:
     hooks:
       # run-report-golden/ holds byte-exact renders of post-run-report.sh
       # (#585); a paused run's empty `LABELS: ` trailer ends in a space.
+      # docs/generated/ holds the knowledge bundle (#601) — prose concatenated
+      # verbatim from three repos. These hooks REWRITE what they flag, so running
+      # them there would mutate bytes the generator is contracted to reproduce
+      # and the next build would revert the edit. The sources are linted in
+      # their own repos.
       - id: trailing-whitespace
-        exclude: ^tests/fixtures/run-report-golden/
+        exclude: ^(tests/fixtures/run-report-golden/|docs/generated/)
       - id: end-of-file-fixer
-        exclude: ^tests/fixtures/run-report-golden/
+        exclude: ^(tests/fixtures/run-report-golden/|docs/generated/)
       - id: check-yaml
       - id: check-json
         # tests/fixtures/ holds deliberately-malformed JSON/JSONL used to test
         # the pipeline's parse-salvage paths — not config to validate.
         exclude: ^tests/fixtures/
       - id: check-merge-conflict
+      # The bundle is 18 concatenated docs — already a few hundred kB, and it
+      # grows with the list — and it is generated output rather than something
+      # anyone committed by hand.
       - id: check-added-large-files
+        exclude: ^docs/generated/
       - id: mixed-line-ending
+        exclude: ^docs/generated/
 
   - repo: https://github.com/rhysd/actionlint
     rev: v1.7.12
@@ -70,7 +80,10 @@ repos:
   - repo: https://github.com/crate-ci/typos
     rev: v1.47.2
     hooks:
+      # Vocabulary in the bundle belongs to bridge and ai-instructions; a typo
+      # is fixed in the source repo, not in the generated copy.
       - id: typos
+        exclude: ^docs/generated/
 
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.0

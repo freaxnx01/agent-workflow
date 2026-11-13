@@ -1,0 +1,104 @@
+name: knowledge-bundle
+
+# Regenerates docs/generated/software-factory-knowledge.md (#601) and lands a
+# change on main through an App-authored PR with squash auto-merge.
+#
+# Why a PR: main is classically protected (required check: gate-selftest), so a
+# direct push is rejected. The PR is authored by the pipeline App because
+# GITHUB_TOKEN-authored PRs do not trigger CI, and auto-merge would wait forever
+# on checks that never start.
+#
+# What auto-merge actually waits for is gate-selftest alone. `lint` and `test`
+# run on the PR but are not in main's required_status_checks (see lint.yml), so
+# a red run there is visible without holding the squash.
+#
+# `[skip ci]` goes ONLY on the squash-merge subject: on the PR head commit the
+# required checks would be skipped and the merge would stall. On the merge
+# commit it stops the pipelines on main.
+#
+# The three repos are public, so the sibling checkouts use the default token.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
+  push:
+    branches: [main]
+    paths:
+      - 'README.md'
+      - 'docs/**'
+      - 'docs/knowledge-bundle.txt'
+      - '!docs/generated/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: knowledge-bundle
+  cancel-in-progress: false
+
+jobs:
+  bundle:
+    name: bundle
+    if: github.repository == 'freaxnx01/agent-workflow' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BRANCH: chore/knowledge-bundle
+      SUBJECT: 'chore(docs): regenerate knowledge bundle'
+    steps:
+      - name: Checkout agent-workflow
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          path: factory/agent-workflow
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout bridge
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: freaxnx01/bridge
+          path: factory/bridge
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout ai-instructions
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: freaxnx01/ai-instructions
+          path: factory/ai-instructions
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Build the bundle
+        # A missing source fails here with <repo>/<path> named; nothing is written.
+        run: bash factory/agent-workflow/scripts/build-knowledge-bundle.sh --root factory
+
+      - name: Detect change
+        id: change
+        working-directory: factory/agent-workflow
+        # status, not `git diff --quiet`: diff does not see an untracked file,
+        # so the first run (no bundle on main yet) would look unchanged.
+        run: |
+          changed=true
+          [[ -n "$(git status --porcelain -- docs/generated/)" ]] || changed=false
+          printf 'changed=%s\n' "$changed" >> "$GITHUB_OUTPUT"
+          [[ "$changed" == true ]] || echo "Bundle unchanged: no branch, no PR."
+
+      - name: Mint pipeline App token
+        id: app_token
+        if: steps.change.outputs.changed == 'true'
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349  # v2.2.2
+        with:
+          app-id: ${{ secrets.PIPELINE_APP_ID }}
+          private-key: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
+
+      - name: Push branch, open or update PR, enable auto-merge
+        if: steps.change.outputs.changed == 'true'
+        working-directory: factory/agent-workflow
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        # BRANCH and SUBJECT come from the job env above. The script is covered
+        # by tests/run-knowledge-bundle-tests.sh against the `gh` mock.
+        run: bash scripts/publish-knowledge-bundle.sh
