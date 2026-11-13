@@ -82,6 +82,28 @@ outsider to spend lane credits; a maintainer labels an outsider's issue by
 hand. A repo onboarded before the stub existed needs `onboard-consumer.sh`
 re-run (or the stub copied in) to get it.
 
+## Letting `[low]` assumptions through, per repo
+
+By default a headless enrich hands **every** `[low]`-confidence assumption to a
+human (`needs-human`). On a repo that is not mission-critical that stops the
+lane on most feature issues. The operator can loosen it per repo in
+`autopilot.conf`:
+
+```ini
+repo=freaxnx01/game-rhyflitzer:tests.yml
+accept_low=freaxnx01/game-rhyflitzer
+```
+
+For that repo the driver runs `/enrich <n> --quick --headless --accept-low`.
+The `[low]` items are still written to the issue's `## Assumptions` block,
+under a line saying the policy was on, and the issue is dispatched.
+**One-way doors and ⛔ Blocked items still go to `needs-human`**: the policy
+loosens `[low]` and nothing else (#550).
+
+It lives in the host config, next to the allowlist, so a consumer repo cannot
+loosen its own gate. A policy for a repo without a `repo=` line is a config
+error. `--dry-run` shows `enrich headless --accept-low` for such a repo.
+
 ## Setup
 
 1. **Config.** `cp setup/autopilot.conf.example ~/.config/agent-workflow/autopilot.conf`
@@ -153,7 +175,7 @@ script:
 | `failed (enrich timed out after <n>s)` | The nested enrich session hit `enrich_timeout`; escalated to `needs-human` |
 | `failed (enrich exited <rc>)` | The nested enrich session crashed; escalated to `needs-human` |
 | `failed (…); ESCALATION FAILED: needs-human not applied, enrichment-ongoing may still be set` | Any escalation above (timeout, crash, incomplete enrich), AND the escalation call itself failed — the issue may be stuck; fix by hand |
-| `needs-human` | The enrich session hit a one-way door or a `[low]` assumption and handed it over |
+| `needs-human` | The enrich session hit a one-way door, a ⛔ Blocked item, or a `[low]` assumption (the last only on a repo without `accept_low=`) and handed it over |
 | `skipped (could not read labels — not dispatching)` | A post-enrich label re-read (`needs-human`, `needs-enrichment`, or `parked`) failed, or returned a state the driver did not expect; refuses to dispatch rather than guess |
 | `failed (enrich did not complete)` | The nested session exited 0 but neither enriched nor escalated the issue (prose-only reply, a denied tool, a stop on an error, or its own `needs-human` write failing) — `needs-enrichment` is still there and `needs-human` is not. Escalated to `needs-human` and the lock released, so the issue cannot silently drop out of the lane (#458) |
 | `skipped (enrichment-ongoing still set — may be another session's lock)` | The session neither enriched nor escalated, but the lock is still on the issue — most likely another `/enrich` session holds it (this one stood down at Step 1.5 or lost the Step 2.5 race). Nothing written; if no session is actually running, see "When something is wedged" |
@@ -161,7 +183,7 @@ script:
 | `failed (dispatch labels not applied); escalated to needs-human` | The enrich session came out clean, but applying `ai-implement`/`ai-review-ai-merge` failed even after retry; escalated to a human instead of silently dropping the issue |
 | `failed (dispatch labels not applied); ESCALATION FAILED: needs-human not applied` | The dispatch write failed, AND the escalation write also failed — the issue is now enriched with no dispatch labels and no `needs-human`; fix by hand |
 | `enriched` | Spec, plan and issue body written; `ai-implement` + `ai-review-ai-merge` applied |
-| `would: enrich headless, then dispatch (clone <dir>)` | `--dry-run` only — what a real run would attempt next |
+| `would: enrich headless[ --accept-low], then dispatch (clone <dir>)` | `--dry-run` only — what a real run would attempt next; `--accept-low` appears for an `accept_low=` repo |
 
 A `failed` line for a specific issue points at
 `~/.cache/agent-workflow/autopilot/logs/enrich-<n>.log` for the nested

@@ -28,3 +28,11 @@ enrich_timeout=1800
 #
 # Start with the sandbox. Add a real repo only after an end-to-end run.
 repo=freaxnx01/agent-action-sandbox:ci.yml
+
+# Optional, per repo: let headless enrich proceed on [low]-confidence
+# assumptions instead of handing every one to a human (#550). The [low] items
+# are still written to the issue's Assumptions block; one-way doors
+# (credentials, money, public interfaces) and ⛔ Blocked items still go to
+# needs-human. The repo must also have a repo= line above. Meant for repos that
+# are not mission-critical (the game-* fleet), never for factory repos.
+#accept_low=freaxnx01/game-rhyflitzer
