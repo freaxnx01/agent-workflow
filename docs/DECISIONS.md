@@ -1882,3 +1882,146 @@ and an edit can fail independently of the post.
 + Recorded, not fixed here: `check-attempt-cap.sh` counts any comment starting
   with `## ai-implement run` regardless of author. A forged one can only *raise*
   the count — park sooner — so it fails safe.
+
+## ADR-022 — The AI review comment carries a machine-readable review marker (2026-11-13)
+
+**Status:** accepted
+
+**Context.** bridge's cockpit will offer **Merge** on agent PRs, gated on the AI
+review verdict being `approve` *for the PR's current head SHA*
+(freaxnx01/bridge#382). The verdict was prose only: `review-pr.sh` posts a
+comment opening with `<!-- review-pr:<sha> -->` and the line
+``## Automated review — verdict: `approve` ``, and `post-auto-review-block.sh`
+posts a separate "Review held: self-fix exhausted after N/M iteration(s)" status
+comment. A consumer would have to regex both, and the fields it actually needs —
+the head SHA the verdict applies to, how many concerns block versus nit, whether
+the self-fix loop had passes left — are either absent or only recoverable from
+rendered Markdown.
+
+**Decision.**
+
+1. **One hidden line, at the end.** Every review comment `review-pr.sh` posts on
+   GitHub ends with exactly one marker line, directly after the
+   trailing ``_Agent: … · head: `…`_`` line and separated from it by one
+   newline. The prefix
+   is the literal `<!-- ai-review:` plus one space, the suffix one space plus
+   `-->`, and in between is a single compact JSON object:
+
+   ```text
+   <!-- ai-review: {"v":1,"verdict":"approve","head_sha":"5b669f4e2a1c8d3b","blocking":0,"nits":1,"self_fix":{"iterations":1,"max":2,"exhausted":false}} -->
+   ```
+
+2. **The fields of `v: 1`.**
+
+   | Field | Type | Source | Present when |
+   |---|---|---|---|
+   | `v` | int | constant `1` | always |
+   | `verdict` | string | the verdict passed to `finish` | always; one of `approve`, `request_changes`, `block`, `review_failed` |
+   | `head_sha` | string | `HEAD_SHA` | it matches `^[0-9a-f]{7,64}$` |
+   | `blocking` | int | concerns whose `severity` is not `low` | the result JSON holds a `concerns` array |
+   | `nits` | int | concerns whose `severity` is `low` | same |
+   | `self_fix.iterations` | int | `ITERATION` — fix passes applied *before* this review, `0` on the first | `SELF_FIX_MAX` is an integer |
+   | `self_fix.max` | int | `SELF_FIX_MAX` | same |
+   | `self_fix.exhausted` | bool | `verdict == "request_changes"` and `max > 0` and `iterations >= max` | same |
+
+   `blocking` counts anything that is not `low` rather than only `high` and
+   `medium`, so an unknown severity is never mistaken for a nit — it fails
+   closed. The split matches the review prompt: `request_changes` needs at least
+   one `high` or `medium` concern, and an `approve` may still carry `low` nits.
+
+3. **Omitted, never faked.** A field whose source is empty or not the type the
+   table names is left out of the object — no `null`, no `0` stand-ins. A
+   `HEAD_SHA` that is not a hex SHA of at least git's 7-character minimum
+   abbreviation drops `head_sha` entirely rather than publishing a value a
+   consumer could match a head against. `self_fix` is omitted as a whole when
+   `SELF_FIX_MAX` is unknown; a non-numeric `ITERATION` falls back to `0`.
+
+4. **No free text, and no breaking out of the comment.** No field carries the
+   summary, a concern message, the `reason`, or anything else the agent or the
+   PR author writes. Every string is either an enum the pipeline produces
+   (`verdict`) or a SHA. The object is built with `jq -nc` from `--arg` /
+   `--argjson`, then every `<` and `>` in the compact JSON is replaced with the
+   JSON escapes `<` / `>` (ADR-021 item 5). Compact JSON has neither
+   character outside string values, so the substitution is lossless and a parser
+   decodes the original back exactly; the line can never contain a second `-->`.
+
+5. **One marker per review comment, keyed by head SHA.** `post_or_skip` skips
+   when a comment already marks the head (`<!-- review-pr:<sha> -->`), so a head
+   carries at most one review comment and a marker never changes after posting.
+   A re-review after a self-fix pass posts a *new* comment for the *new* head.
+   The verdict for a head is therefore the latest marker whose `head_sha` equals
+   that head. A consumer offering Merge requires both `verdict == "approve"` and
+   that match, and treats everything else — including `block` and
+   `review_failed` — as not approved.
+
+6. **`exhausted` describes the final review on a head, not "the PR is held."**
+   The "Review held: self-fix exhausted after N/M iteration(s)" comment is posted
+   later, by `post-auto-review-block.sh`, and stays human-readable only: it bears
+   no marker, and this ADR does not change it. The last review on a head already
+   knows `iterations` and `max`, so `exhausted` needs no later write. A self-fix
+   loop that *aborts* (a failed fix step, a crashed re-review) leaves the last
+   marker saying `exhausted: false` even though the PR is held — consumers must
+   not read `exhausted` as "held". `verdict != "approve"` is the merge gate;
+   `exhausted` is context for why.
+
+7. **Versioning.** Adding an optional field is not a bump — consumers ignore
+   unknown fields. Renaming a field, removing one, or changing its type or
+   meaning bumps `v`. A consumer that meets an unknown `v` treats the comment as
+   having no marker and falls back to the visible text.
+
+8. **Trust rule for consumers.** A marker is only as trustworthy as the comment
+   it sits in, and on a public repo anyone can comment. Consumers MUST:
+   (a) read markers only from comments authored by the pipeline's review
+   identities — the first review runs with `GH_TOKEN: ${{ github.token }}`, so
+   that is `github-actions[bot]`; re-reviews are posted from the self-fix step,
+   which uses `steps.app_token.outputs.token || github.token`, so where the repo
+   configures the pipeline GitHub App the author is that App's bot;
+   (b) take the marker from the **last** line of the comment only, and at most
+   one per comment; (c) treat an unknown `v` as no marker; (d) use the marker to
+   display and to decide *not* to act, and — because a PR can be pushed to
+   between reading and acting — re-check the PR's current head SHA at action
+   time rather than trusting the read. Known gap inherited from ADR-019 and
+   ADR-021: the agent runs with a token that may be able to post as the same
+   bot, so the author filter holds against third parties, not against the agent
+   (#535).
+
+9. **Azure DevOps emits no review marker in v1.** Same unverified round trip as
+   ADR-021 item 9: the discussion field is HTML and Azure DevOps sanitizes stored
+   HTML, so whether an HTML comment survives is untested. `render_review_marker`
+   returns early unless `FORGE == github`; a consumer reading an ADO PR finds no
+   marker. Attaching one there is a separate issue, gated on a live round-trip
+   check.
+
+**Relation to ADR-021.** This **extends ADR-021's pattern to a second comment
+type; it does not amend ADR-021**, whose contract remains the run report's
+alone. The two markers have different prefixes, different fields and independent
+`v` lines. As there, the addition is purely additive: every byte the visible
+review comment printed before is still printed, in the same order, and the
+`<!-- review-pr:<sha> -->` idempotency marker is untouched.
+
+**Rejected: appending the marker in the workflow after `review-pr.sh` runs.**
+`render_comment` is the only place that builds the body, and `finish` already
+has the verdict. A post-processing step would need the result JSON and the
+self-fix state passed back out, and could fail independently of the post.
+
+**Rejected: `blocking` = `high` concerns only.** That would read a PR held on a
+single `medium` concern as having nothing blocking it, contradicting the
+verdict in the same object.
+
+**Rejected: forcing `github.token` on re-reviews so one author covers both.**
+That would change who the self-fix push is attributed to — a visible behaviour
+change well outside this contract. The trust rule names both identities instead.
+
+**Consequences.**
+
++ The raw comment body grows by roughly 150 bytes. Nothing a human sees changes:
+  an HTML comment does not render.
++ The first review reports `self_fix.iterations: 0` whenever the workflow passes
+  a cap, which is the honest reading of "fix passes applied before this review" —
+  not a claim that the loop ran.
++ A review comment that was never posted (the idempotency skip, a dry run, a run
+  that died before `finish`) has no marker. Consumers must treat "no marker for
+  this head" as normal and fall back to "not reviewed".
++ `review_failed` and `block` travel in the marker unchanged rather than being
+  flattened into "not approved", so a consumer can tell "the reviewer refused"
+  from "the review could not run" when it explains why Merge is unavailable.
