@@ -50,3 +50,6 @@ ignores:
   # issue-body-large-plan.md it would change the file's size, which is the
   # property the classify-turns SIGPIPE regression test depends on.
   - "tests/fixtures/**"
+  # Generated knowledge bundle (#601): concatenated docs from three repos, so its
+  # headings repeat and nest by design. The sources are linted in their own repos.
+  - "docs/generated/**"

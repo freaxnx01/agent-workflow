@@ -1,0 +1,27 @@
+# Software Factory knowledge bundle: sources, one <repo>/<path> per line.
+# This is the only place to edit when the set changes (see README, "Knowledge bundle").
+# Lines starting with # and blank lines are ignored.
+
+# agent-workflow
+agent-workflow/README.md
+agent-workflow/docs/FACTORY-MAP.md
+agent-workflow/docs/DECISIONS.md
+agent-workflow/docs/AUTOPILOT.md
+agent-workflow/docs/ALARMS.md
+agent-workflow/docs/AZDO-PIPELINE-SETUP.md
+agent-workflow/docs/DESIGN.md
+agent-workflow/docs/glossary.md
+agent-workflow/docs/TODO.md
+
+# bridge
+bridge/README.md
+bridge/docs/cockpit.md
+bridge/docs/dispatch.md
+bridge/docs/mcp-cheatsheet.md
+bridge/docs/positioning.md
+
+# ai-instructions
+ai-instructions/README.md
+ai-instructions/.ai/base-instructions.md
+ai-instructions/conventions/milestones.md
+ai-instructions/WORKFLOW-ROLE.md
