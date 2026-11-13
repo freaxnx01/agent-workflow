@@ -1917,7 +1917,7 @@ rendered Markdown.
    |---|---|---|---|
    | `v` | int | constant `1` | always |
    | `verdict` | string | the verdict passed to `finish` | always; one of `approve`, `request_changes`, `block`, `review_failed` |
-   | `head_sha` | string | `HEAD_SHA` | it is a full-length object name — `^([0-9a-f]{40}|[0-9a-f]{64})$`, sha1 or sha256 |
+   | `head_sha` | string | `HEAD_SHA` | it is a full-length object name — `^([0-9a-f]{40}\|[0-9a-f]{64})$`, sha1 or sha256 |
    | `blocking` | int | concerns whose `severity` is not `low` | the result JSON holds a `concerns` array |
    | `nits` | int | concerns whose `severity` is `low` | same |
    | `self_fix.iterations` | int | `ITERATION` — fix passes applied *before* this review, `0` on the first | `SELF_FIX_MAX` is an integer (the workflow passes it only when `self-fix` is on and the cap is above `0`) |
