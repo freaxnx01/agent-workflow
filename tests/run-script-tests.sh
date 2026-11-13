@@ -1858,6 +1858,14 @@ assert_equals "$(grep -cE '^    timeout-minutes: 45$' "$WF")" "2" \
 assert_equals "$(grep -c 'SELF_FIX_OUTCOME: ${{ steps.self_fix.outcome }}' "$WF")" "2" \
   "both blocked steps receive the self-fix outcome (#474)"
 
+# #593: the first review builds its ai-review marker from SELF_FIX_MAX, so both
+# real review steps must receive the cap. The stub-review steps are untouched —
+# they synthesize a verdict and post no comment.
+review_blocks="$(awk '/- name: Run agent review$/{on=1} on&&/^      - name: /&&!/Run agent review/{on=0} on' "$WF")"
+# shellcheck disable=SC2016  # literal GitHub Actions expression, not shell
+assert_equals "$(printf '%s\n' "$review_blocks" | grep -c 'SELF_FIX_MAX: ${{ inputs.self-fix-max-iterations }}')" "2" \
+  "both review steps receive the self-fix cap for the marker (#593)"
+
 # Self-mod guard fires → reason names ADR-002 self-modification, comment
 # goes on the PR (PR_NUMBER is known via find-pipeline-pr.sh which runs
 # unconditionally).
@@ -2270,6 +2278,19 @@ out="$(loop_run "$LOG" 'request_changes,request_changes,request_changes')"
 assert_contains "$out" 'verdict=request_changes' "cap exhausted → final verdict still request_changes"
 assert_contains "$out" 'iterations-used=3'        "used all 3 iterations"
 rm -f "$LOG"
+
+# #593: review-pr.sh reports the self-fix cap in its ai-review marker, so every
+# re-review must see the loop's own MAX_ITERATIONS as SELF_FIX_MAX. Without it
+# the marker omits `self_fix` on exactly the reviews where it matters most.
+RENV="$(mktemp)"
+LOG="$(mktemp)"
+out="$(loop_run "$LOG" 'request_changes,approve' env MAX_ITERATIONS=2 REVIEW_ENV_LOG="$RENV")"
+assert_contains "$out" 'verdict=approve'  "cap forwarding case still approves at iteration 2 (#593)"
+assert_equals "$(sed -n 1p "$RENV")" 'iteration=1 self_fix_max=2' \
+  "re-review 1 sees ITERATION=1 and SELF_FIX_MAX=MAX_ITERATIONS (#593)"
+assert_equals "$(sed -n 2p "$RENV")" 'iteration=2 self_fix_max=2' \
+  "re-review 2 sees ITERATION=2 and the same cap (#593)"
+rm -f "$RENV" "$LOG"
 
 # Fix succeeds but re-review blocks → stop immediately, don't burn remaining iterations
 LOG="$(mktemp)"

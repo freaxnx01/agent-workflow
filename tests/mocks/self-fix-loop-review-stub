@@ -6,10 +6,17 @@
 # review-pr.sh's verdict output. An entry of "CRASH" simulates
 # review-pr.sh exiting non-zero mid-loop (#81 review finding 4) — exits 1
 # without writing $GITHUB_OUTPUT.
+#
+# $REVIEW_ENV_LOG, when set, records one line per call with the env the loop
+# hands the re-review (#593) — review-pr.sh reads these to build its ai-review
+# marker, so the loop forwarding them is worth asserting.
 set -euo pipefail
 IFS=$'\n\t'
 : "${REVIEW_VERDICTS:?REVIEW_VERDICTS must be set}"
 : "${ITERATION:?ITERATION must be set}"
+if [[ -n "${REVIEW_ENV_LOG:-}" ]]; then
+  printf 'iteration=%s self_fix_max=%s\n' "$ITERATION" "${SELF_FIX_MAX:-}" >> "$REVIEW_ENV_LOG"
+fi
 IFS=',' read -ra verdicts <<< "$REVIEW_VERDICTS"
 idx=$((ITERATION - 1))
 verdict="${verdicts[$idx]:-block}"

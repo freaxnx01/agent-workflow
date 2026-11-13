@@ -171,7 +171,11 @@ else
     fi
 
     review_go="$(mktemp)"
-    if ! GITHUB_OUTPUT="$review_go" ITERATION="$i" PR_NUMBER="$PR_NUMBER" REPO="$REPO" HEAD_SHA="$head_sha" \
+    # SELF_FIX_MAX: review-pr.sh reports the cap alongside ITERATION in its
+    # ai-review marker (ADR-022, #593), so a consumer can tell "held at the cap"
+    # from "one pass left" without re-deriving the loop's bounds.
+    if ! GITHUB_OUTPUT="$review_go" ITERATION="$i" SELF_FIX_MAX="$MAX_ITERATIONS" \
+         PR_NUMBER="$PR_NUMBER" REPO="$REPO" HEAD_SHA="$head_sha" \
          bash "$REVIEW_SCRIPT" >/dev/null; then
       abort_iteration "re-review failed" "$i"
       rm -f "$review_go"
