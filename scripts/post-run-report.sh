@@ -66,6 +66,14 @@
 #                       skipped (no failure class, or success).
 #   PR_NUMBER           The run's PR number (steps.verify_pr.outputs.pr-number).
 #                       Run marker only, as `pr`.
+#   PRE_AGENT_STEP      Name of the step that failed before the agent started
+#                       (#597, implement_prefail). When set, the outcome reads
+#                       `failed: before the agent started (step: <name>)` and
+#                       the marker carries class `pre_agent`. Free text: it is
+#                       sanitized and rendered in the visible comment only,
+#                       never in the marker (ADR-021 item 4). With 0 turns and
+#                       $0.00 in RESULT_FILE the run is a non-start, so it
+#                       costs the issue no attempt.
 #
 # Exit codes:
 #   0   success
@@ -118,6 +126,18 @@ ATTEMPT="${ATTEMPT:-}"                 # the cap's lifetime attempt number
 RETRY_ATTEMPT="${RETRY_ATTEMPT:-}"     # position in the automatic retry chain
 RETRY_DECISION="${RETRY_DECISION:-}"   # retry | stop, from Plan retry
 PR_NUMBER="${PR_NUMBER:-}"             # the run's PR number
+PRE_AGENT_STEP="${PRE_AGENT_STEP:-}"   # failed step, when the agent never started (#597)
+
+# Sanitized once, here: the name comes from the Actions jobs API, so it is
+# workflow-authored rather than agent-authored, but it is still free text in a
+# Markdown comment. One line, a conservative character set, 80 chars; a name
+# that is nothing but stripped characters reads as `unknown` rather than
+# rendering an empty parenthesis.
+if [[ -n "$PRE_AGENT_STEP" ]]; then
+  PRE_AGENT_STEP="$(printf '%s' "$PRE_AGENT_STEP" \
+    | tr '\n\r\t' '   ' | tr -cd 'A-Za-z0-9 ._:()#/-' | cut -c1-80)"
+  [[ -n "${PRE_AGENT_STEP// /}" ]] || PRE_AGENT_STEP='unknown'
+fi
 
 # Rendered into the comment, and gates the ai:checks-blocked label. Built here
 # rather than inside render_comment so labels_csv can test one variable.
@@ -412,6 +432,15 @@ if is_pause_class "$FAILURE_CLASS"; then
   STATUS_EMOJI=':warning:'
   STATUS_TEXT="paused: $(pause_title "$FAILURE_CLASS") — the issue stays queued"
   STATUS_LABEL=''
+elif [[ -n "$PRE_AGENT_STEP" ]]; then
+  # #597: the implement job died before the agent started — a toolchain
+  # install, a checkout, the token mint. Still `## ai-implement run` + ai:failed
+  # so the issue stops reading as "in flight", but RESULT_FILE carries 0 turns
+  # and $0.00, which is check-attempt-cap.sh's own non-start rule: it costs the
+  # issue no attempt, only one of its MAX_NON_STARTS.
+  STATUS_EMOJI=':x:'
+  STATUS_TEXT="failed: before the agent started (step: ${PRE_AGENT_STEP})"
+  STATUS_LABEL='ai:failed'
 elif [[ "$FAILURE_CLASS" == "model_not_found" ]]; then
   # #518: a wrong model id. Still `## ai-implement run` + ai:failed — the run
   # did fail — but it has 0 turns and $0.00, so check-attempt-cap.sh counts it
@@ -518,8 +547,14 @@ marker_add_json() {  # <key> <literal> — for values that are their own JSON
 }
 
 render_run_marker() {
-  local counts
+  local counts class
   counts="$(run_counts)"
+  # #597: a pre-agent failure has no classify-failure.sh class — the agent
+  # never ran to produce one. `pre_agent` is an additive enum value, not
+  # `transient`: a consumer's retry model must not read "safe to retry" into a
+  # toolchain or checkout failure that may well be permanent.
+  class="$FAILURE_CLASS"
+  [[ -n "$PRE_AGENT_STEP" ]] && class='pre_agent'
 
   MARKER_ARGS=()
   MARKER_ENTRIES=()
@@ -532,7 +567,7 @@ render_run_marker() {
   fi
   marker_add_json counts "$counts"
   marker_add_int retry_attempt "$RETRY_ATTEMPT"
-  marker_add_string class "$FAILURE_CLASS"
+  marker_add_string class "$class"
   marker_add_string decision "$RETRY_DECISION"
   marker_add_string status "$STATUS_LABEL"
   marker_add_string subtype "$SUBTYPE"

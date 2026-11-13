@@ -4699,6 +4699,44 @@ out="$(CHECKS_RUNNABLE=false CHECKS_BLOCKED_REASON=no-app-token \
 assert_contains "$out" 'LABELS: ai:done,ctx:high,ai:checks-blocked' \
   "blocked + high context → all three labels, outcome first"
 
+section "pre-agent failure report (#597)"
+
+# The implement job died before the agent started: there is no real result
+# JSON, so the prefail job synthesises this one. The report must still be a
+# `## ai-implement run` (the heading check-attempt-cap.sh and bridge's inbox
+# match on), say why, and count as a non-start.
+out="$(PRE_AGENT_STEP='Ensure toolchain' render_only result-pre-agent.json)"
+assert_contains "$out" '## ai-implement run' "heading is the run report's, so tooling that matches it finds it"
+assert_contains "$out" 'failed: before the agent started (step: Ensure toolchain)' "names the failed step"
+assert_contains "$out" 'LABELS: ai:failed' "stamps ai:failed"
+
+marker597="$(sed -n 's/^<!-- ai-run: \(.*\) -->$/\1/p' <<< "$out")"
+assert_equals "$(jq -r '.counts' <<< "$marker597")" "false" "non-start: counts false"
+assert_equals "$(jq -r 'has("attempt")' <<< "$marker597")" "false" "no attempt number"
+assert_equals "$(jq -r '.class' <<< "$marker597")" "pre_agent" "marker class"
+assert_equals "$(jq -r '.subtype' <<< "$marker597")" "pre_agent_failure" "marker subtype"
+assert_equals "$(jq -r '.status' <<< "$marker597")" "ai:failed" "marker status"
+assert_not_contains "$marker597" 'Ensure toolchain' "step name is not in the marker (ADR-021 item 4)"
+
+# The step name is workflow-authored, but the escaping rule is the same: it
+# must not be able to close the HTML comment or inject markup.
+out="$(PRE_AGENT_STEP=$'x --> `rm` <b>\nline2' render_only result-pre-agent.json)"
+assert_equals "$(grep -c '^<!-- ai-run: ' <<< "$out")" "1" "hostile step name → still exactly one marker"
+# `|| true`: a regression that drops the line must fail the assertions below,
+# not abort the whole suite on set -e.
+line597="$(grep 'before the agent started' <<< "$out" || true)"
+assert_not_contains "$line597" '<b>' "markup stripped from the visible line"
+assert_not_contains "$line597" '`' "backticks stripped from the visible line"
+assert_not_contains "$line597" '-->' "the comment terminator cannot survive into the report"
+
+out="$(PRE_AGENT_STEP='<<<>>>' render_only result-pre-agent.json)"
+assert_contains "$out" 'step: unknown' "a step name that sanitises away reads as unknown"
+
+# Unset → nothing changes. Belt and braces beside the golden suite.
+out="$(render_only result-success-cheap.json)"
+assert_not_contains "$out" 'before the agent started' "PRE_AGENT_STEP unset → no pre-agent wording"
+assert_contains "$out" 'LABELS: ai:done' "PRE_AGENT_STEP unset → the usual grade is untouched"
+
 section "no npm anywhere in the pipeline (#395)"
 
 # #302 took the claude path off npm; #395 takes opencode off it. Nothing in
