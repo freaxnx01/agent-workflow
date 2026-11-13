@@ -3831,13 +3831,75 @@ cat > "$FAKE594/sudo" <<'SUDO'
 exit 0
 SUDO
 chmod +x "$FAKE594/sudo"
-out="$(PATH="$FAKE594:$PATH" TOOLS="surely_no_such_tool_xyz" bash "$ENSURE" 2>&1 || true)"
+# APT_RETRY_DELAY=0 only removes the #597 backoff sleeps (15s per run) — the
+# fake still fails every apt-get, so both assertions below test what they did.
+out="$(PATH="$FAKE594:$PATH" APT_RETRY_DELAY=0 TOOLS="surely_no_such_tool_xyz" bash "$ENSURE" 2>&1 || true)"
 assert_contains "$out" 'apt install failed, trying release-binary fallbacks' "apt failure → falls through to the fallbacks (#594)"
 assert_contains "$out" 'surely_no_such_tool_xyz still missing after install' "no fallback for an unknown tool → still reported missing"
-ec="$(run_capture_ec env PATH="$FAKE594:$PATH" TOOLS="surely_no_such_tool_xyz" bash "$ENSURE")"
+ec="$(run_capture_ec env PATH="$FAKE594:$PATH" APT_RETRY_DELAY=0 TOOLS="surely_no_such_tool_xyz" bash "$ENSURE")"
 assert_equals "$ec" "1" "apt failure + no fallback → exit 1"
 rm -rf "$FAKE594"
 assert_contains "$(cat "$ENSURE")" 'sha256sum -c' "the rg fallback verifies its download by checksum"
+
+# #597: a transient apt failure (the 2026-11-11 DNS blip that took every
+# dispatch down at this step) is retried before the release-binary fallback is
+# even considered. The fake sudo counts every `apt-get ... update` and fails the
+# first FAKE_FAIL of them; a successful `install` drops an executable on PATH,
+# standing in for the package actually arriving.
+FAKE597="$(mktemp -d)"
+mkdir -p "$FAKE597/bin"
+cat > "$FAKE597/sudo" <<'SUDO'
+#!/bin/bash
+[[ "$1" == apt-get ]] || exit 0
+if [[ " $* " == *" update "* ]]; then
+  n=$(( $(cat "$FAKE_COUNT" 2>/dev/null || echo 0) + 1 ))
+  printf '%s\n' "$n" > "$FAKE_COUNT"
+  if (( n <= FAKE_FAIL )); then
+    echo "E: Temporary failure resolving 'azure.archive.ubuntu.com'" >&2
+    exit 100
+  fi
+elif [[ " $* " == *" install "* ]]; then
+  for pkg in "$@"; do
+    case "$pkg" in apt-get|install|-*|*=*) continue ;; esac
+    printf '#!/bin/bash\n' > "$FAKE_BIN/$pkg"
+    chmod +x "$FAKE_BIN/$pkg"
+  done
+fi
+exit 0
+SUDO
+chmod +x "$FAKE597/sudo"
+count="$FAKE597/count"
+for fail in 0 1 2; do
+  rm -f "$count" "$FAKE597/bin/tool597"
+  ec=0
+  out="$(PATH="$FAKE597:$FAKE597/bin:$PATH" FAKE_COUNT="$count" FAKE_BIN="$FAKE597/bin" \
+         FAKE_FAIL="$fail" APT_RETRY_DELAY=0 TOOLS="tool597" bash "$ENSURE" 2>&1)" || ec=$?
+  assert_equals "$ec" "0" "apt fails $fail time(s) then succeeds → exit 0 (#597)"
+  assert_equals "$(cat "$count")" "$((fail + 1))" "apt update attempted $((fail + 1)) time(s)"
+done
+assert_contains "$out" 'apt attempt 2/3 failed' "the retry is announced on stderr"
+
+rm -f "$count"
+ec=0
+out="$(PATH="$FAKE597:$FAKE597/bin:$PATH" FAKE_COUNT="$count" FAKE_BIN="$FAKE597/bin" \
+       FAKE_FAIL=99 APT_RETRY_DELAY=0 TOOLS="surely_no_such_tool_xyz" bash "$ENSURE" 2>&1)" || ec=$?
+assert_equals "$(cat "$count")" "3" "bounded: exactly APT_ATTEMPTS tries, no more"
+assert_contains "$out" 'trying release-binary fallbacks' "retries exhausted → still falls through to the fallbacks (#594)"
+assert_equals "$ec" "1" "apt and fallback both fail → still exit 1 (a tool is never silently skipped)"
+
+rm -f "$count"
+PATH="$FAKE597:$FAKE597/bin:$PATH" FAKE_COUNT="$count" FAKE_BIN="$FAKE597/bin" FAKE_FAIL=99 \
+  APT_ATTEMPTS=1 APT_RETRY_DELAY=0 TOOLS="surely_no_such_tool_xyz" bash "$ENSURE" >/dev/null 2>&1 || true
+assert_equals "$(cat "$count")" "1" "APT_ATTEMPTS=1 → a single try"
+assert_contains "$(cat "$ENSURE")" 'Acquire::Retries' "apt itself is asked to retry fetches"
+
+# A tool that is already present is never reinstalled — the retry loop sits
+# behind the `command -v` skip, so apt is not reached at all.
+rm -f "$count"
+PATH="$FAKE597:$FAKE597/bin:$PATH" FAKE_COUNT="$count" FAKE_BIN="$FAKE597/bin" FAKE_FAIL=0 \
+  APT_RETRY_DELAY=0 TOOLS="bash sh" bash "$ENSURE" >/dev/null 2>&1
+assert_equals "$(cat "$count" 2>/dev/null || echo 0)" "0" "tools already present → apt is never invoked"
+rm -rf "$FAKE597"
 
 # AGENT unset → OpenCode install NEVER attempted (Claude path stays zero-cost)
 out="$(TOOLS="bash sh" bash "$ENSURE")"

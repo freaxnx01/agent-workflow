@@ -23,6 +23,12 @@
 #   OPENCODE_DRY_RUN
 #            If "1", report whether OpenCode would be installed but skip
 #            the actual network/install step. Used by Layer-1 tests.
+#   APT_ATTEMPTS
+#            How many times the apt `update` + `install` pair is tried before
+#            the release-binary fallback. Default 3.
+#   APT_RETRY_DELAY
+#            Seconds of backoff between apt attempts, multiplied by the attempt
+#            number (default 5, so 5s then 10s). Tests set it to 0.
 #
 # Exit codes:
 #   0   all required tools present (with or without install)
@@ -76,6 +82,31 @@ install_release_binary() {
   sudo install -m 0755 "$dir/$name/rg" /usr/local/bin/rg
 }
 
+# Retry around apt (#597): on 2026-11-11 a runner could not resolve
+# azure.archive.ubuntu.com and every dispatch died here in ~5 minutes.
+# `-o Acquire::Retries` covers a flapping mirror inside one invocation; the
+# outer loop covers a failed `update`, which aborts the pair before apt's own
+# per-fetch retry matters. Retry first, release-binary fallback second,
+# failure last.
+APT_ATTEMPTS="${APT_ATTEMPTS:-3}"
+APT_RETRY_DELAY="${APT_RETRY_DELAY:-5}"
+
+apt_install_with_retry() {
+  local attempt=1 delay
+  while :; do
+    if sudo apt-get -o Acquire::Retries=3 update -qq \
+       && sudo apt-get -o Acquire::Retries=3 install -y -qq "$@"; then
+      return 0
+    fi
+    (( attempt < APT_ATTEMPTS )) || return 1
+    delay=$(( APT_RETRY_DELAY * attempt ))
+    printf 'warning: apt attempt %d/%d failed, retrying in %ds\n' \
+      "$attempt" "$APT_ATTEMPTS" "$delay" >&2
+    sleep "$delay"
+    attempt=$(( attempt + 1 ))
+  done
+}
+
 MISSING=()
 MISSING=()
 for t in "${TOOLS_LIST[@]}"; do
@@ -93,7 +124,7 @@ else
   done
 
   printf 'installing missing tools via apt: %s\n' "${PKGS[*]}"
-  if ! { sudo apt-get update -qq && sudo apt-get install -y -qq "${PKGS[@]}"; }; then
+  if ! apt_install_with_retry "${PKGS[@]}"; then
     printf 'warning: apt install failed, trying release-binary fallbacks\n' >&2
     for t in "${MISSING[@]}"; do
       command -v "$t" >/dev/null 2>&1 || install_release_binary "$t" || true
