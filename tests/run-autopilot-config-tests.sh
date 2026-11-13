@@ -118,6 +118,52 @@ case "$err" in
   *) fail "unknown key names the problem" "stderr was: $err" ;;
 esac
 
+section "accept_low= (#550)"
+
+assert_eq "an unloaded policy reads as empty" "" "${AUTOPILOT_ACCEPT_LOW[o/r]:-}"
+
+printf 'repo=o/r:ci.yml\nrepo=o/s:ci.yml\naccept_low=o/r\n' > "$TMPDIR_T/low.conf"
+rc=0; load_autopilot_config "$TMPDIR_T/low.conf" >/dev/null 2>&1 || rc=$?
+assert_eq "accept_low config returns 0" "0" "$rc"
+assert_eq "the listed repo accepts low" "1" "${AUTOPILOT_ACCEPT_LOW[o/r]:-}"
+assert_eq "an unlisted allowlisted repo stays strict" "" "${AUTOPILOT_ACCEPT_LOW[o/s]:-}"
+
+printf 'accept_low=o/r\nrepo=o/r:ci.yml\n' > "$TMPDIR_T/low-first.conf"
+rc=0; load_autopilot_config "$TMPDIR_T/low-first.conf" >/dev/null 2>&1 || rc=$?
+assert_eq "accept_low before its repo= line is fine" "0" "$rc"
+assert_eq "order does not matter" "1" "${AUTOPILOT_ACCEPT_LOW[o/r]:-}"
+
+rc=0; load_autopilot_config "$TMPDIR_T/minimal.conf" >/dev/null 2>&1 || rc=$?
+assert_eq "a reload without accept_low resets the policy" "0" "${#AUTOPILOT_ACCEPT_LOW[@]}"
+
+printf 'repo=o/r:ci.yml\naccept_low=o/other\n' > "$TMPDIR_T/low-stray.conf"
+rc=0; err="$(load_autopilot_config "$TMPDIR_T/low-stray.conf" 2>&1 >/dev/null)" || rc=$?
+assert_eq "accept_low for a non-allowlisted repo returns 1" "1" "$rc"
+case "$err" in
+  *":2: accept_low names a repo that is not allowlisted: o/other"*) pass "the stray policy names file, line and repo" ;;
+  *) fail "the stray policy names file, line and repo" "stderr was: $err" ;;
+esac
+
+# Two slashes, so this fails the owner/name grammar itself. A single-segment
+# traversal (`../r`) does match that grammar — `..` is inside [A-Za-z0-9._-] —
+# and is refused one step later by the allowlist check above instead. Either
+# way the value never reaches anything but an array key.
+printf 'repo=o/r:ci.yml\naccept_low=../../r\n' > "$TMPDIR_T/low-bad.conf"
+rc=0; err="$(load_autopilot_config "$TMPDIR_T/low-bad.conf" 2>&1 >/dev/null)" || rc=$?
+assert_eq "a malformed accept_low returns 1" "1" "$rc"
+case "$err" in
+  *"accept_low must be owner/name: ../../r"*) pass "a malformed accept_low names the problem" ;;
+  *) fail "a malformed accept_low names the problem" "stderr was: $err" ;;
+esac
+
+printf 'repo=o/r:ci.yml\naccept_low=../r\n' > "$TMPDIR_T/low-traversal.conf"
+rc=0; err="$(load_autopilot_config "$TMPDIR_T/low-traversal.conf" 2>&1 >/dev/null)" || rc=$?
+assert_eq "a traversal-shaped accept_low returns 1" "1" "$rc"
+case "$err" in
+  *":2: accept_low names a repo that is not allowlisted: ../r"*) pass "a traversal-shaped accept_low is refused with file:line" ;;
+  *) fail "a traversal-shaped accept_low is refused with file:line" "stderr was: $err" ;;
+esac
+
 section "AUTOPILOT_CONFIG env default"
 
 rc=0

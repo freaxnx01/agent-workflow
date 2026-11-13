@@ -8,11 +8,21 @@
 #   AUTOPILOT_ENRICH_TIMEOUT  per-issue timeout in seconds (default 1800)
 #   AUTOPILOT_REPOS           array of allowlisted owner/name repos
 #   AUTOPILOT_GATES           assoc array, owner/name -> its test-gate workflow file
+#   AUTOPILOT_ACCEPT_LOW      assoc array, owner/name -> 1 for repos whose headless
+#                             enrich may proceed on [low] assumptions (#550)
 #
 # Each allowlisted repo is declared as:
 #   repo=<owner/name>:<test-gate workflow file>
 # e.g.
 #   repo=freaxnx01/agent-action-sandbox:ci.yml
+#
+# A repo may additionally be declared, by the operator only, as:
+#   accept_low=<owner/name>
+# Headless enrich on that repo then records [low] assumptions and continues;
+# one-way doors and ⛔ items still go to needs-human. The repo must also have a
+# repo= line (anywhere in the file). It lives here, host-side, for the same
+# reason the allowlist does: a consumer repo must not be able to loosen its own
+# gate.
 #
 # The gate is named HERE, not in the consumer's own agent.yml: that reusable
 # workflow (.github/workflows/agent-implement.yml) does not declare a
@@ -36,6 +46,12 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# Declared at source time, not only inside load_autopilot_config: a caller that
+# never loads a config (tests sourcing the driver) must read it as empty. On an
+# undeclared name, ${AUTOPILOT_ACCEPT_LOW[o/r]:-} would be an indexed subscript
+# evaluated arithmetically — `o / r`, a division by zero.
+declare -gA AUTOPILOT_ACCEPT_LOW=()
+
 load_autopilot_config() {
   local file="${1:-${AUTOPILOT_CONFIG:-$HOME/.config/agent-workflow/autopilot.conf}}"
   local line key value lineno=0
@@ -50,6 +66,8 @@ load_autopilot_config() {
   # entry from a prior one.
   declare -gA AUTOPILOT_GATES
   AUTOPILOT_GATES=()
+  AUTOPILOT_ACCEPT_LOW=()
+  local -a low_repos=() low_lines=()
 
   if [[ ! -r "$file" ]]; then
     printf 'error: config not readable: %s\n' "$file" >&2
@@ -112,6 +130,15 @@ load_autopilot_config() {
         # shellcheck disable=SC2034  # consumed by the caller after sourcing, not in this file
         AUTOPILOT_GATES["$repo_name"]="$gate"
         ;;
+      accept_low)
+        if ! [[ "$value" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+          printf 'error: %s:%d: accept_low must be owner/name: %s\n' "$file" "$lineno" "$value" >&2
+          return 1
+        fi
+        # Checked against the allowlist after the loop, so line order is free.
+        low_repos+=("$value")
+        low_lines+=("$lineno")
+        ;;
       *)
         printf 'error: %s:%d: unknown key: %s\n' "$file" "$lineno" "$key" >&2
         return 1
@@ -123,6 +150,21 @@ load_autopilot_config() {
     printf 'error: %s: no repo= lines — an empty allowlist would do nothing\n' "$file" >&2
     return 1
   fi
+
+  local i r allowed
+  for i in "${!low_repos[@]}"; do
+    allowed=0
+    for r in "${AUTOPILOT_REPOS[@]}"; do
+      [[ "$r" == "${low_repos[$i]}" ]] && allowed=1
+    done
+    if (( ! allowed )); then
+      printf 'error: %s:%d: accept_low names a repo that is not allowlisted: %s\n' \
+        "$file" "${low_lines[$i]}" "${low_repos[$i]}" >&2
+      return 1
+    fi
+    # shellcheck disable=SC2034  # consumed by the caller after sourcing
+    AUTOPILOT_ACCEPT_LOW["${low_repos[$i]}"]=1
+  done
 
   return 0
 }

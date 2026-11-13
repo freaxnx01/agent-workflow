@@ -110,6 +110,23 @@ else
   fail "a failed session's log captures stderr diagnostics" "no stub-diagnostic-line in $AUTOPILOT_LOG_DIR/enrich-99.log"
 fi
 
+section "the accept-low policy (#550)"
+
+rc=0; ENRICH_ACCEPT_LOW=1 "$WRAPPER" 550 || rc=$?
+assert_eq "ENRICH_ACCEPT_LOW=1 adds --accept-low" \
+  "/enrich 550 --quick --headless --accept-low" "$(cat "$TMPDIR_T/stdin")"
+
+for v in 0 yes true ''; do
+  rc=0; ENRICH_ACCEPT_LOW="$v" "$WRAPPER" 550 || rc=$?
+  assert_eq "ENRICH_ACCEPT_LOW='$v' stays strict" "/enrich 550 --quick --headless" "$(cat "$TMPDIR_T/stdin")"
+done
+
+rc=0; env -u ENRICH_ACCEPT_LOW "$WRAPPER" 550 || rc=$?
+assert_eq "unset ENRICH_ACCEPT_LOW stays strict" "/enrich 550 --quick --headless" "$(cat "$TMPDIR_T/stdin")"
+
+rc=0; ENRICH_ACCEPT_LOW=1 STUB_RC=3 "$WRAPPER" 550 || rc=$?
+assert_eq "the session's exit status still propagates with the policy" "3" "$rc"
+
 section "usage"
 
 rc=0; "$WRAPPER" >/dev/null 2>&1 || rc=$?

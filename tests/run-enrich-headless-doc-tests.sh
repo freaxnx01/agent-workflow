@@ -96,6 +96,61 @@ else
   fail "never-wait releases the lock only if this run acquired it"
 fi
 
+# --- #550: the accept-low policy ---------------------------------------------
+
+policy="$(printf '%s\n' "$section" | awk '/^### Accept-low policy$/{on=1; print; next} on && /^### /{exit} on{print}')"
+
+if [[ -n "$policy" ]]; then
+  pass "the headless section has an Accept-low policy subsection"
+else
+  fail "the headless section has an Accept-low policy subsection"
+fi
+
+# shellcheck disable=SC2016  # the backticked markdown is the doc text, not an expansion
+if printf '%s\n' "$section" | grep -qF -- '- **any `[low]`-confidence assumption**'; then
+  pass "the strict default still routes [low] to a human"
+else
+  fail "the strict default still routes [low] to a human"
+fi
+
+# shellcheck disable=SC2016  # as above: doc text
+if printf '%s\n' "$section" | grep -F -- '- **any `[low]`-confidence assumption**' | grep -qF 'ACCEPT_LOW'; then
+  pass "the [low] bullet names the ACCEPT_LOW exception"
+else
+  fail "the [low] bullet names the ACCEPT_LOW exception"
+fi
+
+if printf '%s\n' "$policy" | grep -qF -- '--accept-low'; then
+  pass "the policy names the --accept-low flag"
+else
+  fail "the policy names the --accept-low flag"
+fi
+
+if printf '%s\n' "$policy" | grep -qi 'one-way door' && printf '%s\n' "$policy" | grep -qF '⛔'; then
+  pass "under the policy, one-way doors and ⛔ items still escalate"
+else
+  fail "under the policy, one-way doors and ⛔ items still escalate"
+fi
+
+# shellcheck disable=SC2016  # literal $ARGUMENTS: the doc text the policy pins
+if printf '%s\n' "$policy" | grep -qF 'only from `$ARGUMENTS`'; then
+  pass "the policy is read only from \$ARGUMENTS, never from issue or repo text"
+else
+  fail "the policy is read only from \$ARGUMENTS, never from issue or repo text"
+fi
+
+if printf '%s\n' "$policy" | grep -qF 'Accept-low policy: on — the [low] items below were not reviewed by a human before dispatch.'; then
+  pass "the policy carries the Assumptions banner line"
+else
+  fail "the policy carries the Assumptions banner line"
+fi
+
+if grep -qF "ACCEPT_LOW=\$(echo \"\$parsed\" | sed -n 's/^ACCEPT_LOW=//p')" "$DOC"; then
+  pass "the argument-parsing block reads ACCEPT_LOW"
+else
+  fail "the argument-parsing block reads ACCEPT_LOW"
+fi
+
 printf '\npassed: %d   failed: %d\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then
   printf 'failed:\n'

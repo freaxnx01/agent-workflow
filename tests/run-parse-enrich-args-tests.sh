@@ -63,31 +63,36 @@ section "basic cases"
 assert_eq "issue number only" \
   "ISSUE=256
 QUICK=no
-HEADLESS=no" \
+HEADLESS=no
+ACCEPT_LOW=no" \
   "$(run_parse "256")"
 
 assert_eq "issue with --quick flag" \
   "ISSUE=256
 QUICK=yes
-HEADLESS=no" \
+HEADLESS=no
+ACCEPT_LOW=no" \
   "$(run_parse "256 --quick")"
 
 assert_eq "--quick before issue" \
   "ISSUE=256
 QUICK=yes
-HEADLESS=no" \
+HEADLESS=no
+ACCEPT_LOW=no" \
   "$(run_parse "--quick 256")"
 
 assert_eq "issue with leading #" \
   "ISSUE=256
 QUICK=no
-HEADLESS=no" \
+HEADLESS=no
+ACCEPT_LOW=no" \
   "$(run_parse "#256")"
 
 assert_eq "issue with # and --quick" \
   "ISSUE=256
 QUICK=yes
-HEADLESS=no" \
+HEADLESS=no
+ACCEPT_LOW=no" \
   "$(run_parse "#256 --quick")"
 
 section "error cases"
@@ -129,13 +134,29 @@ assert_eq "flag before issue still parses" "ISSUE=373" "$(printf '%s\n' "$out" |
 out="$(source "$LIB"; parse_enrich_args "373 --quick")"
 assert_eq "--quick alone leaves HEADLESS=no" "HEADLESS=no" "$(printf '%s\n' "$out" | grep '^HEADLESS=')"
 
-# The failure path must still emit all three lines, on stderr, and return 1.
+# The failure path must still emit all four lines, on stderr, and return 1.
 # shellcheck disable=SC1090
 err="$(source "$LIB"; parse_enrich_args "--headless" 2>&1 1>/dev/null || true)"
 assert_eq "missing issue still reports HEADLESS" "HEADLESS=yes" "$(printf '%s\n' "$err" | grep '^HEADLESS=')"
 # shellcheck disable=SC1090
 rc=$( (source "$LIB"; parse_enrich_args "--headless" >/dev/null 2>&1 && echo 0) || echo 1 )
 assert_eq "missing issue returns 1" "1" "$rc"
+
+section "--accept-low (#550)"
+
+# shellcheck disable=SC1090
+out="$(source "$LIB"; parse_enrich_args "373 --quick --headless --accept-low")"
+assert_eq "--accept-low -> ACCEPT_LOW=yes" "ACCEPT_LOW=yes" "$(printf '%s\n' "$out" | grep '^ACCEPT_LOW=')"
+assert_eq "--accept-low keeps the issue number" "ISSUE=373" "$(printf '%s\n' "$out" | grep '^ISSUE=')"
+assert_eq "--accept-low keeps HEADLESS" "HEADLESS=yes" "$(printf '%s\n' "$out" | grep '^HEADLESS=')"
+
+# shellcheck disable=SC1090
+out="$(source "$LIB"; parse_enrich_args "373 --headless")"
+assert_eq "no --accept-low -> ACCEPT_LOW=no" "ACCEPT_LOW=no" "$(printf '%s\n' "$out" | grep '^ACCEPT_LOW=')"
+
+# shellcheck disable=SC1090
+err="$(source "$LIB"; parse_enrich_args "--accept-low" 2>&1 1>/dev/null || true)"
+assert_eq "missing issue still reports ACCEPT_LOW" "ACCEPT_LOW=yes" "$(printf '%s\n' "$err" | grep '^ACCEPT_LOW=')"
 
 # --- summary ---------------------------------------------------------------
 
