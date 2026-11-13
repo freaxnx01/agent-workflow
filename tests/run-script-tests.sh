@@ -3831,13 +3831,75 @@ cat > "$FAKE594/sudo" <<'SUDO'
 exit 0
 SUDO
 chmod +x "$FAKE594/sudo"
-out="$(PATH="$FAKE594:$PATH" TOOLS="surely_no_such_tool_xyz" bash "$ENSURE" 2>&1 || true)"
+# APT_RETRY_DELAY=0 only removes the #597 backoff sleeps (15s per run) — the
+# fake still fails every apt-get, so both assertions below test what they did.
+out="$(PATH="$FAKE594:$PATH" APT_RETRY_DELAY=0 TOOLS="surely_no_such_tool_xyz" bash "$ENSURE" 2>&1 || true)"
 assert_contains "$out" 'apt install failed, trying release-binary fallbacks' "apt failure → falls through to the fallbacks (#594)"
 assert_contains "$out" 'surely_no_such_tool_xyz still missing after install' "no fallback for an unknown tool → still reported missing"
-ec="$(run_capture_ec env PATH="$FAKE594:$PATH" TOOLS="surely_no_such_tool_xyz" bash "$ENSURE")"
+ec="$(run_capture_ec env PATH="$FAKE594:$PATH" APT_RETRY_DELAY=0 TOOLS="surely_no_such_tool_xyz" bash "$ENSURE")"
 assert_equals "$ec" "1" "apt failure + no fallback → exit 1"
 rm -rf "$FAKE594"
 assert_contains "$(cat "$ENSURE")" 'sha256sum -c' "the rg fallback verifies its download by checksum"
+
+# #597: a transient apt failure (the 2026-11-11 DNS blip that took every
+# dispatch down at this step) is retried before the release-binary fallback is
+# even considered. The fake sudo counts every `apt-get ... update` and fails the
+# first FAKE_FAIL of them; a successful `install` drops an executable on PATH,
+# standing in for the package actually arriving.
+FAKE597="$(mktemp -d)"
+mkdir -p "$FAKE597/bin"
+cat > "$FAKE597/sudo" <<'SUDO'
+#!/bin/bash
+[[ "$1" == apt-get ]] || exit 0
+if [[ " $* " == *" update "* ]]; then
+  n=$(( $(cat "$FAKE_COUNT" 2>/dev/null || echo 0) + 1 ))
+  printf '%s\n' "$n" > "$FAKE_COUNT"
+  if (( n <= FAKE_FAIL )); then
+    echo "E: Temporary failure resolving 'azure.archive.ubuntu.com'" >&2
+    exit 100
+  fi
+elif [[ " $* " == *" install "* ]]; then
+  for pkg in "$@"; do
+    case "$pkg" in apt-get|install|-*|*=*) continue ;; esac
+    printf '#!/bin/bash\n' > "$FAKE_BIN/$pkg"
+    chmod +x "$FAKE_BIN/$pkg"
+  done
+fi
+exit 0
+SUDO
+chmod +x "$FAKE597/sudo"
+count="$FAKE597/count"
+for fail in 0 1 2; do
+  rm -f "$count" "$FAKE597/bin/tool597"
+  ec=0
+  out="$(PATH="$FAKE597:$FAKE597/bin:$PATH" FAKE_COUNT="$count" FAKE_BIN="$FAKE597/bin" \
+         FAKE_FAIL="$fail" APT_RETRY_DELAY=0 TOOLS="tool597" bash "$ENSURE" 2>&1)" || ec=$?
+  assert_equals "$ec" "0" "apt fails $fail time(s) then succeeds → exit 0 (#597)"
+  assert_equals "$(cat "$count")" "$((fail + 1))" "apt update attempted $((fail + 1)) time(s)"
+done
+assert_contains "$out" 'apt attempt 2/3 failed' "the retry is announced on stderr"
+
+rm -f "$count"
+ec=0
+out="$(PATH="$FAKE597:$FAKE597/bin:$PATH" FAKE_COUNT="$count" FAKE_BIN="$FAKE597/bin" \
+       FAKE_FAIL=99 APT_RETRY_DELAY=0 TOOLS="surely_no_such_tool_xyz" bash "$ENSURE" 2>&1)" || ec=$?
+assert_equals "$(cat "$count")" "3" "bounded: exactly APT_ATTEMPTS tries, no more"
+assert_contains "$out" 'trying release-binary fallbacks' "retries exhausted → still falls through to the fallbacks (#594)"
+assert_equals "$ec" "1" "apt and fallback both fail → still exit 1 (a tool is never silently skipped)"
+
+rm -f "$count"
+PATH="$FAKE597:$FAKE597/bin:$PATH" FAKE_COUNT="$count" FAKE_BIN="$FAKE597/bin" FAKE_FAIL=99 \
+  APT_ATTEMPTS=1 APT_RETRY_DELAY=0 TOOLS="surely_no_such_tool_xyz" bash "$ENSURE" >/dev/null 2>&1 || true
+assert_equals "$(cat "$count")" "1" "APT_ATTEMPTS=1 → a single try"
+assert_contains "$(cat "$ENSURE")" 'Acquire::Retries' "apt itself is asked to retry fetches"
+
+# A tool that is already present is never reinstalled — the retry loop sits
+# behind the `command -v` skip, so apt is not reached at all.
+rm -f "$count"
+PATH="$FAKE597:$FAKE597/bin:$PATH" FAKE_COUNT="$count" FAKE_BIN="$FAKE597/bin" FAKE_FAIL=0 \
+  APT_RETRY_DELAY=0 TOOLS="bash sh" bash "$ENSURE" >/dev/null 2>&1
+assert_equals "$(cat "$count" 2>/dev/null || echo 0)" "0" "tools already present → apt is never invoked"
+rm -rf "$FAKE597"
 
 # AGENT unset → OpenCode install NEVER attempted (Claude path stays zero-cost)
 out="$(TOOLS="bash sh" bash "$ENSURE")"
@@ -4637,6 +4699,112 @@ out="$(CHECKS_RUNNABLE=false CHECKS_BLOCKED_REASON=no-app-token \
 assert_contains "$out" 'LABELS: ai:done,ctx:high,ai:checks-blocked' \
   "blocked + high context → all three labels, outcome first"
 
+section "pre-agent failure report (#597)"
+
+# The implement job died before the agent started: there is no real result
+# JSON, so the prefail job synthesises this one. The report must still be a
+# `## ai-implement run` (the heading check-attempt-cap.sh and bridge's inbox
+# match on), say why, and count as a non-start.
+out="$(PRE_AGENT_STEP='Ensure toolchain' render_only result-pre-agent.json)"
+assert_contains "$out" '## ai-implement run' "heading is the run report's, so tooling that matches it finds it"
+assert_contains "$out" 'failed: before the agent started (step: Ensure toolchain)' "names the failed step"
+assert_contains "$out" 'LABELS: ai:failed' "stamps ai:failed"
+
+marker597="$(sed -n 's/^<!-- ai-run: \(.*\) -->$/\1/p' <<< "$out")"
+assert_equals "$(jq -r '.counts' <<< "$marker597")" "false" "non-start: counts false"
+assert_equals "$(jq -r 'has("attempt")' <<< "$marker597")" "false" "no attempt number"
+assert_equals "$(jq -r '.class' <<< "$marker597")" "pre_agent" "marker class"
+assert_equals "$(jq -r '.subtype' <<< "$marker597")" "pre_agent_failure" "marker subtype"
+assert_equals "$(jq -r '.status' <<< "$marker597")" "ai:failed" "marker status"
+assert_not_contains "$marker597" 'Ensure toolchain' "step name is not in the marker (ADR-021 item 4)"
+
+# The step name is workflow-authored, but the escaping rule is the same: it
+# must not be able to close the HTML comment or inject markup.
+out="$(PRE_AGENT_STEP=$'x --> `rm` <b>\nline2' render_only result-pre-agent.json)"
+assert_equals "$(grep -c '^<!-- ai-run: ' <<< "$out")" "1" "hostile step name → still exactly one marker"
+# `|| true`: a regression that drops the line must fail the assertions below,
+# not abort the whole suite on set -e.
+line597="$(grep 'before the agent started' <<< "$out" || true)"
+assert_not_contains "$line597" '<b>' "markup stripped from the visible line"
+assert_not_contains "$line597" '`' "backticks stripped from the visible line"
+assert_not_contains "$line597" '-->' "the comment terminator cannot survive into the report"
+
+out="$(PRE_AGENT_STEP='<<<>>>' render_only result-pre-agent.json)"
+assert_contains "$out" 'step: unknown' "a step name that sanitises away reads as unknown"
+
+# Unset → nothing changes. Belt and braces beside the golden suite.
+out="$(render_only result-success-cheap.json)"
+assert_not_contains "$out" 'before the agent started' "PRE_AGENT_STEP unset → no pre-agent wording"
+assert_contains "$out" 'LABELS: ai:done' "PRE_AGENT_STEP unset → the usual grade is untouched"
+
+section "find-failed-step — name the step that failed (#597)"
+
+FIND597="$ROOT/scripts/find-failed-step.sh"
+JOBS597="$(cat "$ROOT/tests/fixtures/prefail-jobs.json")"
+
+out="$(JOBS_JSON="$JOBS597" JOB_NAME_SUFFIX='Implement issue #7' bash "$FIND597")"
+assert_equals "$out" "Ensure toolchain" "names the FIRST failed step of the implement job"
+
+out="$(JOBS_JSON="$JOBS597" JOB_NAME_SUFFIX='Implement issue #8' bash "$FIND597")"
+assert_equals "$out" "unknown" "no job matches the suffix → unknown"
+
+out="$(JOBS_JSON="$JOBS597" JOB_NAME_SUFFIX='Preflight' bash "$FIND597")"
+assert_equals "$out" "unknown" "a job that succeeded contributes no step"
+
+out="$(JOBS_JSON='not json' JOB_NAME_SUFFIX='x' bash "$FIND597")"
+assert_equals "$out" "unknown" "garbage payload → unknown"
+ec="$(run_capture_ec env JOBS_JSON='not json' JOB_NAME_SUFFIX='x' bash "$FIND597")"
+assert_equals "$ec" "0" "garbage payload → still exit 0, the report is posted either way"
+
+# The API itself failing (no token, no network, a renamed job) must not take
+# the report down with it: the run URL is the substance, the step name a
+# convenience. A stub `gh` that always fails stands in for the outage.
+FAKEGH597="$(mktemp -d)"
+printf '#!/bin/bash\nexit 1\n' > "$FAKEGH597/gh"
+chmod +x "$FAKEGH597/gh"
+out="$(PATH="$FAKEGH597:$PATH" REPO=owner/repo RUN_ID=1 JOB_NAME_SUFFIX='x' bash "$FIND597")"
+assert_equals "$out" "unknown" "the jobs API failing → unknown, not an error"
+rm -rf "$FAKEGH597"
+
+# The caller writes the output to $GITHUB_OUTPUT, where a second line would be
+# a second key=value pair.
+hostile597="$(jq -c '.jobs[1].steps[2].name = "a\nstep=injected"' "$ROOT/tests/fixtures/prefail-jobs.json")"
+out="$(JOBS_JSON="$hostile597" JOB_NAME_SUFFIX='Implement issue #7' bash "$FIND597")"
+assert_equals "$(printf '%s' "$out" | wc -l | tr -d ' ')" "0" "a step name with a newline still prints ONE line"
+
+section "agent-implement.yml — implement_prefail reports a pre-agent failure (#597)"
+
+WF597="$ROOT/.github/workflows/agent-implement.yml"
+# Comments stripped: the job explains at length why it holds the permissions it
+# does, and a rationale naming `actions: write` must not read as granting it.
+pf597="$(awk '/^  implement_prefail:$/{f=1;next} f && /^  [a-z_]+:$/{exit} f' "$WF597" \
+  | grep -vE '^[[:space:]]*#')"
+assert_contains "$pf597" 'needs: implement' "the job needs the implement job"
+assert_contains "$pf597" "needs.implement.result == 'failure'" "reports only a FAILED implement job (a parked run is green)"
+assert_contains "$pf597" "needs.implement.outputs.agent-eligible != 'true'" "complement of the gate: never double-reports"
+assert_contains "$pf597" '!cancelled()' "a superseded run stays silent (#571)"
+assert_contains "$pf597" '!inputs.stub-claude' "stub runs are tests, never report"
+assert_contains "$pf597" 'PRE_AGENT_STEP' "hands the failed step to post-run-report.sh"
+assert_contains "$pf597" 'post-run-report.sh' "reports through the one reporting script (no bespoke comment)"
+assert_contains "$pf597" 'actions: read' "needs the jobs API, nothing more"
+assert_not_contains "$pf597" 'actions: write' "no dispatch rights: it only reports"
+assert_contains "$pf597" 'persist-credentials: false' "its consumer checkout keeps no token"
+
+# The complement only holds while the gate's own condition is what it was.
+gate597="$(awk '/^  implement_gate:$/{f=1;next} f && /^  [a-z_]+:$/{exit} f' "$WF597")"
+assert_contains "$gate597" "needs.implement.outputs.agent-eligible == 'true'" "the gate's own condition is unchanged"
+
+# The lookup matches the implement job by the name GitHub actually reports —
+# which is the YAML-parsed `name:`, not the source line (the unquoted scalar
+# ends at its ` #` comment marker). Compared post-parse so the two cannot drift.
+assert_equals "$(python3 -c '
+import sys, yaml
+jobs = yaml.safe_load(open(sys.argv[1]))["jobs"]
+suffix = [s["env"]["JOB_NAME_SUFFIX"] for s in jobs["implement_prefail"]["steps"]
+          if "JOB_NAME_SUFFIX" in (s.get("env") or {})]
+print(suffix[0] == jobs["implement"]["name"])
+' "$WF597")" "True" "JOB_NAME_SUFFIX matches the implement job's effective name"
+
 section "no npm anywhere in the pipeline (#395)"
 
 # #302 took the claude path off npm; #395 takes opencode off it. Nothing in
@@ -4692,8 +4860,10 @@ fi
 
 # The pipeline-ref checkouts fetch agent-workflow itself and must keep the
 # default token — scoping the change.
-assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'ref: ..{ inputs.pipeline-ref' || true)" "4" \
-  "the four pipeline-ref checkouts are still present and untouched"
+# The count tracks the number of jobs that check the pipeline out, not the rule
+# — #597's implement_prefail job brought its own and made it five.
+assert_equals "$(printf '%s' "$wf430_exec" | grep -c 'ref: ..{ inputs.pipeline-ref' || true)" "5" \
+  "the five pipeline-ref checkouts are still present and untouched"
 
 # Both review jobs and the implement gate must mint their own token. Passing one
 # between jobs via a job output is not an option: job outputs are not

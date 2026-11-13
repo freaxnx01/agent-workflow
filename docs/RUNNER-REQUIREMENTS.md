@@ -14,6 +14,8 @@ Tools the pipeline expects on the runner. `scripts/ensure-toolchain.sh` installs
 
 Pre-installed on `ubuntu-latest` — `ensure-toolchain.sh` is a no-op there in practice. Self-hosted runners must have these baked in via the Ansible role (see homelab repo).
 
+When something is missing, the `apt-get update` + `install` pair is retried `APT_ATTEMPTS` times (default 3) with `APT_RETRY_DELAY`-second backoff (default 5, so 5s then 10s) before the pinned release-binary fallback is tried (#597). Both are env-overridable; a mirror that fails DNS for one attempt no longer fails the run.
+
 ## Conditionally required (per-agent)
 
 ### When `AGENT=opencode`

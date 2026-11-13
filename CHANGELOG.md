@@ -371,6 +371,7 @@ additions are the optional `NTFY_TOKEN` secret and the
 
 ### Added
 
+- *(pipeline)* A failure of the implement job **before the agent starts** now posts a run report on the issue naming the failed step, stamps `ai:failed`, and carries an `ai-run` marker with `class: "pre_agent"` (ADR-023, #597). It does not count as an attempt, so a repeated outage is bounded by `MAX_NON_STARTS` rather than burning the issue's budget.
 - **review:** Every GitHub review comment ends with one hidden
   `<!-- ai-review: {…} -->` marker carrying the verdict, the full head SHA it
   applies to, the blocking/nit concern counts and — only where `self-fix` is
@@ -749,6 +750,7 @@ additions are the optional `NTFY_TOKEN` secret and the
 
 ### Fixed
 
+- *(pipeline)* `ensure-toolchain.sh` retries transient apt failures (3 attempts, 5s/10s backoff, `APT_ATTEMPTS` / `APT_RETRY_DELAY`) before the release-binary fallback (#597). A mirror failing DNS for one attempt no longer fails the run.
 - **autopilot:** the test-gate eligibility condition now verifies the gate
   gates. "Has completed a run on the default branch" was satisfied by a
   `workflow_dispatch`-only workflow documented as "not part of the agent
