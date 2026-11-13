@@ -712,7 +712,7 @@ then follow it. Today: re-scan and report drift.
 One `list_repos` call re-derives the ground truth. Update the map, commit,
 move on.
 
-# FILE: agent-workflow/docs/DECISIONS.md (@8b4f855)
+# FILE: agent-workflow/docs/DECISIONS.md (@778422c)
 
 # Architecture Decisions
 
@@ -2754,6 +2754,114 @@ change well outside this contract. The trust rule names both identities instead.
 + `review_failed` and `block` travel in the marker unchanged rather than being
   flattened into "not approved", so a consumer can tell "the reviewer refused"
   from "the review could not run" when it explains why Merge is unavailable.
+
+## ADR-023 — A failure before the agent starts is reported on the issue (2026-11-13)
+
+**Status:** accepted
+
+**Context.** Every reporting path in `agent-implement.yml` lives in
+`implement_gate`, whose `if:` is
+`!cancelled() && needs.implement.outputs.agent-eligible == 'true'`.
+`agent-eligible` requires `steps.agent_reached.outputs.reached == 'true'`, and
+that step is the last one before the agent. A failure at any earlier step of the
+`implement` job — the token mint, either checkout, `Ensure toolchain`, the
+classifiers, triage, or the job's own `timeout-minutes` — therefore skips the
+gate by design and leaves **no** trace on the issue: no comment, no run marker,
+no label change. The issue keeps `ai-implement` and reads as "still running".
+
+Seen on 2026-11-11: freaxnx01/bridge#366, run 43042982652, where apt could not
+resolve `azure.archive.ubuntu.com` while installing ripgrep (exit 100). The job
+went red in about five minutes and the operator found out from the Actions list.
+This is exactly the "nothing happened, without a reason" state that the
+consumers of ADR-021's marker — bridge's issue inbox (freaxnx01/bridge#368) and
+the overnight digest (freaxnx01/bridge#381) — are designed to rule out.
+
+**Decision.**
+
+1. **A new job, `implement_prefail`, reports it.** Not an `if: failure()` step
+   inside `implement`: the failure is often the runner itself (no `gh`, no
+   network, a bad checkout), and a step on that runner can fail the same way. It
+   is also what ADR-020 already requires of the gate — own runner, own fresh
+   checkouts, never an agent.
+
+2. **Its condition is the exact complement of `implement_gate`'s.** The gate
+   reports when `agent-eligible == 'true'`; `implement_prefail` reports when the
+   job failed and it is not:
+
+   ```yaml
+   if: ${{ !cancelled() && !inputs.stub-claude
+           && needs.implement.result == 'failure'
+           && needs.implement.outputs.agent-eligible != 'true' }}
+   ```
+
+   A given failure is therefore reported by **exactly one** of the two, never
+   both and never neither. `result == 'failure'`, not `!= 'success'`, is what
+   keeps a parked (attempt cap) or paused (pause gate) run silent: those jobs
+   finish green, did no work, and must not have a verdict stamped on them
+   (ADR-021 / #517). `implement_gate` and its `if:` are unchanged.
+
+3. **The report is a non-start.** `post-run-report.sh` is given a synthetic
+   result — `{"is_error":true,"subtype":"pre_agent_failure","num_turns":0,
+   "total_cost_usd":0,"duration_ms":0}` — and the new `PRE_AGENT_STEP` env. Zero
+   turns and $0.00 are `check-attempt-cap.sh`'s own non-start rule, so the run
+   costs the issue **no attempt**; it consumes one of `MAX_NON_STARTS`
+   (default 5), which is what bounds a repeated outage. `counts` is `false` and
+   `attempt` is therefore omitted from the marker, with no change to
+   `run_counts`.
+
+4. **Marker `class` is a new value, `pre_agent`, with `subtype`
+   `pre_agent_failure`.** Deliberately not `transient`: a pre-agent failure is
+   not always transient, and a consumer's retry model (freaxnx01/bridge#367)
+   reads `transient` as "safe to retry". This is an **additive** enum value —
+   ADR-021's field table is not amended, and its `class` row has always been
+   "whatever the pipeline produces". Consumers MUST treat an unrecognised
+   `class` as "failed, not retryable by class" rather than rejecting the marker;
+   a consumer that enumerates classes exhaustively was already wrong under
+   ADR-021 item 3.
+
+5. **The failed step's name is visible-only.** It comes from
+   `find-failed-step.sh`, which reads this run's jobs
+   (`GET /repos/{repo}/actions/runs/{id}/attempts/{n}/jobs`, `actions: read`)
+   and takes the first failed step of the first failed job whose name ends with
+   the implement job's. It is rendered into the outcome line
+   (`failed: before the agent started (step: Ensure toolchain)`) after being
+   collapsed to one line, cut to `[A-Za-z0-9 ._:()#/-]` and 80 characters. It
+   never reaches the marker — ADR-021 item 4 holds: no free text in the marker.
+
+6. **Best effort, not a guarantee.** If the issue API or the token is itself
+   what failed, this job fails too and nothing is posted; the job goes red. A
+   cancelled run stays silent (`!cancelled()`, #571), as for the gate. Azure
+   DevOps is out of scope — its pipeline has its own report path (ADR-021
+   item 9), and the step lookup is a GitHub Actions API call.
+
+7. **No new label and no new consumer permission.** `ai:failed` already means
+   "the run failed" and is what `post-run-report.sh` stamps. `actions: read` is
+   already covered by the `actions: write` the caller grants for the gate's
+   retry dispatch.
+
+**Rejected: a bespoke comment-and-label script.** It would re-implement the
+forge adapter calls, the marker builder and the stale-label cleanup that
+`post-run-report.sh` already owns, and the two would drift.
+
+**Rejected: auto-redispatching a pre-agent failure.** The retry added in #597
+lives inside `ensure-toolchain.sh`'s apt step, bounded. A failure that survives
+it is not known to be transient; it waits for a human.
+
+**Rejected: skipping a tool that will not install.** A silently missing `rg`
+degrades the agent in ways that are much harder to see than a red job. The step
+still fails when apt and the release-binary fallback both fail — what changed is
+that the failure is now visible on the issue.
+
+**Consequences.**
+
++ A run killed by `timeout-minutes` **before** the agent now gets a report; one
+  killed during the agent still posts none (#567, unchanged).
++ One extra runner start (~30 s) per pre-agent failure, which is rare.
++ A consumer renaming its caller job does not break the report: the step name
+  falls back to `unknown` and the run URL is still there.
++ Visible text on every existing report is unchanged — `PRE_AGENT_STEP` unset
+  renders byte-identically, which `tests/run-run-report-golden-tests.sh` holds
+  to unmodified.
 
 # FILE: agent-workflow/docs/AUTOPILOT.md (@abffc78)
 
