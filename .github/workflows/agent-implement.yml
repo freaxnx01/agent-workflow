@@ -1560,7 +1560,12 @@ jobs:
           MODEL: ${{ inputs.review-model }}
           # Reported in the comment's ai-review marker (ADR-022, #593). This is
           # the first review, so ITERATION stays unset and the marker says 0.
-          SELF_FIX_MAX: ${{ inputs.self-fix-max-iterations }}
+          # Passed only when self-fix is on — the self-fix step below is gated
+          # on the same toggle, so with it off a request_changes is held right
+          # here and no fix pass can follow. The empty value drops the whole
+          # self_fix object (ADR-022 item 3) instead of advertising a cap that
+          # will never be spent. A cap of 0 drops it too: the loop no-ops.
+          SELF_FIX_MAX: ${{ inputs.self-fix && inputs.self-fix-max-iterations || '' }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: bash .claude-pipeline/scripts/review-pr.sh
 
@@ -1938,7 +1943,12 @@ jobs:
           MODEL: ${{ inputs.review-model }}
           # Reported in the comment's ai-review marker (ADR-022, #593). This is
           # the first review, so ITERATION stays unset and the marker says 0.
-          SELF_FIX_MAX: ${{ inputs.self-fix-max-iterations }}
+          # Passed only when self-fix is on — the self-fix step below is gated
+          # on the same toggle, so with it off a request_changes is held right
+          # here and no fix pass can follow. The empty value drops the whole
+          # self_fix object (ADR-022 item 3) instead of advertising a cap that
+          # will never be spent. A cap of 0 drops it too: the loop no-ops.
+          SELF_FIX_MAX: ${{ inputs.self-fix && inputs.self-fix-max-iterations || '' }}
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: bash .claude-pipeline/scripts/review-pr.sh
 

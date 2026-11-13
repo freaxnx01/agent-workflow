@@ -1908,7 +1908,7 @@ rendered Markdown.
    `-->`, and in between is a single compact JSON object:
 
    ```text
-   <!-- ai-review: {"v":1,"verdict":"approve","head_sha":"5b669f4e2a1c8d3b","blocking":0,"nits":1,"self_fix":{"iterations":1,"max":2,"exhausted":false}} -->
+   <!-- ai-review: {"v":1,"verdict":"approve","head_sha":"5b669f4e2a1c8d3b9f0e7a4c61d82b35af907e14","blocking":0,"nits":1,"self_fix":{"iterations":1,"max":2,"exhausted":false}} -->
    ```
 
 2. **The fields of `v: 1`.**
@@ -1917,10 +1917,10 @@ rendered Markdown.
    |---|---|---|---|
    | `v` | int | constant `1` | always |
    | `verdict` | string | the verdict passed to `finish` | always; one of `approve`, `request_changes`, `block`, `review_failed` |
-   | `head_sha` | string | `HEAD_SHA` | it matches `^[0-9a-f]{7,64}$` |
+   | `head_sha` | string | `HEAD_SHA` | it is a full-length object name — `^([0-9a-f]{40}|[0-9a-f]{64})$`, sha1 or sha256 |
    | `blocking` | int | concerns whose `severity` is not `low` | the result JSON holds a `concerns` array |
    | `nits` | int | concerns whose `severity` is `low` | same |
-   | `self_fix.iterations` | int | `ITERATION` — fix passes applied *before* this review, `0` on the first | `SELF_FIX_MAX` is an integer |
+   | `self_fix.iterations` | int | `ITERATION` — fix passes applied *before* this review, `0` on the first | `SELF_FIX_MAX` is an integer (the workflow passes it only when `self-fix` is on and the cap is above `0`) |
    | `self_fix.max` | int | `SELF_FIX_MAX` | same |
    | `self_fix.exhausted` | bool | `verdict == "request_changes"` and `max > 0` and `iterations >= max` | same |
 
@@ -1931,10 +1931,19 @@ rendered Markdown.
 
 3. **Omitted, never faked.** A field whose source is empty or not the type the
    table names is left out of the object — no `null`, no `0` stand-ins. A
-   `HEAD_SHA` that is not a hex SHA of at least git's 7-character minimum
-   abbreviation drops `head_sha` entirely rather than publishing a value a
-   consumer could match a head against. `self_fix` is omitted as a whole when
-   `SELF_FIX_MAX` is unknown; a non-numeric `ITERATION` falls back to `0`.
+   `HEAD_SHA` that is not a full-length object name drops `head_sha` entirely
+   rather than publishing a value a consumer could match a head against: an
+   abbreviation is not one under item 5's equality, so a consumer holding the
+   full head would read the marker as belonging to some other commit.
+   `self_fix` is omitted as a whole when `SELF_FIX_MAX` is unknown; a
+   non-numeric `ITERATION` falls back to `0`.
+
+   Both review jobs pass `SELF_FIX_MAX` only when `self-fix` is enabled, so in
+   the default configuration (`self-fix: false`) a `request_changes` first
+   review carries no `self_fix` object at all — the PR is held immediately and
+   no fix pass can follow, so there is no cap in force to report. A `self-fix:
+   true` with a cap of `0` drops it too: the loop no-ops, and `exhausted` is
+   defined `false` at `max: 0`, which would read as "passes remaining".
 
 4. **No free text, and no breaking out of the comment.** No field carries the
    summary, a concern message, the `reason`, or anything else the agent or the
@@ -1949,10 +1958,12 @@ rendered Markdown.
    when a comment already marks the head (`<!-- review-pr:<sha> -->`), so a head
    carries at most one review comment and a marker never changes after posting.
    A re-review after a self-fix pass posts a *new* comment for the *new* head.
-   The verdict for a head is therefore the latest marker whose `head_sha` equals
-   that head. A consumer offering Merge requires both `verdict == "approve"` and
-   that match, and treats everything else — including `block` and
-   `review_failed` — as not approved.
+   The verdict for a head is therefore the latest marker whose `head_sha`
+   equals that head — a plain, case-sensitive string equality of two
+   full-length object names, never a prefix match (item 3 keeps abbreviations
+   out of the field, so there is nothing to prefix-match). A consumer offering
+   Merge requires both `verdict == "approve"` and that match, and treats
+   everything else — including `block` and `review_failed` — as not approved.
 
 6. **`exhausted` describes the final review on a head, not "the PR is held."**
    The "Review held: self-fix exhausted after N/M iteration(s)" comment is posted
@@ -2018,7 +2029,9 @@ change well outside this contract. The trust rule names both identities instead.
   an HTML comment does not render.
 + The first review reports `self_fix.iterations: 0` whenever the workflow passes
   a cap, which is the honest reading of "fix passes applied before this review" —
-  not a claim that the loop ran.
+  not a claim that the loop ran. With `self-fix: false` — the default — no cap
+  is passed and the object is absent, so "no `self_fix`" is the common case a
+  consumer must handle, not an edge one.
 + A review comment that was never posted (the idempotency skip, a dry run, a run
   that died before `finish`) has no marker. Consumers must treat "no marker for
   this head" as normal and fall back to "not reviewed".

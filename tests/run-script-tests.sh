@@ -1429,12 +1429,13 @@ marker_run() {
 marker_line() { tail -n1 <<<"$1"; }
 marker_json() { marker_line "$1" | sed -n 's/^<!-- ai-review: \(.*\) -->$/\1/p'; }
 
-c="$(marker_run review-request-changes.json HEAD_SHA=5b669f4 SELF_FIX_MAX=2 ITERATION=2)"
+FULL_SHA=5b669f4e2a1c8d3b9f0e7a4c61d82b35af907e14
+c="$(marker_run review-request-changes.json HEAD_SHA="$FULL_SHA" SELF_FIX_MAX=2 ITERATION=2)"
 assert_contains "$(marker_line "$c")" '<!-- ai-review: {' "request_changes → last line is the marker (#593)"
 j="$(marker_json "$c")"
 assert_equals "$(jq -r '.v' <<<"$j")" "1" "marker v is 1 (#593)"
 assert_equals "$(jq -r '.verdict' <<<"$j")" "request_changes" "marker carries the verdict (#593)"
-assert_equals "$(jq -r '.head_sha' <<<"$j")" "5b669f4" "marker carries head_sha (#593)"
+assert_equals "$(jq -r '.head_sha' <<<"$j")" "$FULL_SHA" "marker carries head_sha (#593)"
 assert_equals "$(jq -r '.blocking' <<<"$j")" "2" "high+medium concerns → blocking 2 (#593)"
 assert_equals "$(jq -r '.nits' <<<"$j")" "0" "no low concerns → nits 0 (#593)"
 assert_equals "$(jq -c '.self_fix' <<<"$j")" '{"iterations":2,"max":2,"exhausted":true}' \
@@ -1452,6 +1453,15 @@ assert_equals "$(jq -c '.self_fix' <<<"$j")" '{"iterations":0,"max":2,"exhausted
 c="$(marker_run review-approve.json SELF_FIX_MAX=2 ITERATION=2)"
 assert_equals "$(jq -r '.self_fix.exhausted' <<<"$(marker_json "$c")")" "false" \
   "approve at the cap → not exhausted (#593)"
+
+# self-fix disabled → the workflow passes no cap, so a held PR's marker makes
+# no claim about fix passes instead of advertising ones that can never run.
+c="$(marker_run review-request-changes.json SELF_FIX_MAX='')"
+j="$(marker_json "$c")"
+assert_equals "$(jq -r 'has("self_fix")' <<<"$j")" "false" \
+  "request_changes with no cap → self_fix omitted (#593)"
+assert_equals "$(jq -r '.verdict' <<<"$j")" "request_changes" \
+  "a dropped self_fix leaves the rest of the marker intact (#593)"
 
 # SELF_FIX_MAX unknown → the whole self_fix object is omitted, never faked.
 for bad in '' abc '3a'; do
@@ -1481,13 +1491,22 @@ assert_equals "$(grep -c '^<!-- ai-review: ' <<<"$c")" "1" "hostile HEAD_SHA →
 assert_equals "$(jq -r 'has("head_sha")' <<<"$(marker_json "$c")")" "false" \
   "non-hex HEAD_SHA → head_sha omitted (#593)"
 
-# Shorter than git's 7-char minimum abbreviation is not a SHA either — omitted,
-# never faked, so a consumer never matches a head against a guess.
-c="$(marker_run review-approve.json HEAD_SHA=abc123)"
-assert_equals "$(jq -r 'has("head_sha")' <<<"$(marker_json "$c")")" "false" \
-  "6-char HEAD_SHA → head_sha omitted (#593)"
+# Anything short of a full-length object name is omitted, never faked:
+# ADR-022 item 5 has consumers match a head by plain equality, so an
+# abbreviation would read as belonging to some other commit.
+for abbrev in abc123 5b669f4 "${FULL_SHA:0:12}" "${FULL_SHA:0:39}"; do
+  c="$(marker_run review-approve.json HEAD_SHA="$abbrev")"
+  assert_equals "$(jq -r 'has("head_sha")' <<<"$(marker_json "$c")")" "false" \
+    "abbreviated HEAD_SHA '$abbrev' → head_sha omitted (#593)"
+done
 assert_equals "$(jq -r '.verdict' <<<"$(marker_json "$c")")" "approve" \
   "a dropped head_sha leaves the rest of the marker intact (#593)"
+
+# sha256 object names are full-length too.
+SHA256_HEAD="$(printf '%s' "$FULL_SHA$FULL_SHA" | cut -c1-64)"
+c="$(marker_run review-approve.json HEAD_SHA="$SHA256_HEAD")"
+assert_equals "$(jq -r '.head_sha' <<<"$(marker_json "$c")")" "$SHA256_HEAD" \
+  "64-char sha256 HEAD_SHA → head_sha carried (#593)"
 
 HOSTILE_SEVERITY="$(mktemp --suffix=.json)"
 jq '.concerns[0].severity = "x-->y<z"' "$FIXTURES/review-request-changes.json" > "$HOSTILE_SEVERITY"
@@ -1859,12 +1878,18 @@ assert_equals "$(grep -c 'SELF_FIX_OUTCOME: ${{ steps.self_fix.outcome }}' "$WF"
   "both blocked steps receive the self-fix outcome (#474)"
 
 # #593: the first review builds its ai-review marker from SELF_FIX_MAX, so both
-# real review steps must receive the cap. The stub-review steps are untouched —
-# they synthesize a verdict and post no comment.
+# real review steps must receive the cap — but only when self-fix is on, since
+# the self-fix step shares that gate and an ungated cap would advertise fix
+# passes that can never run on a PR held right there. The stub-review steps are
+# untouched — they synthesize a verdict and post no comment.
 review_blocks="$(awk '/- name: Run agent review$/{on=1} on&&/^      - name: /&&!/Run agent review/{on=0} on' "$WF")"
+# The `\$` keeps the literal GitHub Actions expression out of bash expansion.
+gated_cap="SELF_FIX_MAX: \${{ inputs.self-fix && inputs.self-fix-max-iterations || '' }}"
+assert_equals "$(printf '%s\n' "$review_blocks" | grep -cF "$gated_cap")" "2" \
+  "both review steps receive the cap only when self-fix is on (#593)"
 # shellcheck disable=SC2016  # literal GitHub Actions expression, not shell
-assert_equals "$(printf '%s\n' "$review_blocks" | grep -c 'SELF_FIX_MAX: ${{ inputs.self-fix-max-iterations }}')" "2" \
-  "both review steps receive the self-fix cap for the marker (#593)"
+assert_equals "$(printf '%s\n' "$review_blocks" | grep -cF 'SELF_FIX_MAX: ${{ inputs.self-fix-max-iterations }}')" "0" \
+  "no review step passes the cap ungated (#593)"
 
 # Self-mod guard fires → reason names ADR-002 self-modification, comment
 # goes on the PR (PR_NUMBER is known via find-pipeline-pr.sh which runs

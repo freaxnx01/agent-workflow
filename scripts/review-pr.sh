@@ -50,6 +50,8 @@
 #   SELF_FIX_MAX       The self-fix iteration cap in force. Reported in the
 #                      ai-review marker; when unset or non-numeric the marker's
 #                      `self_fix` object is omitted rather than guessed (#593).
+#                      The workflow passes it only when self-fix is enabled —
+#                      with it off there is no cap in force to report.
 #   DIFF_FILE          Pre-fetched diff path. If set, skips `gh pr diff`.
 #                      Used by Layer-1 tests.
 #   EXISTING_COMMENTS  Newline-separated comment bodies. If set, skips the
@@ -171,7 +173,11 @@ render_review_marker() {
   [[ "$FORGE" == "github" ]] || return 0
 
   local sha_arg=() counts='{}' self_fix='{}'
-  if [[ "$HEAD_SHA" =~ ^[0-9a-f]{7,64}$ ]]; then
+  # Full-length object names only (sha1 or sha256). ADR-022 item 5 has
+  # consumers match a head by equality, and an abbreviation string-compared
+  # against a full head SHA reads as "not reviewed" — so an abbreviated
+  # HEAD_SHA drops the field rather than publishing an unmatchable value.
+  if [[ "$HEAD_SHA" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
     sha_arg=(--arg head_sha "$HEAD_SHA")
   fi
   if [[ -s "$json_file" ]]; then
