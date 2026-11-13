@@ -711,6 +711,40 @@ case "$out" in
   *) fail "the log names both consequences" "output was: $out" ;;
 esac
 
+section "the accept-low policy reaches the nested enrich (#550)"
+
+cat > "$TMPDIR_T/enrich-env-stub.sh" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s %s\n' "$1" "${ENRICH_ACCEPT_LOW:-unset}" >> "$ENRICH_ENV_LOG"
+exit 0
+STUB
+chmod +x "$TMPDIR_T/enrich-env-stub.sh"
+export ENRICH_ENV_LOG="$TMPDIR_T/enrich-env.log"
+
+printf 'max_per_run=1\nrepo=o/r:ci.yml\naccept_low=o/r\n' > "$TMPDIR_T/ap-low.conf"
+
+rm -rf "$AUTOPILOT_CACHE_DIR"; : > "$GH_MOCK_LOG"; : > "$ENRICH_ENV_LOG"
+GH_MOCK_STDOUT_MAP="$TMPDIR_T/gh-clean.map" ENRICH_CMD="$TMPDIR_T/enrich-env-stub.sh" \
+  "$DRIVER" --config "$TMPDIR_T/ap-low.conf" >/dev/null 2>&1
+assert_eq "an accept_low repo runs enrich with ENRICH_ACCEPT_LOW=1" "41 1" "$(cat "$ENRICH_ENV_LOG")"
+
+rm -rf "$AUTOPILOT_CACHE_DIR"; : > "$GH_MOCK_LOG"; : > "$ENRICH_ENV_LOG"
+GH_MOCK_STDOUT_MAP="$TMPDIR_T/gh-clean.map" ENRICH_CMD="$TMPDIR_T/enrich-env-stub.sh" \
+  "$DRIVER" --config "$TMPDIR_T/ap.conf" --max 1 >/dev/null 2>&1
+assert_eq "a repo without accept_low runs enrich with ENRICH_ACCEPT_LOW=0" "41 0" "$(cat "$ENRICH_ENV_LOG")"
+
+out="$("$DRIVER" --config "$TMPDIR_T/ap-low.conf" --dry-run 2>&1)"
+case "$out" in
+  *"would: enrich headless --accept-low, then dispatch"*) pass "the dry run names the policy" ;;
+  *) fail "the dry run names the policy" "output was: $out" ;;
+esac
+out="$("$DRIVER" --config "$TMPDIR_T/ap.conf" --dry-run --max 1 2>&1)"
+case "$out" in
+  *"--accept-low"*) fail "a strict repo's dry run does not mention the policy" "output was: $out" ;;
+  *) pass "a strict repo's dry run does not mention the policy" ;;
+esac
+
 section "SIGPIPE re-scoping: partial-but-mutating runs must not report success"
 
 # Deterministic SIGPIPE, no scheduling involved: fd 3 is wired to a pipe whose
