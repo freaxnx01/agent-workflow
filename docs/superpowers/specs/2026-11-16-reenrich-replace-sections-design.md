@@ -229,6 +229,10 @@ Step 6's composition. It therefore inherits the strip with no change of its own.
   python3 is already required by `azdo.sh` (`:329`) and by the ADO block in
   `commands/enrich.md:911`.
 
+## Landing order
+
+Lands before #500: both edit the Azure DevOps write block in `commands/enrich.md` (this one adds the strip after the `azdo_description` guard). Do not dispatch the two concurrently.
+
 ## Consequences
 
 - A re-run silently discards hand edits made inside the previous AC, Assumptions
