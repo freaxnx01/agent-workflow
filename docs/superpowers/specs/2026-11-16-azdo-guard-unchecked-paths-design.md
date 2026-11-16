@@ -82,6 +82,10 @@ by a Layer-1 fixture test that fails without the fix.
 - **A5** [high] The old plan `docs/superpowers/plans/2026-10-08-azdo-enrichment-writeback.md:481`
   keeps its historical usage string. It is a record, not a source of truth.
 
+## Landing order
+
+Lands before #500: both edit `azdo_description` and `_azdo_edit_tags` in `scripts/lib/azdo.sh`; #500's plan rebases onto this one. Do not dispatch the two concurrently.
+
 ## Consequences
 
 - #500 edits `azdo_set_description` and `_azdo_edit_tags`/`azdo_*_tag` bodies in

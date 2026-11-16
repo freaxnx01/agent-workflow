@@ -83,6 +83,11 @@ append-only (`System.History`) and is not a lost-update hazard.
   and `commands/enrich-phased.md`. Rejected: also touching `new.md`, `parked.md`, `roadmap.md`;
   they use `azdo_set_tags` (opt-in, unchanged).
 
+## Landing order
+
+Lands after #498: it edits `azdo_description` and `_azdo_edit_tags` in the same file and owns the `|| return 1` transform guard.
+Lands after #499: both edit the Azure DevOps write block in `commands/enrich.md`.
+
 ## Consequences
 
 - Each guarded write now loses to any concurrent edit, including a harmless one (a comment
