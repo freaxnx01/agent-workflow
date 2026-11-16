@@ -307,6 +307,30 @@ assert_eq "an absent description reads as empty, exit 0" "" \
   "$(run_desc azdo-workitem-no-description.json azdo-set-description-stored.json \
       azdo_description 5)"
 
+# #498 -- a response without a `fields` object is a read FAILURE, not an empty
+# description. Read as empty it would make azdo_set_description pick `add`, which
+# appends to the existing body instead of replacing it.
+rc=0
+err="$(run_desc azdo-workitem-no-fields.json azdo-set-description-stored.json \
+        azdo_description 5 2>&1 >/dev/null)" || rc=$?
+assert_eq "a response without fields exits 1" "1" "$rc"
+case "$err" in
+  *"unexpected response"*) pass "a response without fields explains itself" ;;
+  *) fail "a response without fields explains itself" "stderr: $err" ;;
+esac
+
+# The append-instead-of-replace path: an unreadable item must not be written.
+rm -f "$sd_dir/body.txt"
+rc=0
+run_desc azdo-workitem-no-fields.json azdo-set-description-stored.json \
+  azdo_set_description 5 '<p>new</p>' >/dev/null 2>&1 || rc=$?
+assert_eq "set_description refuses an unreadable item" "1" "$rc"
+if [[ -s "$sd_dir/body.txt" ]]; then
+  fail "set_description sends no PATCH for an unreadable item" "a request body was recorded"
+else
+  pass "set_description sends no PATCH for an unreadable item"
+fi
+
 # Review Focus 2 — the op is chosen from the read, never fixed.
 rm -f "$sd_dir/body.txt"
 run_desc azdo-workitem-with-description.json azdo-set-description-stored.json \

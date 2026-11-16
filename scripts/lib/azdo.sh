@@ -336,6 +336,10 @@ azdo_html_escape() {
 # that has never had a description simply omits the key. Exit 1 on a read error.
 # Callers must capture the status -- an empty echo alone cannot tell the two
 # apart, and composing a write from a failed read destroys the existing body.
+#
+# Exit 1 also when the response has no `fields` object, matching the other
+# parsers: read as an empty description it would make azdo_set_description pick
+# `add`, which APPENDS to the existing body rather than replacing it.
 azdo_description() {
   local id="${1:?azdo_description requires a work-item id}"
   : "${AZDO_PROJECT:?AZDO_PROJECT must be set — call resolve_azdo_context first}"
@@ -344,7 +348,10 @@ azdo_description() {
   | python3 -c '
 import sys, json
 d = json.load(sys.stdin)
-sys.stdout.write(d.get("fields", {}).get("System.Description", ""))'
+if "fields" not in d:
+    sys.stderr.write("azdo_description: unexpected response: %s\n" % str(d)[:200])
+    sys.exit(1)
+sys.stdout.write(d["fields"].get("System.Description", ""))'
 }
 
 # azdo_set_description <id> <html>  writes System.Description, echoes it back.
