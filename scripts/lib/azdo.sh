@@ -461,12 +461,15 @@ for c in comments:
 # indistinguishable from a failed one, and writing anyway would clear every tag
 # the item has -- parked and roadmap included.
 #
+# The transform's status is checked explicitly: callers invoke with `||`, which
+# suppresses errexit here, and an empty `next` would clear every tag.
+#
 # [expected-rev] is passed to azdo_set_tags unchanged; exit codes are its (64 =
 # the item moved since that revision).
 _azdo_edit_tags() {
   local id="${1-}" mode="${2-}" tag="${3-}" rev="${4-}"
   if [[ -z "$id" || -z "$mode" || -z "$tag" ]]; then
-    echo "usage: _azdo_edit_tags <id> <add|remove> <tag> [expected-rev]" >&2
+    echo "usage: azdo_add_tag <id> <tag> | azdo_remove_tag <id> <tag> [expected-rev]" >&2
     return 2
   fi
 
@@ -488,7 +491,10 @@ if mode == "add":
         tags.append(tag)
 else:
     tags = [t for t in tags if t.lower() != tag.lower()]
-print("; ".join(tags))' "$mode" "$tag")
+print("; ".join(tags))' "$mode" "$tag") || {
+    echo "_azdo_edit_tags: could not compute the new tag set for work item $id — refusing to write" >&2
+    return 1
+  }
 
   azdo_set_tags "$id" "$next" "$rev"
 }

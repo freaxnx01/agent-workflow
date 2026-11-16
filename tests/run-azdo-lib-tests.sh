@@ -460,6 +460,43 @@ assert_eq "usage error without a tag" "2" \
   "$( rc=0; run_tag azdo-fields-tagged.json azdo_add_tag 5 >/dev/null 2>&1 || rc=$?
      printf '%s' "$rc" )"
 
+# #498 -- a failed transform must not become a write. Callers use `|| rc=$?`,
+# which suppresses errexit inside the function, so the guard must be explicit.
+# azdo_fields is overridden to emit a row the transform cannot parse.
+rm -f "$tg_dir/body.txt"
+rc=0
+# shellcheck disable=SC2030,SC2031
+(
+  export PATH="$MOCKS:$PATH"
+  export CURL_MOCK_FIXTURE="$FIXTURES/azdo-set-tags-replaced.json"
+  export CURL_MOCK_BODY_LOG="$tg_dir/body.txt"
+  export AZDO_ORG=contoso AZDO_PROJECT=MyProject AZDO_REPO=my-repo
+  export AZURE_DEVOPS_EXT_PAT=not-a-real-token
+  # shellcheck disable=SC1090
+  source "$LIB"
+  # SC2329: invoked indirectly -- _azdo_edit_tags calls it from the sourced lib.
+  # shellcheck disable=SC2329
+  azdo_fields() { printf 'not json\n'; }
+  azdo_remove_tag 5 roadmap
+) >/dev/null 2>&1 || rc=$?
+assert_eq "a failed tag transform exits 1" "1" "$rc"
+if [[ -s "$tg_dir/body.txt" ]]; then
+  fail "a failed tag transform sends no PATCH" "a request body was recorded"
+else
+  pass "a failed tag transform sends no PATCH"
+fi
+
+# The usage line names what a caller actually types, not the private helper.
+usage_err="$(run_tag azdo-fields-tagged.json azdo_add_tag 5 2>&1 >/dev/null || true)"
+case "$usage_err" in
+  *"azdo_add_tag"*"azdo_remove_tag"*) pass "usage names the public functions" ;;
+  *) fail "usage names the public functions" "stderr: $usage_err" ;;
+esac
+case "$usage_err" in
+  *"_azdo_edit_tags"*) fail "usage does not name the private function" "stderr: $usage_err" ;;
+  *) pass "usage does not name the private function" ;;
+esac
+
 # Idempotency: adding a tag that already exists must not duplicate it.
 rm -f "$tg_dir/body.txt"
 run_tag azdo-fields-tagged.json azdo_add_tag 5 parked >/dev/null
