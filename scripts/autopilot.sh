@@ -25,6 +25,8 @@
 #   AUTOPILOT_DISABLE_FLAG  kill switch. Default ~/.config/agent-workflow/autopilot.disabled
 #   AUTOPILOT_LOG_DIR       nested session logs. Default $AUTOPILOT_CACHE_DIR/logs
 #   ENRICH_CMD              per-issue enrich command. Default scripts/lib/agent-cmd-enrich.sh
+#                           ENRICH_CMD runs with ENRICH_ACCEPT_LOW=1 for repos
+#                           listed as accept_low= in the config, 0 otherwise (#550)
 #   MODEL                   passed through to the nested session
 #   GH_TOKEN                required. The direnv-exported PAT — run the driver
 #                           under `direnv exec <dir with the .envrc>`; it is
@@ -87,7 +89,7 @@ ENRICH_CMD="${ENRICH_CMD:-$ROOT/scripts/lib/agent-cmd-enrich.sh}"
 
 die() { printf 'error: %s\n' "$1" >&2; exit "${2:-2}"; }
 
-usage() { sed -n '3,44p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,46p' "$0" | sed 's/^# \{0,1\}//'; }
 
 parse_args() {
   while [[ $# -gt 0 ]]; do
@@ -205,11 +207,16 @@ escalate_issue() {
 }
 
 process_issue() {
-  local repo="$1" n="$2" dir rc
+  local repo="$1" n="$2" dir rc accept_low=0 mode='headless'
   dir="$(autopilot_clone_dir "$repo")"
+  # The operator's per-repo [low] policy (#550), from the host config only.
+  if [[ -n "${AUTOPILOT_ACCEPT_LOW[$repo]:-}" ]]; then
+    accept_low=1
+    mode='headless --accept-low'
+  fi
 
   if (( DRY_RUN )); then
-    log_issue "$repo" "$n" "would: enrich headless, then dispatch (clone $dir)"
+    log_issue "$repo" "$n" "would: enrich $mode, then dispatch (clone $dir)"
     return 0
   fi
 
@@ -219,7 +226,7 @@ process_issue() {
   fi
 
   rc=0
-  ( cd "$dir" && timeout "$AUTOPILOT_ENRICH_TIMEOUT" "$ENRICH_CMD" "$n" ) || rc=$?
+  ( cd "$dir" && ENRICH_ACCEPT_LOW="$accept_low" timeout "$AUTOPILOT_ENRICH_TIMEOUT" "$ENRICH_CMD" "$n" ) || rc=$?
 
   if (( rc != 0 )); then
     # A crash escalates to a human, not just to the log. Without this, an issue
