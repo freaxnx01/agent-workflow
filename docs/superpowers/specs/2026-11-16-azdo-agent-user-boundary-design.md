@@ -84,10 +84,13 @@ The image (`docker/azp-agent/Dockerfile`) gains:
 - user `awf-agent` (its own uid and group, home `/home/awf-agent`, not in group
   `azp`);
 - `sudo`, with one sudoers drop-in (mode 0440) allowing `azp` to run, as
-  `awf-agent` only and without a password, exactly two root-owned, non-writable
-  entry points:
+  `awf-agent` only and without a password, exactly three root-owned,
+  non-writable entry points:
   - `awf-agent-run`: runs the agent CLI on a prompt in the agent's own
     workspace and writes the result JSON to its stdout;
+  - `awf-agent-git`: a fixed set of git operations in the agent's workspace
+    (seed it from a bundle, commit, write the commits back as a bundle), with
+    hooks and fsmonitor off;
   - `awf-agent-reap`: kills every process of `awf-agent` (`kill -KILL -1` as that
     user) and reports whether any remain.
 - an environment allowlist on that rule (`env_reset`, keep only what the agent
@@ -163,7 +166,7 @@ A Layer-1 test (extend `run-agent-isolation-tests.sh`, or a sibling
 - no `AZURE_DEVOPS_EXT_PAT` / `SYSTEM_ACCESSTOKEN` reaches the agent command line
   or its allowlisted environment;
 - every git call on agent-produced data passes the hook/fsmonitor overrides;
-- the Dockerfile's sudoers rule names only the two entry points, runs as
+- the Dockerfile's sudoers rule names only the three entry points, runs as
   `awf-agent` only, and the entry points are root-owned and not group/world
   writable;
 - the agent's result is read only through `import-result-output.sh`.
@@ -185,7 +188,7 @@ Static Dockerfile checks extend `run-azp-agent-dockerfile-tests.sh`.
 
 ## Acceptance (for the plan)
 
-- Pipeline mode runs the agent as `awf-agent` via the two sudo entry points, and
+- Pipeline mode runs the agent as `awf-agent` via the three sudo entry points, and
   exits 1 with a report when the boundary is missing.
 - The agent's environment contains no Azure DevOps credential; `awf-agent`
   cannot read `/azp/agent`, `/home/azp`, the scripts' write paths or the driver's
@@ -226,8 +229,6 @@ These were settled by the author, not the user; each can be overturned at review
 - Exact names and paths of the entry points and the sudoers file.
 - How the agent's workspace is seeded (clone through the boundary, or a
   prepared world-readable source copy) as long as it carries no credential.
-- Whether the bundle is written by `awf-agent-run` at the end or by a third entry
-  point; either way it is created as `awf-agent` and read by `azp` as data.
 - Where the Claude CLI lives so both users can execute it.
 - Splitting `implement-azdo.sh` further if it helps testability.
 
