@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+#
+# awf-agent-reap — end every process of the boundary user (#591, ADR-024).
+#
+# One of the three root-owned entry points `azp` may run as `awf-agent` through
+# /etc/sudoers.d/awf-agent. The driver runs it after each agent call: nothing
+# the agent left behind may still be running while the driver judges the
+# attempt, pushes with its credential, or seeds the next attempt.
+#
+# Usage:
+#   awf-agent-reap --protocol   prints the protocol version
+#   awf-agent-reap              kills, then prints how many processes remain
+#
+# WHY NOT `kill -KILL -1`. On Linux that broadcast includes the caller, so the
+# entry point would die with its targets and could never report the survivor
+# count the driver fails closed on. Enumerating /proc for the caller's own uid
+# reaches exactly the same processes — the uid boundary is what scopes it — and
+# leaves this process alive to count.
+#
+# Zombies are not survivors: a reaped-but-not-yet-waited child executes nothing.
+# They are skipped in the count, never in the kill.
+#
+# Optional environment:
+#   AWF_REAP_TEST  "1" permits the kill when the caller is not `awf-agent`.
+#                  Tests set it inside a throwaway user+pid namespace; without
+#                  it a mistaken invocation on a developer's machine refuses.
+#
+# Exit codes: 0 nothing remains; 1 at least one process survived; 2 usage error
+# or refused because the caller is not the boundary user.
+set -euo pipefail
+IFS=$'\n\t'
+
+AWF_PROTOCOL=1
+AWF_AGENT_USER=awf-agent
+
+if [[ "${1:-}" == "--protocol" ]]; then
+  printf '%s\n' "$AWF_PROTOCOL"
+  exit 0
+fi
+if [[ $# -gt 0 ]]; then
+  printf 'usage: awf-agent-reap [--protocol]\n' >&2
+  exit 2
+fi
+
+if [[ "$(id -un)" != "$AWF_AGENT_USER" && "${AWF_REAP_TEST:-}" != "1" ]]; then
+  printf 'awf-agent-reap: refusing to run as %s; this kills every process of the caller'"'"'s uid\n' \
+    "$(id -un)" >&2
+  exit 2
+fi
+
+MY_UID="$(id -u)"
+
+# live_pids — every process of this uid except this one, zombies excluded.
+live_pids() {
+  local dir pid owner state
+  for dir in /proc/[0-9]*; do
+    pid="${dir#/proc/}"
+    [[ "$pid" != "$$" ]] || continue
+    owner="$(stat -c '%u' "$dir" 2>/dev/null)" || continue
+    [[ "$owner" == "$MY_UID" ]] || continue
+    state="$(awk '{ print $3 }' "$dir/stat" 2>/dev/null)" || continue
+    [[ "$state" != "Z" ]] || continue
+    printf '%s\n' "$pid"
+  done
+}
+
+kill_round() {
+  local pid
+  for pid in $(live_pids); do
+    kill -KILL "$pid" 2>/dev/null || true
+  done
+}
+
+remaining=0
+for _round in 1 2 3; do
+  kill_round
+  sleep 0.2
+  remaining="$(live_pids | grep -c . || true)"
+  [[ "$remaining" != 0 ]] || break
+done
+
+printf '%s\n' "$remaining"
+[[ "$remaining" == 0 ]]

@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+#
+# awf-agent-git — the fixed set of git operations the boundary user performs on
+# its own workspace (#591, ADR-024).
+#
+# One of the three root-owned entry points `azp` may run as `awf-agent` through
+# /etc/sudoers.d/awf-agent. It is deliberately not "git as awf-agent": three
+# verbs, each with its arguments checked, are all the driver needs.
+#
+# Usage:
+#   awf-agent-git --protocol
+#   awf-agent-git <workspace> seed <bundle-file> <branch-or-sha>
+#   awf-agent-git <workspace> commit <message>
+#   awf-agent-git <workspace> bundle <base-sha>        (bundle on stdout)
+#
+# `seed` clones the driver's bundle into a workspace that does not exist yet and
+# detaches at <branch-or-sha>; `commit` stages everything and commits; `bundle`
+# writes <base-sha>..HEAD plus the branch ref to stdout, which is the only way
+# the agent's commits reach the driver.
+#
+# EVERY git call carries core.hooksPath=/dev/null and core.fsmonitor=false. The
+# workspace is the agent's, hooks and repo-local config included: none of it may
+# execute when the boundary touches that repo.
+#
+# Optional environment:
+#   AWF_WS_ROOT  where agent workspaces live. Default /home/awf-agent/ws.
+#
+# Exit codes:
+#   0  done
+#   1  a git operation failed
+#   2  usage error, or a workspace outside the root
+#   3  nothing to commit (commit), or no commit beyond the base (bundle)
+set -euo pipefail
+IFS=$'\n\t'
+
+AWF_PROTOCOL=1
+AWF_WS_ROOT="${AWF_WS_ROOT:-/home/awf-agent/ws}"
+AWF_COMMIT_NAME=ai-implement
+AWF_COMMIT_EMAIL=ai-implement@noreply.invalid
+
+usage() {
+  printf 'usage: awf-agent-git --protocol | awf-agent-git <workspace> seed|commit|bundle <args...>\n' >&2
+  exit 2
+}
+
+# wsgit <workspace> <git-args...> — git in the workspace, hooks and fsmonitor off.
+wsgit() {
+  local dir="$1"; shift
+  git -C "$dir" -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
+}
+
+# require_workspace <path> — the workspace must be a direct child of the root.
+# `realpath -m` resolves symlinks and `..` without requiring the path to exist,
+# so neither a traversal nor a symlinked workspace escapes.
+require_workspace() {
+  local resolved root
+  resolved="$(realpath -m -- "$1")" || exit 2
+  root="$(realpath -m -- "$AWF_WS_ROOT")" || exit 2
+  if [[ "$(dirname -- "$resolved")" != "$root" || "$resolved" == "$root" ]]; then
+    printf 'awf-agent-git: workspace %s is not a direct child of %s\n' "$1" "$root" >&2
+    exit 2
+  fi
+  printf '%s\n' "$resolved"
+}
+
+# resolve_seed_ref <workspace> <ref> — the commit <ref> names among the refs the
+# bundle carried. The driver bundles whatever ref the attempt is based on
+# (`origin/main`, a branch, a sha), so each namespace the fetch mirrored into is
+# tried in turn.
+resolve_seed_ref() {
+  local dir="$1" ref="$2" candidate sha
+  for candidate in "$ref" "refs/awf/seed/heads/$ref" "refs/awf/seed/remotes/$ref" "refs/awf/seed/$ref"; do
+    if sha="$(wsgit "$dir" rev-parse --quiet --verify "${candidate}^{commit}" 2>/dev/null)"; then
+      printf '%s\n' "$sha"
+      return 0
+    fi
+  done
+  return 1
+}
+
+cmd_seed() {
+  local dir="$1" bundle="$2" ref="$3" sha
+  [[ -n "$bundle" && -n "$ref" ]] || usage
+  [[ -r "$bundle" ]] || { printf 'awf-agent-git: cannot read bundle %s\n' "$bundle" >&2; exit 2; }
+  if [[ -e "$dir" ]]; then
+    printf 'awf-agent-git: workspace %s already exists\n' "$dir" >&2
+    exit 2
+  fi
+  git init --quiet "$dir" || exit 1
+  wsgit "$dir" config user.name "$AWF_COMMIT_NAME" || exit 1
+  wsgit "$dir" config user.email "$AWF_COMMIT_EMAIL" || exit 1
+  wsgit "$dir" fetch --quiet "$bundle" '+refs/*:refs/awf/seed/*' || exit 1
+  sha="$(resolve_seed_ref "$dir" "$ref")" || {
+    printf 'awf-agent-git: the bundle carries no ref %s\n' "$ref" >&2
+    exit 1
+  }
+  wsgit "$dir" checkout --quiet --detach "$sha" || exit 1
+}
+
+cmd_commit() {
+  local dir="$1" message="$2"
+  [[ -n "$message" ]] || usage
+  [[ -d "$dir/.git" ]] || { printf 'awf-agent-git: %s is not a workspace\n' "$dir" >&2; exit 2; }
+  wsgit "$dir" add -A || exit 1
+  if wsgit "$dir" diff --cached --quiet; then
+    printf 'awf-agent-git: nothing to commit\n' >&2
+    exit 3
+  fi
+  wsgit "$dir" commit --quiet -m "$message" || exit 1
+}
+
+cmd_bundle() {
+  local dir="$1" base="$2" branch ahead
+  [[ -n "$base" ]] || usage
+  [[ -d "$dir/.git" ]] || { printf 'awf-agent-git: %s is not a workspace\n' "$dir" >&2; exit 2; }
+  wsgit "$dir" rev-parse --quiet --verify "${base}^{commit}" >/dev/null ||
+    { printf 'awf-agent-git: unknown base %s\n' "$base" >&2; exit 1; }
+  ahead="$(wsgit "$dir" rev-list --count "$base..HEAD")" || exit 1
+  if [[ "$ahead" == 0 ]]; then
+    printf 'awf-agent-git: no commit beyond %s\n' "$base" >&2
+    exit 3
+  fi
+  # The branch the agent chose travels with the bundle as its single head; a
+  # detached HEAD travels as HEAD and the driver names the branch itself.
+  branch="$(wsgit "$dir" symbolic-ref --quiet --short HEAD || true)"
+  wsgit "$dir" bundle create -q - "$base..${branch:-HEAD}" || exit 1
+}
+
+[[ $# -ge 1 ]] || usage
+if [[ "$1" == "--protocol" ]]; then
+  printf '%s\n' "$AWF_PROTOCOL"
+  exit 0
+fi
+[[ $# -ge 2 ]] || usage
+
+workspace="$(require_workspace "$1")"
+verb="$2"
+shift 2
+
+case "$verb" in
+  seed)   cmd_seed "$workspace" "${1:-}" "${2:-}" ;;
+  commit) cmd_commit "$workspace" "${1:-}" ;;
+  bundle) cmd_bundle "$workspace" "${1:-}" ;;
+  *)      usage ;;
+esac
