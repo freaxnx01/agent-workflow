@@ -144,6 +144,10 @@ main() {
     register_agent "$agent_dir"
   fi
   check_agent_version "$agent_dir"
+  # The agent's registration credentials live here. A named volume keeps its
+  # root-directory mode across an image rebuild, so the image alone cannot make
+  # it private (#591): every start does.
+  chmod 0700 "$agent_dir"
   cd "$agent_dir"
 
   unset AZP_TOKEN VSTS_AGENT_INPUT_TOKEN

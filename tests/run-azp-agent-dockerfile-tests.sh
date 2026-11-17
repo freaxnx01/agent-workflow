@@ -140,6 +140,68 @@ run_checks() {
   check_install_run "$dotnet"
   check_toolchain_env "$norm" "$dotnet"
   check_dotnet_env_and_user "$dotnet"
+  check_boundary "$norm"
+}
+
+# runs_under_user <norm> <needle> — the USER in effect for every RUN line that
+# mentions <needle>, one per line.
+runs_under_user() {
+  awk -v needle="$2" '
+    /^FROM / { user = "root" }
+    /^USER / { user = $2 }
+    /^RUN / && index($0, needle) > 0 { print user }
+  ' <<<"$1"
+}
+
+# check_boundary <norm> — the agent user boundary of #591: the second user, the
+# three entry points, the sudoers drop-in, and an `azp` home the agent cannot
+# read.
+check_boundary() {
+  local norm="$1" rc entry copy useradd_line apt_line first_user_1000 copy_line
+  local boundary_dir=/usr/local/libexec/awf-agent
+
+  apt_line="$(grep -E '^RUN .*apt-get install' <<<"$(stage_lines "$norm" base)" | head -n1 || true)"
+  rc=1; [[ "$apt_line" =~ (^|\ )sudo(\ |$) ]] && rc=0
+  check dockerfile_base_installs_sudo "$(verdict "$rc")" "apt line: $apt_line"
+
+  useradd_line="$(grep -E '^RUN .*useradd .*awf-agent' <<<"$norm" | head -n1 || true)"
+  rc=0
+  [[ -n "$useradd_line" ]] || rc=1
+  [[ "$useradd_line" =~ --uid\ ([0-9]+) ]] || rc=1
+  [[ "${BASH_REMATCH[1]:-1000}" != 1000 ]] || rc=1
+  [[ "$useradd_line" != *" -G "* && "$useradd_line" != *"--groups"* ]] || rc=1
+  check dockerfile_creates_awf_agent_user "$(verdict "$rc")" \
+    "useradd: $useradd_line"
+
+  rc=0
+  first_user_1000="$(grep -n '^USER 1000$' <<<"$norm" | head -n1 | cut -d: -f1)"
+  for entry in awf-agent-run awf-agent-git awf-agent-reap; do
+    copy="$(grep -E "^COPY .*boundary/$entry $boundary_dir/$entry\$" <<<"$norm" | head -n1 || true)"
+    [[ -n "$copy" ]] || { rc=1; continue; }
+    [[ "$copy" == *"--chmod=0755"* ]] || rc=1
+    copy_line="$(grep -n -F "$copy" <<<"$norm" | head -n1 | cut -d: -f1)"
+    [[ -n "$first_user_1000" && "$copy_line" -lt "$first_user_1000" ]] || rc=1
+  done
+  check dockerfile_copies_boundary_entrypoints "$(verdict "$rc")" \
+    "three mode-0755 COPYs into $boundary_dir, before USER 1000"
+
+  copy="$(grep -E '^COPY .*sudoers-awf-agent /etc/sudoers\.d/awf-agent$' <<<"$norm" | head -n1 || true)"
+  rc=0
+  [[ -n "$copy" ]] || rc=1
+  [[ "$copy" == *"--chmod=0440"* ]] || rc=1
+  copy_line="$(grep -n -F "$copy" <<<"$norm" | head -n1 | cut -d: -f1)"
+  [[ -n "$first_user_1000" && -n "$copy_line" && "$copy_line" -lt "$first_user_1000" ]] || rc=1
+  check dockerfile_copies_sudoers_rule "$(verdict "$rc")" "COPY: $copy"
+
+  local installs
+  installs="$(runs_under_user "$norm" install-claude-cli.sh | grep -c '^awf-agent$' || true)"
+  check dockerfile_installs_claude_for_awf_agent \
+    "$([[ "$installs" == 1 ]] && echo ok || echo bad)" \
+    "install-claude-cli.sh RUNs under USER awf-agent: $installs"
+
+  rc=1; grep -qE '^RUN .*chmod 0700 /home/azp( |$)' <<<"$norm" && rc=0
+  check dockerfile_azp_home_is_private "$(verdict "$rc")" \
+    "no RUN sets /home/azp to 0700"
 }
 
 check_install_run() { # check_install_run <dotnet-stage>
@@ -218,6 +280,28 @@ mutate_drop_final_user() {
 mutate_toolchain_into_base() {
   awk 'BEGIN { done = 0 } { print } /^FROM / && !done { print "ENV AWF_TOOLCHAIN=dotnet"; done = 1 }' "$1" > "$2"
 }
+mutate_drop_sudo_package() {
+  sed -E 's/^([[:space:]]*)bash ca-certificates curl git jq sudo /\1bash ca-certificates curl git jq /' "$1" > "$2"
+}
+mutate_awf_agent_into_azp_group() {
+  sed -E 's/(useradd .*awf-agent)/\1 -G azp/' "$1" > "$2"
+}
+mutate_boundary_entrypoint_world_writable() {
+  sed -E 's#(COPY --chmod=)0755( docker/azp-agent/boundary/awf-agent-run)#\10777\2#' "$1" > "$2"
+}
+mutate_sudoers_copy_mode() {
+  sed -E 's#(COPY --chmod=)0440( docker/azp-agent/sudoers-awf-agent)#\10644\2#' "$1" > "$2"
+}
+mutate_drop_awf_agent_claude_install() {
+  awk '
+    /^USER awf-agent$/ { skipping = 1; next }
+    skipping && /^RUN .*install-claude-cli\.sh/ { skipping = 0; next }
+    { print }
+  ' "$1" > "$2"
+}
+mutate_open_azp_home() {
+  sed -E 's#chmod 0700 /home/azp#chmod 0755 /home/azp#' "$1" > "$2"
+}
 
 # negative <case-name> <mutator> <check-that-must-fail>
 negative() {
@@ -242,6 +326,95 @@ negative negative_root_user_is_caught mutate_drop_final_user \
   dockerfile_dotnet_stage_ends_as_user_1000
 negative negative_toolchain_in_base_is_caught mutate_toolchain_into_base \
   dockerfile_toolchain_env_only_in_dotnet
+negative negative_missing_sudo_is_caught mutate_drop_sudo_package \
+  dockerfile_base_installs_sudo
+negative negative_agent_in_azp_group_is_caught mutate_awf_agent_into_azp_group \
+  dockerfile_creates_awf_agent_user
+negative negative_writable_entrypoint_is_caught mutate_boundary_entrypoint_world_writable \
+  dockerfile_copies_boundary_entrypoints
+negative negative_loose_sudoers_mode_is_caught mutate_sudoers_copy_mode \
+  dockerfile_copies_sudoers_rule
+negative negative_no_agent_cli_is_caught mutate_drop_awf_agent_claude_install \
+  dockerfile_installs_claude_for_awf_agent
+negative negative_readable_azp_home_is_caught mutate_open_azp_home \
+  dockerfile_azp_home_is_private
+
+# --- the sudoers drop-in ------------------------------------------------------
+
+SUDOERS="${SUDOERS:-$ROOT/docker/azp-agent/sudoers-awf-agent}"
+BOUNDARY_DIR=/usr/local/libexec/awf-agent
+ENV_ALLOWLIST='CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY MODEL MAX_TURNS'
+
+# run_sudoers_checks <file> — the grant must stay exactly three fixed commands,
+# as one user, with no path to root and no credential in the kept environment.
+run_sudoers_checks() {
+  local file="$1" rule commands expected rc
+  CHECK_FAILS=0
+  CHECK_FAIL_NAMES=""
+
+  rule="$(grep -E '^azp ' "$file" | head -n1 || true)"
+  rc=0
+  [[ "$rule" =~ ^azp\ ALL=\(awf-agent\)\ NOPASSWD:\ (.*)$ ]] || rc=1
+  commands="${BASH_REMATCH[1]:-}"
+  check sudoers_runas_is_awf_agent_only "$(verdict "$rc")" "rule: $rule"
+
+  expected="$BOUNDARY_DIR/awf-agent-run, $BOUNDARY_DIR/awf-agent-git, $BOUNDARY_DIR/awf-agent-reap"
+  rc=0
+  [[ "$commands" == "$expected" ]] || rc=1
+  check sudoers_names_exactly_the_three_entry_points "$(verdict "$rc")" \
+    "commands: $commands"
+
+  rc=0
+  grep -qE '^Defaults:azp env_reset$' "$file" || rc=1
+  grep -qF "Defaults:azp env_keep = \"$ENV_ALLOWLIST\"" "$file" || rc=1
+  check sudoers_env_keep_is_the_allowlist "$(verdict "$rc")" \
+    "env_reset plus env_keep = \"$ENV_ALLOWLIST\""
+
+  rc=0
+  grep -qE '\(root\)|ALL=\(ALL' "$file" && rc=1
+  grep -qE 'NOPASSWD:[[:space:]]*ALL' "$file" && rc=1
+  check sudoers_grants_nothing_as_root "$(verdict "$rc")" "no (root) and no ALL command"
+}
+
+mutate_sudoers_all_commands() {
+  sed -E 's#NOPASSWD: .*#NOPASSWD: ALL#' "$1" > "$2"
+}
+mutate_sudoers_runas_root() {
+  sed -E 's#\(awf-agent\)#(root)#' "$1" > "$2"
+}
+mutate_sudoers_env_keep_extra() {
+  sed -E 's#(env_keep = "[^"]*)"#\1 AZURE_DEVOPS_EXT_PAT"#' "$1" > "$2"
+}
+
+negative_sudoers() {
+  local name="$1" mutator="$2" expected="$3" mutated="$WORK/$1.sudoers"
+  "$mutator" "$SUDOERS" "$mutated"
+  if cmp -s "$SUDOERS" "$mutated"; then
+    fail "$name" "mutation changed nothing — the case would pass vacuously"; return 0
+  fi
+  EMIT=0; run_sudoers_checks "$mutated"; EMIT=1
+  if (( CHECK_FAILS > 0 )) && [[ "$CHECK_FAIL_NAMES" == *" $expected "* ]]; then pass "$name"; else
+    fail "$name" "expected $expected to fail | failed: ${CHECK_FAIL_NAMES:-none}"; fi
+}
+
+section "sudoers drop-in"
+run_sudoers_checks "$SUDOERS"
+
+if command -v visudo >/dev/null 2>&1; then
+  visudo_rc=0
+  visudo -cf "$SUDOERS" >/dev/null 2>&1 || visudo_rc=$?
+  assert_eq "sudoers_visudo_accepts_the_file" "0" "$visudo_rc"
+else
+  printf '  %s–%s sudoers_visudo_accepts_the_file (skipped: no visudo)%s\n' "$C_DIM" "$C_OFF" "$C_OFF"
+fi
+
+section "negative cases (a mutated sudoers file must be caught)"
+negative_sudoers negative_sudoers_all_commands_is_caught mutate_sudoers_all_commands \
+  sudoers_names_exactly_the_three_entry_points
+negative_sudoers negative_sudoers_root_runas_is_caught mutate_sudoers_runas_root \
+  sudoers_runas_is_awf_agent_only
+negative_sudoers negative_sudoers_credential_in_env_keep_is_caught mutate_sudoers_env_keep_extra \
+  sudoers_env_keep_is_the_allowlist
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then printf 'Failed: %s\n' "${FAIL_NAMES[*]}"; exit 1; fi
