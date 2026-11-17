@@ -18,6 +18,11 @@
 # directly). Under systemd that comes from the unit's EnvironmentFile, since a
 # --user unit inherits nothing from an interactive shell.
 #
+# ENRICH_ACCEPT_LOW=1 (set by autopilot.sh for repos the operator lists as
+# accept_low= in autopilot.conf) appends --accept-low, so headless enrich
+# records [low] assumptions and continues (#550). Only the exact value 1 turns
+# it on; anything else is the strict default.
+#
 # stdout/stderr go to $AUTOPILOT_LOG_DIR/enrich-<n>.log rather than being
 # discarded, so a failed enrichment leaves a trace the driver's log line can
 # point at. Diagnostics only — it does not change the exit-code contract.
@@ -50,4 +55,9 @@ args=(--print --allowedTools 'Edit,Write,Read,Glob,Grep,MultiEdit,TodoWrite,Bash
 log_dir="${AUTOPILOT_LOG_DIR:-${TMPDIR:-/tmp}}"
 mkdir -p "$log_dir"
 
-claude "${args[@]}" <<< "/enrich $issue --quick --headless" > "$log_dir/enrich-$issue.log" 2>&1
+prompt="/enrich $issue --quick --headless"
+if [[ "${ENRICH_ACCEPT_LOW:-0}" == "1" ]]; then
+  prompt+=" --accept-low"
+fi
+
+claude "${args[@]}" <<< "$prompt" > "$log_dir/enrich-$issue.log" 2>&1
