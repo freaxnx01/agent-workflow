@@ -274,5 +274,123 @@ assert_eq "self_fix_pr_default_identity_unchanged: author" \
   "github-actions[bot] <github-actions[bot]@users.noreply.github.com>" \
   "$(git -C "$W" log -1 --format='%an <%ae>')"
 
+section "azdo self-fix behind the agent user boundary (#591)"
+
+# selffix_pipeline <agent-mock> [VAR=value ...] — selffix_azdo in pipeline mode.
+# FIX_AGENT_CMD is cleared so the real wrapper resolves and honours
+# AGENT_WORKSPACE; the mock the fix agent actually is arrives as
+# AWF_AGENT_CLAUDE, exec'd by the boundary inside the agent's own workspace.
+# Each call gets its own workspace root. Sets SFP_WS and SFP_SUDO.
+SFP_N=0
+SFP_WS=''; SFP_SUDO=''; SFP_BOUNDARY_DIR=''
+selffix_pipeline() {
+  local agent="$1"; shift
+  SFP_N=$((SFP_N + 1))
+  SFP_WS="$T/sfp-$SFP_N/ws"; SFP_SUDO="$T/sfp-$SFP_N/sudo.log"
+  mkdir -p "$SFP_WS"; : > "$SFP_SUDO"
+  selffix_azdo "$agent" FIX_AGENT_CMD= AGENT=claude \
+    TF_BUILD=True SYSTEM_ACCESSTOKEN="$PAT" \
+    AWF_BOUNDARY_DIR="${SFP_BOUNDARY_DIR:-$MOCKS/awf-boundary}" \
+    AWF_WS_ROOT="$SFP_WS" AWF_RUN_ID="sf$SFP_N" AWF_AGENT_CLAUDE="$MOCKS/$agent" \
+    SUDO_LOG="$SFP_SUDO" SUDO_MOCK_KEEP='GIT_MOCK_REAL,GIT_MOCK_ORIGIN_URL,GIT_MOCK_LOG' "$@"
+}
+
+fresh_world
+selffix_pipeline self-fix-agent
+assert_eq "selfFix_Pipeline_CommitsAsAgentAndPushes: exit 0" "0" "$RC"
+assert_contains "selfFix_Pipeline_CommitsAsAgentAndPushes: the fix ran through the boundary" \
+  "awf-agent-run $SFP_WS/sf1-sf1 --" "$(cat "$SFP_SUDO")"
+assert_eq "selfFix_Pipeline_CommitsAsAgentAndPushes: remote has the fix commit" \
+  "$(git -C "$W" rev-parse HEAD)" "$(git -C "$B" rev-parse agent/x)"
+assert_contains "selfFix_Pipeline_CommitsAsAgentAndPushes: the fix is in the pushed tree" \
+  "fixed" "$(git -C "$W" show HEAD:file.txt)"
+assert_eq "selfFix_Pipeline_CommitsAsAgentAndPushes: author is ai-implement" \
+  "ai-implement <ai-implement@noreply.invalid>" "$(git -C "$W" log -1 --format='%an <%ae>')"
+assert_eq "selfFix_Pipeline_CommitsAsAgentAndPushes: still on the PR branch" "agent/x" \
+  "$(git -C "$W" symbolic-ref --quiet --short HEAD)"
+assert_eq "selfFix_Pipeline_CommitsAsAgentAndPushes: stop file empty" "" "$SF_STOP"
+assert_not_contains "selfFix_Pipeline_CommitsAsAgentAndPushes: no credential in the output" \
+  "$PAT" "$SF_OUT"
+
+fresh_world
+BEFORE="$(git -C "$B" rev-parse agent/x)"
+selffix_pipeline self-fix-agent-noop
+assert_eq "selfFix_Pipeline_NoChange_StopsWithTodayWording: exit 1" "1" "$RC"
+assert_eq "selfFix_Pipeline_NoChange_StopsWithTodayWording: stop file" \
+  "self-fix stopped: the fix failed, timed out or made no change" "$SF_STOP"
+assert_eq "selfFix_Pipeline_NoChange_StopsWithTodayWording: remote unchanged" \
+  "$BEFORE" "$(git -C "$B" rev-parse agent/x)"
+
+# A fix agent that leaves a process behind must not have its commit pushed.
+SFP_SURVIVOR="$T/sfp-survivor"
+mkdir -p "$SFP_SURVIVOR"
+printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$MOCKS/awf-boundary/awf-agent-run" > "$SFP_SURVIVOR/awf-agent-run"
+printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$ROOT/docker/azp-agent/boundary/awf-agent-git" > "$SFP_SURVIVOR/awf-agent-git"
+# shellcheck disable=SC2016  # the $1 belongs to the generated reap, not to this shell
+printf '#!/usr/bin/env bash\n[[ "${1:-}" != --protocol ]] || { printf "1\\n"; exit 0; }\nprintf "2\\n"\nexit 1\n' > "$SFP_SURVIVOR/awf-agent-reap"
+chmod +x "$SFP_SURVIVOR"/*
+
+fresh_world
+BEFORE="$(git -C "$B" rev-parse agent/x)"
+SFP_BOUNDARY_DIR="$SFP_SURVIVOR"
+selffix_pipeline self-fix-agent
+SFP_BOUNDARY_DIR=''
+assert_eq "selfFix_Pipeline_ReapFails_Stops: exit 1" "1" "$RC"
+assert_eq "selfFix_Pipeline_ReapFails_Stops: stop file" \
+  "self-fix stopped: an agent process survived the fix" "$SF_STOP"
+assert_eq "selfFix_Pipeline_ReapFails_Stops: remote unchanged" \
+  "$BEFORE" "$(git -C "$B" rev-parse agent/x)"
+assert_eq "selfFix_Pipeline_ReapFails_Stops: nothing merged into the PR branch" \
+  "$BEFORE" "$(git -C "$W" rev-parse agent/x)"
+
+fresh_world
+BEFORE="$(git -C "$B" rev-parse agent/x)"
+selffix_pipeline self-fix-agent SUDO_MOCK_DENY=1
+assert_eq "selfFix_Pipeline_BoundaryMissing_Stops: exit 1" "1" "$RC"
+assert_eq "selfFix_Pipeline_BoundaryMissing_Stops: stop file" \
+  "self-fix stopped: the agent user boundary is not available" "$SF_STOP"
+assert_eq "selfFix_Pipeline_BoundaryMissing_Stops: remote unchanged" \
+  "$BEFORE" "$(git -C "$B" rev-parse agent/x)"
+assert_eq "selfFix_Pipeline_BoundaryMissing_Stops: the checkout was never touched" "" \
+  "$(git -C "$W" status --porcelain)"
+
+fresh_world
+BEFORE="$(git -C "$B" rev-parse agent/x)"
+selffix_pipeline self-fix-agent-pipeline
+assert_eq "selfFix_Pipeline_PipelineFile_Refused: exit 3" "3" "$RC"
+assert_contains "selfFix_Pipeline_PipelineFile_Refused: stop file names the path" \
+  "the fix changed pipeline files: azure-pipelines.yml" "$SF_STOP"
+assert_eq "selfFix_Pipeline_PipelineFile_Refused: remote unchanged" \
+  "$BEFORE" "$(git -C "$B" rev-parse agent/x)"
+
+# Local mode is untouched: no boundary, no sudo, today's behaviour.
+fresh_world
+: > "$T/local-sudo.log"
+selffix_azdo self-fix-agent SUDO_LOG="$T/local-sudo.log"
+assert_eq "selfFix_Local_Unchanged: exit 0" "0" "$RC"
+assert_eq "selfFix_Local_Unchanged: no sudo call" "" "$(cat "$T/local-sudo.log")"
+assert_eq "selfFix_Local_Unchanged: remote has the fix commit" \
+  "$(git -C "$W" rev-parse HEAD)" "$(git -C "$B" rev-parse agent/x)"
+
+# SKIP_COMMIT hands both the no-change verdict and the commit to the caller,
+# which is what lets the commit be made inside the boundary.
+fresh_world
+BEFORE="$(git -C "$W" rev-parse HEAD)"
+RC=0
+( cd "$W" && env REPO=MyProject/my-repo HEAD_REF=agent/x ITERATION=1 SKIP_CLONE=1 SKIP_PUSH=1 \
+    SKIP_COMMIT=1 WORK_DIR="$W" FIX_AGENT_CMD="$MOCKS/self-fix-agent" \
+    bash "$ROOT/scripts/self-fix-pr.sh" 42 "$T/concerns.json" ) >/dev/null 2>&1 || RC=$?
+assert_eq "selfFixPr_SkipCommit_DoesNotCommit: exit 0" "0" "$RC"
+assert_eq "selfFixPr_SkipCommit_DoesNotCommit: nothing committed" "$BEFORE" "$(git -C "$W" rev-parse HEAD)"
+assert_contains "selfFixPr_SkipCommit_DoesNotCommit: the edit is left in the tree" \
+  "file.txt" "$(git -C "$W" status --porcelain)"
+
+fresh_world
+RC=0
+( cd "$W" && env REPO=MyProject/my-repo HEAD_REF=agent/x ITERATION=1 SKIP_CLONE=1 SKIP_PUSH=1 \
+    SKIP_COMMIT=1 WORK_DIR="$W" FIX_AGENT_CMD="$MOCKS/self-fix-agent-noop" \
+    bash "$ROOT/scripts/self-fix-pr.sh" 42 "$T/concerns.json" ) >/dev/null 2>&1 || RC=$?
+assert_eq "selfFixPr_SkipCommit_NoChangeIsNotAnError: exit 0" "0" "$RC"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then printf 'failed: %s\n' "${FAIL_NAMES[*]}"; exit 1; fi

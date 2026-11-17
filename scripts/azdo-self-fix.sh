@@ -12,6 +12,13 @@
 # is the driver's only path to the push (the agent itself has Bash, so it is
 # also run without the PAT), and the PAT never enters a URL or .git/config.
 #
+# In a PIPELINE run the fix agent also runs as a different Linux user,
+# `awf-agent`, in a workspace of its own seeded from the PR branch (#591,
+# ADR-024). It commits inside that boundary and the commit returns as a verified
+# bundle that this checkout fast-forwards to. A missing boundary, a surviving
+# agent process or a commit that does not fast-forward all stop the fix before
+# the push. A local run is unchanged.
+#
 # Required environment variables:
 #   HEAD_REF               PR head branch — pushed to
 #   ITERATION              integer, used in the commit message
@@ -42,6 +49,8 @@ SF_HEAD_REF="$HEAD_REF"
 SF_BASE_REF="origin/$DEFAULT_BRANCH"
 SF_STOP_FILE="${SELF_FIX_STOP_FILE:-}"
 SF_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SF_AGENT_WS=''   # the fix agent's own workspace in pipeline mode; empty locally
+SF_TMP=''        # handoff dir for the bundles that cross the boundary
 
 # Fixed 20-minute ceiling for one fix run; see the setup guide's §11 budget.
 FIX_TIMEOUT=20m
@@ -57,6 +66,11 @@ stop() {
 }
 
 run_fix_without_push() {
+  # With a workspace (pipeline mode) the agent runs as awf-agent in there and
+  # commits through the boundary afterwards, so this call owns neither the
+  # commit nor the "made no change" verdict.
+  local boundary=()
+  [[ -z "$SF_AGENT_WS" ]] || boundary=(SKIP_COMMIT=1 "AGENT_WORKSPACE=$SF_AGENT_WS")
   # The fix never pushes (push_branch runs afterwards, in this process), so the
   # agent gets neither credential.
   env -u AZURE_DEVOPS_EXT_PAT -u SYSTEM_ACCESSTOKEN \
@@ -65,7 +79,46 @@ run_fix_without_push() {
     GIT_AUTHOR_NAME=ai-implement GIT_AUTHOR_EMAIL=ai-implement@noreply.invalid \
     GIT_COMMITTER_NAME=ai-implement GIT_COMMITTER_EMAIL=ai-implement@noreply.invalid \
     HEAD_REF="$SF_HEAD_REF" REPO="$REPO" ITERATION="$ITERATION" \
+    "${boundary[@]}" \
     timeout --kill-after=30s "$FIX_TIMEOUT" bash "$SF_SCRIPT_DIR/self-fix-pr.sh" "$@"
+}
+
+# In a pipeline run the fix agent runs as awf-agent, in a workspace seeded from
+# the PR branch (#591): it never touches this checkout, and its commit comes
+# back the same way the implement agent's does — as a verified bundle.
+run_fix_in_boundary() {
+  boundary_check >/dev/null 2>&1 ||
+    stop 1 "self-fix stopped: the agent user boundary is not available"
+  SF_TMP="$(mktemp -d)"
+  chmod 0711 "$SF_TMP"
+  SF_AGENT_WS="$(boundary_new_workspace "sf$ITERATION")"
+  boundary_seed "$SF_AGENT_WS" "$SF_TMP/handoff" "$SF_HEAD_REF" ||
+    stop 1 "self-fix stopped: the agent workspace could not be prepared"
+  run_fix_without_push "$@" ||
+    stop 1 "self-fix stopped: the fix failed, timed out or made no change"
+  commit_in_boundary
+  collect_fix
+}
+
+# The commit is the agent's, made inside the boundary, so the bundle carries it.
+# Nothing to commit is the same verdict a local run reports, with its wording.
+commit_in_boundary() {
+  local rc=0
+  boundary_commit "$SF_AGENT_WS" "address self-review (iteration $ITERATION)" || rc=$?
+  [[ "$rc" -ne 3 ]] ||
+    stop 1 "self-fix stopped: the fix failed, timed out or made no change"
+  [[ "$rc" -eq 0 ]] || stop 1 "self-fix stopped: the fix could not be committed"
+  boundary_reap || stop 1 "self-fix stopped: an agent process survived the fix"
+}
+
+# Brings the fix onto the PR branch in this checkout. require_pr_branch runs
+# first: the fast-forward moves whatever branch HEAD is on.
+collect_fix() {
+  require_pr_branch
+  boundary_collect "$SF_AGENT_WS" "$(git rev-parse "$SF_HEAD_REF")" "$SF_TMP/handoff" >/dev/null ||
+    stop 4 "self-fix stopped: the fix did not come back as a verifiable commit"
+  bgit merge --ff-only refs/awf/collected >/dev/null 2>&1 ||
+    stop 4 "self-fix stopped: the fix does not fast-forward $SF_HEAD_REF"
 }
 
 # Refuses (no push) unless the fix commit sits on the PR branch.
@@ -87,8 +140,12 @@ run_pipeline_file_guard() {
 }
 
 main() {
-  run_fix_without_push "$@" ||
-    stop 1 "self-fix stopped: the fix failed, timed out or made no change"
+  if pipeline_mode; then
+    run_fix_in_boundary "$@"
+  else
+    run_fix_without_push "$@" ||
+      stop 1 "self-fix stopped: the fix failed, timed out or made no change"
+  fi
   require_pr_branch
   run_pipeline_file_guard
 
