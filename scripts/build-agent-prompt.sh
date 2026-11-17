@@ -45,6 +45,10 @@
 #   PROMPT_FORGE      "azdo" swaps the closing instructions for that forge:
 #                     branch-and-push only, no PR and no "Closes #N", because
 #                     implement-azdo.sh opens the PR itself. Default "github".
+#   PROMPT_PUSH       "0" (azdo only) drops the push instruction: in a pipeline
+#                     run the agent works behind the user boundary (#591), in a
+#                     workspace with no remote, and the driver pushes for it.
+#                     Default "1" — today's text, byte for byte.
 #   ISSUE_JSON        Pre-fetched `gh issue view --json title,body,comments`
 #                     output. When set, skips the gh call -- used by tests and by
 #                     scripts/lib/forge.sh on a non-GitHub forge (#253).
@@ -118,7 +122,17 @@ comments="$(printf '%s' "$issue_json" \
   # Closes-# convention, and implement-azdo.sh opens the PR itself through the
   # adapter -- so telling the agent to open one would either fail or produce a
   # second, unlinked PR.
-  if [[ "${PROMPT_FORGE:-github}" == "azdo" ]]; then
+  if [[ "${PROMPT_FORGE:-github}" == "azdo" && "${PROMPT_PUSH:-1}" == 0 ]]; then
+    # Pipeline mode: the agent works behind the user boundary (#591), in a
+    # workspace seeded from a bundle. There is no remote there, so an
+    # instruction to push would send it looking for a credential it must not
+    # have; the driver collects its commits and pushes them itself.
+    printf 'Implement the change on a NEW BRANCH and commit your work there.\n'
+    printf 'Do NOT push, and do NOT open a pull request: this workspace has no\n'
+    printf 'remote. The caller collects your commits, pushes them, and opens the\n'
+    printf 'PR linked to work item #%s. There is no "Closes #N" convention on\n' "$ISSUE_NUMBER"
+    printf 'this forge, so do not add one.\n'
+  elif [[ "${PROMPT_FORGE:-github}" == "azdo" ]]; then
     printf 'Implement the change on a NEW BRANCH. Commit your work and push the\n'
     printf 'branch. Do NOT open a pull request yourself -- the caller opens it and\n'
     printf 'links it to work item #%s. There is no "Closes #N" convention on this\n' "$ISSUE_NUMBER"

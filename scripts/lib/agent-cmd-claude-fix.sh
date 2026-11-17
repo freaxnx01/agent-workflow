@@ -32,4 +32,15 @@ MODEL="$(allowed_model_or_fallback "${MODEL:-}")"
 args=(--print --allowedTools 'Edit,Write,Read,Glob,Grep,MultiEdit,Bash')
 [[ -n "${MODEL:-}" ]] && args+=(--model "$MODEL")
 
-claude "${args[@]}" < "$prompt" > "${RUNNER_TEMP:-/tmp}/self-fix-agent-output.log" 2>&1
+log="${RUNNER_TEMP:-/tmp}/self-fix-agent-output.log"
+
+# AGENT_WORKSPACE is the driver saying "run this behind the user boundary"
+# (#591): in an Azure Pipelines run the fix agent runs as awf-agent, in the
+# workspace named here, with the same arguments and the same log.
+if [[ -n "${AGENT_WORKSPACE:-}" ]]; then
+  # shellcheck source=scripts/lib/agent-boundary.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/agent-boundary.sh"
+  boundary_exec_claude "$AGENT_WORKSPACE" "${args[@]}" < "$prompt" > "$log" 2>&1
+else
+  claude "${args[@]}" < "$prompt" > "$log" 2>&1
+fi

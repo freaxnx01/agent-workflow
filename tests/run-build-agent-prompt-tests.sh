@@ -203,6 +203,25 @@ assert_not_contains "$az_tail" 'Closes #7'      "azdo drops the Closes-# phrase"
 assert_not_contains "$az_tail" 'open a DRAFT pull' "azdo does not ask the agent to open a PR"
 assert_contains "$az_tail" 'Do NOT open a pull request yourself' "azdo says who opens it"
 assert_contains "$az_tail" 'push the'            "azdo still requires a branch and push"
+
+# PROMPT_PUSH=0: in a pipeline run the agent works in its own workspace behind
+# the user boundary (#591), seeded from a bundle. There is no remote there, so
+# telling it to push would send it looking for a credential it does not have.
+env ISSUE_JSON="$fs_json" ISSUE_NUMBER=7 REPO=o/r PROMPT_FILE="$fs_dir/az-nopush.md" \
+  PROMPT_FORGE=azdo PROMPT_PUSH=0 bash "$SCRIPT" >/dev/null 2>&1 || true
+env ISSUE_JSON="$fs_json" ISSUE_NUMBER=7 REPO=o/r PROMPT_FILE="$fs_dir/az-push1.md" \
+  PROMPT_FORGE=azdo PROMPT_PUSH=1 bash "$SCRIPT" >/dev/null 2>&1 || true
+nopush_tail="$(cat "$fs_dir/az-nopush.md" 2>/dev/null || true)"
+
+assert_contains "$nopush_tail" 'Do NOT push'     "prompt_PushOff_SaysDoNotPush"
+assert_not_contains "$nopush_tail" 'push the'    "prompt_PushOff_DropsThePushInstruction"
+assert_contains "$nopush_tail" 'NEW BRANCH'      "prompt_PushOff_StillAsksForABranch"
+assert_not_contains "$nopush_tail" 'Closes #7'   "prompt_PushOff_KeepsDroppingTheClosesPhrase"
+if cmp -s "$fs_dir/az.md" "$fs_dir/az-push1.md"; then
+  pass "prompt_Default_Unchanged"
+else
+  fail "prompt_Default_Unchanged" "$(diff "$fs_dir/az.md" "$fs_dir/az-push1.md" | head -5)"
+fi
 rm -rf "$fs_dir"
 
 

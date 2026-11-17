@@ -49,4 +49,14 @@ args=(--print --output-format json
       --max-turns "${MAX_TURNS:-80}")
 [[ -n "${MODEL:-}" ]] && args+=(--model "$MODEL")
 
-claude "${args[@]}" < "$prompt" > "$out"
+# AGENT_WORKSPACE is the driver saying "run this behind the user boundary"
+# (#591): in an Azure Pipelines run the agent runs as awf-agent, in the
+# workspace named here, with the same arguments and the same redirections. The
+# grant above is what makes that boundary necessary rather than optional.
+if [[ -n "${AGENT_WORKSPACE:-}" ]]; then
+  # shellcheck source=scripts/lib/agent-boundary.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/agent-boundary.sh"
+  boundary_exec_claude "$AGENT_WORKSPACE" "${args[@]}" < "$prompt" > "$out"
+else
+  claude "${args[@]}" < "$prompt" > "$out"
+fi

@@ -332,5 +332,78 @@ lib 'boundary_reap; printf "rc=%s\n" "$?"' \
   BOUNDARY_DIR_OVERRIDE_UNUSED=1 SUDO_MOCK_DENY=1
 assert_contains "reap_SudoDenied_ReturnsFailure" "rc=1" "$OUT"
 
+section "the agent wrappers honour AGENT_WORKSPACE"
+
+# A stand-in CLI that answers like the real one: a canonical result object on
+# stdout, plus a note of where it ran and what it was asked.
+WRAP_CLI="$TMP/wrap-cli"
+cat > "$WRAP_CLI" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$0.argv"
+printf '%s\n' "$PWD" >> "$0.cwd"
+cat >/dev/null
+printf '{"type":"result","subtype":"success","is_error":false,"num_turns":1}\n'
+STUB
+chmod +x "$WRAP_CLI"
+
+# wrapper <script> [VAR=value ...] — runs one agent wrapper on a throwaway
+# prompt; sets RC and leaves the stub's log next to $WRAP_CLI.
+WRAP_N=0
+wrapper() {
+  local script="$1"; shift
+  WRAP_N=$((WRAP_N + 1))
+  : > "$WRAP_CLI.argv"; : > "$WRAP_CLI.cwd"; : > "$SUDO_LOG"
+  printf 'do the thing\n' > "$TMP/wrap-prompt-$WRAP_N.md"
+  WRAP_OUT="$TMP/wrap-result-$WRAP_N.json"
+  RC=0
+  env PATH="$TMP/wrap-bin:$MOCKS:$PATH" HOME="$TMP" \
+    AWF_BOUNDARY_DIR="$BOUNDARY" AWF_WS_ROOT="$WS_ROOT" AWF_AGENT_CLAUDE="$WRAP_CLI" \
+    SUDO_LOG="$SUDO_LOG" RUNNER_TEMP="$TMP" \
+    AZURE_DEVOPS_EXT_PAT=leak-pat SYSTEM_ACCESSTOKEN=leak-token \
+    "$@" bash "$ROOT/scripts/lib/$script" "$TMP/wrap-prompt-$WRAP_N.md" "$WRAP_OUT" \
+    >"$TMP/wrap-stdout-$WRAP_N" 2>&1 || RC=$?
+}
+
+# Without a workspace the wrappers call `claude` off PATH, exactly as a local
+# run does today.
+mkdir -p "$TMP/wrap-bin"
+cp "$WRAP_CLI" "$TMP/wrap-bin/claude"
+
+mkdir -p "$WS_ROOT/wrapws"
+
+wrapper agent-cmd-claude-implement.sh AGENT_WORKSPACE="$WS_ROOT/wrapws" MODEL=claude-sonnet-5
+assert_eq "implementWrapper_AgentWorkspace_UsesBoundary: rc" "0" "$RC"
+assert_contains "implementWrapper_AgentWorkspace_UsesBoundary: through the boundary" \
+  "awf-agent-run $WS_ROOT/wrapws -- --print --output-format json" "$(cat "$SUDO_LOG")"
+assert_contains "implementWrapper_AgentWorkspace_UsesBoundary: same flags as a local run" \
+  "--permission-mode bypassPermissions" "$(cat "$SUDO_LOG")"
+assert_contains "implementWrapper_AgentWorkspace_UsesBoundary: ran in the workspace" \
+  "$WS_ROOT/wrapws" "$(cat "$WRAP_CLI.cwd")"
+assert_contains "implementWrapper_AgentWorkspace_UsesBoundary: result captured" \
+  '"type":"result"' "$(cat "$WRAP_OUT")"
+assert_not_contains "implementWrapper_AgentWorkspace_UsesBoundary: no credential reached the CLI" \
+  "leak-pat" "$(cat "$WRAP_CLI.argv")$(cat "$TMP/wrap-stdout-$WRAP_N")"
+
+wrapper agent-cmd-claude-implement.sh MODEL=claude-sonnet-5
+assert_eq "implementWrapper_NoWorkspace_Unchanged: rc" "0" "$RC"
+assert_eq "implementWrapper_NoWorkspace_Unchanged: no sudo call" "" "$(cat "$SUDO_LOG")"
+assert_contains "implementWrapper_NoWorkspace_Unchanged: claude called directly" \
+  "--print --output-format json" "$(cat "$TMP/wrap-bin/claude.argv")"
+
+FIX_LOG="$TMP/self-fix-agent-output.log"
+wrapper agent-cmd-claude-fix.sh AGENT_WORKSPACE="$WS_ROOT/wrapws"
+assert_eq "fixWrapper_AgentWorkspace_UsesBoundary: rc" "0" "$RC"
+assert_contains "fixWrapper_AgentWorkspace_UsesBoundary: through the boundary" \
+  "awf-agent-run $WS_ROOT/wrapws -- --print --allowedTools" "$(cat "$SUDO_LOG")"
+assert_contains "fixWrapper_AgentWorkspace_UsesBoundary: output still logged" \
+  '"type":"result"' "$(cat "$FIX_LOG")"
+
+: > "$TMP/wrap-bin/claude.argv"
+wrapper agent-cmd-claude-fix.sh
+assert_eq "fixWrapper_NoWorkspace_Unchanged: rc" "0" "$RC"
+assert_eq "fixWrapper_NoWorkspace_Unchanged: no sudo call" "" "$(cat "$SUDO_LOG")"
+assert_contains "fixWrapper_NoWorkspace_Unchanged: claude called directly" \
+  "--allowedTools" "$(cat "$TMP/wrap-bin/claude.argv")"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then printf 'Failed: %s\n' "${FAIL_NAMES[*]}"; exit 1; fi
