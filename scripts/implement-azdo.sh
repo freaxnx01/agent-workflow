@@ -279,12 +279,13 @@ run_attempt_boundary() {
   if ! boundary_seed "$AGENT_WORKSPACE" "$WORK_DIR/handoff" "origin/$DEFAULT_BRANCH"; then
     note_evidence_error 'the agent workspace could not be prepared'
     AGENT_RC=1
+    ATTEMPT_SECONDS=0
     return 0
   fi
   PROMPT_FILE="$PROMPT_FILE" PROMPT_FORGE=azdo PROMPT_PUSH=0 \
     bash "$HERE/build-agent-prompt.sh" >/dev/null
   invoke_agent "$WORK_DIR/raw-result.json"
-  # Nothing the agent left is read while a process of its can still run.
+  # Nothing the agent left is read while a process of its own can still run.
   if ! boundary_reap; then
     note_evidence_error 'an agent process survived the attempt'
     return 0

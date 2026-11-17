@@ -90,6 +90,8 @@ run_fix_in_boundary() {
   boundary_check >/dev/null 2>&1 ||
     stop 1 "self-fix stopped: the agent user boundary is not available"
   SF_TMP="$(mktemp -d)"
+  trap '[[ -z "$SF_TMP" ]] || rm -rf "$SF_TMP"' EXIT
+  # 0711: the agent user reaches the seed bundle inside and nothing else.
   chmod 0711 "$SF_TMP"
   SF_AGENT_WS="$(boundary_new_workspace "sf$ITERATION")"
   boundary_seed "$SF_AGENT_WS" "$SF_TMP/handoff" "$SF_HEAD_REF" ||
