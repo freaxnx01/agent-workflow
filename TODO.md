@@ -1,5 +1,14 @@
 # TODO
 
+## Session 2026-11-17 (#591 enrichment) — parked
+
+- [ ] **Older `docs/superpowers/` plans and specs contain leak-list terms.** The
+      leak grep run for #591 matched several plans and specs from July–November
+      2026 that name the work organisation, its repositories and the personal
+      sandbox organisation. Nothing was changed. Decide whether to redact them
+      (and whether history matters) in a dedicated pass; the term list lives
+      outside the repo.
+
 ## Azure DevOps track (#573) — found during the item-c live proof (2026-11-09)
 
 - [ ] **The service hook missed one `ai-implement` tag.** Work item 12 was
