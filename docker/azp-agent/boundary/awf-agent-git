@@ -86,7 +86,7 @@ cmd_seed() {
     printf 'awf-agent-git: workspace %s already exists\n' "$dir" >&2
     exit 2
   fi
-  git init --quiet "$dir" || exit 1
+  git -c core.hooksPath=/dev/null -c core.fsmonitor=false init --quiet "$dir" || exit 1
   wsgit "$dir" config user.name "$AWF_COMMIT_NAME" || exit 1
   wsgit "$dir" config user.email "$AWF_COMMIT_EMAIL" || exit 1
   wsgit "$dir" fetch --quiet "$bundle" '+refs/*:refs/awf/seed/*' || exit 1

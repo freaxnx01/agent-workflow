@@ -49,9 +49,12 @@ AWF_WS_ROOT="${AWF_WS_ROOT:-/home/awf-agent/ws}"
 AWF_AGENT_USER=awf-agent
 AWF_BOUNDARY_PROTOCOL=1
 
-# bgit <git-args...> — git on agent-produced data. Hooks and fsmonitor are off
-# on EVERY call: a bundle, a fetch and a rev-list all run repo config, and the
-# agent owns the repo they came from.
+# bgit <git-args...> — the only git in this file. Hooks and fsmonitor are off on
+# EVERY call: a bundle, a fetch and a rev-list all run repo config, and the
+# agent owns the repo they came from. The calls that touch no agent data go
+# through it too, so "every git call here disables hooks" stays a property a
+# static guard can check (tests/run-azdo-isolation-tests.sh) rather than a
+# judgement about which call needs it.
 bgit() {
   git -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"
 }
@@ -216,7 +219,7 @@ valid_branch_name() {
   [[ -n "$name" ]] || return 1
   [[ "$name" != -* ]] || return 1
   [[ "$name" =~ ^[A-Za-z0-9._/-]{1,100}$ ]] || return 1
-  git check-ref-format --branch "$name" >/dev/null 2>&1
+  bgit check-ref-format --branch "$name" >/dev/null 2>&1
 }
 
 # cap_file_bytes <file> <max> — 1 when the file is larger than <max>, and also
@@ -233,14 +236,14 @@ cap_file_bytes() {
 # `persistCredentials: false` on the consumer's pipeline YAML, so the driver
 # checks the result and refuses.
 checkout_has_credentials() {
-  if git config --get-regexp '^http\..*extraheader$' >/dev/null 2>&1; then
+  if bgit config --get-regexp '^http\..*extraheader$' >/dev/null 2>&1; then
     return 0
   fi
   local url
   while read -r url; do
     [[ -n "$url" ]] || continue
     [[ "$url" =~ ^[A-Za-z+.-]+://[^/@]*@ ]] && return 0
-  done < <(git remote -v 2>/dev/null | awk '{ print $2 }' | sort -u)
+  done < <(bgit remote -v 2>/dev/null | awk '{ print $2 }' | sort -u)
   return 1
 }
 
@@ -252,5 +255,5 @@ azdo_git() {
   GIT_CONFIG_COUNT=1 \
   GIT_CONFIG_KEY_0=http.extraheader \
   GIT_CONFIG_VALUE_0="Authorization: Basic $(printf ':%s' "${AZURE_DEVOPS_EXT_PAT:-}" | base64 -w0)" \
-  git "$@"
+  bgit "$@"
 }
