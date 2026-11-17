@@ -193,8 +193,13 @@ assert_eq "self_fix_pushes_with_extraheader: remote has the fix commit" \
   "$(git -C "$W" rev-parse HEAD)" "$(git -C "$B" rev-parse agent/x)"
 assert_eq "self_fix_pushes_with_extraheader: author is ai-implement" \
   "ai-implement <ai-implement@noreply.invalid>" "$(git -C "$W" log -1 --format='%an <%ae>')"
-assert_contains "self_fix_pushes_with_extraheader: push used the redacted extraheader" \
-  "http.extraheader=Authorization: Basic <redacted>" "$(printf '%s\n' "$SF_LOG" | grep ' push ' || true)"
+# Since #591 the header reaches git through GIT_CONFIG_* instead of `git -c`, so
+# the token is in the push's environment and not in its argv; the shim logs the
+# key, never the value.
+assert_contains "self_fix_pushes_with_extraheader: push was authenticated" \
+  "env:GIT_CONFIG_KEY_0=http.extraheader" "$(printf '%s\n' "$SF_LOG" | grep -E '(^| )push ' || true)"
+assert_not_contains "self_fix_pushes_with_extraheader: no header in the push argv" \
+  "http.extraheader=Authorization" "$(printf '%s\n' "$SF_LOG" | grep -E '(^| )push ' || true)"
 assert_eq "self_fix_pushes_with_extraheader: stop file empty" "" "$SF_STOP"
 
 assert_not_contains "self_fix_secret_never_persisted: git log" "$PAT" "$SF_LOG"

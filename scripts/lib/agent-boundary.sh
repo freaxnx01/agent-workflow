@@ -18,7 +18,7 @@
 #
 # Functions (0 on success, 1 on failure with one line on stderr naming it):
 #   boundary_check                  every entry point answers the known protocol
-#   boundary_new_workspace          prints the next workspace path (not created)
+#   boundary_new_workspace <n>      prints workspace <n>'s path (not created)
 #   boundary_seed <ws> <dir> <ref>  bundles <ref> into <dir> and seeds <ws>
 #   boundary_exec_claude <ws> <args...>   runs the agent CLI in <ws>
 #   boundary_commit <ws> <message>  commits in <ws>; 3 = nothing to commit
@@ -27,7 +27,9 @@
 #                                   fetches the agent's commits into
 #                                   refs/awf/collected and prints the branch the
 #                                   bundle carried (empty when detached);
-#                                   3 = no commit beyond <base>
+#                                   3 = no commit beyond <base>;
+#                                   4 = the bundle names a branch the driver
+#                                   will not use
 #   valid_branch_name <name>        the branch-name rule for agent-chosen names
 #   cap_file_bytes <file> <max>     1 when the file is larger, missing or unreadable
 #   checkout_has_credentials        0 when the checkout carries a credential
@@ -46,7 +48,6 @@ AWF_BOUNDARY_DIR="${AWF_BOUNDARY_DIR:-/usr/local/libexec/awf-agent}"
 AWF_WS_ROOT="${AWF_WS_ROOT:-/home/awf-agent/ws}"
 AWF_AGENT_USER=awf-agent
 AWF_BOUNDARY_PROTOCOL=1
-AWF_BOUNDARY_WS_SEQ=0
 
 # bgit <git-args...> — git on agent-produced data. Hooks and fsmonitor are off
 # on EVERY call: a bundle, a fetch and a rev-list all run repo config, and the
@@ -80,12 +81,14 @@ boundary_check() {
   return 0
 }
 
-# boundary_new_workspace — the next workspace path for this run. A generator:
-# each call prints a path no attempt has used, and creates nothing (the seed,
-# as the agent, is what creates it).
+# boundary_new_workspace <n> — the path of this run's workspace <n>; it creates
+# nothing (the seed, as the agent, is what creates it). The sequence number is
+# the caller's (the attempt, the fix iteration) rather than state in here: a
+# counter kept here would be incremented inside the caller's `$( )` subshell and
+# lost, handing the next attempt the last agent's workspace.
 boundary_new_workspace() {
-  AWF_BOUNDARY_WS_SEQ=$((AWF_BOUNDARY_WS_SEQ + 1))
-  printf '%s/%s-%s\n' "$AWF_WS_ROOT" "${AWF_RUN_ID:-$$}" "$AWF_BOUNDARY_WS_SEQ"
+  local sequence="${1:?boundary_new_workspace needs a sequence number}"
+  printf '%s/%s-%s\n' "$AWF_WS_ROOT" "${AWF_RUN_ID:-$$}" "$sequence"
 }
 
 # boundary_seed <workspace> <bundle-dir> <ref> — hands the agent its starting
@@ -190,7 +193,7 @@ boundary_collect() {
     printf 'agent boundary: the agent bundle does not verify against this checkout\n' >&2
     return 1
   fi
-  branch="$(bundle_branch "$bundle")" || return 1
+  branch="$(bundle_branch "$bundle")" || return 4
   ref="refs/heads/$branch"
   [[ -n "$branch" ]] || ref=HEAD
   if ! bgit fetch --quiet "$bundle" "+$ref:refs/awf/collected" 2>/dev/null; then

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#
+# awf-agent-git — the real entry point of docker/azp-agent/boundary/, reached through the
+# mock boundary dir so the driver tests exercise it unchanged.
+set -euo pipefail
+IFS=$'\n\t'
+exec "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/docker/azp-agent/boundary/awf-agent-git" "$@"

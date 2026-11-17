@@ -21,6 +21,10 @@
 #                     ai/7-same every call (a reused name across attempts)
 #   hang              no output, sleeps 30 s
 #   success-dirty     as success, plus an untracked junk.txt
+#   success-longbranch  as success, on a 150-character branch name: legal to
+#                     git, rejected by the driver's own branch-name rule (#591)
+#   success-oversized   as success, but 70 000 bytes of junk instead of a
+#                     result object — over the driver's 64 KiB cap (#591)
 # Step mode also serves the review and self-fix calls, told apart by argv, and
 # they consume no step: `--output-format json` is the implement call;
 # `--allowedTools` is a fix call (logs `fix <n>` to $CLAUDE_MOCK_FIX_LOG and
@@ -106,6 +110,12 @@ if [[ -n "${CLAUDE_MOCK_STEPS:-}" ]]; then
     success-nobranch)
       printf 'mock change\n' > HELLO.md; git add HELLO.md; git commit -q -m "mock agent change"
       cat "$fixtures/result-success-cheap.json" ;;
+    success-longbranch)
+      _step_commit "ok-$(printf 'x%.0s' {1..150})" HELLO.md
+      cat "$fixtures/result-success-cheap.json" ;;
+    success-oversized)
+      _step_commit ok HELLO.md
+      head -c 70000 /dev/zero | tr '\0' 'x' ;;
     transient|transient-pushed|transient-pushed-fixed|task_failure)
       if [[ "$step" == transient-pushed-fixed ]]; then _step_commit same a.txt; else _step_commit try a.txt; fi
       printf 'junk\n' > junk.txt

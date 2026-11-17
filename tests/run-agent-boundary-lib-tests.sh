@@ -142,7 +142,7 @@ BOUNDARY_DIR_OVERRIDE=''
 
 section "workspaces"
 
-lib 'boundary_new_workspace; boundary_new_workspace' AWF_RUN_ID=run9
+lib 'boundary_new_workspace 1; boundary_new_workspace 2' AWF_RUN_ID=run9
 assert_eq "new_workspace_IsAFreshChildOfTheRoot" "$WS_ROOT/run9-1
 $WS_ROOT/run9-2" "$OUT"
 assert_eq "new_workspace_CreatesNothing" "" "$(ls -A "$WS_ROOT")"
@@ -153,7 +153,7 @@ DRIVER="$(new_driver_checkout driver)"
 BASE_SHA="$(git -C "$DRIVER" rev-parse HEAD)"
 lib '
 cd "$DRIVER"
-ws="$(boundary_new_workspace)" || exit 10
+ws="$(boundary_new_workspace 1)" || exit 10
 boundary_seed "$ws" "$HANDOFF" origin/main || exit 11
 printf "agent work\n" > "$ws/AGENT.md"
 git -C "$ws" checkout -q -b ai/591-boundary || exit 12
@@ -176,7 +176,7 @@ assert_eq "seed_collect_RoundTrip: the driver's checkout stays on main" "main" \
 # A detached agent workspace carries HEAD, not a branch: the driver names it.
 lib '
 cd "$DRIVER"
-ws="$(boundary_new_workspace)" || exit 10
+ws="$(boundary_new_workspace 1)" || exit 10
 boundary_seed "$ws" "$HANDOFF" origin/main || exit 11
 printf "detached work\n" > "$ws/D.md"
 boundary_commit "$ws" "agent commit" || exit 13
@@ -189,7 +189,7 @@ assert_contains "collect_DetachedHead_PrintsNoBranch: empty branch" "branch=[]" 
 # Nothing committed is not invalid evidence: it is the "committed nothing" path.
 lib '
 cd "$DRIVER"
-ws="$(boundary_new_workspace)" || exit 10
+ws="$(boundary_new_workspace 1)" || exit 10
 boundary_seed "$ws" "$HANDOFF" origin/main || exit 11
 boundary_commit "$ws" "nothing"; printf "commit_rc=%s\n" "$?"
 boundary_collect "$ws" "$BASE_SHA" "$HANDOFF" >/dev/null; printf "collect_rc=%s\n" "$?"
@@ -200,7 +200,7 @@ assert_contains "collect_NoNewCommits_Returns3" "collect_rc=3" "$OUT"
 # Commits that do not descend from the attempt's base are refused.
 lib '
 cd "$DRIVER"
-ws="$(boundary_new_workspace)" || exit 10
+ws="$(boundary_new_workspace 1)" || exit 10
 boundary_seed "$ws" "$HANDOFF" origin/main || exit 11
 git -C "$ws" checkout -q --orphan ai/orphan
 git -C "$ws" rm -rq --cached . 2>/dev/null || true
@@ -212,12 +212,29 @@ boundary_collect "$ws" "$BASE_SHA" "$HANDOFF" >/dev/null; printf "collect_rc=%s\
 assert_contains "collect_WrongBase_Fails: rc" "collect_rc=1" "$OUT"
 assert_contains "collect_WrongBase_Fails: says why" "descend" "$ERR"
 
+# A branch name git accepts but the driver will not: collect refuses it with a
+# code of its own, so the report can say what was wrong.
+lib '
+cd "$DRIVER"
+ws="$(boundary_new_workspace 1)" || exit 10
+boundary_seed "$ws" "$HANDOFF" origin/main || exit 11
+git -C "$DRIVER" update-ref -d refs/awf/collected
+printf "long\n" > "$ws/L.md"
+git -C "$ws" checkout -q -b "ai/$(printf "x%.0s" {1..150})"
+boundary_commit "$ws" "long branch" || exit 13
+boundary_collect "$ws" "$BASE_SHA" "$HANDOFF" >/dev/null; printf "collect_rc=%s\n" "$?"
+' AWF_RUN_ID=longbr DRIVER="$DRIVER" HANDOFF="$TMP/handoff-longbr" BASE_SHA="$BASE_SHA"
+assert_contains "collect_UnusableBranchName_Returns4" "collect_rc=4" "$OUT"
+assert_contains "collect_UnusableBranchName_Returns4: says why" "unusable branch" "$ERR"
+assert_eq "collect_UnusableBranchName_Returns4: nothing was collected" "" \
+  "$(git -C "$DRIVER" for-each-ref --format='%(refname)' refs/awf/collected)"
+
 # The workspace is the agent's: its hooks and its fsmonitor must never run.
 MARKER_DIR="$TMP/markers"
 mkdir -p "$MARKER_DIR"
 lib '
 cd "$DRIVER"
-ws="$(boundary_new_workspace)" || exit 10
+ws="$(boundary_new_workspace 1)" || exit 10
 boundary_seed "$ws" "$HANDOFF" origin/main || exit 11
 printf "hooked\n" > "$ws/H.md"
 git -C "$ws" checkout -q -b ai/hooked
