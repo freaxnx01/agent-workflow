@@ -31,10 +31,14 @@ IFS=$'\n\t'
 #
 # Matching is exact and case-sensitive, so `## Specification` and
 # `## Acceptance criteria notes` are safe, and it skips lines inside ``` / ~~~
-# fences so a body quoting a previous enrichment is not cut. `\r\n` is handled
+# fences so a body quoting a previous enrichment is not cut. Fences follow
+# CommonMark: a fence closes only on the same character at least as long as
+# the opener, so a ~~~ line inside a ``` fence, or a ``` block nested in a ````
+# fence, does not end it early. `\r\n` is handled
 # for matching only: the kept prefix is byte-identical to the input apart from
 # trailing blank lines, which are dropped.
 enrich_body_strip_markdown() {
+  # shellcheck disable=SC2016  # backticks are fence characters in Python, not expansions
   python3 -c '
 import re, sys
 
@@ -52,14 +56,22 @@ OWNED = re.compile(
 text = sys.stdin.buffer.read().decode("utf-8")
 lines = text.splitlines(keepends=True)
 
+FENCE = re.compile(r" {0,3}(`{3,}|~{3,})(.*)")
+
 cut = None
-fenced = False
+fence = None  # the opening run, e.g. "````"; None outside a fence
 for i, line in enumerate(lines):
-    bare = line.rstrip("\r\n").lstrip()
-    if bare.startswith("```") or bare.startswith("~~~"):
-        fenced = not fenced
-        continue
-    if fenced:
+    m = FENCE.fullmatch(line.rstrip("\r\n"))
+    if fence is None:
+        # A backtick fence may not carry a backtick in its info string.
+        if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+            fence = m.group(1)
+            continue
+    else:
+        # Close only on the same character, at least as long, with nothing after.
+        run = m.group(1) if m else ""
+        if run[:1] == fence[0] and len(run) >= len(fence) and not m.group(2).strip():
+            fence = None
         continue
     if OWNED.fullmatch(line.rstrip("\r\n")):
         cut = i
@@ -105,7 +117,7 @@ OWNED = {
     "spec & plan",
 }
 
-text = sys.stdin.read()
+text = sys.stdin.buffer.read().decode("utf-8")
 
 cut = None
 for match in re.finditer(r"<h2\b[^>]*>(.*?)</h2\s*>", text, re.I | re.S):
@@ -116,8 +128,8 @@ for match in re.finditer(r"<h2\b[^>]*>(.*?)</h2\s*>", text, re.I | re.S):
         break
 
 if cut is None:
-    sys.stdout.write(text)
+    sys.stdout.buffer.write(text.encode("utf-8"))
     sys.exit(0)
 
-sys.stdout.write(text[:cut].rstrip())'
+sys.stdout.buffer.write(text[:cut].rstrip().encode("utf-8"))'
 }

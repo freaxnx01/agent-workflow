@@ -116,6 +116,8 @@ assert_strip fresh_body_unchanged      enrich_body_strip_markdown md
 assert_strip crlf_body_unchanged       enrich_body_strip_markdown md
 assert_strip inline_mention_not_cut    enrich_body_strip_markdown md
 assert_strip fenced_heading_not_cut    enrich_body_strip_markdown md
+assert_strip mixed_fence_not_cut      enrich_body_strip_markdown md
+assert_strip nested_fence_not_cut     enrich_body_strip_markdown md
 assert_strip similar_heading_not_cut   enrich_body_strip_markdown md
 
 section "markdown — a previous enrichment is cut"

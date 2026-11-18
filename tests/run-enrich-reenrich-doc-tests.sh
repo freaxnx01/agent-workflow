@@ -164,6 +164,20 @@ ph_fj_issue="$(slice "$ph_forgejo" '^### Phase `issue`$' '^### ')"
 assert_contains "GitHub issue phase strips" "$ph_gh_issue" 'enrich_body_strip_markdown'
 assert_contains "Forgejo issue phase strips" "$ph_fj_issue" 'enrich_body_strip_markdown'
 
+# The phase must point at the guarded fetch, not invite piping the read into
+# the filter: `gh issue view … | enrich_body_strip_markdown` takes the filter's
+# exit status and skips Step 6's retry and `[ -s orig-body.md ]` guard, so a
+# failed read would write a body with no human description.
+for forge in GitHub Forgejo; do
+  if [[ $forge == GitHub ]]; then text="$ph_gh_issue"; else text="$ph_fj_issue"; fi
+  assert_contains "$forge issue phase reads through the guarded fetch" "$text" 'kept-body.md'
+  if printf '%s\n' "$text" | grep -qiE 'pipe[[:space:]]+the[[:space:]]+re-read'; then
+    fail "$forge issue phase does not invite piping the read" "found 'pipe the re-read'"
+  else
+    pass "$forge issue phase does not invite piping the read"
+  fi
+done
+
 printf '\npassed: %d   failed: %d\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then
   printf 'failed:\n'
