@@ -149,6 +149,29 @@ This inverts a reasonable expectation: narrowing a job's `permissions:` later
 will not constrain the App-token calls. If you need to restrict what the
 pipeline can do, change the App's permissions, not the workflow's.
 
+### Each job asks for less than the App holds (#592 F8)
+
+Since #592 each mint requests an explicit scope, so a job's token carries **what
+that job requests, intersected with what the App holds** — not the installation's
+full set. Granting the App a permission no longer hands it to every job:
+
+| Job | Token scope |
+|---|---|
+| `implement` (runs the agent) | contents, pull requests, issues: write; workflows: write only with `app-token-workflows-write: true` |
+| `implement_gate` (decides) | contents, pull requests, checks, commit statuses: read; issues: write (the pipeline alarm) |
+
+Neither asks for **Actions**. The agent's job must not be able to
+`gh run cancel` its own run — the gate ignores cancelled runs by design, so a
+self-cancel would be a way to dodge the verdict.
+
+**A plan that edits workflow files needs both halves:** the App's Workflows
+permission *and* `app-token-workflows-write: true` on the reusable workflow.
+With the permission but not the input, the token simply doesn't carry it and the
+push is rejected with GitHub's `refusing to allow a GitHub App to create or
+update workflow ... without 'workflows' permission`. With the input but not the
+permission, the **mint itself fails** — which is why the input is opt-in: a
+consumer whose App lacks Workflows keeps minting as before.
+
 ## If you skip this
 
 The pipeline stays usable: PRs are opened as drafts and are perfectly

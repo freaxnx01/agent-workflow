@@ -481,6 +481,15 @@ jobs:
         with:
           app-id: ${{ secrets.PIPELINE_APP_ID }}
           private-key: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
+          # #592 F8: the agent's job gets what it uses and nothing more — never
+          # `actions`, or it could `gh run cancel` its own run and skip the
+          # gate's verdict (the gate deliberately ignores cancelled runs).
+          # An empty permission-* is skipped by the action at this pinned SHA,
+          # so an opt-out consumer requests no `workflows` at all.
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+          permission-workflows: ${{ inputs.app-token-workflows-write && 'write' || '' }}
 
       - name: Warn when no pipeline App token is configured
         # Knowable at second zero, so say it before any agent cost is incurred:
@@ -1202,6 +1211,17 @@ jobs:
         with:
           app-id: ${{ secrets.PIPELINE_APP_ID }}
           private-key: ${{ secrets.PIPELINE_APP_PRIVATE_KEY }}
+          # #592 F8: read to judge, write only to the issue. `issues: write` is
+          # what "Raise pipeline alarm" needs (pipeline-pause.sh creates, pins
+          # and closes alarm issues); checks and statuses are read through
+          # `gh pr view --json statusCheckRollup` (#482). No `actions` — this
+          # token never dispatches; retry-dispatch.sh uses the job's own
+          # GITHUB_TOKEN, which holds `actions: write` (#351).
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: read
+          permission-checks: read
+          permission-statuses: read
 
       - name: Checkout consumer repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2

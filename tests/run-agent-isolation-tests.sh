@@ -95,6 +95,37 @@ else:
     for key, value in want_env.items():
         if str(got_env.get(key, "")).strip() != value:
             problems.append(f"implement: F7 step env {key} is {got_env.get(key)!r}, want {value!r}")
+
+# F8 (#592): each App token carries only what its job uses. An unscoped mint
+# gives the agent's job every permission the installation holds — including
+# Actions, which would let it cancel its own run and skip the gate's verdict.
+WANT_MINTS = {
+    "implement": {
+        "permission-contents": "write",
+        "permission-pull-requests": "write",
+        "permission-issues": "write",
+        "permission-workflows": "${{ inputs.app-token-workflows-write && 'write' || '' }}",
+    },
+    "implement_gate": {
+        "permission-contents": "read",
+        "permission-issues": "write",
+        "permission-pull-requests": "read",
+        "permission-checks": "read",
+        "permission-statuses": "read",
+    },
+}
+for job_name, want in WANT_MINTS.items():
+    steps = jobs[job_name].get("steps") or []
+    mint = next((s for s in steps if "create-github-app-token" in (s.get("uses") or "")), None)
+    if mint is None:
+        problems.append(f"{job_name}: no create-github-app-token step (#592 F8)")
+        continue
+    got = {key: str(value).strip() for key, value in (mint.get("with") or {}).items()
+           if key.startswith("permission-")}
+    if not got:
+        problems.append(f"{job_name}: mint is unscoped (#592 F8)")
+    elif got != want:
+        problems.append(f"{job_name}: mint scope is {got}, want {want} (#592 F8)")
 print("\n".join(problems))
 PY
 }
@@ -136,8 +167,19 @@ fi
 mutate_drop_runner_check() {
   sed -i '/check-gate-runner-isolation\.sh/d' "$1"
 }
+mutate_unscope_gate_mint() {
+  sed -i '/^  implement_gate:/,/^  ai_review_ai_merge:/{/permission-/d}' "$1"
+}
+mutate_implement_mint_actions() {
+  # The implement mint is the first in the file, so bound the substitution to it.
+  sed -i '0,/^ *permission-issues: write$/s//&\n          permission-actions: write/' "$1"
+}
+mutate_workflows_always() {
+  sed -i 's|^\( *permission-workflows:\).*|\1 write|' "$1"
+}
 
-for mutator in mutate_drop_runner_check; do
+for mutator in mutate_drop_runner_check mutate_unscope_gate_mint \
+               mutate_implement_mint_actions mutate_workflows_always; do
   cp "$WF" "$T/mutated.yml"
   "$mutator" "$T/mutated.yml"
   if out="$(check_workflow "$T/mutated.yml" 2>&1)" && [[ -z "$out" ]]; then

@@ -190,6 +190,7 @@ safe value, so a consumer on GitHub-hosted runners needs none of them.
 |---|---|---|
 | `gate-runner-labels` | `''` (uses `runner-labels`) | **Required on self-hosted `runner-labels`.** A JSON array naming where the gate jobs run — hosted runners, or an ephemeral self-hosted pool. The gate decides the verdict and must not inherit the workspace and `$HOME` the agent just wrote: a planted git hook or a modified `~/.local/bin` tool would otherwise run inside the job that judges the run. |
 | `allow-shared-gate-runner` | `false` | Only as the explicit way out of the above, e.g. ephemeral self-hosted runners that start clean per job. The run proceeds with a `::warning::`. |
+| `app-token-workflows-write` | `false` | Set it when plans will edit files under `.github/workflows/`. The implement job's App token is minted with an explicit scope (contents, pull requests, issues — never `actions`), so `workflows: write` has to be asked for. It also requires the **App** to hold the Workflows permission: without it the token mint fails, which is why this is opt-in. Off, a push touching a workflow file is rejected by GitHub (`… without 'workflows' permission`). See `PIPELINE-APP-SETUP.md`. |
 
 With a self-hosted `runner-labels`, an empty `gate-runner-labels` and no
 opt-out, the implement job **refuses before the agent starts**:
