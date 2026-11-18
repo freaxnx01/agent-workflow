@@ -183,8 +183,10 @@ created before that — or one that never accepted the later grant, which
 So both mints are `continue-on-error`, and every reader falls back to
 `GITHUB_TOKEN`. A failed mint costs posture, not the run: the PR is authored by
 `github-actions` and its checks need manual approval, while `implement_gate`
-keeps its verdict, report and retry — its reads are scoped by the job's own
-`permissions:` block. The step summary and a `::warning::` name it, so check
+keeps its verdict, report and retry. One read degrades: `GITHUB_TOKEN` there
+holds no Checks or Commit statuses (the consumer's caller stub does not grant
+them, and a called job may not ask for more), so the checks diagnostic may
+report an App-authored PR's checks as unable to run. The step summary and a `::warning::` name it, so check
 there first if a run that used to be App-authored suddenly isn't.
 
 ## If you skip this

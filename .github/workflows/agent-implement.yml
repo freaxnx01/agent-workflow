@@ -1277,8 +1277,10 @@ jobs:
         # is reachable: `checks`/`statuses` were added to the App's table by
         # #482, and an older installation, or one that never accepted the later
         # grant, does not hold them. Every reader here falls back to
-        # `github.token`, which this job's `permissions:` already scope for the
-        # reads, so a failed mint costs a little posture and no verdict.
+        # `github.token`, so a failed mint costs posture, not the verdict. That
+        # token holds no `checks`/`statuses` — the consumer's caller stub does not
+        # grant them, and a job may not ask for more than its caller grants — so
+        # the checks diagnostic below may misreport on that fallback.
         continue-on-error: true
         # See the implement job's mint: a SHA bump must be re-verified against
         # the empty-`permission-*` skip before merging.
@@ -1301,7 +1303,7 @@ jobs:
       - name: Warn when the pipeline App token could not be minted
         if: ${{ steps.app_token.outcome == 'failure' }}
         run: |
-          printf '::warning title=App token mint failed::The gate continues on GITHUB_TOKEN, which this job already scopes for the reads it needs, so the verdict stands. Check the App and installation permissions (Checks and Commit statuses, read) against docs/PIPELINE-APP-SETUP.md\n'
+          printf '::warning title=App token mint failed::The gate continues on GITHUB_TOKEN, so the verdict stands; that token cannot read check runs, so the checks diagnostic may misreport. Check the App and installation permissions (Checks and Commit statuses, read) against docs/PIPELINE-APP-SETUP.md\n'
 
       - name: Checkout consumer repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
