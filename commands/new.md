@@ -289,7 +289,7 @@ az boards work-item create --org "$(azdo_org_url)" --project "$AZDO_PROJECT" \
 ```
 
 **Do not apply `needs-enrichment`.** That tag exists to gate GitHub's
-`/gh:implement`, and there is no pipeline dispatch on this forge (ADR-012), so it
+`/gh:implement`, and there is no pipeline dispatch on this forge (ADR-017), so it
 would signal a readiness state nothing here acts on.
 
 ### Tags afterwards
