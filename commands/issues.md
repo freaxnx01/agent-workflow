@@ -441,6 +441,36 @@ lookup. It is, however, indistinguishable from a wrong `--query` path (see the
 epistemic note at the end of this section), so if you expected WIP items and got
 none, verify the shape before trusting the empty set.
 
+**Filter with an order-preserving tool, never `comm`/`sort`.** Step 2 returns ids
+newest first (`ORDER BY [System.CreatedDate] DESC`) and the render step depends
+on that order. The obvious set difference destroys it silently:
+
+```bash
+keep=$(comm -23 <(echo "$ids" | sort) <(echo "$wip" | sort))   # WRONG
+```
+
+`comm` requires sorted input, so it hands back the ids in **numeric** order.
+Observed live: WIQL returned `7 6 4 1` and this produced `1 4 6 7`, exactly
+reversed, with no error. Filter the ordered list in place instead:
+
+```bash
+if [ -n "$wip" ]; then
+  keep=$(echo "$ids" | grep -vxFf <(echo "$wip")) || true   # rc 1 = all ids are WIP
+else
+  keep=$ids          # no active PRs: nothing is WIP
+fi
+```
+
+Two details there are load-bearing. `-x` anchors each pattern to the whole line,
+so WIP id `6` does not also drop `16` and `61`; without it an empty `$wip` would
+match every line and drop the entire list, which is what the `-n` guard covers.
+And `grep -v` exits **1** when nothing survives, a legitimate answer here (every
+candidate is WIP) that would otherwise abort the step under `set -e`.
+
+The `sort -u` above is deliberate: the WIP list is a **set** and order-insensitive.
+Only the candidate list carries an order. GitHub and Forgejo avoid this trap
+because they sort at render time rather than carrying an order through a filter.
+
 ### Step 5 — the milestone argument maps to Iteration Path
 
 A milestone on this forge is an **iteration** (see ADR-012 for why Iteration Path

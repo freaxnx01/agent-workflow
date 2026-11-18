@@ -297,6 +297,11 @@ reported as one.
 abandoned one does not count — `azdo_active_pr_work_items` already encodes that,
 so don't re-derive it from `--status all`.
 
+`ids` is in newest-first WIQL order and `wip` is sorted. Mark in-flight items
+with a membership test (`grep -qxF`), never a `comm` over sorted lists, which
+would hand back the ids in numeric order. See the trap note in
+`commands/issues.md` step 4.
+
 Resolve fields with `azdo_fields "$ids"` and show id, title, state, iteration and
 an in-flight marker. Order as the other forges do; the ordering rules are
 forge-independent.
