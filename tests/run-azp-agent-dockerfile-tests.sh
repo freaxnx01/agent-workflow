@@ -194,10 +194,10 @@ check_boundary() {
   check dockerfile_copies_sudoers_rule "$(verdict "$rc")" "COPY: $copy"
 
   local installs
-  installs="$(runs_under_user "$norm" install-claude-cli.sh | grep -c '^awf-agent$' || true)"
+  installs="$(runs_under_user "$norm" install-claude-cli.sh | grep -c '^1001$' || true)"
   check dockerfile_installs_claude_for_awf_agent \
     "$([[ "$installs" == 1 ]] && echo ok || echo bad)" \
-    "install-claude-cli.sh RUNs under USER awf-agent: $installs"
+    "install-claude-cli.sh RUNs under USER 1001 (awf-agent): $installs"
 
   rc=1; grep -qE '^RUN .*chmod 0700 /home/azp( |$)' <<<"$norm" && rc=0
   check dockerfile_azp_home_is_private "$(verdict "$rc")" \
@@ -294,7 +294,7 @@ mutate_sudoers_copy_mode() {
 }
 mutate_drop_awf_agent_claude_install() {
   awk '
-    /^USER awf-agent$/ { skipping = 1; next }
+    /^USER 1001$/ { skipping = 1; next }
     skipping && /^RUN .*install-claude-cli\.sh/ { skipping = 0; next }
     { print }
   ' "$1" > "$2"

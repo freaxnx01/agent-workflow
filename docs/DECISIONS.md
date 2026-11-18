@@ -2160,17 +2160,17 @@ The Azure DevOps path had the same weakness and a worse one.
 process, in the same job and container, as the same Linux user (`azp`, uid
 1000). That user could:
 
-- **read the job's access token.** `AZURE_DEVOPS_EXT_PAT` was exported into the
++ **read the job's access token.** `AZURE_DEVOPS_EXT_PAT` was exported into the
   agent's environment (from `SYSTEM_ACCESSTOKEN`, `lib/ci-host.sh`), and even
   without it, `/proc/<pid>/environ` of the agent worker is readable by the same
   uid, and `/proc/<pid>/cmdline` by anyone — and the token was in the argv of
   every authenticated git call (`git -c http.extraheader=...`). With the token
   the agent can push branches, open PRs, and post or delete the run reports
   `check-attempt-cap.sh` counts.
-- **rewrite the judge.** The pipeline scripts, the run's temp dir and the
++ **rewrite the judge.** The pipeline scripts, the run's temp dir and the
   consumer checkout were all writable by it, and bash reads a running script
   lazily.
-- **persist past the run.** `/azp/agent` is a persistent Docker volume owned by
++ **persist past the run.** `/azp/agent` is a persistent Docker volume owned by
   `azp`, holding the agent binaries and its registration credentials. An agent
   that rewrites them controls every later job on that registration, secrets
   included; one that copies them can impersonate the agent.
@@ -2218,18 +2218,18 @@ job, for the cost of one image change.
 
 **Consequences.**
 
-- The image must be rebuilt before an `ai-implement` run will start; nothing in
++ The image must be rebuilt before an `ai-implement` run will start; nothing in
   the pipeline YAML changes.
-- The container must not run with `no-new-privileges` (sudo is setuid). A broken
++ The container must not run with `no-new-privileges` (sudo is setuid). A broken
   sudo is detected and named.
-- A logged-in CLI session under `/home/azp` is not usable in pipeline mode; the
++ A logged-in CLI session under `/home/azp` is not usable in pipeline mode; the
   token variable is.
-- `persistCredentials: false` is enforced by the driver, since nothing in this
++ `persistCredentials: false` is enforced by the driver, since nothing in this
   repo can enforce it on a consumer's pipeline YAML.
-- An agent can still write a plausible lie in its own result text, exactly as on
++ An agent can still write a plausible lie in its own result text, exactly as on
   GitHub; the draft PR, the AI review, PR build validation and the human merge
   are what catch that.
-- `tests/run-azdo-isolation-tests.sh` keeps the boundary from regressing, the
++ `tests/run-azdo-isolation-tests.sh` keeps the boundary from regressing, the
   counterpart of `run-agent-isolation-tests.sh` for this forge.
 
 **Source:** `docs/superpowers/specs/2026-11-16-azdo-agent-user-boundary-design.md`

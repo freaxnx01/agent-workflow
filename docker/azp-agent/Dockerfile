@@ -57,7 +57,7 @@ COPY --chmod=0440 docker/azp-agent/sudoers-awf-agent /etc/sudoers.d/awf-agent
 # The agent runs its CLI as itself, so the CLI has to be installed as itself.
 # HOME is explicit: the installer targets $HOME/.local/bin, which is where
 # awf-agent-run looks.
-USER awf-agent
+USER 1001
 RUN HOME=/home/awf-agent bash /opt/agent-workflow/scripts/install-claude-cli.sh
 
 USER 1000
