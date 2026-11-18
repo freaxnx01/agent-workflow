@@ -422,5 +422,25 @@ assert_eq "fixWrapper_NoWorkspace_Unchanged: no sudo call" "" "$(cat "$SUDO_LOG"
 assert_contains "fixWrapper_NoWorkspace_Unchanged: claude called directly" \
   "--allowedTools" "$(cat "$TMP/wrap-bin/claude.argv")"
 
+section "the sudo mock does not shadow the real sudo"
+# The act workflows put tests/mocks first on PATH, so ensure-toolchain.sh's
+# `sudo apt-get install` reaches this mock. Calls outside the boundary must go
+# to the next sudo on PATH, not be refused.
+mkdir -p "$TMP/real-sudo-bin"
+printf '#!/usr/bin/env bash\nprintf "real-sudo %%s\\n" "$*"\n' > "$TMP/real-sudo-bin/sudo"
+chmod +x "$TMP/real-sudo-bin/sudo"
+RC=0
+OUT="$(PATH="$MOCKS:$TMP/real-sudo-bin:/usr/bin:/bin" sudo apt-get install -y ripgrep 2>&1)" || RC=$?
+assert_eq "sudoMock_NonBoundaryCall_DelegatesToRealSudo: rc" "0" "$RC"
+assert_eq "sudoMock_NonBoundaryCall_DelegatesToRealSudo: argv" \
+  "real-sudo apt-get install -y ripgrep" "$OUT"
+mkdir -p "$TMP/bash-only-bin"
+ln -sf "$(command -v bash)" "$TMP/bash-only-bin/bash"
+RC=0
+OUT="$(PATH="$MOCKS:$TMP/bash-only-bin" sudo apt-get install -y ripgrep 2>&1)" || RC=$?
+assert_eq "sudoMock_NonBoundaryCall_NoRealSudo_Refuses: rc" "1" "$RC"
+assert_contains "sudoMock_NonBoundaryCall_NoRealSudo_Refuses: says why" \
+  "refusing to run as" "$OUT"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then printf 'Failed: %s\n' "${FAIL_NAMES[*]}"; exit 1; fi

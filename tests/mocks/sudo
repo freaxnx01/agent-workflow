@@ -15,10 +15,31 @@
 #                   seam only: a stub entry point needs its own mock's
 #                   configuration, which the real allowlist would drop.
 #
+# Any call that does not target awf-agent is handed to the next `sudo` on PATH:
+# the act workflows put tests/mocks first on PATH, and ensure-toolchain.sh's
+# `sudo apt-get install` must still reach the real one. Without a real sudo
+# such a call is refused.
+#
 # Exit codes: the command's own; 1 when the call is refused or malformed.
 set -euo pipefail
 IFS=$'\n\t'
 
+# real_sudo — the first sudo on PATH that is not this mock; empty if none.
+real_sudo() {
+  local self dir candidate
+  self="$(cd "${BASH_SOURCE[0]%/*}" && pwd -P)/sudo"
+  IFS=':' read -r -a dirs <<< "$PATH"
+  for dir in "${dirs[@]}"; do
+    [[ -n "$dir" && -x "$dir/sudo" ]] || continue
+    candidate="$(cd "$dir" && pwd -P)/sudo"
+    [[ "$candidate" != "$self" ]] || continue
+    printf '%s' "$candidate"
+    return 0
+  done
+  return 0
+}
+
+original_args=("$@")
 argv="$(IFS=' '; printf '%s' "$*")"
 printf '%s\n' "$argv" >> "${SUDO_LOG:-/dev/null}"
 
@@ -32,6 +53,10 @@ while (( $# )); do
   esac
 done
 
+if [[ "$want_user" != "awf-agent" ]]; then
+  real="$(real_sudo)"
+  [[ -n "$real" ]] && exec "$real" "${original_args[@]}"
+fi
 if [[ "${SUDO_MOCK_DENY:-}" == "1" ]]; then
   printf 'sudo: a password is required\n' >&2
   exit 1
