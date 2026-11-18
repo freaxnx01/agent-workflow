@@ -1,6 +1,6 @@
 # Reword the stale "pipeline is GitHub-only" claim Implementation Plan (#616)
 
-**Goal:** Make `new.md`, `route.md`, `work.md` and `enrich.md` agree with ADR-017
+**Goal:** Make `new.md`, `route.md`, `work.md`, `enrich.md` and `queue.md` agree with ADR-017
 as amended 2026-11-02, with a grep guard against the stale phrases.
 
 **Architecture:** Markdown edits plus one test block. No script changes.
@@ -10,9 +10,10 @@ as amended 2026-11-02, with a grep guard against the stale phrases.
 ## Global Constraints
 
 - Touch only `commands/new.md`, `commands/route.md`, `commands/work.md`,
-  `commands/enrich.md` and `tests/run-script-tests.sh`.
-- Keep the ADR-017 citation in each file. Do not touch `docs/DECISIONS.md`,
-  `commands/queue.md`, or `enrich.md:58`.
+  `commands/enrich.md`, `commands/queue.md` and `tests/run-script-tests.sh`.
+- Keep the ADR-017 citation in each file. Do not touch `docs/DECISIONS.md`
+  or `enrich.md:58`.
+- In `queue.md` change only the Azure DevOps paragraph quoted in Task 6.
 - Do not touch the `enrich.md` Azure DevOps code block (`:940-960`, #499/#500).
 - Plain ASCII in added text.
 - Line numbers are from `main` at `a1e850f`; locate by the quoted text, not the number.
@@ -26,8 +27,8 @@ as amended 2026-11-02, with a grep guard against the stale phrases.
 
 ```bash
 # The "pipeline is GitHub-only" claim went stale with the ADR-017 amendment (#573, #616).
-for f in new.md route.md work.md enrich.md; do
-  assert_equals "$(grep -cE 'GitHub-only \(ADR-017\)|no pipeline dispatch on this forge|nothing on this forge dispatches|nothing here picks the item up|There is no .ai-implement. here' "$ROOT/commands/$f" || true)" "0" \
+for f in new.md route.md work.md enrich.md queue.md; do
+  assert_equals "$(grep -cE 'GitHub-only \(ADR-017\)|no pipeline dispatch on this forge|nothing on this forge dispatches|nothing here picks the item up|There is no .ai-implement. here|the pipeline is GitHub-only' "$ROOT/commands/$f" || true)" "0" \
     "$f no longer says the pipeline is GitHub-only on Azure DevOps"
   assert_equals "$([[ "$(grep -c 'ADR-017' "$ROOT/commands/$f")" -ge 1 ]] && echo yes || echo no)" "yes" \
     "$f still cites ADR-017"
@@ -37,7 +38,7 @@ done
 - [ ] **Step 2: Run, expect failure**
 
 Run: `bash tests/run-script-tests.sh 2>&1 | tail -15`
-Expected: four FAILs "no longer says the pipeline is GitHub-only" (route.md's phrase is split over two lines, so it matches on `GitHub-only (ADR-017)` at the start of line 219; confirm all four fail, adjust the regex if route.md does not).
+Expected: five FAILs "no longer says the pipeline is GitHub-only" (route.md's phrase is split over two lines, so it matches on `GitHub-only (ADR-017)` at the start of line 219; confirm all five fail, adjust the regex if route.md does not).
 
 ### Task 2: Reword `new.md`
 
@@ -151,9 +152,31 @@ Where the Azure Pipeline is installed an enriched item is dispatchable
 `ai-implement` to dispatch it, and stop.
 ```
 
-### Task 6: Verify
+### Task 6: Reword `queue.md`
 
-- [ ] **Step 1:** `bash tests/run-script-tests.sh 2>&1 | tail -15` — all pass, including the eight new assertions.
+**Files:**
+- Modify: `commands/queue.md` (the last paragraph of the Azure DevOps section, before `## Unknown host`)
+
+- [ ] **Step 1: Replace the paragraph**
+
+Old:
+
+```
+There is no `ai-implement` dispatch on this forge — the pipeline is GitHub-only —
+so report readiness, and don't offer to dispatch.
+```
+
+New:
+
+```
+Dispatch on this forge depends on the Azure Pipeline being installed: tagging a
+work item `ai-implement` triggers it (ADR-017, amended 2026-11-02). This command
+does not apply the tag, so report readiness, and don't offer to dispatch.
+```
+
+### Task 7: Verify
+
+- [ ] **Step 1:** `bash tests/run-script-tests.sh 2>&1 | tail -15` — all pass, including the ten new assertions.
 - [ ] **Step 2:** `grep -n "GitHub-only" commands/enrich.md` shows only the `Headless mode is GitHub-only in v1` line.
 - [ ] **Step 3:** `git diff --stat` lists only the five files from Global Constraints.
 - [ ] **Step 4:** Commit: `docs(commands): reword the stale GitHub-only pipeline claim to match ADR-017 (#616)`
