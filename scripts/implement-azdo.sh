@@ -186,14 +186,24 @@ preflight_boundary() {
   local cause
   if ! cause="$(boundary_check 2>&1)"; then
     BOUNDARY_REFUSAL="the agent user boundary is not available: $(printf '%s' "$cause" | head -n1)"
+    return 0
   fi
+  # The container outlives the job: a crashed earlier run can have left an
+  # agent process behind, and nothing authenticated runs while one exists.
+  boundary_reap >/dev/null 2>&1 ||
+    BOUNDARY_REFUSAL='an agent process from an earlier run survived the reap'
   return 0
 }
 
 # Exits 1 with a run report on the work item when preflight refused the run.
+# No agent ran, so the report states 0 turns and $0.00: check-attempt-cap.sh
+# counts that as a non-start (#393), and a misconfigured image does not use up
+# the work item's attempts.
 refuse_without_boundary() {
   [[ -n "$BOUNDARY_REFUSAL" ]] || return 0
   printf 'error: %s\n' "$BOUNDARY_REFUSAL" >&2
+  RESULT_FILE="$WORK_DIR/no-agent-ran.json"
+  printf '{"num_turns":0,"total_cost_usd":0}\n' > "$RESULT_FILE"
   post_report "failed: $BOUNDARY_REFUSAL" "next: stopping, no agent ran (see AZDO-PIPELINE-SETUP.md §13)"
   exit 1
 }
@@ -752,6 +762,11 @@ review_draft_pr() {
   if [[ "${SELF_FIX:-0}" == 1 && "$REVIEW_VERDICT" == request_changes \
         && "$SELF_FIX_MAX_ITERATIONS" -gt 0 ]]; then
     run_self_fix
+    # The fix agent's own stop paths reap, but a timeout or a crash of the
+    # self-fix script does not reach them; the verdict posts with the token.
+    if pipeline_mode && ! boundary_reap >/dev/null 2>&1; then
+      SELF_FIX_STOP="${SELF_FIX_STOP:+$SELF_FIX_STOP; }an agent process survived the self-fix"
+    fi
   fi
   report_file="$(mktemp -p "$WORK_DIR")"
   render_review_report > "$report_file"

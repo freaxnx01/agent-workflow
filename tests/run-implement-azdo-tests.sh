@@ -317,6 +317,26 @@ cap_roundtrip() {
   env -i HOME="$TMP" PATH="$PATH" ISSUE_NUMBER=7 REPO=contoso/my-repo DRY_RUN=1 \
     ISSUE_COMMENTS_JSON="$comments" bash "$ROOT/scripts/check-attempt-cap.sh"
 }
+# A boundary refusal starts no agent, so its report is a non-start (#393), not
+# an attempt: a misconfigured image must not park the work item.
+# shellcheck disable=SC2016  # $1/$2 are for the inner bash, not this one
+env -i HOME="$TMP" PATH="$PATH" bash -c '
+  source "$1"
+  REFUSAL_OUT="$2"
+  forge_issue_comment() { cp "$2" "$REFUSAL_OUT"; }
+  remote_branch_exists() { return 1; }
+  WORK_DIR="$(mktemp -d)" ISSUE_NUMBER=7 RUN_CONTEXT=pipeline RUN_ATTEMPT=1 TURNS_BUDGET=80
+  BOUNDARY_REFUSAL="the agent user boundary is not available: sudo: a password is required"
+  refuse_without_boundary' _ "$ROOT/scripts/implement-azdo.sh" "$TMP/refusal.md" >/dev/null 2>&1 || true
+refusal_body="$(cat "$TMP/refusal.md" 2>/dev/null || true)"
+cap_out="$(env -i HOME="$TMP" PATH="$PATH" ISSUE_NUMBER=7 REPO=contoso/my-repo DRY_RUN=1 \
+  ISSUE_COMMENTS_JSON="$(jq -Rs '[{body: .}]' <<<"$refusal_body")" \
+  bash "$ROOT/scripts/check-attempt-cap.sh")"
+assert_contains "refusalReport_IsANonStart: names the refusal" \
+  "the agent user boundary is not available" "$refusal_body"
+assert_contains "refusalReport_IsANonStart: attempt not consumed" "attempt=1" "$cap_out"
+assert_contains "refusalReport_IsANonStart: counted as a non-start" "non-starts=1" "$cap_out"
+
 cap_out="$(cap_roundtrip "$FIXTURES/result-max-turns.json")"
 assert_contains "cap_roundtrip_max_turns: attempt" "attempt=2" "$cap_out"
 assert_contains "cap_roundtrip_max_turns: non-starts" "non-starts=0" "$cap_out"
@@ -677,10 +697,13 @@ SURVIVOR_DIR="$TMP/boundary-survivor"
 mkdir -p "$SURVIVOR_DIR"
 printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$MOCKS/awf-boundary/awf-agent-run" > "$SURVIVOR_DIR/awf-agent-run"
 printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$ROOT/docker/azp-agent/boundary/awf-agent-git" > "$SURVIVOR_DIR/awf-agent-git"
+# The preflight reap finds nothing; every reap after it reports survivors.
 # shellcheck disable=SC2016  # the $1 belongs to the generated reap, not to this shell
-printf '#!/usr/bin/env bash\n[[ "${1:-}" != --protocol ]] || { printf "1\\n"; exit 0; }\nprintf "2\\n"\nexit 1\n' > "$SURVIVOR_DIR/awf-agent-reap"
+printf '#!/usr/bin/env bash\n[[ "${1:-}" != --protocol ]] || { printf "1\\n"; exit 0; }\ncount=%q\nn=$(( $(cat "$count" 2>/dev/null || echo 0) + 1 ))\nprintf "%%s\\n" "$n" > "$count"\n(( n > 1 )) || { printf "0\\n"; exit 0; }\nprintf "2\\n"\nexit 1\n' \
+  "$TMP/survivor-reap.count" > "$SURVIVOR_DIR/awf-agent-reap"
 chmod +x "$SURVIVOR_DIR"/*
 PIPE_BOUNDARY_DIR="$SURVIVOR_DIR"
+rm -f "$TMP/survivor-reap.count"
 run_pipeline success
 PIPE_BOUNDARY_DIR=''
 assert_eq "attempt_ReapFails_InvalidEvidence: rc" "1" "$RC"
@@ -716,6 +739,37 @@ assert_contains "attempt_PipelineFileInBundle_Refused: names the file" "azure-pi
 assert_not_contains "attempt_PipelineFileInBundle_Refused: no PR" "repos pr create" "$AZLOG"
 assert_eq "attempt_PipelineFileInBundle_Refused: nothing pushed" "" \
   "$(git -C "$BARE" branch --list 'ai/7-pf-1')"
+
+# A crashed earlier job can leave an agent process on the long-lived container:
+# it is reaped before anything authenticated runs.
+run_pipeline success
+first_call="$(grep -v -- '--protocol' "$PIPE_SUDO" | head -n1)"
+assert_contains "preflight_ReapsLeftoversBeforeTheRun: first boundary call is the reap" \
+  "awf-agent-reap" "$first_call"
+
+LEFTOVER_DIR="$TMP/boundary-leftover"
+mkdir -p "$LEFTOVER_DIR"
+cp "$SURVIVOR_DIR/awf-agent-run" "$SURVIVOR_DIR/awf-agent-git" "$LEFTOVER_DIR/"
+# shellcheck disable=SC2016  # the $1 belongs to the generated reap, not to this shell
+printf '#!/usr/bin/env bash\n[[ "${1:-}" != --protocol ]] || { printf "1\\n"; exit 0; }\nprintf "1\\n"\nexit 1\n' > "$LEFTOVER_DIR/awf-agent-reap"
+chmod +x "$LEFTOVER_DIR"/*
+PIPE_BOUNDARY_DIR="$LEFTOVER_DIR"
+run_pipeline success
+PIPE_BOUNDARY_DIR=''
+assert_eq "preflight_LeftoverSurvivesReap_Refuses: rc" "1" "$RC"
+assert_contains "preflight_LeftoverSurvivesReap_Refuses: the report says why" \
+  "an agent process from an earlier run survived the reap" "$AZLOG"
+assert_eq "preflight_LeftoverSurvivesReap_Refuses: the agent never ran" "" "$CLAUDELOG"
+
+# Nothing posts the review verdict while the fix agent could still be running.
+run_pipeline success AI_REVIEW=1 SELF_FIX=1 \
+  CLAUDE_MOCK_REVIEWS=review-request-changes.json,review-approve.json
+last_call="$(grep -v -- '--protocol' "$PIPE_SUDO" | tail -n1)"
+assert_eq "selfFix_Pipeline_ReapsBeforeTheVerdict: rc" "0" "$RC"
+assert_contains "selfFix_Pipeline_ReapsBeforeTheVerdict: the fix ran in the boundary" \
+  "awf-agent-run" "$(grep -c 'awf-agent-run' "$PIPE_SUDO" | awk '$1 >= 2 {print "awf-agent-run"}')"
+assert_contains "selfFix_Pipeline_ReapsBeforeTheVerdict: last boundary call is the reap" \
+  "awf-agent-reap" "$last_call"
 
 # Local mode is untouched: no sudo, no boundary, today's behaviour.
 : > "$TMP/local-sudo.log"
