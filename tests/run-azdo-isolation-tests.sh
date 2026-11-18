@@ -153,8 +153,8 @@ check_self_fix_driver() { # check_self_fix_driver <root>
   local file="$1/scripts/azdo-self-fix.sh" text rc=0
 
   text="$(logical "$file")"
-  func_body "$text" main | grep -q 'pipeline_mode' || rc=1
-  func_body "$text" main | grep -q 'run_fix_in_boundary' || rc=1
+  grep -q 'pipeline_mode' <<<"$(func_body "$text" main)" || rc=1
+  grep -q 'run_fix_in_boundary' <<<"$(func_body "$text" main)" || rc=1
   before "$(func_body "$text" run_fix_in_boundary)" boundary_check run_fix_without_push || rc=1
   check selffix_boundary_check_precedes_the_agent "$(verdict "$rc")" \
     "main must dispatch to run_fix_in_boundary in pipeline mode, which must check the boundary before the agent"
