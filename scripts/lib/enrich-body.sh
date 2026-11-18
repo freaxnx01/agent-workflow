@@ -74,3 +74,50 @@ while kept and kept[-1].rstrip("\r\n") == "":
     kept.pop()
 sys.stdout.buffer.write("".join(kept).encode("utf-8"))'
 }
+
+# enrich_body_strip_html  filter: stdin to stdout.
+#
+# The Azure DevOps counterpart: System.Description is an HTML field, so the
+# sections /enrich writes there are `<h2>` elements, not markdown headings. Cuts
+# at the first `<h2>` whose text is enrich-owned -- the six markdown headings
+# plus "Spec & Plan", which is what the Azure DevOps block writes.
+#
+# Headings are matched on NORMALISED text (inner tags stripped, HTML-unescaped,
+# whitespace collapsed, case-insensitive) rather than literally: the service
+# rewrites stored markup, so the `<h2>Acceptance Criteria</h2>` written is not
+# necessarily the `<h2>` read back. How exactly it rewrites has not been
+# observed live, so the match tolerates attributes, wrapper tags and entities.
+#
+# Callers must keep the azdo_description read and this strip as two separate
+# guarded statements -- piping the read into this filter would take the filter's
+# exit status, and a failed read would become a write.
+enrich_body_strip_html() {
+  python3 -c '
+import html, re, sys
+
+OWNED = {
+    "acceptance criteria",
+    "assumptions",
+    "consequences",
+    "implementation plan",
+    "spec",
+    "spec & implementation plan",
+    "spec & plan",
+}
+
+text = sys.stdin.read()
+
+cut = None
+for match in re.finditer(r"<h2\b[^>]*>(.*?)</h2\s*>", text, re.I | re.S):
+    inner = re.sub(r"<[^>]+>", "", match.group(1))
+    normalised = " ".join(html.unescape(inner).split()).casefold()
+    if normalised in OWNED:
+        cut = match.start()
+        break
+
+if cut is None:
+    sys.stdout.write(text)
+    sys.exit(0)
+
+sys.stdout.write(text[:cut].rstrip())'
+}

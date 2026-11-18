@@ -109,6 +109,37 @@ else
   fail "idempotent_after_recompose" "a filter invocation failed"
 fi
 
+section "html — nothing to strip"
+
+assert_strip html_no_owned_heading_unchanged enrich_body_strip_html html
+assert_strip html_similar_heading_not_cut    enrich_body_strip_html html
+assert_strip html_empty_input                enrich_body_strip_html html
+
+section "html — a previous enrichment is cut"
+
+assert_strip html_cuts_exact_write             enrich_body_strip_html html
+assert_strip html_cuts_sanitized_shape         enrich_body_strip_html html
+assert_strip html_cuts_spec_and_plan_first     enrich_body_strip_html html
+assert_strip html_cuts_wrapped_heading         enrich_body_strip_html html
+assert_strip html_only_sections_strips_to_empty enrich_body_strip_html html
+
+section "html — idempotent across a re-compose"
+
+kept_html="$TMP/kept.html"
+recomposed_html="$TMP/recomposed.html"
+restripped_html="$TMP/restripped.html"
+if enrich_body_strip_html < "$FIXTURES/html_cuts_exact_write.in.html" > "$kept_html" \
+  && cat "$kept_html" "$FIXTURES/recompose-sections.html" > "$recomposed_html" \
+  && enrich_body_strip_html < "$recomposed_html" > "$restripped_html"; then
+  if cmp -s "$restripped_html" "$kept_html"; then
+    pass "html_idempotent_after_recompose"
+  else
+    fail "html_idempotent_after_recompose" "strip(strip(x) + new sections) != strip(x)"
+  fi
+else
+  fail "html_idempotent_after_recompose" "a filter invocation failed"
+fi
+
 printf '\npassed: %d   failed: %d\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then
   printf 'failed:\n'
