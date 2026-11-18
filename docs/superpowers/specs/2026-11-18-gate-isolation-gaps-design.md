@@ -164,6 +164,13 @@ plain bad luck, affect the verdict on its own run:
   `evidence_empty` and `evidence_oversized`.
 - `evidence_oversized` runs only under `local-scripts: true`. That is the act
   mode, where `.claude-pipeline/` is a workspace mirror.
+  - **Amended in review:** the stand-in export script is vendored as
+    `tests/mocks/export-result-output-oversized.sh` and `cp`-ed into place,
+    rather than written from the YAML step through a heredoc. A script a YAML
+    step writes at run time is linted by nothing and runnable by no test;
+    vendored, shellcheck reads it and `run-gate-evidence-tests.sh` asserts the
+    payload still passes the 128 KiB cap, which is the only thing that makes
+    the act scenario mean anything.
 - The verify jobs mirror the existing `verify-*` jobs: they assert on the
   reusable workflow's outputs.
 - **What act does not show:** act reproduces the Linux 128 KiB per-string env

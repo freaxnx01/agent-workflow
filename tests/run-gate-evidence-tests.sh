@@ -322,5 +322,22 @@ out="$(imp imp5 "$(field "$ex" result-json)" "$(field "$ex" execution-usage)")"
 assert_eq "a 1000-event aggregate survives the hand-over" "$(field "$ex" execution-usage)" \
   "$(jq -c . "$(field "$out" execution-file)")"
 
+section "the oversized stand-in hands over evidence too large to carry (#592 F9)"
+# tests/mocks/export-result-output-oversized.sh is what agent-implement.yml's
+# `evidence_oversized` arm copies over the workspace export script, playing the
+# agent that rewrote it (#535). The act scenario only proves anything while the
+# payload still exceeds the 128 KiB per-string env cap and still looks like a
+# normal success — so check both here, where it costs milliseconds.
+out="$(bash "$ROOT/tests/mocks/export-result-output-oversized.sh")"
+rj="$(field "$out" result-json)"
+assert_eq "is-error=false — the evidence looks fine" "false" "$(field "$out" is-error)"
+assert_eq "result-json is a canonical result" "result" "$(printf '%s' "$rj" | jq -r .type)"
+assert_eq "it claims a turn the gate must not believe" "1" "$(printf '%s' "$rj" | jq -r .num_turns)"
+if (( ${#rj} > 131072 )); then
+  pass "result-json is past the 128 KiB env cap"
+else
+  fail "result-json is past the 128 KiB env cap" "${#rj} bytes"
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then printf '  - %s\n' "${FAIL_NAMES[@]}"; exit 1; fi

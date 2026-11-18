@@ -1066,24 +1066,17 @@ jobs:
               # workspace copy of the export script so the evidence it hands
               # over looks canonical and is too large to carry — the gate's
               # raw-capture step dies with E2BIG (Linux caps one env string at
-              # 128 KiB) and the import finds no file. num_turns:1 here is what
-              # the payload claims; the gate must still report 0 turns.
+              # 128 KiB) and the import finds no file. The stand-in's
+              # num_turns:1 is what the payload claims; the gate must still
+              # report 0 turns. It lives under tests/mocks/ rather than in a
+              # heredoc here so shellcheck and the Layer-1 suite both reach it.
               if [[ ! -d .claude-pipeline/scripts || -d .claude-pipeline/.git ]]; then
                 echo "::error::stub-fixture evidence_oversized needs local-scripts mode (a workspace .claude-pipeline/scripts it may overwrite)"; exit 2
               fi
               jq -nc --argjson issue "$ISSUE_NUMBER" --arg model "$DEFAULT_MODEL" \
                 '{type:"result",subtype:"success",is_error:false,duration_ms:1500,num_turns:1,total_cost_usd:0,session_id:"stub",result:("Stub success for issue #" + ($issue|tostring) + " (model " + $model + ")."),usage:{input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0}}' > "$out"
-              cat > .claude-pipeline/scripts/export-result-output.sh <<'HOSTILE'
-          #!/usr/bin/env bash
-          # Stand-in for export-result-output.sh, written by the stub to play the
-          # agent that rewrote it (#592 F9 / #535). Emits one canonical-looking
-          # result whose `result` string is 200000 characters.
-          set -euo pipefail
-          IFS=$'\n\t'
-          payload="$(jq -nc '{type:"result",subtype:"success",is_error:false,num_turns:1,total_cost_usd:0,usage:{input_tokens:0,output_tokens:0,cache_creation_input_tokens:0,cache_read_input_tokens:0},result:("x" * 200000)}')"
-          printf 'result-json=%s\n' "$payload" >> "$GITHUB_OUTPUT"
-          printf 'is-error=false\n'            >> "$GITHUB_OUTPUT"
-          HOSTILE
+              cp .claude-pipeline/tests/mocks/export-result-output-oversized.sh \
+                 .claude-pipeline/scripts/export-result-output.sh
               ;;
             *)
               echo "::error::unknown stub-fixture: $STUB_FIXTURE"; exit 2
