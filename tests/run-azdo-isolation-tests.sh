@@ -156,9 +156,9 @@ check_self_fix_driver() { # check_self_fix_driver <root>
     "main must dispatch to run_fix_in_boundary in pipeline mode, which must check the boundary before the agent"
 
   rc=0
-  printf '%s\n' "$text" | grep -qE 'AGENT_WORKSPACE=.*SF_AGENT_WS|SKIP_COMMIT=1 "AGENT_WORKSPACE' || rc=1
-  printf '%s\n' "$text" | grep -q 'boundary_commit' || rc=1
-  printf '%s\n' "$text" | grep -q 'boundary_reap' || rc=1
+  grep -qE 'AGENT_WORKSPACE=.*SF_AGENT_WS|SKIP_COMMIT=1 "AGENT_WORKSPACE' <<<"$text" || rc=1
+  grep -q 'boundary_commit' <<<"$text" || rc=1
+  grep -q 'boundary_reap' <<<"$text" || rc=1
   check selffix_fix_call_carries_the_workspace "$(verdict "$rc")" \
     "the pipeline path must set AGENT_WORKSPACE and commit/reap inside the boundary"
 }
@@ -181,7 +181,7 @@ check_git_calls_disable_hooks() { # check_git_calls_disable_hooks <root>
     while read -r line; do
       [[ -n "$line" ]] || continue
       # A git call, not a word inside a string: `git` starting a command.
-      printf '%s\n' "$line" | grep -qE '(^|[;&|(][[:space:]]*|^[[:space:]]*)git[[:space:]]' || continue
+      grep -qE '(^|[;&|(][[:space:]]*|^[[:space:]]*)git[[:space:]]' <<<"$line" || continue
       [[ "$line" == *"core.hooksPath=/dev/null"* && "$line" == *"core.fsmonitor=false"* ]] && continue
       bad+=" ${file##*/}:[$line]"
     done <<<"$(logical "$file")"
@@ -206,9 +206,9 @@ check_sudoers() { # check_sudoers <root>
 check_result_import() { # check_result_import <root>
   local file="$1/scripts/implement-azdo.sh" text rc=0 reads
   text="$(logical "$file")"
-  printf '%s\n' "$text" | grep -q 'RESULT_JSON_FILE=' || rc=1
-  printf '%s\n' "$text" | grep -q 'import-result-output.sh' || rc=1
-  printf '%s\n' "$text" | grep -qF 'RESULT_FILE="$(_output_value result-file' || rc=1
+  grep -q 'RESULT_JSON_FILE=' <<<"$text" || rc=1
+  grep -q 'import-result-output.sh' <<<"$text" || rc=1
+  grep -qF 'RESULT_FILE="$(_output_value result-file' <<<"$text" || rc=1
   # Nothing may parse the raw result itself: it is the agent's text until the
   # import has rebuilt it field by field.
   reads="$(printf '%s\n' "$text" | grep -F 'raw-result.json' \
