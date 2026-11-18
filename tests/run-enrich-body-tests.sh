@@ -45,18 +45,17 @@ source "$LIB"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-# assert_strip <case-name> <filter> <extension>
-#   Runs <filter> over tests/fixtures/enrich-body/<case>.in.<ext> and compares
-#   its stdout with <case>.out.<ext>. `cmp` and not `diff`/`[[ == ]]`: a CR or a
-#   dropped trailing newline is exactly the kind of difference these filters
-#   must not introduce, and command substitution would eat it.
-assert_strip() {
-  local name="$1" filter="$2" ext="$3"
-  local in="$FIXTURES/$name.in.$ext" expected="$FIXTURES/$name.out.$ext"
-  local actual="$TMP/$name.actual.$ext" status=0
+# assert_strip_files <case-name> <filter> <input-file> <expected-file>
+#   Runs <filter> over <input-file> and compares its stdout with
+#   <expected-file>. `cmp` and not `diff`/`[[ == ]]`: a CR or a dropped trailing
+#   newline is exactly the kind of difference these filters must not introduce,
+#   and command substitution would eat it.
+assert_strip_files() {
+  local name="$1" filter="$2" in="$3" expected="$4"
+  local actual="$TMP/$name.actual" status=0
 
   if [[ ! -f "$in" || ! -f "$expected" ]]; then
-    fail "$name" "missing fixture pair ($name.in.$ext / $name.out.$ext)"
+    fail "$name" "missing input or expectation ($in / $expected)"
     return 0
   fi
 
@@ -68,8 +67,47 @@ assert_strip() {
   if cmp -s "$actual" "$expected"; then
     pass "$name"
   else
-    fail "$name" "output differs from $name.out.$ext"
+    fail "$name" "output differs from $(basename "$expected")"
   fi
+}
+
+# assert_strip <case-name> <filter> <extension>
+#   The fixture-pair form: <case>.in.<ext> through the filter, against
+#   <case>.out.<ext>.
+assert_strip() {
+  local name="$1" filter="$2" ext="$3"
+  assert_strip_files "$name" "$filter" \
+    "$FIXTURES/$name.in.$ext" "$FIXTURES/$name.out.$ext"
+}
+
+# unterminate <fixture> <dest>  copies a fixture, dropping the single trailing
+# newline it carries on disk.
+#
+# Every tracked fixture here ends with a newline because the repo's
+# end-of-file-fixer hook rewrites files that don't — and these are compared with
+# `cmp`, so a byte the hook adds is a byte the filter would be wrongly expected
+# to emit. For the HTML cases that newline is storage, not data: an Azure DevOps
+# System.Description is one value with no trailing newline, and the filter
+# rstrips its output. Both sides drop it, so the comparison stays byte-exact on
+# the bytes that are actually the filter's.
+unterminate() {
+  python3 -c '
+import sys
+
+data = open(sys.argv[1], "rb").read()
+if data.endswith(b"\n"):
+    data = data[:-1]
+open(sys.argv[2], "wb").write(data)' "$1" "$2"
+}
+
+# assert_strip_html <case-name>  the HTML fixture-pair form, with the storage
+# newline dropped from both the input and the expectation.
+assert_strip_html() {
+  local name="$1"
+  unterminate "$FIXTURES/$name.in.html" "$TMP/$name.in.html"
+  unterminate "$FIXTURES/$name.out.html" "$TMP/$name.out.html"
+  assert_strip_files "$name" enrich_body_strip_html \
+    "$TMP/$name.in.html" "$TMP/$name.out.html"
 }
 
 section "markdown — nothing to strip"
@@ -86,8 +124,16 @@ assert_strip cuts_prior_enrichment          enrich_body_strip_markdown md
 assert_strip cuts_headless_assumptions_only enrich_body_strip_markdown md
 assert_strip cuts_forgejo_heading           enrich_body_strip_markdown md
 assert_strip cuts_crlf_enrichment           enrich_body_strip_markdown md
-assert_strip trailing_spaces_heading_cut    enrich_body_strip_markdown md
 assert_strip only_sections_strips_to_empty  enrich_body_strip_markdown md
+
+# Built here rather than stored: the property under test is a heading with
+# trailing spaces, and the repo's trailing-whitespace hook would strip exactly
+# that out of a tracked fixture — silently turning the case into a duplicate of
+# cuts_prior_enrichment.
+printf 'The original human description.\n\n## Acceptance Criteria   \n\n- [ ] Trailing spaces on the heading.\n' \
+  > "$TMP/trailing_spaces_heading_cut.in.md"
+assert_strip_files trailing_spaces_heading_cut enrich_body_strip_markdown \
+  "$TMP/trailing_spaces_heading_cut.in.md" "$FIXTURES/trailing_spaces_heading_cut.out.md"
 
 section "markdown — idempotent across a re-compose"
 
@@ -111,25 +157,26 @@ fi
 
 section "html — nothing to strip"
 
-assert_strip html_no_owned_heading_unchanged enrich_body_strip_html html
-assert_strip html_similar_heading_not_cut    enrich_body_strip_html html
-assert_strip html_empty_input                enrich_body_strip_html html
+assert_strip_html html_no_owned_heading_unchanged
+assert_strip_html html_similar_heading_not_cut
+assert_strip_html html_empty_input
 
 section "html — a previous enrichment is cut"
 
-assert_strip html_cuts_exact_write             enrich_body_strip_html html
-assert_strip html_cuts_sanitized_shape         enrich_body_strip_html html
-assert_strip html_cuts_spec_and_plan_first     enrich_body_strip_html html
-assert_strip html_cuts_wrapped_heading         enrich_body_strip_html html
-assert_strip html_only_sections_strips_to_empty enrich_body_strip_html html
+assert_strip_html html_cuts_exact_write
+assert_strip_html html_cuts_sanitized_shape
+assert_strip_html html_cuts_spec_and_plan_first
+assert_strip_html html_cuts_wrapped_heading
+assert_strip_html html_only_sections_strips_to_empty
 
 section "html — idempotent across a re-compose"
 
 kept_html="$TMP/kept.html"
 recomposed_html="$TMP/recomposed.html"
 restripped_html="$TMP/restripped.html"
-if enrich_body_strip_html < "$FIXTURES/html_cuts_exact_write.in.html" > "$kept_html" \
-  && cat "$kept_html" "$FIXTURES/recompose-sections.html" > "$recomposed_html" \
+unterminate "$FIXTURES/recompose-sections.html" "$TMP/recompose-sections.html"
+if enrich_body_strip_html < "$TMP/html_cuts_exact_write.in.html" > "$kept_html" \
+  && cat "$kept_html" "$TMP/recompose-sections.html" > "$recomposed_html" \
   && enrich_body_strip_html < "$recomposed_html" > "$restripped_html"; then
   if cmp -s "$restripped_html" "$kept_html"; then
     pass "html_idempotent_after_recompose"
