@@ -297,9 +297,14 @@ reported as one.
 abandoned one does not count — `azdo_active_pr_work_items` already encodes that,
 so don't re-derive it from `--status all`.
 
-`ids` is in newest-first WIQL order and `wip` is sorted. Mark in-flight items
-with a membership test (`grep -qxF`), never a `comm` over sorted lists, which
-would hand back the ids in numeric order. See the trap note in
+`ids` is the **comma-joined** newest-first WIQL order; `wip` is a sorted set,
+**one id per line**. Split before you test — `tr ',' '\n' <<<"$ids"` — or a
+per-id test sees the whole list as a single line, matches nothing, and reports
+every in-flight item as fresh. Mark in-flight items with a membership test
+(`grep -qxF "$id" <<<"$wip"`), never a `comm` over sorted lists: `sort` without
+`-n` is lexicographic, so that hands the ids back in string order (`10` before
+`9`) — and `sort -n` is no fix either, since neither order is the WIQL one. Keep
+the comma-joined form for `azdo_fields`. See the trap note in
 `commands/issues.md` step 4.
 
 Resolve fields with `azdo_fields "$ids"` and show id, title, state, iteration and

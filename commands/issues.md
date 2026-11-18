@@ -423,12 +423,12 @@ the **active PRs** (few) and collect their linked work items, rather than asking
 each work item for its PRs (many):
 
 ```bash
-for pr in $(az repos pr list --org "$org_url" --project "$AZDO_PROJECT" \
-              --repository "$AZDO_REPO" --status active \
-              --output tsv --query '[].pullRequestId'); do
+wip=$(for pr in $(az repos pr list --org "$org_url" --project "$AZDO_PROJECT" \
+                    --repository "$AZDO_REPO" --status active \
+                    --output tsv --query '[].pullRequestId'); do
   az repos pr work-item list --org "$org_url" --id "$pr" \
     --output tsv --query '[].id'
-done | sort -u
+done | sort -u)      # $wip: one id per line — this is azdo_active_pr_work_items
 ```
 
 `--status` takes **`active` / `completed` / `abandoned` / `all`** — there is no
