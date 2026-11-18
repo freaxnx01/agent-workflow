@@ -2,13 +2,14 @@
 
 ## Problem
 
-Four commands tell the reader that agent-workflow's pipeline is GitHub-only, or
+Five commands tell the reader that agent-workflow's pipeline is GitHub-only, or
 that nothing on Azure DevOps dispatches, and cite ADR-017 for it:
 
 - `commands/new.md:291-293` ("there is no pipeline dispatch on this forge")
 - `commands/route.md:218-222` ("pipeline is GitHub-only ... route is unavailable")
 - `commands/work.md:91-95` ("pipeline is GitHub-only ... nothing here picks the item up")
 - `commands/enrich.md:963-967` ("nothing on this forge dispatches", "There is no `ai-implement` here")
+- `commands/queue.md:304-305` ("There is no `ai-implement` dispatch on this forge — the pipeline is GitHub-only"); it carries no ADR citation yet, so this change adds one
 
 ADR-017's amendment (`docs/DECISIONS.md:1636-1646`, from #573) says a pipeline now
 runs on Azure DevOps: tagging a work item `ai-implement` dispatches
@@ -18,7 +19,7 @@ is stale.
 
 ## Design
 
-Docs-only. Reword the claim in the four files so each says what ADR-017 says
+Docs-only. Reword the claim in the five files so each says what ADR-017 says
 now, keeping the ADR-017 citation, and keep each command's behaviour unchanged:
 
 - `/new` still does not apply `needs-enrichment` on Azure DevOps. The reason
@@ -32,28 +33,27 @@ now, keeping the ADR-017 citation, and keep each command's behaviour unchanged:
   dispatches nothing before the user confirms (`commands/route.md:17,134`).
 - `/work` still never applies `ai-implement` and has no draft PR to wait on; it
   says dispatch exists separately and is a user step.
+- `/queue` still reports readiness and does not offer to dispatch from there; it
+  now says dispatch depends on the Azure Pipeline being installed and cites
+  ADR-017 (amended 2026-11-02).
 - `/enrich` still reports the paths and stops. It no longer says nothing
   dispatches; it says the item is dispatchable where the pipeline is installed
   and that the user applies `ai-implement`. It still does not apply the tag and
   does not claim the item was dispatched.
 
 Add one regression test to `tests/run-script-tests.sh` (next to the ADR-017
-assertions at `:5013-5021`) that fails if the four stale phrases return and
+assertions at `:5013-5021`) that fails if the stale phrases return in any of the five files and
 requires the ADR-017 citation to stay.
-
-Out of scope, written down not acted on: `commands/queue.md:304` carries the same
-stale claim ("the pipeline is GitHub-only") without an ADR citation, so it is not
-one of the four. See A2.
 
 ## Acceptance criteria
 
-- None of `commands/new.md`, `route.md`, `work.md`, `enrich.md` says the pipeline
+- None of `commands/new.md`, `route.md`, `work.md`, `enrich.md`, `queue.md` says the pipeline
   is GitHub-only or that nothing on Azure DevOps dispatches, on their Azure DevOps
   paths.
-- Each still cites ADR-017, and the wording agrees with the amendment dated
+- Each cites ADR-017 (`queue.md` gains the citation), and the wording agrees with the amendment dated
   2026-11-02.
 - No command behaviour changes: `/new` applies no `needs-enrichment`, `/work` and
-  `/enrich` apply no `ai-implement`, `/route` dispatches nothing unconfirmed.
+  `/enrich` apply no `ai-implement`, `/route` dispatches nothing unconfirmed, `/queue` offers no dispatch.
 - `enrich.md:58` ("Headless mode is GitHub-only in v1") is unchanged; it is a
   different, true claim.
 - `tests/run-script-tests.sh` passes with the new assertions.
@@ -78,10 +78,11 @@ one of the four. See A2.
 - **A1** [high] Docs-only, no script or ADR change. Rejected: also fixing ADR-017's
   Decision/Why prose ("no pipeline agent"). The amendment at
   `docs/DECISIONS.md:1636-1646` already supersedes it and ADRs are append-only.
-- **A2** [med] `commands/queue.md:304` is left alone. Rejected: folding it in as a
-  fifth file. The issue names four files and says "all four files together";
-  `queue.md` has the same stale phrase but no ADR citation (`commands/queue.md:304`).
-  Parked for a follow-up issue.
+- **A2** [confirmed] Widen the change to five files and include
+  `commands/queue.md:304`, adding the ADR-017 citation like the others. Decided by
+  the user: "Widen #616 to five files". Rejected: leaving `queue.md` parked (the
+  original [med] assumption); it carries the same stale phrase
+  (`commands/queue.md:304-305`).
 - **A3** [med] `/route` states availability conditionally ("where the Azure
   Pipeline is installed"). Rejected: asserting the route is always available.
   A command cannot tell whether the project's pipeline is installed
@@ -91,7 +92,7 @@ one of the four. See A2.
   the reason is reworded. Evidence: `scripts/azdo-tag-guard.sh`,
   `scripts/implement-azdo.sh` and `scripts/lib/azdo.sh` never reference it.
 - **A5** [high] One regression test is added to `tests/run-script-tests.sh:5013`
-  area. Rejected: no test. The same stale phrase survived in four files, a cheap
+  area. Rejected: no test. The same stale phrase survived in five files, a cheap
   grep guard stops it coming back.
 
 ## Consequences
