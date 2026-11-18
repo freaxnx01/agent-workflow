@@ -320,6 +320,9 @@ assert_eq "selfFix_Pipeline_NoChange_StopsWithTodayWording: stop file" \
   "self-fix stopped: the fix failed, timed out or made no change" "$SF_STOP"
 assert_eq "selfFix_Pipeline_NoChange_StopsWithTodayWording: remote unchanged" \
   "$BEFORE" "$(git -C "$B" rev-parse agent/x)"
+# An early stop still reaps: the review report posts with the token right after.
+assert_contains "selfFix_Pipeline_NoChange_StillReaps: reap ran" \
+  "awf-agent-reap" "$(grep -v -- '--protocol' "$SFP_SUDO")"
 
 # A fix agent that leaves a process behind must not have its commit pushed.
 SFP_SURVIVOR="$T/sfp-survivor"

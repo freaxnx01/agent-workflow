@@ -51,6 +51,7 @@ SF_STOP_FILE="${SELF_FIX_STOP_FILE:-}"
 SF_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SF_AGENT_WS=''   # the fix agent's own workspace in pipeline mode; empty locally
 SF_TMP=''        # handoff dir for the bundles that cross the boundary
+SF_REAP_PENDING=0  # 1 from the fix agent's start until a reap succeeded
 
 # Fixed 20-minute ceiling for one fix run; see the setup guide's §11 budget.
 FIX_TIMEOUT=20m
@@ -58,8 +59,14 @@ FIX_TIMEOUT=20m
 # shellcheck source=implement-azdo.sh
 source "$SF_SCRIPT_DIR/implement-azdo.sh"
 
+# stop <code> <line> — reaps first when a fix agent may still be running: the
+# caller posts the review report with the token right after this exits.
 stop() {
   local code="$1" line="$2"
+  if [[ "$SF_REAP_PENDING" == 1 ]]; then
+    SF_REAP_PENDING=0
+    boundary_reap >/dev/null 2>&1 || line="$line; an agent process survived the reap"
+  fi
   [[ -z "$SF_STOP_FILE" ]] || printf '%s\n' "$line" > "$SF_STOP_FILE"
   printf '%s\n' "$line" >&2
   exit "$code"
@@ -96,6 +103,7 @@ run_fix_in_boundary() {
   SF_AGENT_WS="$(boundary_new_workspace "sf$ITERATION")"
   boundary_seed "$SF_AGENT_WS" "$SF_TMP/handoff" "$SF_HEAD_REF" ||
     stop 1 "self-fix stopped: the agent workspace could not be prepared"
+  SF_REAP_PENDING=1
   run_fix_without_push "$@" ||
     stop 1 "self-fix stopped: the fix failed, timed out or made no change"
   commit_in_boundary
@@ -110,6 +118,7 @@ commit_in_boundary() {
   [[ "$rc" -ne 3 ]] ||
     stop 1 "self-fix stopped: the fix failed, timed out or made no change"
   [[ "$rc" -eq 0 ]] || stop 1 "self-fix stopped: the fix could not be committed"
+  SF_REAP_PENDING=0
   boundary_reap || stop 1 "self-fix stopped: an agent process survived the fix"
 }
 
