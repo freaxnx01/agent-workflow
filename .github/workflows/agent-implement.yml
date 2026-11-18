@@ -483,6 +483,21 @@ jobs:
         # path is not yet verified end-to-end (needs a real App installed).
         id: app_token
         if: ${{ env.PIPELINE_APP_ID != '' }}
+        # A scoped mint can 422: asking for a permission the *installation* does
+        # not hold fails outright, and an installation created before #482 added
+        # Checks/Commit statuses — or one that never accepted a later grant —
+        # holds less than the table in PIPELINE-APP-SETUP.md. Fatal, that would
+        # end the run at its first step with no verdict and no issue comment
+        # (the #597 class). Every consumer of this token reads
+        # `steps.app_token.outputs.token || github.token`, so a failed mint
+        # degrades to the draft-only posture instead, warned about below.
+        continue-on-error: true
+        # Renovate/Dependabot promotes this SHA. Before merging a bump, re-verify
+        # that the new revision still SKIPS empty `permission-*` inputs
+        # (`lib/get-permissions-from-inputs.js`): `permission-workflows` below is
+        # empty by default, and a revision that forwarded the empty string would
+        # 422 every default consumer's mint. run-agent-isolation-tests.sh pins
+        # the verified SHA and fails the bump until it is re-checked.
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349  # v2.2.2
         with:
           app-id: ${{ secrets.PIPELINE_APP_ID }}
@@ -496,6 +511,19 @@ jobs:
           permission-pull-requests: write
           permission-issues: write
           permission-workflows: ${{ inputs.app-token-workflows-write && 'write' || '' }}
+
+      - name: Warn when the pipeline App token could not be minted
+        # The mint is continue-on-error, so say why the run suddenly looks
+        # draft-only. A 422 here is almost always a permission the App — or the
+        # *installation* — does not hold; `app-token-workflows-write: true`
+        # against an App without Workflows is the common one.
+        if: ${{ steps.app_token.outcome == 'failure' }}
+        run: |
+          printf '::warning title=App token mint failed::Falling back to GITHUB_TOKEN; the PR will be authored by github-actions and its checks will need manual approval. Check the App and installation permissions against docs/PIPELINE-APP-SETUP.md\n'
+          cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
+          > [!WARNING]
+          > The pipeline App token could not be minted — this run continues on `GITHUB_TOKEN` and will need its checks approved by hand. See `docs/PIPELINE-APP-SETUP.md`.
+          SUMMARY
 
       - name: Warn when no pipeline App token is configured
         # Knowable at second zero, so say it before any agent cost is incurred:
@@ -547,18 +575,6 @@ jobs:
             cp -r tests/fixtures/. .claude-pipeline/tests/fixtures/
           fi
 
-      - name: Refuse a gate that shares the agent's runner
-        # #592 F7: pre-agent and trusted. A self-hosted run whose gate falls
-        # back to `runner-labels` would be judged on the machine the agent just
-        # had, so refuse here — before any agent cost — unless the consumer
-        # named a gate pool or took the opt-out.
-        id: gate_runner_isolation
-        env:
-          RUNNER_LABELS: ${{ inputs.runner-labels }}
-          GATE_RUNNER_LABELS: ${{ inputs.gate-runner-labels }}
-          ALLOW_SHARED_GATE_RUNNER: ${{ inputs.allow-shared-gate-runner }}
-        run: bash .claude-pipeline/scripts/check-gate-runner-isolation.sh
-
       - name: Hide .claude-pipeline from the consumer repo's git (#99)
         # The pipeline scripts are checked out INTO the consumer working tree at
         # .claude-pipeline/ (a nested repo with its own .git, or copied files in
@@ -607,6 +623,24 @@ jobs:
 
       - name: Ensure toolchain
         run: bash .claude-pipeline/scripts/ensure-toolchain.sh
+
+      - name: Refuse a gate that shares the agent's runner
+        # #592 F7: pre-agent and trusted. A self-hosted run whose gate falls
+        # back to `runner-labels` would be judged on the machine the agent just
+        # had, so refuse here — before any agent cost — unless the consumer
+        # named a gate pool or took the opt-out.
+        #
+        # Placed after "Ensure toolchain" on purpose, still well before the
+        # first agent step: the check parses its inputs with `jq`, and on a
+        # self-hosted runner without jq that is the step above which installs
+        # it. Run earlier, the check died on its own missing dependency — on
+        # exactly the runners it exists to protect.
+        id: gate_runner_isolation
+        env:
+          RUNNER_LABELS: ${{ inputs.runner-labels }}
+          GATE_RUNNER_LABELS: ${{ inputs.gate-runner-labels }}
+          ALLOW_SHARED_GATE_RUNNER: ${{ inputs.allow-shared-gate-runner }}
+        run: bash .claude-pipeline/scripts/check-gate-runner-isolation.sh
 
       # Fill the four variables the read paths already prefer, from ONE forge
       # call, before any classifier runs. classify-agent/task/turns,
@@ -1243,6 +1277,18 @@ jobs:
         # between jobs through a job output, which is not secret-masked (#430).
         id: app_token
         if: ${{ env.PIPELINE_APP_ID != '' }}
+        # This is the gate's FIRST step, and the gate is the job that exists to
+        # be reliable: a fatal mint would take classify, report and retry with
+        # it, ending the run with no verdict, no issue comment and an issue that
+        # still reads as running — after the full agent spend (#597). And a 422
+        # is reachable: `checks`/`statuses` were added to the App's table by
+        # #482, and an older installation, or one that never accepted the later
+        # grant, does not hold them. Every reader here falls back to
+        # `github.token`, which this job's `permissions:` already scope for the
+        # reads, so a failed mint costs a little posture and no verdict.
+        continue-on-error: true
+        # See the implement job's mint: a SHA bump must be re-verified against
+        # the empty-`permission-*` skip before merging.
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349  # v2.2.2
         with:
           app-id: ${{ secrets.PIPELINE_APP_ID }}
@@ -1258,6 +1304,11 @@ jobs:
           permission-pull-requests: read
           permission-checks: read
           permission-statuses: read
+
+      - name: Warn when the pipeline App token could not be minted
+        if: ${{ steps.app_token.outcome == 'failure' }}
+        run: |
+          printf '::warning title=App token mint failed::The gate continues on GITHUB_TOKEN, which this job already scopes for the reads it needs, so the verdict stands. Check the App and installation permissions (Checks and Commit statuses, read) against docs/PIPELINE-APP-SETUP.md\n'
 
       - name: Checkout consumer repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2

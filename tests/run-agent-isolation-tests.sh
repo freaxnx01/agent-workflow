@@ -77,16 +77,24 @@ if "!cancelled()" not in gate_if or "agent-eligible" not in gate_if or "always()
 
 # F7 (#592): a self-hosted run whose gate would share the agent's machine is
 # refused before the agent starts, so the check has to sit before the first
-# agent step and read the three inputs the decision depends on.
+# agent step and read the three inputs the decision depends on. It also has to
+# sit AFTER "Ensure toolchain": it parses its inputs with jq, and that step is
+# what installs jq on a self-hosted runner that lacks it — the runners this
+# check exists for.
 impl_steps = jobs["implement"].get("steps") or []
 impl_agent_at = next((i for i, s in enumerate(impl_steps)
                       if any(m in text(s) for m in AGENT)), None)
 check_at = next((i for i, s in enumerate(impl_steps)
                  if "check-gate-runner-isolation.sh" in (s.get("run") or "")), None)
+toolchain_at = next((i for i, s in enumerate(impl_steps)
+                     if "ensure-toolchain.sh" in (s.get("run") or "")), None)
 if check_at is None:
     problems.append("implement: no step runs check-gate-runner-isolation.sh (#592 F7)")
 elif impl_agent_at is not None and check_at > impl_agent_at:
     problems.append("implement: check-gate-runner-isolation.sh runs after an agent step (#592 F7)")
+elif toolchain_at is None or check_at < toolchain_at:
+    problems.append("implement: check-gate-runner-isolation.sh must run after "
+                    "ensure-toolchain.sh, which installs the jq it parses with (#592 F7)")
 else:
     want_env = {"RUNNER_LABELS": "${{ inputs.runner-labels }}",
                 "GATE_RUNNER_LABELS": "${{ inputs.gate-runner-labels }}",
@@ -99,6 +107,13 @@ else:
 # F8 (#592): each App token carries only what its job uses. An unscoped mint
 # gives the agent's job every permission the installation holds — including
 # Actions, which would let it cancel its own run and skip the gate's verdict.
+#
+# The SHA both mints pin, verified to SKIP empty `permission-*` inputs
+# (lib/get-permissions-from-inputs.js) — which `permission-workflows: ''` on the
+# default path depends on. Renovate bumping this SHA must fail here until a
+# human has re-read that file in the new revision and updated the constant;
+# a revision that forwarded the empty string would 422 every default mint.
+VERIFIED_APP_TOKEN_SHA = "fee1f7d63c2ff003460e3d139729b119787bc349"
 WANT_MINTS = {
     "implement": {
         "permission-contents": "write",
@@ -126,6 +141,19 @@ for job_name, want in WANT_MINTS.items():
         problems.append(f"{job_name}: mint is unscoped (#592 F8)")
     elif got != want:
         problems.append(f"{job_name}: mint scope is {got}, want {want} (#592 F8)")
+    # A scoped mint 422s on a permission the installation does not hold, so it
+    # must never be fatal: in implement_gate that would end the run with no
+    # verdict and no report, which is the #597 class. Readers fall back to
+    # `github.token`.
+    if mint.get("continue-on-error") is not True:
+        problems.append(f"{job_name}: mint must be continue-on-error — a 422 from a "
+                        "permission the installation lacks would otherwise kill the job (#592)")
+    if VERIFIED_APP_TOKEN_SHA not in (mint.get("uses") or ""):
+        problems.append(f"{job_name}: mint pins {mint.get('uses')!r}, not the verified "
+                        f"{VERIFIED_APP_TOKEN_SHA}. `permission-workflows: ''` relies on the "
+                        "action skipping empty permission-* inputs — re-read "
+                        "lib/get-permissions-from-inputs.js in the new revision, then update "
+                        "VERIFIED_APP_TOKEN_SHA in this file (#592 F8)")
 print("\n".join(problems))
 PY
 }
@@ -177,9 +205,32 @@ mutate_implement_mint_actions() {
 mutate_workflows_always() {
   sed -i 's|^\( *permission-workflows:\).*|\1 write|' "$1"
 }
+mutate_fatal_mint() {
+  sed -i '/^ *continue-on-error: true$/d' "$1"
+}
+mutate_bump_app_token_sha() {
+  sed -i 's|\(create-github-app-token@\)[0-9a-f]\{40\}|\1'"$(printf 'd%.0s' {1..40})"'|g' "$1"
+}
+mutate_check_before_toolchain() {
+  # Reorder the implement job so the F7 check runs before "Ensure toolchain" —
+  # the placement where a runner without jq reported valid labels as malformed.
+  # Re-serializes the YAML, dropping comments; the guard reads structure only.
+  python3 - "$1" <<'PY'
+import sys, yaml
+wf = yaml.safe_load(open(sys.argv[1]))
+steps = wf["jobs"]["implement"]["steps"]
+check = next(s for s in steps if "check-gate-runner-isolation.sh" in (s.get("run") or ""))
+toolchain_at = next(i for i, s in enumerate(steps) if "ensure-toolchain.sh" in (s.get("run") or ""))
+steps.remove(check)
+steps.insert(toolchain_at - 1, check)
+yaml.safe_dump(wf, open(sys.argv[1], "w"))
+PY
+}
 
 for mutator in mutate_drop_runner_check mutate_unscope_gate_mint \
-               mutate_implement_mint_actions mutate_workflows_always; do
+               mutate_implement_mint_actions mutate_workflows_always \
+               mutate_fatal_mint mutate_bump_app_token_sha \
+               mutate_check_before_toolchain; do
   cp "$WF" "$T/mutated.yml"
   "$mutator" "$T/mutated.yml"
   if out="$(check_workflow "$T/mutated.yml" 2>&1)" && [[ -z "$out" ]]; then

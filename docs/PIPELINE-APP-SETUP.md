@@ -34,7 +34,7 @@ because the secrets are unset.
    | Issues | Read and write | Run report comments, labels |
    | Checks | Read | Merge envelope gate 5 and the checks diagnostic read the PR's check runs with the App token (#482) |
    | Commit statuses | Read | The same reads, for checks reported as commit statuses (#482) |
-   | Actions | Read | Run status reads (checks diagnostic, retry paths), so they work on the App token too (#482) |
+   | Actions | Read | Run status reads (checks diagnostic, retry paths), so they work on the App token too (#482). Used by the **review** jobs only: since #592 neither `implement` nor `implement_gate` requests it — see *Each job asks for less than the App holds* |
    | Workflows | Read and write | Push a branch that touches `.github/workflows/` — needed only if plans will edit workflow files |
 
    **Workflows is not optional if any plan will edit a workflow file.** An
@@ -139,15 +139,15 @@ pipeline-opened draft PR, the allowlist is missing — also step 7.
 ## What the App token governs
 
 When a workflow step uses the App token rather than `GITHUB_TOKEN`, the job's
-`permissions:` block **no longer governs that call** — the App's installed
-permissions do. What the pipeline can push is therefore exactly what the four
-permissions above (contents, issues, pull requests, workflows, all read/write)
-allow: drop workflows and the pipeline can still do everything *except* push a
-branch that touches `.github/workflows/`.
+`permissions:` block **no longer governs that call** — what the App holds does.
 
 This inverts a reasonable expectation: narrowing a job's `permissions:` later
 will not constrain the App-token calls. If you need to restrict what the
 pipeline can do, change the App's permissions, not the workflow's.
+
+The App's permissions are the **ceiling**, not the grant: since #592 each job
+mints a token scoped to what that job uses, so granting the App a permission no
+longer hands it to every job. The next section is the per-job breakdown.
 
 ### Each job asks for less than the App holds (#592 F8)
 
@@ -171,6 +171,21 @@ push is rejected with GitHub's `refusing to allow a GitHub App to create or
 update workflow ... without 'workflows' permission`. With the input but not the
 permission, the **mint itself fails** — which is why the input is opt-in: a
 consumer whose App lacks Workflows keeps minting as before.
+
+### A scoped mint can fail, so it is never fatal
+
+Asking for a permission the **installation** does not hold fails the mint
+outright with a 422. That is reachable without anyone changing an input: Checks
+and Commit statuses were added to the table above by #482, and an installation
+created before that — or one that never accepted the later grant, which
+*requires* the per-installation review in step 2 — does not hold them.
+
+So both mints are `continue-on-error`, and every reader falls back to
+`GITHUB_TOKEN`. A failed mint costs posture, not the run: the PR is authored by
+`github-actions` and its checks need manual approval, while `implement_gate`
+keeps its verdict, report and retry — its reads are scoped by the job's own
+`permissions:` block. The step summary and a `::warning::` name it, so check
+there first if a run that used to be App-authored suddenly isn't.
 
 ## If you skip this
 
