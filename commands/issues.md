@@ -446,30 +446,48 @@ newest first (`ORDER BY [System.CreatedDate] DESC`) and the render step depends
 on that order. The obvious set difference destroys it silently:
 
 ```bash
-keep=$(comm -23 <(echo "$ids" | sort) <(echo "$wip" | sort))   # WRONG
+keep=$(comm -23 <(tr ',' '\n' <<<"$ids" | sort) <(printf '%s\n' "$wip" | sort))   # WRONG
 ```
 
-`comm` requires sorted input, so it hands back the ids in **numeric** order.
-Observed live: WIQL returned `7 6 4 1` and this produced `1 4 6 7`, exactly
-reversed, with no error. Filter the ordered list in place instead:
+`comm` requires sorted input, and `sort` without `-n` is **lexicographic**, so
+the ids come back in string order — `10` lands before `9`. Observed live: WIQL
+returned `7 6 4 1` and this produced `1 4 6 7`, exactly reversed, with no error.
+Those are all single digits, so that run can't distinguish lexicographic from
+numeric; don't read it as `sort -n` being the fix — neither order is the WIQL one.
+
+Filter the ordered list in place instead. **Mind the shape:** `ids` is the
+**comma-separated** form that step 2b interpolates and `azdo_fields` takes
+(`scripts/lib/azdo.sh`), while `grep -f` matches **one id per line** — so split,
+filter, and re-join before the next call:
 
 ```bash
-if [ -n "$wip" ]; then
-  keep=$(echo "$ids" | grep -vxFf <(echo "$wip")) || true   # rc 1 = all ids are WIP
+if [[ -n "$wip" ]]; then
+  # rc 1 = every candidate is WIP (legitimate); rc >= 2 = real grep error, so fail
+  keep=$(tr ',' '\n' <<<"$ids" | grep -vxFf <(printf '%s\n' "$wip")) || [[ $? -eq 1 ]]
 else
-  keep=$ids          # no active PRs: nothing is WIP
+  keep=$(tr ',' '\n' <<<"$ids")      # no active PRs: nothing is WIP
 fi
+ids=$(printf '%s' "$keep" | tr '\n' ',' | sed 's/,$//')   # back to CSV for step 2b
 ```
 
-Two details there are load-bearing. `-x` anchors each pattern to the whole line,
+Three details there are load-bearing. `-x` anchors each pattern to the whole line,
 so WIP id `6` does not also drop `16` and `61`; without it an empty `$wip` would
 match every line and drop the entire list, which is what the `-n` guard covers.
-And `grep -v` exits **1** when nothing survives, a legitimate answer here (every
-candidate is WIP) that would otherwise abort the step under `set -e`.
+`grep -v` exits **1** when nothing survives, a legitimate answer here (every
+candidate is WIP) that would otherwise abort the step under `set -e` — so allow
+exactly that code and nothing else: a bare `|| true` would also swallow grep's
+rc **2** (a real error, e.g. an unreadable pattern file), leaving `keep` empty and
+indistinguishable from "everything is WIP". And the re-join is not cosmetic: feed
+the newline form to step 2b and the request body is invalid JSON.
 
 The `sort -u` above is deliberate: the WIP list is a **set** and order-insensitive.
-Only the candidate list carries an order. GitHub and Forgejo avoid this trap
-because they sort at render time rather than carrying an order through a filter.
+Only the candidate list carries an order. GitHub and Forgejo don't hit this trap
+because both filter a **server-ordered** list with order-preserving tools, not
+because they re-sort later: GitHub orders in the query
+(`orderBy:{field:CREATED_AT, direction:DESC}`) and filters with `map(select(…))`,
+which keeps input order; Forgejo orders with `sort=created&order=desc` and
+filters in a python loop that prints in response order. So neither path wants a
+render-time sort bolted on, and neither may give up its order preservation.
 
 ### Step 5 — the milestone argument maps to Iteration Path
 
