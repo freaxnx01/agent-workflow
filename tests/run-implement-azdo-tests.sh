@@ -613,8 +613,11 @@ assert_contains "preflight_BoundaryRefused_ExitsBeforeAgent: names the boundary"
   "the agent user boundary is not available" "$ERR"
 assert_contains "preflight_BoundaryRefused_ExitsBeforeAgent: names sudo as the cause" "sudo" "$ERR"
 assert_eq "preflight_BoundaryRefused_ExitsBeforeAgent: the agent never ran" "" "$CLAUDELOG"
-assert_not_contains "preflight_BoundaryRefused_ExitsBeforeAgent: nothing written" \
+# Spec acceptance: "exits 1 with a report when the boundary is missing".
+assert_contains "preflight_BoundaryRefused_ExitsBeforeAgent: a run report is posted" \
   "ai-implement run" "$AZLOG"
+assert_contains "preflight_BoundaryRefused_ExitsBeforeAgent: the report says why" \
+  "the agent user boundary is not available" "$AZLOG"
 
 # `persistCredentials: true` leaves an http.extraheader in the checkout, and
 # nothing in this repo can enforce that setting on the consumer's YAML.
@@ -623,6 +626,8 @@ assert_eq "preflight_CheckoutHasCredentials_Refuses: rc" "1" "$RC"
 assert_contains "preflight_CheckoutHasCredentials_Refuses: names the setting" \
   "persistCredentials must be false" "$ERR"
 assert_eq "preflight_CheckoutHasCredentials_Refuses: the agent never ran" "" "$CLAUDELOG"
+assert_contains "preflight_CheckoutHasCredentials_Refuses: the report says why" \
+  "persistCredentials must be false" "$AZLOG"
 
 run_pipeline success
 assert_eq "attempt_Success_PushesCollectedBranch: rc" "0" "$RC"

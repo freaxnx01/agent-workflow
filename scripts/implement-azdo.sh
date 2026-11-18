@@ -111,6 +111,7 @@ PROMPT_FILE=''
 RESULT_FILE=''
 AGENT_WORKSPACE=''   # the agent's own workspace in pipeline mode; empty locally
 EVIDENCE_ERROR=''    # why this attempt's evidence cannot be trusted, one line
+BOUNDARY_REFUSAL=''  # why preflight refuses to start an agent in pipeline mode
 RESULT_MAX_BYTES=65536   # 64 KiB, as the GitHub gate caps it (#571)
 declare -A RUN_PUSHED=()   # branch -> tip a failed attempt of THIS run left on the server
 
@@ -173,20 +174,28 @@ preflight() {
   return 0
 }
 
-# Both checks fail the whole run closed, before any agent starts and before
-# anything is written: in pipeline mode there is no fallback to running the
-# agent as the driver, which is the weakness #591 closes.
+# Both checks fail the whole run closed before any agent starts: in pipeline
+# mode there is no fallback to running the agent as the driver, which is the
+# weakness #591 closes. The refusal is recorded here and reported by
+# refuse_without_boundary, once the work item is read.
 preflight_boundary() {
   if checkout_has_credentials; then
-    printf 'error: the checkout carries a credential (persistCredentials must be false); refusing to run the agent\n' >&2
-    exit 1
+    BOUNDARY_REFUSAL='the checkout carries a credential (persistCredentials must be false); refusing to run the agent'
+    return 0
   fi
   local cause
   if ! cause="$(boundary_check 2>&1)"; then
-    printf 'error: the agent user boundary is not available: %s\n' \
-      "$(printf '%s' "$cause" | head -n1)" >&2
-    exit 1
+    BOUNDARY_REFUSAL="the agent user boundary is not available: $(printf '%s' "$cause" | head -n1)"
   fi
+  return 0
+}
+
+# Exits 1 with a run report on the work item when preflight refused the run.
+refuse_without_boundary() {
+  [[ -n "$BOUNDARY_REFUSAL" ]] || return 0
+  printf 'error: %s\n' "$BOUNDARY_REFUSAL" >&2
+  post_report "failed: $BOUNDARY_REFUSAL" "next: stopping, no agent ran (see AZDO-PIPELINE-SETUP.md §13)"
+  exit 1
 }
 
 print_banner() {
@@ -812,6 +821,7 @@ main() {
   ! pipeline_mode || chmod 0711 "$WORK_DIR"
   RUN_ATTEMPT=1
   classify_issue
+  refuse_without_boundary
 
   if [[ "$DRY_RUN" == "1" ]]; then
     print_cap_preview

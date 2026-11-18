@@ -125,13 +125,17 @@ check_implement_driver() { # check_implement_driver <root>
 
   text="$(logical "$file")"
   rc=0
-  # preflight is what runs before anything else, and it is where the boundary
-  # is demanded; preflight_boundary is what refuses.
-  before "$(func_body "$text" main)" preflight attempt_loop || rc=1
-  func_body "$text" preflight | grep -q 'preflight_boundary' || rc=1
-  func_body "$text" preflight_boundary | grep -q 'checkout_has_credentials' || rc=1
-  func_body "$text" preflight_boundary | grep -q 'boundary_check' || rc=1
-  func_body "$text" preflight_boundary | grep -q 'exit 1' || rc=1
+  # preflight runs before anything else and is where the boundary is demanded;
+  # preflight_boundary records a refusal, and refuse_without_boundary reports
+  # it and exits before the attempt loop can start an agent.
+  local main_body
+  main_body="$(func_body "$text" main)"
+  before "$main_body" preflight refuse_without_boundary || rc=1
+  before "$main_body" refuse_without_boundary attempt_loop || rc=1
+  grep -q 'preflight_boundary' <<<"$(func_body "$text" preflight)" || rc=1
+  grep -q 'checkout_has_credentials' <<<"$(func_body "$text" preflight_boundary)" || rc=1
+  grep -q 'boundary_check' <<<"$(func_body "$text" preflight_boundary)" || rc=1
+  grep -q 'exit 1' <<<"$(func_body "$text" refuse_without_boundary)" || rc=1
   check implement_boundary_check_precedes_the_agent "$(verdict "$rc")" \
     "preflight must call preflight_boundary, which must demand both the boundary and a credential-free checkout"
 
@@ -248,6 +252,9 @@ mutate_drop_preflight_boundary() {
 mutate_drop_agent_workspace() {
   sed -i 's/ AGENT_WORKSPACE="\$AGENT_WORKSPACE" \\/ \\/' "$1/scripts/implement-azdo.sh"
 }
+mutate_drop_boundary_refusal() {
+  sed -i '/^  refuse_without_boundary$/d' "$1/scripts/implement-azdo.sh"
+}
 mutate_drop_selffix_boundary_check() {
   sed -i '/boundary_check >\/dev\/null/d' "$1/scripts/azdo-self-fix.sh"
 }
@@ -292,6 +299,8 @@ negative negative_no_boundary_preflight_is_caught mutate_drop_preflight_boundary
   implement_boundary_check_precedes_the_agent
 negative negative_agent_outside_the_workspace_is_caught mutate_drop_agent_workspace \
   implement_agent_call_carries_the_workspace
+negative negative_no_boundary_refusal_is_caught mutate_drop_boundary_refusal \
+  implement_boundary_check_precedes_the_agent
 negative negative_selffix_without_boundary_check_is_caught mutate_drop_selffix_boundary_check \
   selffix_boundary_check_precedes_the_agent
 negative negative_selffix_agent_outside_the_workspace_is_caught mutate_drop_selffix_workspace \
