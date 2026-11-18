@@ -19,6 +19,7 @@ section() { printf '\n── %s ──\n' "$1"; }
 pass() { PASS=$((PASS + 1)); printf '  ✓ %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); FAIL_NAMES+=("$1"); printf '  ✗ %s\n' "$1"; [[ $# -gt 1 ]] && printf '      %s\n' "$2"; return 0; }
 assert_eq() { if [[ "$3" == "$2" ]]; then pass "$1"; else fail "$1" "expected: $2 | actual: $3"; fi; }
+assert_has() { if [[ "$3" == *"$2"* ]]; then pass "$1"; else fail "$1" "missing: $2 | in: $3"; fi; }
 field() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
 
 section "export: a normal result passes through compact"
@@ -218,6 +219,15 @@ assert_eq "missing RESULT_JSON_FILE → error_invalid_evidence" "error_invalid_e
 out="$(OUT_DIR="$T/imp-noenv" bash "$IMPORT" 2>/dev/null)"
 assert_eq "no input env at all → valid=false" "false" "$(field "$out" valid)"
 assert_eq "no input env at all → no execution file" "" "$(field "$out" execution-file)"
+
+section "import: the no-evidence warning names masking (#592 F6)"
+# GitHub drops a job output whose value contains a masked secret — a numeric
+# PIPELINE_APP_ID matches digits anywhere in the result — and the gate then sees
+# the same empty value as a run that reported nothing. The warning has to name
+# that cause, or a good run reads as error_invalid_evidence with no explanation.
+out="$(imp imp-mask '' -)"
+assert_has "the warning names secret masking" "secret-masked" "$out"
+assert_has "the warning names PIPELINE_APP_ID" "PIPELINE_APP_ID" "$out"
 
 section "import → post-run-report: a hostile result field never reaches the shell (#571 N1)"
 # report_from <import-output> — render the gate's report from what import wrote.

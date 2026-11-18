@@ -113,7 +113,7 @@ if [[ -n "$result" ]]; then
 else
   write_synthetic
   valid=false
-  printf '::warning title=No valid result evidence::the implement job handed over no canonical result; reporting the run as failed\n'
+  printf '::warning title=No valid result evidence::the implement job handed over no canonical result; reporting the run as failed; if the agent did report a result, GitHub may have dropped the output because it contained a secret-masked value (for example a numeric PIPELINE_APP_ID)\n'
 fi
 
 execution_file=''
