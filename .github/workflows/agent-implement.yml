@@ -17,9 +17,30 @@ on:
           agent (#535, ADR-020). Empty uses `runner-labels`. On persistent
           self-hosted runners point this at GitHub-hosted or ephemeral runners:
           an agent can leave changes in $HOME that a later job on the same
-          machine inherits.
+          machine inherits. Required when `runner-labels` names a self-hosted
+          pool, unless `allow-shared-gate-runner` is set — otherwise the run is
+          refused before the agent starts (#592 F7).
         type: string
         default: ''
+      allow-shared-gate-runner:
+        description: |
+          Accept that the gate jobs share the agent's self-hosted pool when
+          `gate-runner-labels` is empty (#592 F7). Only safe on ephemeral
+          runners, which start clean per job; on a persistent runner the gate
+          inherits the workspace and $HOME the agent just wrote, so a planted
+          git hook or tool runs inside the job that judges the run. The run
+          proceeds with a warning.
+        type: boolean
+        default: false
+      app-token-workflows-write:
+        description: |
+          Request `workflows: write` on the implement job's App token (#592 F8),
+          needed when a plan edits files under `.github/workflows/`. Requires
+          the pipeline App to hold the Workflows permission — without it the
+          token mint fails, which is why this is opt-in. Off, a push that
+          touches a workflow file is rejected by GitHub.
+        type: boolean
+        default: false
       default-model:
         description: |
           Model used when no `model:*` label is present on the issue. Defaults
@@ -510,6 +531,18 @@ jobs:
           if [[ -d tests/fixtures ]]; then
             cp -r tests/fixtures/. .claude-pipeline/tests/fixtures/
           fi
+
+      - name: Refuse a gate that shares the agent's runner
+        # #592 F7: pre-agent and trusted. A self-hosted run whose gate falls
+        # back to `runner-labels` would be judged on the machine the agent just
+        # had, so refuse here — before any agent cost — unless the consumer
+        # named a gate pool or took the opt-out.
+        id: gate_runner_isolation
+        env:
+          RUNNER_LABELS: ${{ inputs.runner-labels }}
+          GATE_RUNNER_LABELS: ${{ inputs.gate-runner-labels }}
+          ALLOW_SHARED_GATE_RUNNER: ${{ inputs.allow-shared-gate-runner }}
+        run: bash .claude-pipeline/scripts/check-gate-runner-isolation.sh
 
       - name: Hide .claude-pipeline from the consumer repo's git (#99)
         # The pipeline scripts are checked out INTO the consumer working tree at

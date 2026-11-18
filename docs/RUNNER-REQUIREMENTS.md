@@ -52,3 +52,9 @@ github_actions_runner_packages:
 ```
 
 …and provision via `apt`. `ensure-toolchain.sh` does the per-run `command -v` check anyway, so this is belt-and-suspenders.
+
+### Gate placement
+
+A self-hosted pool also has to answer *where the gate jobs run*. They make every decision about an implement run (#535, ADR-020) and never run an agent, so they must not land on the machine that just did: a persistent runner hands the next job the same workspace and `$HOME`, and a planted git hook or a modified `~/.local/bin` tool would then run inside the job that judges the run.
+
+So a consumer whose `runner-labels` names a self-hosted pool sets `gate-runner-labels` to a hosted or ephemeral pool. The alternative is `allow-shared-gate-runner: true`, which accepts the shared machine and is only reasonable on ephemeral runners that start clean per job. With neither, the implement job refuses before the agent starts (#592 F7).

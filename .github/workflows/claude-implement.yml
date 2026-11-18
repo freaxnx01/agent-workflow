@@ -28,6 +28,17 @@ on:
       runner-labels:
         type: string
         default: '["ubuntu-latest"]'
+      # #592: a shim consumer on self-hosted runners needs a way to place the
+      # gate jobs elsewhere, and a way out of the refusal when it can't.
+      gate-runner-labels:
+        type: string
+        default: ''
+      allow-shared-gate-runner:
+        type: boolean
+        default: false
+      app-token-workflows-write:
+        type: boolean
+        default: false
       default-model:
         type: string
         default: claude-sonnet-5
@@ -123,6 +134,9 @@ jobs:
     with:
       issue-number: ${{ inputs.issue-number }}
       runner-labels: ${{ inputs.runner-labels }}
+      gate-runner-labels: ${{ inputs.gate-runner-labels }}
+      allow-shared-gate-runner: ${{ inputs.allow-shared-gate-runner }}
+      app-token-workflows-write: ${{ inputs.app-token-workflows-write }}
       default-model: ${{ inputs.default-model }}
       agent: ${{ inputs.agent }}
       timeout-minutes: ${{ inputs.timeout-minutes }}

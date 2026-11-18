@@ -30,6 +30,11 @@ example see `ai-notes/quicktask-vikunja-pipeline-runbook.md`.
 - [ ] Decide **public vs private**. Public → GitHub-hosted runners only
       (`'["ubuntu-latest"]'`). **Never attach a self-hosted runner to a public
       repo** — fork-PR attack surface (DESIGN.md, non-negotiable).
+- [ ] Self-hosted `runner-labels`? Decide where the **gate jobs** run. They
+      never run an agent and must not land on the machine that just did, so
+      either point `gate-runner-labels` at a hosted or ephemeral pool, or set
+      `allow-shared-gate-runner: true` to accept the risk. With neither, the
+      run is **refused before the agent starts** (#592 F7 — see §1).
 - [ ] Confirm the pipeline ref to pin. `@vX` is a **moving** tag that follows
       the newest non-prerelease `vX.*.*` release, updated automatically by
       `release.yml` when a release is published — a consumer pinned to `@vX`
@@ -175,6 +180,28 @@ Drop in:
 
 - `CLAUDE_CODE_OAUTH_TOKEN` secret (generate via `claude setup-token` against your Max subscription).
 - Repo labels — the pipeline self-heals these, but a manual `bash scripts/ensure-issue-labels.sh` before the first run keeps the first issue tidy.
+
+### Isolation inputs (#592)
+
+Three inputs govern how far an agent's run can reach. All three default to the
+safe value, so a consumer on GitHub-hosted runners needs none of them.
+
+| Input | Default | When to set it |
+|---|---|---|
+| `gate-runner-labels` | `''` (uses `runner-labels`) | **Required on self-hosted `runner-labels`.** A JSON array naming where the gate jobs run — hosted runners, or an ephemeral self-hosted pool. The gate decides the verdict and must not inherit the workspace and `$HOME` the agent just wrote: a planted git hook or a modified `~/.local/bin` tool would otherwise run inside the job that judges the run. |
+| `allow-shared-gate-runner` | `false` | Only as the explicit way out of the above, e.g. ephemeral self-hosted runners that start clean per job. The run proceeds with a `::warning::`. |
+
+With a self-hosted `runner-labels`, an empty `gate-runner-labels` and no
+opt-out, the implement job **refuses before the agent starts**:
+
+```text
+::error title=Gate shares the agent's runner::runner-labels names a self-hosted
+pool and gate-runner-labels is empty …
+```
+
+Nothing is spent, and `implement_prefail` reports the refusal on the issue. The
+`self-hosted` label is matched case-insensitively, and `gate-runner-labels: '[]'`
+counts as unset.
 
 ### Required repo settings (even for draft-only runs)
 
