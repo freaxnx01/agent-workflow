@@ -445,7 +445,8 @@ is not left blocked.
 The implementing agent should be able to work from the issue body alone — no
 extra file reads to orient itself. Replace the issue body with:
 
-1. The original description (keep it — context for humans)
+1. The original description with any previous enrichment stripped — `kept-body.md`
+   below (keep it — context for humans)
 2. An `## Acceptance Criteria` section with the approved AC as a `- [ ]` checklist
 3. When `$QUICK` is `yes`, an `## Assumptions` section and a `## Consequences`
    section, before the implementation plan.
@@ -476,11 +477,33 @@ done
 [ -s orig-body.md ] || { echo "could not read issue body — aborting"; exit 1; }
 ```
 
-Assert on the composed body before writing it: it starts with the original's first
-line, retains every `user-attachments` image reference the original had, and
-contains the `## Acceptance Criteria` heading (plus `## Implementation Plan` /
-`## Spec` as applicable). Prefer `--body-file` over `--body` — a 40 KB inlined plan
-does not belong on a command line.
+**Then strip any previous enrichment from what you just read.** On a re-run the
+"original" description *is* the previous run's output — it already carries that
+run's `## Acceptance Criteria`, `## Assumptions`, `## Consequences`,
+`## Implementation Plan` and `## Spec`. Prepending it unfiltered is what gave
+issues two AC blocks, two plans, and no way to tell which was current (#499).
+The filter cuts from the first enrich-owned heading to the end of the body, so
+those sections are **replaced** and everything above them is kept:
+
+```bash
+source "$HOME/.claude/scripts/lib/enrich-body.sh"
+enrich_body_strip_markdown < orig-body.md > kept-body.md \
+  || { echo "could not strip the previous enrichment — aborting"; exit 1; }
+```
+
+Compose from `kept-body.md`, not `orig-body.md`. **`kept-body.md` may legitimately
+be empty** — an issue whose entire body was a previous enrichment has nothing of
+its own above the first owned heading. That is not an error, and unlike the read
+above it must not abort: the test is on the *read*, which is the step that can
+fail silently.
+
+Assert on the composed body before writing it: it starts with `kept-body.md`'s
+first line, retains every `user-attachments` image reference **`kept-body.md`** had,
+and contains the `## Acceptance Criteria` heading (plus `## Implementation Plan` /
+`## Spec` as applicable). The assertion compares against the stripped prefix on
+purpose — an image referenced only inside a previous run's sections is cut with
+them, so demanding it survive would fail every re-run. Prefer `--body-file` over
+`--body` — a 40 KB inlined plan does not belong on a command line.
 
 ```bash
 gh issue edit $ISSUE --body-file <composed-body-file>
@@ -776,10 +799,26 @@ done
 [ -s orig-body.md ] || { echo "could not read issue body — aborting"; exit 1; }
 ```
 
-Assert on the composed `bodyfile.md` before writing it: it starts with the
-original's first line, retains every image/attachment reference the original had,
-and contains the `## Acceptance Criteria` heading (plus `## Spec & Implementation
-Plan` as applicable).
+**Then strip any previous enrichment from what you just read**, exactly as in the
+GitHub Step 6 above — on a re-run the "original" already holds that run's
+`## Acceptance Criteria`, `## Assumptions`, `## Consequences` and
+`## Spec & Implementation Plan`, and prepending it unfiltered appends a second
+copy of each (#499):
+
+```bash
+source "$HOME/.claude/scripts/lib/enrich-body.sh"
+enrich_body_strip_markdown < orig-body.md > kept-body.md \
+  || { echo "could not strip the previous enrichment — aborting"; exit 1; }
+```
+
+Compose `bodyfile.md` from `kept-body.md`, not `orig-body.md`. An empty
+`kept-body.md` is legitimate — the issue had no description of its own above the
+first owned heading.
+
+Assert on the composed `bodyfile.md` before writing it: it starts with
+`kept-body.md`'s first line, retains every image/attachment reference
+`kept-body.md` had, and contains the `## Acceptance Criteria` heading (plus
+`## Spec & Implementation Plan` as applicable).
 
 Replace the issue body via API PATCH — use the **typed** field `-F` so it reads the
 file (`-f` would store the literal string `@bodyfile.md`; `tea issues edit` has no
@@ -791,7 +830,8 @@ tea api -X PATCH "repos/$repo/issues/$ISSUE" -F body=@bodyfile.md
 
 The new body has:
 
-1. The original description (keep it — context for humans)
+1. The original description with any previous enrichment stripped — `kept-body.md`
+   above (keep it — context for humans)
 2. An `## Acceptance Criteria` section with the approved AC as a `- [ ]` checklist
 3. When `$QUICK` is `yes`, an `## Assumptions` section and a `## Consequences`
    section, before the plan references.
@@ -937,6 +977,8 @@ pointers — not the inlined plan:
 
 ```bash
 orig="$(azdo_description "$ISSUE")" || { echo "read failed — not writing"; exit 1; }
+source "$HOME/.claude/scripts/lib/enrich-body.sh"
+orig="$(printf '%s' "$orig" | enrich_body_strip_html)" || { echo "strip failed — not writing"; exit 1; }
 ac=$(printf '%s\n' "$AC_TEXT" | python3 -c '
 import html, re, sys
 for line in sys.stdin:
@@ -958,6 +1000,21 @@ already-stored HTML, and escaping it again would corrupt it. An unescaped `<`
 or `&` in a value this command adds still breaks the stored markup. Assert the
 read-back contains the heading and both paths rather than comparing bytes:
 Azure DevOps sanitizes stored HTML.
+
+`enrich_body_strip_html` is what keeps a re-run from appending a second
+`<h2>Acceptance Criteria</h2>` below the first — on a re-run `$orig` *is* the
+previous run's output. It cuts at the first enrich-owned `<h2>`, matched on
+normalised text (inner tags stripped, unescaped, whitespace collapsed,
+case-insensitive) rather than literally, because the service rewrites stored
+markup and the `<h2>` read back is not necessarily the one written. This is the
+same replacement the GitHub and Forgejo Step 6 blocks do, as #499 requires.
+
+**The read and the strip are deliberately two statements.** Piping the read
+straight into the filter would make `$orig` take the *filter's* exit status, so a
+failed read would yield an empty `$orig` with status 0 — and the write would then
+replace the stored description with nothing but the new sections. The guard on
+the read exists for exactly that; keep the read, its guard, and the guarded strip
+as three separate statements rather than one pipeline.
 
 **Release the lock** with `azdo_remove_tag "$ISSUE" enrichment-ongoing`. The
 lock comment stays as an audit trail. There is no readiness tag to clear — per
