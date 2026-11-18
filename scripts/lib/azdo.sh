@@ -336,6 +336,10 @@ azdo_html_escape() {
 # that has never had a description simply omits the key. Exit 1 on a read error.
 # Callers must capture the status -- an empty echo alone cannot tell the two
 # apart, and composing a write from a failed read destroys the existing body.
+#
+# Exit 1 also when the response has no `fields` object, matching the other
+# parsers: read as an empty description it would make azdo_set_description pick
+# `add`, which APPENDS to the existing body rather than replacing it.
 azdo_description() {
   local id="${1:?azdo_description requires a work-item id}"
   : "${AZDO_PROJECT:?AZDO_PROJECT must be set — call resolve_azdo_context first}"
@@ -344,7 +348,10 @@ azdo_description() {
   | python3 -c '
 import sys, json
 d = json.load(sys.stdin)
-sys.stdout.write(d.get("fields", {}).get("System.Description", ""))'
+if "fields" not in d:
+    sys.stderr.write("azdo_description: unexpected response: %s\n" % str(d)[:200])
+    sys.exit(1)
+sys.stdout.write(d["fields"].get("System.Description", ""))'
 }
 
 # azdo_set_description <id> <html>  writes System.Description, echoes it back.
@@ -454,12 +461,15 @@ for c in comments:
 # indistinguishable from a failed one, and writing anyway would clear every tag
 # the item has -- parked and roadmap included.
 #
+# The transform's status is checked explicitly: callers invoke with `||`, which
+# suppresses errexit here, and an empty `next` would clear every tag.
+#
 # [expected-rev] is passed to azdo_set_tags unchanged; exit codes are its (64 =
 # the item moved since that revision).
 _azdo_edit_tags() {
   local id="${1-}" mode="${2-}" tag="${3-}" rev="${4-}"
   if [[ -z "$id" || -z "$mode" || -z "$tag" ]]; then
-    echo "usage: _azdo_edit_tags <id> <add|remove> <tag> [expected-rev]" >&2
+    echo "usage: azdo_add_tag <id> <tag> | azdo_remove_tag <id> <tag> [expected-rev]" >&2
     return 2
   fi
 
@@ -481,7 +491,10 @@ if mode == "add":
         tags.append(tag)
 else:
     tags = [t for t in tags if t.lower() != tag.lower()]
-print("; ".join(tags))' "$mode" "$tag")
+print("; ".join(tags))' "$mode" "$tag") || {
+    echo "_azdo_edit_tags: could not compute the new tag set for work item $id — refusing to write" >&2
+    return 1
+  }
 
   azdo_set_tags "$id" "$next" "$rev"
 }
