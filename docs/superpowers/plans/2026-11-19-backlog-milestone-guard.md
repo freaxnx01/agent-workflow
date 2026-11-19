@@ -57,6 +57,10 @@ YAML, python3 + PyYAML in the tests, actionlint, shellcheck.
 - **Commit messages reference `(#646)` and never contain `Closes`.**
 - **Lint a new file only after `git add`:** pre-commit `--all-files` skips
   untracked files.
+- **The runner is `tests/run-backlog-milestone-guard-tests.sh`, not
+  `run-backlog-milestone-tests.sh`.** #644's plan creates
+  `tests/run-backlog-milestone-tests.sh` for the command-side filters. If
+  that file already exists when this runs, leave it alone.
 
 ## File Structure
 
@@ -66,7 +70,7 @@ YAML, python3 + PyYAML in the tests, actionlint, shellcheck.
 | `scripts/assign-backlog-milestone.sh` | new: per-issue guard (env-driven) |
 | `scripts/backfill-backlog-milestone.sh` | new: one-off backfill (`-R`, `--apply`) |
 | `tests/fixtures/backlog-milestone/*.json` | new: fixtures |
-| `tests/run-backlog-milestone-tests.sh` | new: Layer-1 runner (picked up by `tests/run-all.sh`) |
+| `tests/run-backlog-milestone-guard-tests.sh` | new: Layer-1 runner (picked up by `tests/run-all.sh`) |
 | `.github/workflows/backlog-milestone.yml` | new: reusable workflow |
 | `.github/workflows/backlog-milestone.test.yml` | new: Layer-2 test |
 | `.github/workflows/issue-milestone.yml` | new: dogfood caller for this repo |
@@ -84,7 +88,7 @@ YAML, python3 + PyYAML in the tests, actionlint, shellcheck.
 
 - Create:
   - `tests/fixtures/backlog-milestone/` (fixtures below)
-  - `tests/run-backlog-milestone-tests.sh`
+  - `tests/run-backlog-milestone-guard-tests.sh`
   - `scripts/lib/backlog-milestone.sh`
   - `scripts/assign-backlog-milestone.sh`
 
@@ -152,18 +156,18 @@ YAML, python3 + PyYAML in the tests, actionlint, shellcheck.
 
 - [ ] **Step 2: Write the failing test runner (guard sections)**
 
-  Create `tests/run-backlog-milestone-tests.sh` with the content below. Task 2
+  Create `tests/run-backlog-milestone-guard-tests.sh` with the content below. Task 2
   and Task 3 append sections **above the summary block**.
 
 ```bash
 #!/usr/bin/env bash
 #
-# run-backlog-milestone-tests.sh — Layer-1 tests for the backlog milestone
+# run-backlog-milestone-guard-tests.sh — Layer-1 tests for the backlog milestone
 # guard (#646): scripts/assign-backlog-milestone.sh,
 # scripts/backfill-backlog-milestone.sh and their workflows. gh is mocked; no
 # network.
 #
-# Usage: tests/run-backlog-milestone-tests.sh
+# Usage: tests/run-backlog-milestone-guard-tests.sh
 # Exit codes: 0 all pass; 1 at least one assertion failed.
 set -euo pipefail
 IFS=$'\n\t'
@@ -312,7 +316,7 @@ exit 0
 
 - [ ] **Step 3: Run it and watch it fail**
 
-Run: `chmod +x tests/run-backlog-milestone-tests.sh && bash tests/run-backlog-milestone-tests.sh`
+Run: `chmod +x tests/run-backlog-milestone-guard-tests.sh && bash tests/run-backlog-milestone-guard-tests.sh`
 Expected: FAIL, because the scripts do not exist yet. The decision and lookup
 assertions fail first.
 
@@ -457,7 +461,7 @@ main() {
   report assigned ''
 }
 
-# Sourced by tests/run-backlog-milestone-tests.sh to call milestone_decision.
+# Sourced by tests/run-backlog-milestone-guard-tests.sh to call milestone_decision.
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   main "$@"
 fi
@@ -465,12 +469,12 @@ fi
 
 - [ ] **Step 6: Run the tests and watch them pass**
 
-Run: `chmod +x scripts/assign-backlog-milestone.sh && bash tests/run-backlog-milestone-tests.sh`
+Run: `chmod +x scripts/assign-backlog-milestone.sh && bash tests/run-backlog-milestone-guard-tests.sh`
 Expected: `failed: 0`, exit 0.
 
 - [ ] **Step 7: Lint**
 
-Run: `git add scripts/lib/backlog-milestone.sh scripts/assign-backlog-milestone.sh tests/run-backlog-milestone-tests.sh tests/fixtures/backlog-milestone && shellcheck -x -e SC1091 scripts/lib/backlog-milestone.sh scripts/assign-backlog-milestone.sh tests/run-backlog-milestone-tests.sh`
+Run: `git add scripts/lib/backlog-milestone.sh scripts/assign-backlog-milestone.sh tests/run-backlog-milestone-guard-tests.sh tests/fixtures/backlog-milestone && shellcheck -x -e SC1091 scripts/lib/backlog-milestone.sh scripts/assign-backlog-milestone.sh tests/run-backlog-milestone-guard-tests.sh`
 Expected: no output, exit 0.
 
 - [ ] **Step 8: Commit**
@@ -486,7 +490,7 @@ git commit -m "feat(milestone): assign backlog to issues opened without a milest
 **Files:**
 
 - Create: `scripts/backfill-backlog-milestone.sh`
-- Modify: `tests/run-backlog-milestone-tests.sh` (append above the summary block)
+- Modify: `tests/run-backlog-milestone-guard-tests.sh` (append above the summary block)
 
 - [ ] **Step 1: Append the failing backfill tests**
 
@@ -564,7 +568,7 @@ assert_eq "malformed repo -> exit 2" "2" "$rc"
 
 - [ ] **Step 2: Run it and watch it fail**
 
-Run: `bash tests/run-backlog-milestone-tests.sh`
+Run: `bash tests/run-backlog-milestone-guard-tests.sh`
 Expected: the backfill sections FAIL, because the script is missing. The
 Task 1 sections still pass.
 
@@ -666,12 +670,12 @@ main "$@"
 
 - [ ] **Step 4: Run the tests and watch them pass**
 
-Run: `chmod +x scripts/backfill-backlog-milestone.sh && bash tests/run-backlog-milestone-tests.sh`
+Run: `chmod +x scripts/backfill-backlog-milestone.sh && bash tests/run-backlog-milestone-guard-tests.sh`
 Expected: `failed: 0`, exit 0.
 
 - [ ] **Step 5: Lint and commit**
 
-Run: `git add scripts/backfill-backlog-milestone.sh tests/run-backlog-milestone-tests.sh && shellcheck -x -e SC1091 scripts/backfill-backlog-milestone.sh tests/run-backlog-milestone-tests.sh`
+Run: `git add scripts/backfill-backlog-milestone.sh tests/run-backlog-milestone-guard-tests.sh && shellcheck -x -e SC1091 scripts/backfill-backlog-milestone.sh tests/run-backlog-milestone-guard-tests.sh`
 Expected: clean.
 
 ```bash
@@ -689,7 +693,7 @@ git commit -m "feat(milestone): add a dry-run-first backlog backfill script (#64
   - `.github/workflows/backlog-milestone.test.yml`
   - `.github/workflows/issue-milestone.yml`
 - Modify:
-  - `tests/run-backlog-milestone-tests.sh` (append above the summary)
+  - `tests/run-backlog-milestone-guard-tests.sh` (append above the summary)
   - `justfile`
 
 - [ ] **Step 1: Append the failing workflow assertions**
@@ -769,7 +773,7 @@ fi
 
 - [ ] **Step 2: Run it and watch it fail**
 
-Run: `bash tests/run-backlog-milestone-tests.sh`
+Run: `bash tests/run-backlog-milestone-guard-tests.sh`
 Expected: the "the workflows" section FAILS, because the files are missing.
 
 - [ ] **Step 3: Write `.github/workflows/backlog-milestone.yml`**
@@ -1024,13 +1028,13 @@ Under `test-act:`, after the `issue-intake.test.yml` line, add:
 
 - [ ] **Step 7: Run the tests and watch them pass**
 
-Run: `bash tests/run-backlog-milestone-tests.sh`
+Run: `bash tests/run-backlog-milestone-guard-tests.sh`
 Expected: `failed: 0`. If actionlint is installed, its three assertions pass
 too.
 
 - [ ] **Step 8: Lint and commit**
 
-Run: `git add .github/workflows/backlog-milestone.yml .github/workflows/backlog-milestone.test.yml .github/workflows/issue-milestone.yml justfile tests/run-backlog-milestone-tests.sh && actionlint .github/workflows/backlog-milestone.yml .github/workflows/backlog-milestone.test.yml .github/workflows/issue-milestone.yml`
+Run: `git add .github/workflows/backlog-milestone.yml .github/workflows/backlog-milestone.test.yml .github/workflows/issue-milestone.yml justfile tests/run-backlog-milestone-guard-tests.sh && actionlint .github/workflows/backlog-milestone.yml .github/workflows/backlog-milestone.test.yml .github/workflows/issue-milestone.yml`
 Expected: clean.
 
 ```bash
@@ -1269,14 +1273,14 @@ git commit -m "docs(milestone): document the backlog milestone guard and backfil
 - [ ] **Step 1: Layer-1 suite**
 
 Run: `bash tests/run-all.sh`
-Expected: exit 0. Both `run-backlog-milestone-tests.sh` and
+Expected: exit 0. Both `run-backlog-milestone-guard-tests.sh` and
 `run-onboard-stub-tests.sh` are discovered and pass.
 
 - [ ] **Step 2: Lint gate**
 
 Run: `pre-commit run --all-files`. If pre-commit is unavailable, run
 `actionlint` on all three workflows and
-`shellcheck -x -e SC1091 scripts/assign-backlog-milestone.sh scripts/backfill-backlog-milestone.sh scripts/lib/backlog-milestone.sh scripts/onboard-consumer.sh tests/run-backlog-milestone-tests.sh tests/run-onboard-stub-tests.sh`.
+`shellcheck -x -e SC1091 scripts/assign-backlog-milestone.sh scripts/backfill-backlog-milestone.sh scripts/lib/backlog-milestone.sh scripts/onboard-consumer.sh tests/run-backlog-milestone-guard-tests.sh tests/run-onboard-stub-tests.sh`.
 Expected: clean.
 
 - [ ] **Step 3: Exercise the backfill's dry run end to end against the mock**
