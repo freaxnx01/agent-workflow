@@ -99,16 +99,30 @@ plain bad luck, affect the verdict on its own run:
   - `ALLOW_SHARED_GATE_RUNNER` (`true`/`false`).
 - **Detection:** a `self-hosted` label means any element whose lowercased value
   equals `self-hosted`. GitHub labels are case-insensitive.
+  - **Amended in review:** that test is not fail-closed. GitHub dispatches to a
+    self-hosted runner on custom labels alone, so `'["homelab","claude"]'`
+    reached the same persistent machine and passed silently. The shipped script
+    inverts it: a pool is allowed only when every label is a GitHub-hosted image
+    (`ubuntu-*`/`windows-*`/`macos-*`), and the `self-hosted` label only picks
+    the refusal's wording. Hosted larger runners are the known false positive —
+    ephemeral, so the opt-out is correct for them.
 - **Exit codes:**
-  - 0 when the run is allowed: not self-hosted, gate labels set, or opted out.
+  - 0 when the run is allowed: GitHub-hosted, gate labels set, or opted out.
     The opt-out still prints a `::warning::` saying the gate shares the agent's
     runner.
   - 1 when it is refused.
   - 2 when `RUNNER_LABELS` is not a JSON array of strings.
-- **Placement:** in the implement job, right after "Checkout agent-workflow
-  scripts" and before any agent step. It is pre-agent and trusted. A refusal
-  fails the implement job before `agent-eligible`, so `implement_prefail`
-  (ADR-023) reports it on the issue.
+    - **Amended in review:** also when a non-empty `GATE_RUNNER_LABELS` is not.
+      Unvalidated, `gate-runner-labels: 'self-hosted'` read as "a gate pool is
+      named" and the run only broke at the gate job's `runs-on:` — after the
+      full agent spend, which is what this check exists to prevent. And when
+      `jq` is missing, reported as itself rather than as malformed labels.
+- **Placement:** in the implement job and before any agent step. It is pre-agent
+  and trusted. A refusal fails the implement job before `agent-eligible`, so
+  `implement_prefail` (ADR-023) reports it on the issue.
+  - **Amended in review:** after "Ensure toolchain", not right after "Checkout
+    agent-workflow scripts" — the check parses with `jq`, and that step is what
+    installs `jq` on a self-hosted runner lacking it. Still pre-agent.
 - **Shim:** `claude-implement.yml` gains `gate-runner-labels`, which is missing
   today, plus `allow-shared-gate-runner` and `app-token-workflows-write`. Those
   forward verbatim, so shim consumers on self-hosted runners have a way out.
@@ -123,6 +137,18 @@ plain bad luck, affect the verdict on its own run:
   At the pinned SHA `fee1f7d…`, `lib/get-permissions-from-inputs.js` skips any
   `INPUT_PERMISSION-*` whose value is empty (`if (!value) return permissions;`),
   so one mint step with an expression is enough.
+  - **Amended in review:** that verification now has a tripwire.
+    `run-agent-isolation-tests.sh` pins the verified SHA, so a Renovate bump
+    fails until someone re-reads that file in the new revision — a revision that
+    forwarded the empty string would 422 every default consumer's mint.
+- **Amended in review:** both mints are `continue-on-error`. A scoped mint 422s
+  on a permission the *installation* does not hold, which is reachable for
+  `checks`/`statuses` (added to the App's table by #482, and a later grant needs
+  per-installation acceptance). Fatal in `implement_gate` — its first step —
+  that would end the run with no verdict, no comment and the issue still reading
+  as running, the #597 class, after the full agent spend. Every reader already
+  falls back to `${{ steps.app_token.outputs.token || github.token }}`, so the
+  degraded path exists; a `::warning::` names it.
 - **Doc updates:**
   - `docs/PIPELINE-APP-SETUP.md` "What the App token governs": the token now
     carries only what each job requests, intersected with what the App holds. A
@@ -138,6 +164,13 @@ plain bad luck, affect the verdict on its own run:
   `evidence_empty` and `evidence_oversized`.
 - `evidence_oversized` runs only under `local-scripts: true`. That is the act
   mode, where `.claude-pipeline/` is a workspace mirror.
+  - **Amended in review:** the stand-in export script is vendored as
+    `tests/mocks/export-result-output-oversized.sh` and `cp`-ed into place,
+    rather than written from the YAML step through a heredoc. A script a YAML
+    step writes at run time is linted by nothing and runnable by no test;
+    vendored, shellcheck reads it and `run-gate-evidence-tests.sh` asserts the
+    payload still passes the 128 KiB cap, which is the only thing that makes
+    the act scenario mean anything.
 - The verify jobs mirror the existing `verify-*` jobs: they assert on the
   reusable workflow's outputs.
 - **What act does not show:** act reproduces the Linux 128 KiB per-string env

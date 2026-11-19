@@ -19,6 +19,7 @@ section() { printf '\n── %s ──\n' "$1"; }
 pass() { PASS=$((PASS + 1)); printf '  ✓ %s\n' "$1"; }
 fail() { FAIL=$((FAIL + 1)); FAIL_NAMES+=("$1"); printf '  ✗ %s\n' "$1"; [[ $# -gt 1 ]] && printf '      %s\n' "$2"; return 0; }
 assert_eq() { if [[ "$3" == "$2" ]]; then pass "$1"; else fail "$1" "expected: $2 | actual: $3"; fi; }
+assert_has() { if [[ "$3" == *"$2"* ]]; then pass "$1"; else fail "$1" "missing: $2 | in: $3"; fi; }
 field() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
 
 section "export: a normal result passes through compact"
@@ -219,6 +220,15 @@ out="$(OUT_DIR="$T/imp-noenv" bash "$IMPORT" 2>/dev/null)"
 assert_eq "no input env at all → valid=false" "false" "$(field "$out" valid)"
 assert_eq "no input env at all → no execution file" "" "$(field "$out" execution-file)"
 
+section "import: the no-evidence warning names masking (#592 F6)"
+# GitHub drops a job output whose value contains a masked secret — a numeric
+# PIPELINE_APP_ID matches digits anywhere in the result — and the gate then sees
+# the same empty value as a run that reported nothing. The warning has to name
+# that cause, or a good run reads as error_invalid_evidence with no explanation.
+out="$(imp imp-mask '' -)"
+assert_has "the warning names secret masking" "secret-masked" "$out"
+assert_has "the warning names PIPELINE_APP_ID" "PIPELINE_APP_ID" "$out"
+
 section "import → post-run-report: a hostile result field never reaches the shell (#571 N1)"
 # report_from <import-output> — render the gate's report from what import wrote.
 report_from() {
@@ -311,6 +321,23 @@ ex="$(RESULT_FILE="$FIX/result-success-cheap.json" EXECUTION_FILE="$T/claude-100
 out="$(imp imp5 "$(field "$ex" result-json)" "$(field "$ex" execution-usage)")"
 assert_eq "a 1000-event aggregate survives the hand-over" "$(field "$ex" execution-usage)" \
   "$(jq -c . "$(field "$out" execution-file)")"
+
+section "the oversized stand-in hands over evidence too large to carry (#592 F9)"
+# tests/mocks/export-result-output-oversized.sh is what agent-implement.yml's
+# `evidence_oversized` arm copies over the workspace export script, playing the
+# agent that rewrote it (#535). The act scenario only proves anything while the
+# payload still exceeds the 128 KiB per-string env cap and still looks like a
+# normal success — so check both here, where it costs milliseconds.
+out="$(bash "$ROOT/tests/mocks/export-result-output-oversized.sh")"
+rj="$(field "$out" result-json)"
+assert_eq "is-error=false — the evidence looks fine" "false" "$(field "$out" is-error)"
+assert_eq "result-json is a canonical result" "result" "$(printf '%s' "$rj" | jq -r .type)"
+assert_eq "it claims a turn the gate must not believe" "1" "$(printf '%s' "$rj" | jq -r .num_turns)"
+if (( ${#rj} > 131072 )); then
+  pass "result-json is past the 128 KiB env cap"
+else
+  fail "result-json is past the 128 KiB env cap" "${#rj} bytes"
+fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then printf '  - %s\n' "${FAIL_NAMES[@]}"; exit 1; fi
