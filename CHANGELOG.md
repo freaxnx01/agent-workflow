@@ -733,6 +733,14 @@ additions are the optional `NTFY_TOKEN` secret and the
 
 ### Changed
 
+- **commands:** `/parked repark` and `/roadmap defer` move an issue to the
+  standing `backlog` milestone instead of stripping its milestone, and stop with
+  a pointer to `/milestone new backlog` when that milestone is missing — never
+  creating it. `/milestone triage` now walks `backlog` (minus `parked` /
+  `roadmap`) plus every issue with no milestone. Azure DevOps uses the root
+  iteration as `backlog`, and `/parked repark` records the sprint it left in an
+  `iteration-was:` comment so `/parked unpark` can offer it back. Follows
+  freaxnx01/ai-instructions#61 (#644).
 - **runners:** opencode installs via its native installer (checksum-pinned)
   instead of `npm install -g`, which resolved to the shared global prefix and
   died with `EACCES` on a persistent runner whose prefix was ever written as

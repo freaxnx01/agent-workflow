@@ -58,6 +58,11 @@ is enforced by a deny-list, not just promised.
 | Review | *(automatic)* | the pipeline reviews its own PR; `/gh:review <N>` for a second opinion |
 | Close | `/done <N>` | the issue closed and the milestone tidied |
 
+**Nothing is un-milestoned.** What isn't scheduled sits in the `backlog`
+milestone: `/parked repark` and `/roadmap defer` move issues there, and
+`/milestone triage` walks it. Create it once per repo with
+`/milestone new backlog`. No command creates it for you.
+
 **`/enrich` is the step that gates everything.** The pipeline reads only the issue
 **body**, so a spec committed to `docs/` that never got inlined is invisible to it.
 `/gh:implement` refuses an issue with no `## Implementation Plan` heading, and

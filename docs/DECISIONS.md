@@ -1083,6 +1083,24 @@ sentence rather than needing the comment that used to explain it.
 > date of a milestone's `due_on` and stores any time as `T00:00:00Z` — a midday write
 > to `agent-workflow` milestone #5 read back as midnight. `/new` and `/milestone`
 > now send `T00:00:00Z`, so the read-back matches the request.
+>
+> **Amended 2026-11-19 (#644):** "roadmap/parked carry no milestone" no longer
+> holds. Every open issue now has a milestone, and unscheduled, parked and
+> roadmap work lives in a standing `backlog` milestone
+> (freaxnx01/ai-instructions#61). `/parked repark` and `/roadmap defer` **move**
+> the issue to `backlog` instead of stripping its milestone, and stop with a
+> pointer to `/milestone new backlog` when it is missing. `repark` still records
+> `milestone-was:`, except when the issue was already in `backlog`. `unpark`
+> offers that record back and otherwise leaves the milestone untouched, reporting
+> where the issue sits from its own read-back rather than assuming `backlog` (a
+> hand-parked issue keeps the milestone it had, a legacy one may have none).
+> `/milestone triage` walks `backlog` minus
+> `parked`/`roadmap`, plus every issue with no milestone. On Azure DevOps,
+> `backlog` is the root iteration, and `repark`/`unpark` carry the same round
+> trip under the name `iteration-was:` — written as its own comment, because
+> `azdo_comments` strips the HTML a multi-line body arrives in and would glue a
+> second line onto the reason. The "Consequences" bullets about stripping
+> describe the old behaviour.
 
 ### Context
 
