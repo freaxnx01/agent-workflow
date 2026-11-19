@@ -11,8 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 GitHub-hosted runners. **Self-hosted consumers must act:** when `runner-labels`
 names a self-hosted pool, set `gate-runner-labels` to GitHub-hosted or
 ephemeral runners, or opt in with `allow-shared-gate-runner: true` (ephemeral
-runners only) — otherwise the run is refused before the agent starts (#592 F7,
-#640). New behaviour a consumer will see:
+runners only) — otherwise the run is refused before the agent starts
+(#592 F7, #640). New behaviour a consumer will see:
 
 - **Backlog milestone guard (opt-in).** A new reusable workflow
   `backlog-milestone.yml` gives an issue opened or reopened without a milestone
