@@ -1091,10 +1091,10 @@ sentence rather than needing the comment that used to explain it.
 > the issue to `backlog` instead of stripping its milestone, and stop with a
 > pointer to `/milestone new backlog` when it is missing. `repark` still records
 > `milestone-was:`, except when the issue was already in `backlog`. `unpark`
-> offers that record back and otherwise leaves the milestone untouched — after a
-> `repark` round trip that is `backlog`, but with no record it says nothing about
-> where the issue sits, because it never read it (a hand-parked issue keeps the
-> milestone it had). `/milestone triage` walks `backlog` minus
+> offers that record back and otherwise leaves the milestone untouched, reporting
+> where the issue sits from its own read-back rather than assuming `backlog` (a
+> hand-parked issue keeps the milestone it had, a legacy one may have none).
+> `/milestone triage` walks `backlog` minus
 > `parked`/`roadmap`, plus every issue with no milestone. On Azure DevOps,
 > `backlog` is the root iteration, and `repark`/`unpark` carry the same round
 > trip under the name `iteration-was:` — written as its own comment, because
