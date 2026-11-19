@@ -220,6 +220,99 @@ assert_eq "unknown flag -> exit 2" "2" "$rc"
 rc=0; bash "$BACKFILL" -R 'not a repo' >/dev/null 2>&1 || rc=$?
 assert_eq "malformed repo -> exit 2" "2" "$rc"
 
+section "the workflows"
+
+WF="$ROOT/.github/workflows/backlog-milestone.yml"
+TEST_WF="$ROOT/.github/workflows/backlog-milestone.test.yml"
+CALLER="$ROOT/.github/workflows/issue-milestone.yml"
+
+# The three files are the deliverable; their absence is one named failure, not
+# twenty confusing ones. The implementing pipeline run could not commit them:
+# pushing anything under .github/workflows/ needs the App's Workflows
+# permission plus `app-token-workflows-write: true`, and agent-workflow's own
+# agent.yml does not set it (docs/PIPELINE-APP-SETUP.md "A plan that edits
+# workflow files needs both halves"). The assertions below are the gate: they
+# start passing the moment the files land, and until then this suite is red.
+missing=()
+for f in "$WF" "$TEST_WF" "$CALLER"; do
+  [[ -r "$f" ]] || missing+=("${f##*/}")
+done
+if (( ${#missing[@]} > 0 )); then
+  # IFS is $'\n\t' here, so "${missing[*]}" would join on a newline.
+  fail "the #646 workflow files are committed" \
+    "missing: $(IFS=' '; printf '%s' "${missing[*]}") — needs a run with app-token-workflows-write: true"
+  printf '\npassed: %d   failed: %d\n' "$PASS" "$FAIL"
+  printf 'failed:\n'
+  for n in "${FAIL_NAMES[@]}"; do printf -- '  - %s\n' "$n"; done
+  exit 1
+fi
+
+wf="$(cat "$WF")"
+test_wf="$(cat "$TEST_WF")"
+caller="$(cat "$CALLER")"
+
+assert_contains "reusable: callable" "$wf" 'workflow_call:'
+assert_contains "reusable: runs the guard script" "$wf" 'scripts/assign-backlog-milestone.sh'
+assert_contains "reusable: has a job timeout" "$wf" 'timeout-minutes:'
+assert_contains "reusable: has per-issue concurrency" "$wf" 'concurrency:'
+assert_not_contains "reusable: never writes code" "$wf" 'contents: write'
+# shellcheck disable=SC2016  # `${{ }}` is Actions expression syntax, not shell
+for needle in 'id: assign' \
+              'decision: ${{ steps.assign.outputs.decision }}' \
+              'value: ${{ jobs.milestone.outputs.decision }}' \
+              'value: ${{ jobs.milestone.outputs.reason }}'; do
+  assert_contains "reusable: the caller can read the decision — $needle" "$wf" "$needle"
+done
+
+assert_contains "caller: on opened and reopened" "$caller" 'types: [opened, reopened]'
+assert_contains "caller: calls the local reusable workflow" "$caller" 'uses: ./.github/workflows/backlog-milestone.yml'
+assert_contains "caller: uses this repo's scripts" "$caller" 'local-scripts: true'
+# shellcheck disable=SC2016
+assert_contains "caller: passes only the issue number" "$caller" 'issue-number: ${{ github.event.issue.number }}'
+
+assert_contains "test: calls the reusable workflow" "$test_wf" 'uses: ./.github/workflows/backlog-milestone.yml'
+assert_contains "test: drives the real script through the gh mock" "$test_wf" 'stub-mode: true'
+for fixture in milestones-with-backlog.json milestones-without-backlog.json issue-has-milestone.json; do
+  assert_contains "test: covers $fixture" "$test_wf" "tests/fixtures/backlog-milestone/$fixture"
+done
+
+# SECURITY: public repo, anyone can open an issue. No user-controlled field may
+# reach a workflow at all — only the number goes in.
+leaks="$(grep -nE 'github\.event\.(issue\.(title|body|user)|comment)' "$WF" "$TEST_WF" "$CALLER" 2>/dev/null || true)"
+assert_eq "no workflow reads a user-controlled event field" "" "$leaks"
+
+for f in "$WF" "$TEST_WF" "$CALLER"; do
+  unpinned="$(grep -E '^\s*-?\s*uses: [^.]' "$f" 2>/dev/null | grep -vE '@[0-9a-f]{40}' || true)"
+  assert_eq "${f##*/}: every external action is pinned by full SHA" "" "$unpinned"
+  top="$(python3 -c 'import sys,yaml; d=yaml.safe_load(open(sys.argv[1])); print(d.get("permissions"))' "$f" 2>/dev/null || true)"
+  assert_eq "${f##*/}: top-level permissions are contents: read only" "{'contents': 'read'}" "$top"
+done
+
+# A calling job granting less than the callee's jobs declare is rejected at
+# load (startup_failure, #34 / #435). Assert every calling job grants the union.
+perm_check() {
+  python3 - "$WF" "$1" <<'PY'
+import sys, yaml
+callee = yaml.safe_load(open(sys.argv[1]))
+need = {}
+for job in callee["jobs"].values():
+    need.update(job.get("permissions") or {})
+caller = yaml.safe_load(open(sys.argv[2]))
+bad = [n for n, j in caller["jobs"].items()
+       if "uses" in j and (j.get("permissions") or {}) != need]
+print(" ".join(bad))
+PY
+}
+assert_eq "caller: every calling job grants the callee's permissions" "" "$(perm_check "$CALLER" 2>&1 || true)"
+assert_eq "test: every calling job grants the callee's permissions" "" "$(perm_check "$TEST_WF" 2>&1 || true)"
+
+if command -v actionlint >/dev/null 2>&1; then
+  for f in "$WF" "$TEST_WF" "$CALLER"; do
+    if actionlint "$f" >/dev/null 2>&1; then pass "actionlint is clean (${f##*/})"
+    else fail "actionlint is clean (${f##*/})" "$(actionlint "$f" 2>&1 | head -5)"; fi
+  done
+fi
+
 printf '\npassed: %d   failed: %d\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then
   printf 'failed:\n'
