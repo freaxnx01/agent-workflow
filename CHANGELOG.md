@@ -748,6 +748,7 @@ additions are the optional `NTFY_TOKEN` secret and the
   contract by issue shape — the TDD contract for code changes, a before/after
   verification contract for docs-only issues — from the new shared
   `/gh:implementation-contract` (#177)
+- **new:** `/new` falls back to the `backlog` milestone instead of `none` (#645). `backlog` replaces the `none` option, is what a silent or declined answer and zero active milestones resolve to, and is not counted as an active milestone; it is reported, never created, when missing. `/new` no longer offers or creates `general-<month>-<year>`.
 
 ### Fixed
 

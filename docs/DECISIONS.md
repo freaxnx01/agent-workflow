@@ -1072,6 +1072,13 @@ sentence rather than needing the comment that used to explain it.
 **Status:** Accepted
 **Tracking:** none — direct change, no issue
 
+> **Amended 2026-11-19:** the `none` option and the zero-milestone
+> `general-<month>-<year>` offer no longer hold (#645, ai-instructions#61). `backlog`
+> is the default milestone: it replaces `none`, it is what a silent or declined
+> answer and zero active milestones resolve to, and it is not counted as an active
+> milestone. A missing `backlog` is reported, never created. The proposal ordering,
+> the sort rule and the silent single assignment stand.
+>
 > **Amended 2026-10-04:** "midday UTC" below no longer holds. GitHub keeps only the
 > date of a milestone's `due_on` and stores any time as `T00:00:00Z` — a midday write
 > to `agent-workflow` milestone #5 read back as midnight. `/new` and `/milestone`
