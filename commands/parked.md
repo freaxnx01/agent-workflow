@@ -111,8 +111,14 @@ the current milestone **before** writing anything:
 ```bash
 # 1 — backlog must exist before anything is written
 repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
-if [ "$(gh api "repos/$repo/milestones?state=open&per_page=100" \
-        --jq '[.[] | select(.title == "backlog")] | length')" != "1" ]; then
+rc=0
+found=$(gh api "repos/$repo/milestones?state=open&per_page=100" \
+        --jq '[.[] | select(.title == "backlog")] | length') || rc=$?
+if [ "$rc" -ne 0 ]; then
+  echo "Could not read the milestones of $repo (gh exit $rc). That is not a missing 'backlog' — fix the read, then re-run."
+  exit 1
+fi
+if [ "$found" != "1" ]; then
   echo "No open 'backlog' milestone in $repo. Create it with /milestone new backlog, then re-run."
   exit 1
 fi
@@ -132,6 +138,12 @@ fi
 **A missing `backlog` stops the command before the comment.** Report it,
 point at `/milestone new backlog`, and never create it yourself. A closed
 `backlog` counts as missing.
+
+**A failed read is not a missing milestone.** `gh`'s status is captured
+separately, because an expired token, a network error or a rate limit all make
+the substitution empty — the same as a repo with no `backlog`. Both stop before
+any write, but only one of them is fixed by creating a milestone, so they must
+not be reported as the same thing.
 
 `milestone-was:` sits on the **second** line deliberately: every reason read-back
 here takes `split("\n")[0]`, so `/parked list` and the confirmation below keep
@@ -306,9 +318,15 @@ so `unpark` can offer it back. Check `backlog` and capture the current milestone
 
 ```bash
 # 0 — backlog must exist before anything is written
-if ! tea api --login git-home "repos/$repo/milestones?state=open&limit=50" | python3 -c '
+rc=0
+found=$(tea api --login git-home "repos/$repo/milestones?state=open&limit=50" | python3 -c '
 import sys, json
-sys.exit(0 if any(m["title"] == "backlog" for m in json.load(sys.stdin)) else 1)'; then
+print("yes" if any(m.get("title") == "backlog" for m in json.load(sys.stdin)) else "no")') || rc=$?
+if [ "$rc" -ne 0 ]; then
+  echo "Could not read the milestones of $repo (exit $rc). That is not a missing 'backlog' — fix the read, then re-run."
+  exit 1
+fi
+if [ "$found" != "yes" ]; then
   echo "No open 'backlog' milestone in $repo. Create it with /milestone new backlog, then re-run."
   exit 1
 fi
@@ -356,6 +374,11 @@ print(i["number"], (i.get("milestone") or {}).get("title") or "-", sep="\t")'
 **A missing `backlog` stops the command before the comment.** Report it,
 point at `/milestone new backlog`, and never create it yourself. A closed
 `backlog` counts as missing.
+
+**A failed read is not a missing milestone.** The read's status is captured
+separately, because an unreachable host or an expired token would otherwise
+report "no `backlog`" for a milestone that exists. Both stop before any write,
+but only one of them is fixed by creating a milestone.
 
 **Why `backlog`.** A parked issue is paused on purpose and not scheduled, and
 every open issue lives in a milestone. `backlog` is where unscheduled work goes
@@ -456,27 +479,73 @@ Report from that read-back, not from an exit code. If `new` is empty the item
 ends with no tags at all, which is correct and is why `azdo_set_tags` accepts an
 empty value.
 
-### repark `<n>` "<reason>"
-
-Add `parked` to the existing tags the same way, then post the reason as a
-comment — there is no field for it:
+**Then offer the recorded iteration back.** `repark` writes an `iteration-was:`
+comment whenever it moved the item out of a sprint. Read the newest one and
+**ask** before writing — never restore silently:
 
 ```bash
+was=$(azdo_comments "<n>" | sed -n 's/^iteration-was: *//p' | tail -1)
+```
+
+- **Empty output** — nothing was recorded (parked by hand, or `repark` found the
+  item already at the root). It stays where it is; say nothing about the
+  iteration, because nothing here read it back.
+- **An iteration that still exists** — check `$was` against `azdo_iterations`,
+  offer to restore it, then report from the read-back:
+
+  ```bash
+  az boards work-item update --id "<n>" --org "$(azdo_org_url)" \
+    --fields "System.IterationPath=$was" \
+    --output tsv --only-show-errors --query 'fields."System.IterationPath"'
+  ```
+
+- **An iteration that no longer exists** — say so and leave the item at the root.
+  Do not create it and do not substitute another.
+
+These are the same rules as the GitHub section's `milestone-was:` offer; only
+the record's spelling differs, because this forge schedules with an iteration
+rather than a milestone.
+
+### repark `<n>` "<reason>"
+
+Add `parked` to the existing tags the same way. Capture the iteration **before**
+anything moves it, then post the reason — there is no field for it — and the
+record of where the item came from:
+
+```bash
+# 1 — the iteration being left; the project root means "already in backlog"
+was=$(azdo_fields "<n>" | python3 -c 'import sys, json; print(json.loads(sys.stdin.readline())["iteration"])')
+
+# 2 — the reason, and the record only when there is a sprint to record
 az boards work-item update --id "<n>" --org "$(azdo_org_url)" \
   --discussion "<reason>" --output none --only-show-errors
+if [ -n "$was" ] && [ "$was" != "$AZDO_PROJECT" ]; then
+  az boards work-item update --id "<n>" --org "$(azdo_org_url)" \
+    --discussion "iteration-was: $was" --output none --only-show-errors
+fi
 ```
+
+**The record is its own comment, not a second line of the reason.** GitHub and
+Forgejo put `milestone-was:` on line two because their read-backs take the first
+line; here the reader is `azdo_comments`, which strips the HTML the API wraps a
+body in — so a newline arrives as a `<br>` that is removed without leaving a
+space, gluing the record onto the end of the reason. `azdo_comments` prints one
+comment per line, so a separate comment is the only spelling that survives the
+round trip.
 
 Then move the item to the project **root iteration**, this forge's `backlog`.
 The root always exists, so there is no missing-backlog case here:
 
 ```bash
+# 3 — move it to backlog, now that the previous iteration is recorded
 az boards work-item update --id "<n>" --org "$(azdo_org_url)" \
   --fields "System.IterationPath=$AZDO_PROJECT" \
   --output tsv --only-show-errors --query 'fields."System.IterationPath"'
 ```
 
-Report from that read-back: it must print `$AZDO_PROJECT` alone. This forge
-records no `milestone-was:` and its `unpark` offers none back.
+Report from that read-back: it must print `$AZDO_PROJECT` alone. A sprint is
+scheduling, and reparking discards it, so `unpark` has to be able to offer it
+back — the same round trip the other two forges get from `milestone-was:`.
 
 ### review
 

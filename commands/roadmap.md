@@ -102,8 +102,14 @@ the `backlog` milestone**, and otherwise keeps labels unchanged. Check
 ```bash
 # 1 — backlog must exist before anything is written
 repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
-if [ "$(gh api "repos/$repo/milestones?state=open&per_page=100" \
-        --jq '[.[] | select(.title == "backlog")] | length')" != "1" ]; then
+rc=0
+found=$(gh api "repos/$repo/milestones?state=open&per_page=100" \
+        --jq '[.[] | select(.title == "backlog")] | length') || rc=$?
+if [ "$rc" -ne 0 ]; then
+  echo "Could not read the milestones of $repo (gh exit $rc). That is not a missing 'backlog' — fix the read, then re-run."
+  exit 1
+fi
+if [ "$found" != "1" ]; then
   echo "No open 'backlog' milestone in $repo. Create it with /milestone new backlog, then re-run."
   exit 1
 fi
@@ -120,6 +126,12 @@ gh issue view <n> --json number,milestone --jq '[.number, (.milestone.title // "
 **A missing `backlog` stops the command before the comment.** Report it,
 point at `/milestone new backlog`, and never create it yourself. A closed
 `backlog` counts as missing.
+
+**A failed read is not a missing milestone.** `gh`'s status is captured
+separately, because an expired token, a network error or a rate limit all make
+the substitution empty — the same as a repo with no `backlog`. Both stop before
+any write, but only one of them is fixed by creating a milestone, so they must
+not be reported as the same thing.
 
 **Why `backlog`.** A roadmap issue is *planned for future work, not yet
 scheduled*, and every open issue lives in a milestone. `backlog` is where
@@ -252,9 +264,15 @@ before any write:
 
 ```bash
 # 0 — backlog must exist before anything is written
-if ! tea api --login git-home "repos/$repo/milestones?state=open&limit=50" | python3 -c '
+rc=0
+found=$(tea api --login git-home "repos/$repo/milestones?state=open&limit=50" | python3 -c '
 import sys, json
-sys.exit(0 if any(m["title"] == "backlog" for m in json.load(sys.stdin)) else 1)'; then
+print("yes" if any(m.get("title") == "backlog" for m in json.load(sys.stdin)) else "no")') || rc=$?
+if [ "$rc" -ne 0 ]; then
+  echo "Could not read the milestones of $repo (exit $rc). That is not a missing 'backlog' — fix the read, then re-run."
+  exit 1
+fi
+if [ "$found" != "yes" ]; then
   echo "No open 'backlog' milestone in $repo. Create it with /milestone new backlog, then re-run."
   exit 1
 fi
@@ -283,6 +301,11 @@ print(i["number"], (i.get("milestone") or {}).get("title") or "-", sep="\t")'
 **A missing `backlog` stops the command before the comment.** Report it,
 point at `/milestone new backlog`, and never create it yourself. A closed
 `backlog` counts as missing.
+
+**A failed read is not a missing milestone.** The read's status is captured
+separately, because an unreachable host or an expired token would otherwise
+report "no `backlog`" for a milestone that exists. Both stop before any write,
+but only one of them is fixed by creating a milestone.
 
 **Why `backlog`.** A roadmap issue is *planned for future work, not yet
 scheduled*, and every open issue lives in a milestone. `backlog` is where
@@ -385,6 +408,11 @@ az boards work-item update --id "<n>" --org "$(azdo_org_url)" \
 
 Report from that read-back. The root always exists, so there is no
 missing-backlog case on this forge.
+
+`defer` records no `iteration-was:` — the counterpart of `/parked repark`'s
+record — for the same reason it records no `milestone-was:` on the other forges:
+`promote` always names the iteration it schedules into, so there is nothing to
+offer back.
 
 ## Unknown host
 

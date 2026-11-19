@@ -1096,7 +1096,10 @@ sentence rather than needing the comment that used to explain it.
 > where the issue sits, because it never read it (a hand-parked issue keeps the
 > milestone it had). `/milestone triage` walks `backlog` minus
 > `parked`/`roadmap`, plus every issue with no milestone. On Azure DevOps,
-> `backlog` is the root iteration. The "Consequences" bullets about stripping
+> `backlog` is the root iteration, and `repark`/`unpark` carry the same round
+> trip under the name `iteration-was:` — written as its own comment, because
+> `azdo_comments` strips the HTML a multi-line body arrives in and would glue a
+> second line onto the reason. The "Consequences" bullets about stripping
 > describe the old behaviour.
 
 ### Context

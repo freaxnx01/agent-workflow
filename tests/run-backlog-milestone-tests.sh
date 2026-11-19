@@ -31,7 +31,8 @@ else
   C_GREEN=''; C_RED=''; C_DIM=''; C_OFF=''
 fi
 
-section() { printf '\n%s── %s ──%s\n' "$C_DIM" "$1" "$C_OFF"; }
+SECTION=''
+section() { SECTION="$1"; printf '\n%s── %s ──%s\n' "$C_DIM" "$1" "$C_OFF"; }
 pass() { PASS=$((PASS + 1)); printf '  %s✓%s %s\n' "$C_GREEN" "$C_OFF" "$1"; }
 fail() {
   FAIL=$((FAIL + 1)); FAIL_NAMES+=("$1")
@@ -44,6 +45,17 @@ ok() { local name="$1" detail="$2"; shift 2; if "$@"; then pass "$name"; else fa
 # no <name> <detail> <command...> — pass when the command fails
 no() { local name="$1" detail="$2"; shift 2; if "$@"; then fail "$name" "$detail"; else pass "$name"; fi; }
 has() { [[ "$1" == *"$2"* ]]; }
+
+# fail_closed — the mocks reject a call they do not recognise, but the extracted
+# command text runs without errexit, so that rejection would otherwise leave RC
+# at 0 and a mistyped forge call would still read as "runs cleanly". Every run
+# goes through this, so an unrecognised call is a failure wherever it happens.
+fail_closed() {
+  case "$OUT" in
+    *"unexpected gh call"*|*"unexpected tea call"*|*"az mock: no fixture for"*)
+      fail "$SECTION — no unrecognised forge call" "$OUT" ;;
+  esac
+}
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -83,6 +95,18 @@ printf '%s\n' '{"comments": [{"body": "parked: waiting on vendor"}, {"body": "ro
 printf '%s\n' '[{"body": "parked: waiting on vendor"}, {"body": "roadmap: waiting on vendor"}]' > "$WORK/fj-comments.json"
 # What `az ... --query 'fields."System.IterationPath"' --output tsv` prints back.
 printf '%s\n' 'MyProject' > "$WORK/az-iteration-root.tsv"
+# What the workitemsbatch call behind `azdo_fields` returns: one item scheduled
+# into a sprint, one already at the project root (this forge's `backlog`).
+printf '%s\n' '{"value": [{"id": 42, "fields": {"System.Id": 42, "System.Title": "t", "System.State": "To Do", "System.Tags": "parked", "System.IterationPath": "MyProject\\Sprint 3"}}]}' \
+  > "$WORK/az-batch-in-sprint.json"
+printf '%s\n' '{"value": [{"id": 42, "fields": {"System.Id": 42, "System.Title": "t", "System.State": "To Do", "System.Tags": "parked", "System.IterationPath": "MyProject"}}]}' \
+  > "$WORK/az-batch-at-root.json"
+# What the comments API returns — HTML-wrapped, which is why `azdo_comments`
+# strips it and why the record has to be its own comment, not a second line.
+printf '%s\n' '{"comments": [{"id": 11, "text": "<div>waiting on vendor</div>"}, {"id": 12, "text": "<div>iteration-was: MyProject\\Sprint 3</div>"}]}' \
+  > "$WORK/az-comments-record.json"
+printf '%s\n' '{"comments": [{"id": 11, "text": "<div>waiting on vendor</div>"}]}' \
+  > "$WORK/az-comments-plain.json"
 
 # The stubs. Every call is logged; reads are served from fixtures via the real
 # jq, so the command's own --jq filter is what gets tested.
@@ -127,23 +151,42 @@ run() {
   OUT="$(LOG="$LOG" FIX_MS="$2" FIX_ISSUE="$3" FIX_ISSUES="$WORK/issues.json" \
     FIX_COMMENTS="$WORK/comments.json" FIX_FJ_COMMENTS="$WORK/fj-comments.json" \
     bash -c "$STUBS$1" 2>&1)" || RC=$?
+  fail_closed
 }
 
 # run_azdo <az fixture> <code> — runs code with the real scripts/lib/azdo.sh
 # sourced, `az` served by tests/mocks/az and the AZDO_* context pre-set; sets
 # OUT, RC, AZ_LOG (argv per call) and AZ_STDIN (the WIQL request body).
+#
+# $AZ_MAP, when set, names a "<argv substring>\t<fixture>" file that picks the
+# fixture per call — needed once a section makes several different az calls
+# (read the iteration, comment, then move it), which one fixture cannot serve.
 run_azdo() {
   AZ_LOG="$WORK/az.log.$RANDOM"; AZ_STDIN="$WORK/az.stdin.$RANDOM"
   : > "$AZ_LOG"; : > "$AZ_STDIN"
   RC=0
   OUT="$(
     export PATH="$MOCKS:$PATH" AZ_MOCK_FIXTURE="$1" AZ_MOCK_LOG="$AZ_LOG" \
-      AZ_MOCK_STDIN_LOG="$AZ_STDIN" AZDO_ORG=contoso AZDO_PROJECT=MyProject \
-      AZDO_REPO=my-repo AZURE_DEVOPS_EXT_PAT=not-a-real-token
+      AZ_MOCK_STDIN_LOG="$AZ_STDIN" AZ_MOCK_MAP="${AZ_MAP:-}" AZDO_ORG=contoso \
+      AZDO_PROJECT=MyProject AZDO_REPO=my-repo AZURE_DEVOPS_EXT_PAT=not-a-real-token
     bash -c "source '$LIB'
 $2" 2>&1
   )" || RC=$?
+  fail_closed
 }
+
+# az_line <pattern> — the 1-based position of the first az call matching
+# <pattern>, or 0 when there is none. Lets a test assert call ORDER, which is
+# the whole point of recording an iteration before overwriting it.
+az_line() {
+  local n
+  n="$(grep -n -m1 -e "$1" "$AZ_LOG" | cut -d: -f1)"
+  printf '%s\n' "${n:-0}"
+}
+
+# in_order <a> <b> <c> — true when all three az_line positions were found and
+# the calls happened in that order.
+in_order() { [[ "$1" -gt 0 ]] && [[ "$1" -lt "$2" ]] && [[ "$2" -lt "$3" ]]; }
 
 # wiql — the query as the WIQL parser would receive it, decoded from the body
 # azdo_wiql posted. PARSE-FAILED when the body is not the JSON it must be.
@@ -260,14 +303,43 @@ no "no command spells it NOT ... CONTAINS" "a prefix NOT is in one of the three 
   grep -qn 'NOT \[System\.' "$CMDS/milestone.md" "$CMDS/parked.md" "$CMDS/roadmap.md"
 
 section "/parked repark — Azure DevOps"
+# The section makes three different az calls, so the fixture is chosen per call.
+# `--discussion` writes nothing back, so /dev/null is the honest fixture for it.
+printf 'workitemsbatch\t%s\n--discussion\t/dev/null\nSystem.IterationPath=\t%s\n' \
+  "$WORK/az-batch-in-sprint.json" "$WORK/az-iteration-root.tsv" > "$WORK/az-map-sprint"
+printf 'workitemsbatch\t%s\n--discussion\t/dev/null\nSystem.IterationPath=\t%s\n' \
+  "$WORK/az-batch-at-root.json" "$WORK/az-iteration-root.tsv" > "$WORK/az-map-root"
 # shellcheck disable=SC2016  # the heading itself contains backticks; it is a literal
 code="$(blocks "$CMDS/parked.md" "Azure DevOps" 'repark `<n>` "<reason>"' | subst)"
-run_azdo "$WORK/az-iteration-root.tsv" "$code"
+AZ_MAP="$WORK/az-map-sprint" run_azdo "$WORK/az-iteration-root.tsv" "$code"
 ok "runs cleanly" "$OUT" test "$RC" -eq 0
 ok "moves the item to the project root iteration" "$(cat "$AZ_LOG")" \
   grep -qE -- '--fields System\.IterationPath=MyProject( |$)' "$AZ_LOG"
 ok "reads the iteration back" "$(cat "$AZ_LOG")" \
   grep -q -- '--query fields."System.IterationPath"' "$AZ_LOG"
+ok "records the sprint it is taking the item out of" "$(cat "$AZ_LOG")" \
+  grep -qF -- '--discussion iteration-was: MyProject\Sprint 3' "$AZ_LOG"
+ok "records it before the move overwrites it" \
+  "read=$(az_line workitemsbatch) record=$(az_line 'iteration-was:') move=$(az_line '--fields System\.IterationPath=')" \
+  in_order "$(az_line workitemsbatch)" "$(az_line 'iteration-was:')" \
+           "$(az_line '--fields System\.IterationPath=')"
+AZ_MAP="$WORK/az-map-root" run_azdo "$WORK/az-iteration-root.tsv" "$code"
+ok "runs cleanly when the item is already at the root" "$OUT" test "$RC" -eq 0
+no "records nothing when the item is already at the root" "$(cat "$AZ_LOG")" \
+  grep -q 'iteration-was:' "$AZ_LOG"
+
+section "/parked unpark — Azure DevOps"
+# Fence 2 of the section: the read that offers the recorded iteration back. The
+# restore itself sits inside a bullet (indented fence), so `blocks` skips it —
+# it only runs on an explicit yes, which a fixture test cannot give.
+# shellcheck disable=SC2016  # the heading itself contains backticks; it is a literal
+code="$(blocks "$CMDS/parked.md" "Azure DevOps" 'unpark `<n>`' 2 | subst)"
+run_azdo "$WORK/az-comments-record.json" "$code
+printf 'was=[%s]\n' \"\$was\""
+ok "offers back the sprint repark recorded" "$OUT" has "$OUT" 'was=[MyProject\Sprint 3]'
+run_azdo "$WORK/az-comments-plain.json" "$code
+printf 'was=[%s]\n' \"\$was\""
+ok "offers nothing when repark recorded nothing" "$OUT" has "$OUT" 'was=[]'
 
 section "/roadmap defer — Azure DevOps"
 # shellcheck disable=SC2016  # the heading itself contains backticks; it is a literal

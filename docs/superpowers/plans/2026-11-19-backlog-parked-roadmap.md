@@ -364,8 +364,8 @@ rc=0; ids=$(azdo_wiql "SELECT [System.Id] FROM WorkItems
 WHERE [System.TeamProject] = @project
   AND [System.AreaPath] UNDER '$AZDO_PROJECT\\$AZDO_REPO'
   AND [System.IterationPath] = '$AZDO_PROJECT'
-  AND NOT [System.Tags] CONTAINS 'parked'
-  AND NOT [System.Tags] CONTAINS 'roadmap'
+  AND [System.Tags] NOT CONTAINS 'parked'
+  AND [System.Tags] NOT CONTAINS 'roadmap'
 ORDER BY [System.CreatedDate] DESC") || rc=$?
 ```
 ````
