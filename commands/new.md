@@ -45,7 +45,9 @@ gh issue create --title "<type>(<scope>): <concise title>" --body-file <notes-fi
 
 After creating, print the issue number, title, and URL — **read back** rather than
 trusting the exit code (`gh issue create` has been seen exiting `0` while silently
-dropping the label). If there's no `gh`/repo context, say so and stop.
+dropping the label). Report the milestone from the read-back; when the fallback
+should have assigned `backlog` and the read-back shows none, say so rather than
+claiming it. If there's no `gh`/repo context, say so and stop.
 
 ```bash
 gh issue view <number> --json number,title,url,labels,milestone
@@ -68,59 +70,55 @@ not established), while `T12:00:00Z` kept the requested date:
 gh api "repos/$repo/milestones" -f title="<name>" -f due_on="<YYYY-MM-DD>T12:00:00Z"
 ```
 
-If my notes name no milestone, read the open ones — **sorted locally**, see *The
-sort rule* below — and take case 2, 3, or 4 by how many came back:
+If my notes name no milestone, read the open ones. **`backlog` is the fallback
+bucket, not an active milestone** (ai-instructions#61): list only the **active**
+ones — open and not titled `backlog` — **sorted locally**, see *The sort rule*
+below, and separately check whether `backlog` exists. Take case 2, 3, or 4 by how
+many active milestones came back:
 
 ```bash
 gh api "repos/$repo/milestones?state=open&per_page=100" \
-  --jq 'sort_by(.due_on // "9999") | .[] | [.title, (.due_on // "-")] | @tsv'
+  --jq 'sort_by(.due_on // "9999") | map(select(.title != "backlog")) | .[] | [.title, (.due_on // "-")] | @tsv'
+gh api "repos/$repo/milestones?state=open&per_page=100" \
+  --jq 'map(select(.title == "backlog")) | length'
 ```
 
-**2 — Zero open milestones.** Offer to create the month's general bucket,
-`general-<month>-<year>` (e.g. `general-september-2026`), due the **30th of that
-month clamped to the month length**, so February lands on the 28th/29th:
+The second prints `1` when `backlog` exists and `0` when it does not. The match is
+the exact, case-sensitive title.
 
-```bash
-month=$(LC_ALL=C date +%B | tr 'A-Z' 'a-z')   # locale-pinned — see below
-year=$(date +%Y)
-last_day=$(date -d "$(date +%Y-%m-01) +1 month -1 day" +%d)
-due_day=$(( last_day < 30 ? last_day : 30 ))
+**2 — Zero active milestones.** Assign `backlog` with `-m "backlog"`, silently,
+and report it from the read-back (same discipline as case 3). `/new` no longer
+offers or creates a monthly general bucket.
 
-gh api "repos/$repo/milestones" \
-  -f title="general-$month-$year" \
-  -f due_on="$year-$(date +%m)-${due_day}T12:00:00Z"
-```
-
-- **Confirm before creating** — show me the name and the due date and wait for a
-  yes. This keeps case 1's "never create one silently" rule intact rather than
-  carving an exception into it.
-- **Declining must not abort issue creation.** The issue is the deliverable, the
-  milestone is secondary: on a no, file the issue with no milestone and say so.
-- **`LC_ALL=C` is load-bearing.** Bare `date +%B` is locale-dependent and returns
-  `September` (capitalized) even on an English-ish setup, and a translated month
-  name elsewhere — either one creates `general-September-2026` once and forks the
-  naming permanently.
-- **A `422` with `already_exists` means the title is taken by a *closed*
-  milestone** — "zero open milestones" is still true. `/milestone`'s rule applies
-  verbatim: report the existing milestone and stop. No variant name, no reopen path.
-  File the issue with no milestone rather than blocking on it.
-
-**3 — Exactly one open milestone.** Assign it silently with `-m "<name>"`. The
+**3 — Exactly one active milestone.** Assign it silently with `-m "<name>"`. The
 read-back must show it: a silent assignment is always *reported*, never implicit.
+`backlog` is not counted, so a repo holding one other milestone plus `backlog`
+lands here, not in case 4.
 
-**4 — Two or more open milestones.** Ask. Offer the titles in sorted order plus
-`none`, and the **first entry is the proposal** (pre-selected). Rules:
+**4 — Two or more active milestones.** Ask. Offer the active titles in sorted
+order, then `backlog` as the last option, and the **first active entry is the
+proposal** (pre-selected). Rules:
 
-- **Silence is never an assignment.** No answer means no milestone.
-- **`none` is always offered**, and is a legitimate answer — `roadmap` and
-  `parked` issues are *defined* by having no milestone.
+- **Silence is never an assignment *to an active milestone*.** No answer, or a
+  declined question, means `backlog`.
+- **`backlog` replaces the old "no milestone" option.** There is no un-milestoned
+  answer while `backlog` exists.
 - This pre-selection does **not** contradict `/milestone triage`'s "No default
   milestone, no inferring from labels or title". That rule forbids assigning
-  *without an explicit answer*, which this still requires. Don't "fix" the
-  apparent contradiction by removing the pre-selection.
-- A picker caps at four options, so above three open milestones it can't hold them
-  all plus `none` — fall back to a numbered plain-text list that names the first
-  entry as the proposal.
+  *without an explicit answer*, which this still requires for an active
+  milestone. Don't "fix" the apparent contradiction by removing the pre-selection.
+- A picker caps at four options, so above three active milestones it can't hold
+  them all plus `backlog` — fall back to a numbered plain-text list that names the
+  first entry as the proposal and lists `backlog` last.
+
+**`backlog` missing** (the second command printed `0`). Say so in the output —
+"no `backlog` milestone in `<repo>`; create it with `/milestone new backlog`" —
+and **never create it from `/new`**; it is created by hand, with `/milestone`'s
+confirmation and due-date rules. A closed `backlog` counts as missing, and
+`/milestone new backlog` reports the closed one and stops. Where the fallback was
+needed (case 2, or case 4 with no answer) file the issue with **no milestone** and
+say that in the report; the issue is the deliverable, so a missing bucket never
+aborts filing. In case 4 the `backlog` option is then left out.
 
 **The sort rule.** `sort_by(.due_on // "9999")` — soonest due first, **undated
 last**. Do **not** use the API's own `sort=due_on&direction=asc`: it returns
@@ -129,9 +127,9 @@ dated one (verified 2026-09-09 against a repo holding one of each). The `"9999"`
 sentinel is the same idiom the Forgejo sections below already use.
 
 **`/new` never guesses roadmap/parked intent from my notes.** At creation time an
-issue carries only `needs-enrichment` — nothing adds those labels. The invariant
-is enforced on the way *into* those states instead: `/roadmap defer` and
-`/parked repark` strip the milestone.
+issue carries only `needs-enrichment` — nothing adds those labels. What happens
+to the milestone of an issue *entering* those states belongs to `/roadmap defer`
+and `/parked repark` (#644), not to `/new`.
 
 My notes:
 $ARGUMENTS
