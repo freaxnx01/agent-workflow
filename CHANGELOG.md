@@ -371,6 +371,7 @@ additions are the optional `NTFY_TOKEN` secret and the
 
 ### Added
 
+- *(milestone)* Issues opened or reopened without a milestone get the standing `backlog` milestone (#646, freaxnx01/ai-instructions#61). New reusable workflow `backlog-milestone.yml`; `scripts/onboard-consumer.sh` writes the `issue-milestone.yml` stub. A repo without an open `backlog` milestone gets a warning — it is never created. `scripts/backfill-backlog-milestone.sh -R <owner/repo> [--apply]` sweeps existing issues (dry run by default). GitHub-only.
 - *(pipeline)* A failure of the implement job **before the agent starts** now posts a run report on the issue naming the failed step, stamps `ai:failed`, and carries an `ai-run` marker with `class: "pre_agent"` (ADR-023, #597). It does not count as an attempt, so a repeated outage is bounded by `MAX_NON_STARTS` rather than burning the issue's budget.
 - **review:** Every GitHub review comment ends with one hidden
   `<!-- ai-review: {…} -->` marker carrying the verdict, the full head SHA it
