@@ -66,11 +66,13 @@ No preamble. If there are none, just say so.
 
 ### unpark
 
-Remove only the `parked` label, then confirm from a read-back:
+Remove only the `parked` label, then confirm from a read-back that also says
+where the issue sits now:
 
 ```bash
 gh issue edit <n> --remove-label "parked"
-gh issue view <n> --json number,labels --jq '[.number, ([.labels[].name] | join(","))] | @tsv'
+gh issue view <n> --json number,labels,milestone \
+  --jq '[.number, ([.labels[].name] | join(",")), (.milestone.title // "no milestone")] | @tsv'
 ```
 
 Report from the read-back. If `parked` is still present, say the removal
@@ -88,14 +90,15 @@ gh issue view <n> --json comments \
 ```
 
 - **Empty output** — nothing was recorded (parked by hand, or `repark` found it
-  already in `backlog`). Say nothing and carry on to routing — in particular,
-  **don't say where the issue sits**: a hand-parked issue keeps whatever
-  milestone it had, a legacy one may have none, and nothing here read it back.
+  already in `backlog`). Leave the milestone as it is and report the one the
+  read-back above printed — a hand-parked issue keeps whatever milestone it had,
+  and a legacy one may have `no milestone`. Never assume `backlog`.
 - **A still-open milestone** — offer to restore it (`gh issue edit <n> -m "<name>"`),
   then read back and report from the read-back. On a decline, leave the milestone
-  as it is — after a `repark` round trip that is `backlog`.
-- **A closed or deleted milestone** — say so and leave the milestone as it is. Do
-  not recreate it and do not substitute another.
+  as it is and report it from the read-back above.
+- **A closed or deleted milestone** — say so, leave the milestone as it is and
+  report it from the read-back above. Do not recreate it and do not substitute
+  another.
 
 If the issue also has `needs-enrichment`, say so before routing. Then delegate:
 read and follow `~/.claude/commands/route.md` (i.e. run `/route <n>`).
@@ -281,11 +284,13 @@ tea issues edit <n> --login git-home --remove-labels "parked"
 tea api --login git-home "repos/$repo/issues/<n>" | python3 -c '
 import sys,json
 i=json.load(sys.stdin)
-print(i["number"], ",".join([l["name"] for l in i.get("labels") or []]), sep="\t")'
+print(i["number"], ",".join([l["name"] for l in i.get("labels") or []]),
+      (i.get("milestone") or {}).get("title") or "no milestone", sep="\t")'
 ```
 
-Report from the read-back. If `parked` is still present, say removal failed
-and stop — do not continue to routing.
+Report from the read-back, which also says where the issue sits now. If
+`parked` is still present, say removal failed and stop — do not continue to
+routing.
 
 **Then offer the recorded milestone back** — same rules as the GitHub section: ask
 first, open milestones only, never recreate a closed one.
@@ -301,9 +306,9 @@ print(was[-1].split(":", 1)[1].strip() if was else "")'
 ```
 
 Restore with `tea milestones issues add --login git-home "<name>" <n>`, then read
-back. On a decline or a closed milestone, leave the milestone as it is — after a
-`repark` round trip that is `backlog`. On an empty record, say nothing about the
-milestone: it was never read. Same rules as the GitHub section.
+back. On a decline, an empty record, or a closed milestone, leave the milestone
+as it is and report the one the read-back above printed — never assume
+`backlog`. Same rules as the GitHub section.
 
 If the issue also has `needs-enrichment`, say so before routing. Then delegate:
 read and follow `~/.claude/commands/route.md` (i.e. run `/route <n>`).
@@ -480,16 +485,17 @@ ends with no tags at all, which is correct and is why `azdo_set_tags` accepts an
 empty value.
 
 **Then offer the recorded iteration back.** `repark` writes an `iteration-was:`
-comment whenever it moved the item out of a sprint. Read the newest one and
-**ask** before writing — never restore silently:
+comment whenever it moved the item out of a sprint. Read the newest one, and
+where the item sits now, and **ask** before writing — never restore silently:
 
 ```bash
 was=$(azdo_comments "<n>" | sed -n 's/^iteration-was: *//p' | tail -1)
+now=$(azdo_fields "<n>" | python3 -c 'import sys, json; print(json.loads(sys.stdin.readline())["iteration"])')
 ```
 
-- **Empty output** — nothing was recorded (parked by hand, or `repark` found the
-  item already at the root). It stays where it is; say nothing about the
-  iteration, because nothing here read it back.
+- **Empty `$was`** — nothing was recorded (parked by hand, or `repark` found the
+  item already at the root). Leave the iteration as it is and report `$now` — a
+  hand-parked item may still sit in a sprint. Never assume the root.
 - **An iteration that still exists** — check `$was` against `azdo_iterations`,
   offer to restore it, then report from the read-back:
 
@@ -499,8 +505,8 @@ was=$(azdo_comments "<n>" | sed -n 's/^iteration-was: *//p' | tail -1)
     --output tsv --only-show-errors --query 'fields."System.IterationPath"'
   ```
 
-- **An iteration that no longer exists** — say so and leave the item at the root.
-  Do not create it and do not substitute another.
+- **An iteration that no longer exists** — say so, leave the iteration as it is
+  and report `$now`. Do not create it and do not substitute another.
 
 These are the same rules as the GitHub section's `milestone-was:` offer; only
 the record's spelling differs, because this forge schedules with an iteration

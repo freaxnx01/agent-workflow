@@ -95,6 +95,10 @@ printf '%s\n' '[{"title": "v1.2 · goal", "due_on": null}, {"title": "backlog", 
 printf '%s\n' '[{"title": "v1.2 · goal", "due_on": null}]' > "$WORK/ms-without-backlog.json"
 printf '%s\n' '{"number": 42, "milestone": {"title": "v1.2 · goal"}}' > "$WORK/issue-in-v12.json"
 printf '%s\n' '{"number": 42, "milestone": {"title": "backlog"}}' > "$WORK/issue-in-backlog.json"
+# unpark reads labels and milestone back in one call. Parked by hand while in
+# v1.2 (no repark, so no record), and a legacy parked issue with no milestone.
+printf '%s\n' '{"number": 42, "labels": [], "milestone": {"title": "v1.2 · goal"}}' > "$WORK/issue-hand-parked.json"
+printf '%s\n' '{"number": 42, "labels": [], "milestone": null}' > "$WORK/issue-no-milestone.json"
 printf '%s\n' '{"comments": [{"body": "parked: waiting on vendor"}, {"body": "roadmap: waiting on vendor"}]}' > "$WORK/comments.json"
 # Forgejo returns the comments as a bare array, GitHub wraps them in the issue.
 printf '%s\n' '[{"body": "parked: waiting on vendor"}, {"body": "roadmap: waiting on vendor"}]' > "$WORK/fj-comments.json"
@@ -142,7 +146,7 @@ tea() {
     *"/issues?"*) cat "$FIX_ISSUES" ;;
     *"/comments"*) cat "$FIX_FJ_COMMENTS" ;;
     *"/issues/"*) cat "$FIX_ISSUE" ;;
-    "comment "*|"milestones issues add"*) : ;;
+    "comment "*|"milestones issues add"*|"issues edit"*) : ;;
     *) printf "unexpected tea call: %s\n" "$*" >&2; return 99 ;;
   esac
 }
@@ -229,6 +233,33 @@ ok "runs cleanly" "$OUT" test "$RC" -eq 0
 ok "lists backlog (not parked/roadmap) + every no-milestone issue" "got: $(numbers "$OUT")" test "$(numbers "$OUT")" = "1,2,6"
 run "$code" "$WORK/ms-without-backlog.json" /dev/null
 ok "missing backlog is reported with the create pointer" "$OUT" has "$OUT" "/milestone new backlog"
+
+# --- /parked unpark (GitHub, Forgejo) --------------------------------------
+#
+# The comment fixtures carry a reason but no milestone-was: line, so these are
+# the empty-record case: the command must report the milestone it read back,
+# not assume `backlog`.
+
+section "/parked unpark — GitHub, nothing recorded"
+code="$(blocks "$CMDS/parked.md" GitHub unpark | subst)"
+run "$code" /dev/null "$WORK/issue-hand-parked.json"
+ok "runs cleanly" "$OUT" test "$RC" -eq 0
+ok "reads back the milestone a hand-parked issue still has" "$OUT" has "$OUT" "v1.2 · goal"
+run "$code" /dev/null "$WORK/issue-no-milestone.json"
+ok "reads back that a legacy parked issue has no milestone" "$OUT" has "$OUT" "no milestone"
+
+section "/parked unpark — Forgejo, nothing recorded"
+code="$(blocks "$CMDS/parked.md" Forgejo unpark | subst)"
+run "$code" /dev/null "$WORK/issue-hand-parked.json"
+ok "runs cleanly" "$OUT" test "$RC" -eq 0
+ok "reads back the milestone a hand-parked issue still has" "$OUT" has "$OUT" "v1.2 · goal"
+run "$code" /dev/null "$WORK/issue-no-milestone.json"
+ok "reads back that a legacy parked issue has no milestone" "$OUT" has "$OUT" "no milestone"
+
+# shellcheck disable=SC2016  # the backticks are literal markdown, not expansions
+no "no unpark branch claims a state it never read" \
+  "$(grep -n 'that is `backlog`\|leave the item at the root\|It stays where it is' "$CMDS/parked.md")" \
+  grep -q 'that is `backlog`\|leave the item at the root\|It stays where it is' "$CMDS/parked.md"
 
 # --- /parked repark (GitHub) ------------------------------------------------
 
@@ -344,12 +375,24 @@ section "/parked unpark — Azure DevOps"
 # it only runs on an explicit yes, which a fixture test cannot give.
 # shellcheck disable=SC2016  # the heading itself contains backticks; it is a literal
 code="$(blocks "$CMDS/parked.md" "Azure DevOps" 'unpark `<n>`' 2 | subst)"
-run_azdo "$WORK/az-comments-record.json" "$code
+# The fence reads the record and the current iteration: two calls, one map each.
+printf 'workitemsbatch\t%s\n--resource comments\t%s\n' \
+  "$WORK/az-batch-at-root.json" "$WORK/az-comments-record.json" > "$WORK/az-map-record"
+printf 'workitemsbatch\t%s\n--resource comments\t%s\n' \
+  "$WORK/az-batch-at-root.json" "$WORK/az-comments-plain.json" > "$WORK/az-map-plain"
+AZ_MAP="$WORK/az-map-record" run_azdo /dev/null "$code
 printf 'was=[%s]\n' \"\$was\""
 ok "offers back the sprint repark recorded" "$OUT" has "$OUT" 'was=[MyProject\Sprint 3]'
-run_azdo "$WORK/az-comments-plain.json" "$code
+AZ_MAP="$WORK/az-map-plain" run_azdo /dev/null "$code
 printf 'was=[%s]\n' \"\$was\""
 ok "offers nothing when repark recorded nothing" "$OUT" has "$OUT" 'was=[]'
+# Parked by hand while in a sprint: no record, and the item is not at the root.
+printf 'workitemsbatch\t%s\n--resource comments\t%s\n' \
+  "$WORK/az-batch-in-sprint.json" "$WORK/az-comments-plain.json" > "$WORK/az-map-hand-parked"
+AZ_MAP="$WORK/az-map-hand-parked" run_azdo /dev/null "$code
+printf 'was=[%s] now=[%s]\n' \"\$was\" \"\$now\""
+ok "reads back the sprint a hand-parked item still sits in" "$OUT" \
+  has "$OUT" 'was=[] now=[MyProject\Sprint 3]'
 
 section "/roadmap defer — Azure DevOps"
 # shellcheck disable=SC2016  # the heading itself contains backticks; it is a literal
