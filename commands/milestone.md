@@ -130,27 +130,44 @@ If the milestone name doesn't exist, `gh` rejects it — print the open mileston
 
 ### triage
 
-Open issues with **no milestone** — the gap `list` deliberately doesn't show.
-Two phases: show the whole gap first, then walk it one issue at a time.
+Open issues that still need a milestone decision, in two groups:
 
-Excludes `parked` (paused on purpose) and `roadmap` (*planned for future work,
-not yet scheduled to a milestone* — being un-milestoned is its whole meaning, so
-nagging about it is noise). Pull requests are excluded by `gh issue list`.
+- issues in **`backlog`** that carry neither `parked` nor `roadmap`. Those two
+  are in `backlog` on purpose, so nagging about them is noise.
+- **every** issue with **no milestone**, whatever its labels. Every open issue
+  belongs in a milestone, and unscheduled work goes in `backlog`
+  (freaxnx01/ai-instructions#61). An issue with none breaks that rule,
+  including a parked or roadmap issue that an older `/parked repark` or
+  `/roadmap defer` stripped.
 
-**Phase 1 — show the gap.** Newest first:
+Two phases: show the whole list first, then walk it one issue at a time. Pull
+requests are excluded by `gh issue list`.
+
+**Phase 1 — show the list.** Check for `backlog`, then list newest first:
 
 ```bash
+gh api "repos/$repo/milestones?state=open&per_page=100" \
+  --jq 'if any(.[]; .title == "backlog") then "backlog: present"
+        else "backlog: MISSING — create it with /milestone new backlog" end'
+
 gh issue list --state open --limit 200 --json number,title,labels,milestone,createdAt \
-  --jq 'map(select(.milestone == null))
-    | map(select([.labels[].name] | index("parked") | not))
-    | map(select([.labels[].name] | index("roadmap") | not))
+  --jq 'map(select(.milestone == null
+           or (.milestone.title == "backlog"
+               and (([.labels[].name] | any(. == "parked" or . == "roadmap")) | not))))
     | sort_by(.createdAt) | reverse
-    | .[] | [.number, .title, (([.labels[].name] | join(",")) | if . == "" then "-" else . end)] | @tsv'
+    | .[] | [.number, .title, (.milestone.title // "no milestone"),
+             (([.labels[].name] | join(",")) | if . == "" then "-" else . end)] | @tsv'
 ```
 
-Print the count with the list. **Truncation guard:** the query caps at 200 — if that
-many came back, say the list may be incomplete rather than implying it's the whole
-gap. If nothing came back, say the gap is empty and **stop — do not enter the walk.**
+If `backlog` is missing, say so once, point at `/milestone new backlog`, and
+carry on: the no-milestone part of the list is still worth walking. **Never
+create it.**
+
+Print the count with the list, and show for each row whether it sits in
+`backlog` or has `no milestone`. **Truncation guard:** the query caps at 200.
+If that many came back, say the list may be incomplete rather than implying it
+is everything. If nothing came back, say there is nothing to triage and
+**stop. Do not enter the walk.**
 
 **Phase 2 — walk it.** Fetch the open milestones **once**, before the walk:
 
@@ -159,8 +176,11 @@ gh api "repos/$repo/milestones?state=open&per_page=100" \
   --jq 'sort_by(.due_on // "9999") | .[] | [.title, (.due_on // "-")] | @tsv'
 ```
 
-Then, for each issue newest first: show number, title, labels; offer the milestone
-titles plus `skip`; on an answer, assign and **read back**:
+Then, for each issue newest first, show number, title, labels and where it
+sits. Offer the milestone titles plus `skip`, with one rule: an issue already
+in `backlog` is offered every open milestone **except** `backlog`, while an
+issue with no milestone is offered all of them, `backlog` included. On an
+answer, assign and **read back**:
 
 ```bash
 gh issue edit <issue> --milestone "<name>"
@@ -329,30 +349,51 @@ above) and stop. **No fuzzy matching, no silent creation.**
 
 ### triage
 
-Open issues with **no milestone** — the gap `list` deliberately doesn't show.
-Two phases: show the whole gap first, then walk it one issue at a time.
+Open issues that still need a milestone decision, in two groups:
 
-Excludes `parked` (paused on purpose) and `roadmap` (*planned for future work,
-not yet scheduled to a milestone* — being un-milestoned is its whole meaning, so
-nagging about it is noise). Pull requests are excluded by `type=issues`.
+- issues in **`backlog`** that carry neither `parked` nor `roadmap`. Those two
+  are in `backlog` on purpose, so nagging about them is noise.
+- **every** issue with **no milestone**, whatever its labels. Every open issue
+  belongs in a milestone, and unscheduled work goes in `backlog`
+  (freaxnx01/ai-instructions#61). An issue with none breaks that rule,
+  including a parked or roadmap issue that an older `/parked repark` or
+  `/roadmap defer` stripped.
 
-**Phase 1 — show the gap.** Newest first:
+Two phases: show the whole list first, then walk it one issue at a time. Pull
+requests are excluded by `type=issues`.
+
+**Phase 1 — show the list.** Check for `backlog`, then list newest first:
 
 ```bash
+tea api --login git-home "repos/$repo/milestones?state=open&limit=50" | python3 -c '
+import sys, json
+titles = [m["title"] for m in json.load(sys.stdin)]
+print("backlog: present" if "backlog" in titles
+      else "backlog: MISSING — create it with /milestone new backlog")'
+
 tea api --login git-home "repos/$repo/issues?state=open&type=issues&limit=100&sort=created&order=desc" \
   | python3 -c '
-import sys,json
-rows=[]
+import sys, json
+rows = []
 for i in json.load(sys.stdin):
-    if i.get("milestone"): continue
-    labels=[l["name"] for l in i.get("labels") or []]
-    if "parked" in labels or "roadmap" in labels: continue
-    rows.append((i["number"], i["title"], ",".join(labels) or "-"))
-print(len(rows), "un-milestoned")
-for n,t,l in rows: print(n, "|", t, "|", l)'
+    where = (i.get("milestone") or {}).get("title")
+    labels = [l["name"] for l in i.get("labels") or []]
+    if where == "backlog":
+        if "parked" in labels or "roadmap" in labels: continue
+    elif where:
+        continue
+    rows.append((i["number"], i["title"], where or "no milestone", ",".join(labels) or "-"))
+print("to triage:", len(rows))
+for n, t, w, l in rows: print(n, "|", t, "|", w, "|", l)'
 ```
 
-If nothing came back, say the gap is empty and **stop — do not enter the walk.**
+If `backlog` is missing, say so once, point at `/milestone new backlog`, and
+carry on: the no-milestone part of the list is still worth walking. **Never
+create it.**
+
+Print the count with the list, and show for each row whether it sits in
+`backlog` or has `no milestone`. If nothing came back, say there is nothing to
+triage and **stop. Do not enter the walk.**
 
 **Phase 2 — walk it.** Fetch the open milestones **once**, before the walk:
 
@@ -363,9 +404,11 @@ for m in sorted(json.load(sys.stdin), key=lambda x: x.get("due_on") or "9999"):
     print(m["title"], m.get("due_on") or "-", sep="\t")'
 ```
 
-Then, for each issue newest first: show number, title, labels; offer the milestone
-titles plus `skip`; on an answer, assign and **read back** using the same mechanics
-as `## assign`:
+Then, for each issue newest first, show number, title, labels and where it
+sits. Offer the milestone titles plus `skip`, with one rule: an issue already
+in `backlog` is offered every open milestone **except** `backlog`, while an
+issue with no milestone is offered all of them, `backlog` included. On an
+answer, assign and **read back** using the same mechanics as `## assign`:
 
 ```bash
 tea milestones issues add --login git-home "<name>" <issue>
@@ -529,14 +572,18 @@ which names exist rather than creating one implicitly.
 
 ### triage
 
-Work items with **no** iteration — the equivalent of "no milestone". An item at
-the project root (`System.IterationPath` equal to `$AZDO_PROJECT`) is unassigned:
+Work items at the project **root iteration**, which is this forge's `backlog`
+(and also what "no iteration" means here), minus the `parked` and `roadmap`
+tags. Those two sit in the backlog on purpose. The root always exists, so
+there is no missing-backlog case on this forge:
 
 ```bash
 rc=0; ids=$(azdo_wiql "SELECT [System.Id] FROM WorkItems
 WHERE [System.TeamProject] = @project
   AND [System.AreaPath] UNDER '$AZDO_PROJECT\\$AZDO_REPO'
   AND [System.IterationPath] = '$AZDO_PROJECT'
+  AND NOT [System.Tags] CONTAINS 'parked'
+  AND NOT [System.Tags] CONTAINS 'roadmap'
 ORDER BY [System.CreatedDate] DESC") || rc=$?
 ```
 
