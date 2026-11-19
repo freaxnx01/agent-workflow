@@ -436,8 +436,13 @@ that holds no Azure DevOps credential and can write nothing the driver later
 trusts (#591, ADR-024). The driver (`azp`, uid 1000) keeps the token, judges
 the run, pushes and opens the PR.
 
-**What an operator has to do: rebuild the image (section 1). Nothing in the
-pipeline YAML changes.** There are no new variables and no new steps.
+**What an operator has to do: rebuild the image (section 1), and make sure the
+`ai-implement` pipeline's checkout says `persistCredentials: false`.** There
+are no new variables and no new steps. A pipeline set up before this section
+existed usually has `persistCredentials: true`; it now refuses every run
+(item 1 below), so flip it before the rebuilt image takes its first job. The
+driver pushes with its own per-command header and needs no persisted
+credential.
 
 What the rebuild adds:
 
