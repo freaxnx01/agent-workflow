@@ -68,6 +68,7 @@ fi
 
 # Prose guards (secondary to the executed filters above).
 assert_eq "$(grep -c 'general-' "$DOC" || true)" "0" "new.md no longer mentions general-<month>-<year>"
+# shellcheck disable=SC2016  # the pattern is the literal markdown `none`, not an expansion
 assert_eq "$(grep -c '`none`' "$DOC" || true)" "0" "new.md no longer offers a none option"
 for sec in "$gh_sec" "$fj_sec"; do
   assert_eq "$(printf '%s\n' "$sec" | grep -q '/milestone new backlog' && echo yes || echo no)" "yes" \
