@@ -52,7 +52,9 @@ report() {
     printf 'milestone: #%s skipped (%s)\n' "$ISSUE_NUMBER" "$reason"
   fi
   [[ -n "${GITHUB_OUTPUT:-}" ]] || return 0
-  printf 'decision=%s\nreason=%s\n' "$decision" "$reason" >> "$GITHUB_OUTPUT"
+  # The reason can carry a milestone title, which is free text: flatten line
+  # breaks so it cannot add lines (a forged decision=) to $GITHUB_OUTPUT.
+  printf 'decision=%s\nreason=%s\n' "$decision" "${reason//[$'\r\n']/ }" >> "$GITHUB_OUTPUT"
 }
 
 validate_env() {

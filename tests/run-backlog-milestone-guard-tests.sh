@@ -100,6 +100,25 @@ assert_not_contains "has a milestone -> no milestone lookup" "$(cat "$d/gh")" 'm
 assert_contains "GITHUB_OUTPUT names the reason" "$(cat "$d/out")" 'reason=has milestone v2.3 · intake'
 rm -rf "$d"
 
+for fixture in issue-closed.json issue-pull-request.json; do
+  d="$(mktemp -d)"; : > "$d/gh"
+  rc=0; out="$(run_guard "$d" "$fixture" milestones-with-backlog.json GITHUB_OUTPUT="$d/out")" || rc=$?
+  assert_eq "$fixture -> exit 0" "0" "$rc"
+  assert_contains "$fixture -> skipped" "$out" 'milestone: #42 skipped ('
+  assert_not_contains "$fixture -> no PATCH" "$(cat "$d/gh")" 'PATCH'
+  assert_not_contains "$fixture -> no milestone lookup" "$(cat "$d/gh")" 'milestones?'
+  rm -rf "$d"
+done
+
+# A milestone title is free text and may hold a newline; it must not forge
+# a second decision= line in $GITHUB_OUTPUT.
+d="$(mktemp -d)"; : > "$d/gh"
+rc=0; out="$(run_guard "$d" issue-milestone-newline.json milestones-with-backlog.json GITHUB_OUTPUT="$d/out")" || rc=$?
+assert_eq "newline in milestone title -> exit 0" "0" "$rc"
+assert_eq "newline in milestone title -> GITHUB_OUTPUT has two lines" "2" "$(wc -l < "$d/out" | tr -d ' ')"
+assert_eq "newline in milestone title -> no forged decision line" "1" "$(grep -c '^decision=' "$d/out")"
+rm -rf "$d"
+
 section "the guard — no backlog milestone warns, never creates"
 
 d="$(mktemp -d)"; : > "$d/gh"
@@ -192,6 +211,19 @@ rc=0; out="$(GH_MOCK_FAIL_MAP="$d/fail" run_backfill "$d" unmilestoned-two-pages
 assert_eq "one failed write -> exit 1" "1" "$rc"
 assert_contains "one failed write -> keeps going" "$(cat "$d/gh")" 'issues/14 -F milestone=7'
 assert_contains "one failed write -> the tally shows it" "$out" 'backfill: assigned 2 of 3'
+rm -rf "$d"
+
+# A gh that reads stdin must not swallow the remaining issue numbers.
+d="$(mktemp -d)"; : > "$d/gh"; mkdir "$d/shim"
+printf '#!/usr/bin/env bash\ncat > /dev/null\nexec "%s/gh" "$@"\n' "$MOCKS" > "$d/shim/gh"; chmod +x "$d/shim/gh"
+printf '%s\t%s\n' 'milestones?state=open' "$FIX/milestones-with-backlog.json" 'milestone=none' "$FIX/unmilestoned-two-pages.json" > "$d/map"
+# shellcheck disable=SC2031  # PATH is rebuilt per call from the pristine $MOCKS
+run_backfill_stdin_gh() {
+  env PATH="$1/shim:$PATH" GH_MOCK_LOG="$1/gh" GH_MOCK_STDOUT_MAP="$1/map" \
+    bash "$BACKFILL" -R freaxnx01/sample --apply 2>&1 < /dev/null
+}
+rc=0; out="$(run_backfill_stdin_gh "$d")" || rc=$?
+assert_contains "stdin-reading gh -> every issue still assigned" "$out" 'backfill: assigned 3 of 3'
 rm -rf "$d"
 
 d="$(mktemp -d)"; : > "$d/gh"

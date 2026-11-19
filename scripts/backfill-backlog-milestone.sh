@@ -55,7 +55,8 @@ assign_all() {
   local number="$1" issues="$2" total="$3" n assigned=0 failed=0
   while IFS= read -r n; do
     [[ -n "$n" ]] || continue
-    if assign_milestone "$REPO" "$n" "$number"; then
+    # </dev/null: the loop's stdin is the issue list; gh must not consume it.
+    if assign_milestone "$REPO" "$n" "$number" < /dev/null; then
       assigned=$((assigned + 1))
     else
       failed=$((failed + 1))
