@@ -216,7 +216,7 @@ section "backlog_milestone_number — exact title, every page"
 lookup() {
   local d; d="$(mktemp -d)"
   printf '%s\t%s\n' 'milestones?state=open' "$FIX/$1" > "$d/map"
-  # shellcheck disable=SC1091
+  # shellcheck disable=SC1090
   (export PATH="$MOCKS:$PATH" GH_MOCK_LOG="$d/gh" GH_MOCK_STDOUT_MAP="$d/map"
    source "$ROOT/scripts/lib/backlog-milestone.sh"; backlog_milestone_number freaxnx01/sample)
   rm -rf "$d"
