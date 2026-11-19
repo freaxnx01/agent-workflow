@@ -65,8 +65,8 @@ If there are none, say the roadmap is empty and stop. This includes repos where 
 
 ### promote
 
-`promote <n> to <milestone>` moves an issue from *someday* to *scheduled* in two
-writes, in this order, each confirmed by read-back:
+`promote <n> to <milestone>` moves an issue from `backlog` to the chosen
+milestone in two writes, in this order, each confirmed by read-back:
 
 ```bash
 # 1) schedule it
@@ -88,34 +88,50 @@ gh api "repos/$repo/milestones?state=open&per_page=100" \
 ```
 
 If step 1 read-back does not show the milestone, stop and do not remove the label.
+`gh issue edit --milestone` replaces the milestone, so the step-1 read-back
+showing `<milestone>` is the proof that the issue left `backlog`.
 After both read-backs confirm, offer `/route <n>` (read and follow
 `~/.claude/commands/route.md`) rather than running it automatically.
 
 ### defer
 
-`defer <n> "<reason>"` appends a roadmap reason comment, **strips the milestone**,
-and otherwise keeps labels unchanged:
+`defer <n> "<reason>"` appends a roadmap reason comment, **moves the issue to
+the `backlog` milestone**, and otherwise keeps labels unchanged. Check
+`backlog` first, before any write:
 
 ```bash
+# 1 — backlog must exist before anything is written
+repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+if [ "$(gh api "repos/$repo/milestones?state=open&per_page=100" \
+        --jq '[.[] | select(.title == "backlog")] | length')" != "1" ]; then
+  echo "No open 'backlog' milestone in $repo. Create it with /milestone new backlog, then re-run."
+  exit 1
+fi
+
+# 2 — reason comment, confirmed from a read-back
 gh issue comment <n> --body "roadmap: <reason>"
 gh issue view <n> --json comments --jq '.comments | last | .body | split("\n")[0]'
 
-# roadmap work is by definition not scheduled — drop any milestone it carries
-gh issue edit <n> --remove-milestone
+# 3 — roadmap work is unscheduled — move it to backlog
+gh issue edit <n> --milestone backlog
 gh issue view <n> --json number,milestone --jq '[.number, (.milestone.title // "-")] | @tsv'
 ```
 
-**Why the strip.** A roadmap issue is *planned for future work, not yet scheduled
-to a milestone*, so carrying one contradicts the label — and `/milestone triage`
-filters `roadmap` out of the un-milestoned gap, so it can never surface the
-contradiction. `/roadmap promote` is the exact inverse: it assigns a milestone,
-then removes the label.
+**A missing `backlog` stops the command before the comment.** Report it,
+point at `/milestone new backlog`, and never create it yourself. A closed
+`backlog` counts as missing.
 
-Report the milestone from the read-back. Removal on an issue that has no milestone
-is a **no-op that exits 0** (verified 2026-09-09), so run it unconditionally rather
-than reading the milestone first. **Coverage is partial by construction:** it only
-fires when `/roadmap defer` runs — labelling an issue `roadmap` by hand in the web
-UI leaves its milestone in place.
+**Why `backlog`.** A roadmap issue is *planned for future work, not yet
+scheduled*, and every open issue lives in a milestone. `backlog` is where
+unscheduled work goes (freaxnx01/ai-instructions#61). `/milestone triage` skips
+`roadmap` issues inside `backlog`, so they do not nag. `/roadmap promote` is the
+exact inverse: it moves the issue to a named milestone, then removes the label.
+`defer` records no `milestone-was:`, because `promote` always names its target.
+
+Report the milestone from the read-back. It must say `backlog`. **Coverage is
+partial by construction:** the move only happens when `/roadmap defer` runs.
+Labelling an issue `roadmap` by hand in the web UI leaves its milestone in
+place.
 
 If no reason argument was provided, ask for one and stop. Never edit the issue body
 and never edit a previous comment.
@@ -192,7 +208,8 @@ label.
 Before writing, verify the exact flags with `tea milestones issues add --help` and
 `tea issues edit --help`.
 
-`promote <n> to <milestone>` performs two writes, each with read-back:
+`promote <n> to <milestone>` moves an issue from `backlog` to the chosen
+milestone in two writes, each with read-back:
 
 ```bash
 # 1) schedule it
@@ -212,7 +229,9 @@ print(i["number"], ",".join([l["name"] for l in i.get("labels") or []]), sep="\t
 ```
 
 If milestone assignment fails or read-back still shows no milestone, stop and do not
-remove the label. For unknown milestone names, print open milestones and stop (no
+remove the label. `tea milestones issues add` replaces the milestone, so the
+step-1 read-back showing `<milestone>` is the proof that the issue left
+`backlog`. For unknown milestone names, print open milestones and stop (no
 fuzzy matching, no silent creation):
 
 ```bash
@@ -227,7 +246,19 @@ After both read-backs confirm, offer `/route <n>` (read and follow
 
 ### defer
 
-`defer <n> "<reason>"` appends a roadmap reason comment and keeps labels unchanged:
+`defer <n> "<reason>"` appends a roadmap reason comment, **moves the issue to
+the `backlog` milestone**, and keeps labels unchanged. Check `backlog` first,
+before any write:
+
+```bash
+# 0 — backlog must exist before anything is written
+if ! tea api --login git-home "repos/$repo/milestones?state=open&limit=50" | python3 -c '
+import sys, json
+sys.exit(0 if any(m["title"] == "backlog" for m in json.load(sys.stdin)) else 1)'; then
+  echo "No open 'backlog' milestone in $repo. Create it with /milestone new backlog, then re-run."
+  exit 1
+fi
+```
 
 ```bash
 tea comment <n> "roadmap: <reason>"
@@ -238,37 +269,38 @@ reasons=[c.get("body","") for c in comments if c.get("body","").startswith("road
 print(reasons[-1].split("\n")[0] if reasons else "—")'
 ```
 
-Deferring also **strips the milestone** — roadmap work is by definition not
-scheduled:
+Deferring then **moves the issue to `backlog`** — roadmap work is unscheduled:
 
 ```bash
-# read the current milestone — `remove` takes the name, not an id
+# move it to backlog — `add` replaces any milestone the issue had
+tea milestones issues add --login git-home "backlog" <n>
 tea api --login git-home "repos/$repo/issues/<n>" | python3 -c '
 import sys, json
-m = json.load(sys.stdin).get("milestone") or {}
-print(m.get("title") or "")'
-
-# then, only if that printed a name:
-tea milestones issues remove --login git-home "<name>" <n>
+i = json.load(sys.stdin)
+print(i["number"], (i.get("milestone") or {}).get("title") or "-", sep="\t")'
 ```
 
-**Why the strip.** A roadmap issue is *planned for future work, not yet scheduled
-to a milestone*, so carrying one contradicts the label — and `/milestone triage`
-filters `roadmap` out of the un-milestoned gap, so it can never surface the
-contradiction. `/roadmap promote` is the exact inverse: it assigns a milestone,
-then removes the label.
+**A missing `backlog` stops the command before the comment.** Report it,
+point at `/milestone new backlog`, and never create it yourself. A closed
+`backlog` counts as missing.
 
-Report the milestone from the read-back. Removal on an issue that has no milestone
-is a **no-op that exits 0** (verified 2026-09-09), so run it unconditionally rather
-than reading the milestone first. **Coverage is partial by construction:** it only
-fires when `/roadmap defer` runs — labelling an issue `roadmap` by hand in the web
-UI leaves its milestone in place.
+**Why `backlog`.** A roadmap issue is *planned for future work, not yet
+scheduled*, and every open issue lives in a milestone. `backlog` is where
+unscheduled work goes (freaxnx01/ai-instructions#61). `/milestone triage` skips
+`roadmap` issues inside `backlog`, so they do not nag. `/roadmap promote` is the
+exact inverse: it moves the issue to a named milestone, then removes the label.
+`defer` records no `milestone-was:`, because `promote` always names its target.
 
-`tea milestones issues remove` mirrors the `add` form used by `/milestone assign`
-and carries the same epistemic caveat as every other `tea` flag here — taken from
-tea's source, not a live run. If it misbehaves, the fallback is
-`tea api --login git-home -X PATCH "repos/$repo/issues/<n>"` with `{"milestone":0}`;
-fix it and update this command.
+Report the milestone from the read-back. It must say `backlog`. **Coverage is
+partial by construction:** the move only happens when `/roadmap defer` runs.
+Labelling an issue `roadmap` by hand in the web UI leaves its milestone in
+place.
+
+Forgejo issues hold one milestone, so `tea milestones issues add` moves the
+issue rather than adding a second one. That is taken from tea's source, not
+a live run. If the read-back shows the old milestone, fall back to
+`tea api --login git-home -X PATCH "repos/$repo/issues/<n>"` with the
+`backlog` milestone's id, then fix and update this command.
 
 If no reason argument was provided, ask for one and stop. Never edit the issue body
 and never edit a previous comment.
@@ -341,8 +373,18 @@ than creating one implicitly.
 
 ### defer `<n>` "<reason>"
 
-Add `roadmap` to the existing tags via `azdo_set_tags`, and post the reason with
-`--discussion`.
+Add `roadmap` to the existing tags via `azdo_set_tags`, post the reason with
+`--discussion`, then move the item to the project **root iteration**, this
+forge's `backlog`:
+
+```bash
+az boards work-item update --id "<n>" --org "$(azdo_org_url)" \
+  --fields "System.IterationPath=$AZDO_PROJECT" \
+  --output tsv --only-show-errors --query 'fields."System.IterationPath"'
+```
+
+Report from that read-back. The root always exists, so there is no
+missing-backlog case on this forge.
 
 ## Unknown host
 
