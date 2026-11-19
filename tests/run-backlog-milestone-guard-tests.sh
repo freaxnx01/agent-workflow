@@ -147,6 +147,79 @@ assert_eq "malformed REPO -> exit 2" "2" "$rc"
 rc=0; env REPO=a/b ISSUE_NUMBER=0 bash "$GUARD" >/dev/null 2>&1 || rc=$?
 assert_eq "non-positive ISSUE_NUMBER -> exit 2" "2" "$rc"
 
+BACKFILL="$ROOT/scripts/backfill-backlog-milestone.sh"
+
+# run_backfill <dir> <unmilestoned-fixture> <milestones-fixture> [args...]
+# shellcheck disable=SC2031  # PATH is rebuilt per call from the pristine $MOCKS
+run_backfill() {
+  local dir="$1" issues="$2" milestones="$3"; shift 3
+  printf '%s\t%s\n' 'milestones?state=open' "$FIX/$milestones" 'milestone=none' "$FIX/$issues" > "$dir/map"
+  env PATH="$MOCKS:$PATH" GH_MOCK_LOG="$dir/gh" GH_MOCK_STDOUT_MAP="$dir/map" \
+    ${GH_MOCK_FAIL_MAP:+GH_MOCK_FAIL_MAP="$GH_MOCK_FAIL_MAP"} \
+    bash "$BACKFILL" -R freaxnx01/sample "$@" 2>&1
+}
+
+section "backfill — dry run counts every page, writes nothing"
+
+d="$(mktemp -d)"; : > "$d/gh"
+rc=0; out="$(run_backfill "$d" unmilestoned-two-pages.json milestones-with-backlog.json)" || rc=$?
+assert_eq "dry run -> exit 0" "0" "$rc"
+# 11, 12 on page one, 14 on page two; 13 is a pull request.
+assert_contains "dry run -> counts across pages, PRs excluded" "$out" \
+  'backfill: 3 open issues without a milestone in freaxnx01/sample'
+assert_contains "dry run -> lists a page-two issue" "$out" '#14'
+assert_not_contains "dry run -> does not list the pull request" "$out" '#13'
+assert_contains "dry run -> says how to apply" "$out" 'DRY_RUN: would assign backlog (#7) to 3 issues'
+assert_not_contains "dry run -> no PATCH" "$(cat "$d/gh")" 'PATCH'
+assert_contains "dry run -> reads every page" "$(cat "$d/gh")" '--paginate'
+rm -rf "$d"
+
+section "backfill — --apply assigns each issue"
+
+d="$(mktemp -d)"; : > "$d/gh"
+rc=0; out="$(run_backfill "$d" unmilestoned-two-pages.json milestones-with-backlog.json --apply)" || rc=$?
+assert_eq "apply -> exit 0" "0" "$rc"
+for n in 11 12 14; do
+  assert_contains "apply -> #$n assigned" "$(cat "$d/gh")" "api -X PATCH repos/freaxnx01/sample/issues/$n -F milestone=7"
+done
+assert_not_contains "apply -> the pull request is not touched" "$(cat "$d/gh")" 'issues/13 '
+assert_contains "apply -> reports the tally" "$out" 'backfill: assigned 3 of 3'
+rm -rf "$d"
+
+d="$(mktemp -d)"; : > "$d/gh"
+printf '%s\n' 'issues/12 -F' > "$d/fail"
+rc=0; out="$(GH_MOCK_FAIL_MAP="$d/fail" run_backfill "$d" unmilestoned-two-pages.json milestones-with-backlog.json --apply)" || rc=$?
+assert_eq "one failed write -> exit 1" "1" "$rc"
+assert_contains "one failed write -> keeps going" "$(cat "$d/gh")" 'issues/14 -F milestone=7'
+assert_contains "one failed write -> the tally shows it" "$out" 'backfill: assigned 2 of 3'
+rm -rf "$d"
+
+d="$(mktemp -d)"; : > "$d/gh"
+rc=0; out="$(run_backfill "$d" unmilestoned-empty.json milestones-with-backlog.json --apply)" || rc=$?
+assert_eq "nothing to do -> exit 0" "0" "$rc"
+assert_contains "nothing to do -> reports zero" "$out" 'backfill: 0 open issues without a milestone'
+assert_not_contains "nothing to do -> no PATCH" "$(cat "$d/gh")" 'PATCH'
+rm -rf "$d"
+
+section "backfill — never creates backlog"
+
+d="$(mktemp -d)"; : > "$d/gh"
+rc=0; out="$(run_backfill "$d" unmilestoned-two-pages.json milestones-without-backlog.json --apply)" || rc=$?
+assert_eq "missing backlog -> exit 64" "64" "$rc"
+assert_contains "missing backlog -> says so" "$out" 'has no open "backlog" milestone'
+assert_not_contains "missing backlog -> no PATCH" "$(cat "$d/gh")" 'PATCH'
+assert_not_contains "missing backlog -> no POST" "$(cat "$d/gh")" 'POST'
+rm -rf "$d"
+
+section "backfill — usage"
+
+rc=0; bash "$BACKFILL" >/dev/null 2>&1 || rc=$?
+assert_eq "no -R -> exit 2" "2" "$rc"
+rc=0; bash "$BACKFILL" -R freaxnx01/sample --bogus >/dev/null 2>&1 || rc=$?
+assert_eq "unknown flag -> exit 2" "2" "$rc"
+rc=0; bash "$BACKFILL" -R 'not a repo' >/dev/null 2>&1 || rc=$?
+assert_eq "malformed repo -> exit 2" "2" "$rc"
+
 printf '\npassed: %d   failed: %d\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then
   printf 'failed:\n'
