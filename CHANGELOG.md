@@ -5,6 +5,77 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.3.0) - 2026-11-19
+
+**Upgrading from 2.2.x:** no change to a consumer's `agent.yml` is needed on
+GitHub-hosted runners. **Self-hosted consumers must act:** when `runner-labels`
+names a self-hosted pool, set `gate-runner-labels` to GitHub-hosted or
+ephemeral runners, or opt in with `allow-shared-gate-runner: true` (ephemeral
+runners only) — otherwise the run is refused before the agent starts
+(#592 F7, #640). New behaviour a consumer will see:
+
+- **Backlog milestone guard (opt-in).** A new reusable workflow
+  `backlog-milestone.yml` gives an issue opened or reopened without a milestone
+  the standing `backlog` milestone (#646, freaxnx01/ai-instructions#61). Repos
+  onboarded with `scripts/onboard-consumer.sh` from now on get the
+  `issue-milestone.yml` caller; existing consumers add it per
+  `docs/CONSUMER-SETUP.md` §3d. A repo without an open `backlog` milestone gets a
+  warning, never a new milestone.
+- A failure of the implement job before the agent starts now posts a run report
+  and stamps `ai:failed` (#597), and the run is judged in a separate gate job
+  (#571, #640).
+- Every review comment carries a machine-readable `ai-review` marker (#593).
+
+### Added
+
+- **commands:** Add /release-package to drive a repo's release recipes (#572)
+- **intake:** Label new issues needs-enrichment on intake (#549) (#556)
+- **integration:** Flag path-scoped rules opencode cannot see (#563)
+- **docs:** Self-updating Software Factory knowledge bundle (#601) (#603)
+- **review:** Machine-readable ai-review marker (#593) (#604)
+- **enrich:** Per-repo policy to let headless enrich proceed on [low] assumptions (#610)
+- **new:** Fall back to the backlog milestone instead of none (#649)
+- **milestone:** Assign the backlog milestone to issues opened without one (#646) (#654)
+
+### Fixed
+
+- **alarm:** Keep the ntfy server address out of the repo and run logs (#524)
+- **security:** Judge the implement run in a separate gate job (#535) (#571)
+- **pipeline:** Retry apt and report pre-agent failures (#597) (#607)
+- **azdo:** Guard the two unchecked paths in azdo.sh (#623)
+- **security:** Close the remaining gate-isolation gaps after #571 (#640)
+
+### Documentation
+
+- **partials:** Drop the 'Details gerne auf Anfrage' offer line from mails (#595)
+- **review:** Spec and plan for the ai-review marker (#593)
+- **review:** Reword plan verification step (#593)
+- **partials:** Require leading TL;DR in /btw side answers (#600)
+- **pipeline:** Spec and plan for apt retry and pre-agent failure reports (#597)
+- **pipeline:** Spec and plan for the Software Factory knowledge bundle (#601)
+- **pipeline:** Record operator decisions in the #597 spec
+- **pipeline:** Mark #601 open questions as accepted calls
+- Spec and plan for #495
+- **azdo:** Add spec and plan for #498
+- Spec and plan for #501
+- **azdo:** Spec and plan for the /rev write guard (#500)
+- **enrich:** Add spec for re-enrichment replacing its own sections (#499)
+- **enrich:** Add implementation plan for re-enrichment replacing its own sections (#499)
+- **azdo:** Spec and plan an agent user boundary (#591) (#614)
+- **specs:** Record landing order for #498, #499 and #500
+- **todo:** Park the leak-term find from the #591 enrichment (#625)
+- **adr:** Cite ADR-017 for the GitHub-only pipeline claim in /new and /route (#622)
+- **gate:** Spec and plan for the remaining gate-isolation gaps (#592) (#631)
+- **enrich-batch:** Add spec and plan for #618
+- **specs:** Spec and plan for #616 (stale GitHub-only pipeline claim)
+- **specs:** Widen #616 to five files, add commands/queue.md
+- **specs:** Spec and plan for /new backlog fallback (#645) (#647)
+- **specs:** Spec and plan for #644 (parked/roadmap move to backlog)
+- **specs:** Drop next from #644 spec and fixtures (deprecated by ai-instructions#62)
+- **milestone:** Spec and plan for the backlog milestone guard (#646)
+- **milestone:** Fix a shellcheck directive in the #646 plan
+- **milestone:** Rename the #646 test runner to avoid #644's runner
+
 ## [2.2.1](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.2.1) - 2026-11-11
 
 Hotfix on top of 2.2.0; no change to a consumer's `agent.yml` is needed.
