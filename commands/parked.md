@@ -87,12 +87,15 @@ gh issue view <n> --json comments \
         | sub("^milestone-was:\\s*"; "")'
 ```
 
-- **Empty output** — nothing was recorded (parked by hand, or it was already in
-  `backlog`). The issue stays in `backlog`. Say nothing and carry on to routing.
+- **Empty output** — nothing was recorded (parked by hand, or `repark` found it
+  already in `backlog`). Say nothing and carry on to routing — in particular,
+  **don't say where the issue sits**: a hand-parked issue keeps whatever
+  milestone it had, a legacy one may have none, and nothing here read it back.
 - **A still-open milestone** — offer to restore it (`gh issue edit <n> -m "<name>"`),
-  then read back and report from the read-back. On a decline it stays in `backlog`.
-- **A closed or deleted milestone** — say so and leave it in `backlog`. Do not
-  recreate it and do not substitute another.
+  then read back and report from the read-back. On a decline, leave the milestone
+  as it is — after a `repark` round trip that is `backlog`.
+- **A closed or deleted milestone** — say so and leave the milestone as it is. Do
+  not recreate it and do not substitute another.
 
 If the issue also has `needs-enrichment`, say so before routing. Then delegate:
 read and follow `~/.claude/commands/route.md` (i.e. run `/route <n>`).
@@ -286,8 +289,9 @@ print(was[-1].split(":", 1)[1].strip() if was else "")'
 ```
 
 Restore with `tea milestones issues add --login git-home "<name>" <n>`, then read
-back. On a decline, an empty record, or a closed milestone, the issue stays in
-`backlog` — same as the GitHub section.
+back. On a decline or a closed milestone, leave the milestone as it is — after a
+`repark` round trip that is `backlog`. On an empty record, say nothing about the
+milestone: it was never read. Same rules as the GitHub section.
 
 If the issue also has `needs-enrichment`, say so before routing. Then delegate:
 read and follow `~/.claude/commands/route.md` (i.e. run `/route <n>`).

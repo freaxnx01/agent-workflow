@@ -1090,8 +1090,11 @@ sentence rather than needing the comment that used to explain it.
 > (freaxnx01/ai-instructions#61). `/parked repark` and `/roadmap defer` **move**
 > the issue to `backlog` instead of stripping its milestone, and stop with a
 > pointer to `/milestone new backlog` when it is missing. `repark` still records
-> `milestone-was:`, except when the issue was already in `backlog`. `unpark`'s
-> fallback is "stays in `backlog`". `/milestone triage` walks `backlog` minus
+> `milestone-was:`, except when the issue was already in `backlog`. `unpark`
+> offers that record back and otherwise leaves the milestone untouched — after a
+> `repark` round trip that is `backlog`, but with no record it says nothing about
+> where the issue sits, because it never read it (a hand-parked issue keeps the
+> milestone it had). `/milestone triage` walks `backlog` minus
 > `parked`/`roadmap`, plus every issue with no milestone. On Azure DevOps,
 > `backlog` is the root iteration. The "Consequences" bullets about stripping
 > describe the old behaviour.

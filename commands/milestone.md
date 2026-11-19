@@ -151,12 +151,13 @@ gh api "repos/$repo/milestones?state=open&per_page=100" \
         else "backlog: MISSING — create it with /milestone new backlog" end'
 
 gh issue list --state open --limit 200 --json number,title,labels,milestone,createdAt \
-  --jq 'map(select(.milestone == null
+  --jq '"fetched: \(length) of at most 200",
+    (map(select(.milestone == null
            or (.milestone.title == "backlog"
                and (([.labels[].name] | any(. == "parked" or . == "roadmap")) | not))))
     | sort_by(.createdAt) | reverse
     | .[] | [.number, .title, (.milestone.title // "no milestone"),
-             (([.labels[].name] | join(",")) | if . == "" then "-" else . end)] | @tsv'
+             (([.labels[].name] | join(",")) | if . == "" then "-" else . end)] | @tsv)'
 ```
 
 If `backlog` is missing, say so once, point at `/milestone new backlog`, and
@@ -164,10 +165,12 @@ carry on: the no-milestone part of the list is still worth walking. **Never
 create it.**
 
 Print the count with the list, and show for each row whether it sits in
-`backlog` or has `no milestone`. **Truncation guard:** the query caps at 200.
-If that many came back, say the list may be incomplete rather than implying it
-is everything. If nothing came back, say there is nothing to triage and
-**stop. Do not enter the walk.**
+`backlog` or has `no milestone`. **Truncation guard:** the fetch caps at 200
+open issues, and the filter runs over that page alone — so read the `fetched:`
+line, not the number of rows. If it says 200, say the list may be incomplete
+rather than implying it is everything, even when the filter left few rows or
+none. If no rows came back, say there is nothing to triage and **stop. Do not
+enter the walk.**
 
 **Phase 2 — walk it.** Fetch the open milestones **once**, before the walk:
 
@@ -582,8 +585,8 @@ rc=0; ids=$(azdo_wiql "SELECT [System.Id] FROM WorkItems
 WHERE [System.TeamProject] = @project
   AND [System.AreaPath] UNDER '$AZDO_PROJECT\\$AZDO_REPO'
   AND [System.IterationPath] = '$AZDO_PROJECT'
-  AND NOT [System.Tags] CONTAINS 'parked'
-  AND NOT [System.Tags] CONTAINS 'roadmap'
+  AND [System.Tags] NOT CONTAINS 'parked'
+  AND [System.Tags] NOT CONTAINS 'roadmap'
 ORDER BY [System.CreatedDate] DESC") || rc=$?
 ```
 

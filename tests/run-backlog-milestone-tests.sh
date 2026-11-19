@@ -6,7 +6,9 @@
 # These run the command text, not grep it: each test pulls the ```bash fences
 # out of a command's section and executes them against fixture JSON, with `gh`
 # and `tea` replaced by stubs that serve the fixtures through the real jq and
-# log every call.
+# log every call. The Azure DevOps sections run against the real
+# scripts/lib/azdo.sh with tests/mocks/az behind it, so the WIQL is asserted as
+# the server would receive it.
 #
 # Usage: tests/run-backlog-milestone-tests.sh
 # Exit codes: 0 all pass; 1 at least one assertion failed.
@@ -15,6 +17,9 @@ IFS=$'\n\t'
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CMDS="$ROOT/commands"
+MOCKS="$ROOT/tests/mocks"
+FIXTURES="$ROOT/tests/fixtures"
+LIB="$ROOT/scripts/lib/azdo.sh"
 
 PASS=0
 FAIL=0
@@ -74,6 +79,10 @@ printf '%s\n' '[{"title": "v1.2 · goal", "due_on": null}]' > "$WORK/ms-without-
 printf '%s\n' '{"number": 42, "milestone": {"title": "v1.2 · goal"}}' > "$WORK/issue-in-v12.json"
 printf '%s\n' '{"number": 42, "milestone": {"title": "backlog"}}' > "$WORK/issue-in-backlog.json"
 printf '%s\n' '{"comments": [{"body": "parked: waiting on vendor"}, {"body": "roadmap: waiting on vendor"}]}' > "$WORK/comments.json"
+# Forgejo returns the comments as a bare array, GitHub wraps them in the issue.
+printf '%s\n' '[{"body": "parked: waiting on vendor"}, {"body": "roadmap: waiting on vendor"}]' > "$WORK/fj-comments.json"
+# What `az ... --query 'fields."System.IterationPath"' --output tsv` prints back.
+printf '%s\n' 'MyProject' > "$WORK/az-iteration-root.tsv"
 
 # The stubs. Every call is logged; reads are served from fixtures via the real
 # jq, so the command's own --jq filter is what gets tested.
@@ -100,8 +109,11 @@ gh() {
 tea() {
   printf "%s\n" "tea $*" >> "$LOG"
   case "$*" in
-    *"/milestones"*) cat "$FIX_MS" ;;
+    *"/milestones?"*) cat "$FIX_MS" ;;
     *"/issues?"*) cat "$FIX_ISSUES" ;;
+    *"/comments"*) cat "$FIX_FJ_COMMENTS" ;;
+    *"/issues/"*) cat "$FIX_ISSUE" ;;
+    "comment "*|"milestones issues add"*) : ;;
     *) printf "unexpected tea call: %s\n" "$*" >&2; return 99 ;;
   esac
 }
@@ -113,7 +125,31 @@ run() {
   LOG="$WORK/log.$RANDOM"; : > "$LOG"
   RC=0
   OUT="$(LOG="$LOG" FIX_MS="$2" FIX_ISSUE="$3" FIX_ISSUES="$WORK/issues.json" \
-    FIX_COMMENTS="$WORK/comments.json" bash -c "$STUBS$1" 2>&1)" || RC=$?
+    FIX_COMMENTS="$WORK/comments.json" FIX_FJ_COMMENTS="$WORK/fj-comments.json" \
+    bash -c "$STUBS$1" 2>&1)" || RC=$?
+}
+
+# run_azdo <az fixture> <code> — runs code with the real scripts/lib/azdo.sh
+# sourced, `az` served by tests/mocks/az and the AZDO_* context pre-set; sets
+# OUT, RC, AZ_LOG (argv per call) and AZ_STDIN (the WIQL request body).
+run_azdo() {
+  AZ_LOG="$WORK/az.log.$RANDOM"; AZ_STDIN="$WORK/az.stdin.$RANDOM"
+  : > "$AZ_LOG"; : > "$AZ_STDIN"
+  RC=0
+  OUT="$(
+    export PATH="$MOCKS:$PATH" AZ_MOCK_FIXTURE="$1" AZ_MOCK_LOG="$AZ_LOG" \
+      AZ_MOCK_STDIN_LOG="$AZ_STDIN" AZDO_ORG=contoso AZDO_PROJECT=MyProject \
+      AZDO_REPO=my-repo AZURE_DEVOPS_EXT_PAT=not-a-real-token
+    bash -c "source '$LIB'
+$2" 2>&1
+  )" || RC=$?
+}
+
+# wiql — the query as the WIQL parser would receive it, decoded from the body
+# azdo_wiql posted. PARSE-FAILED when the body is not the JSON it must be.
+wiql() {
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["query"])' "$AZ_STDIN" \
+    2>/dev/null || printf 'PARSE-FAILED\n'
 }
 
 numbers() { grep -oE '^[0-9]+' <<<"$1" | sort -n | paste -sd, -; }
@@ -127,6 +163,8 @@ run "$code" "$WORK/ms-with-backlog.json" /dev/null
 ok "runs cleanly" "$OUT" test "$RC" -eq 0
 ok "lists backlog (not parked/roadmap) + every no-milestone issue" "got: $(numbers "$OUT")" test "$(numbers "$OUT")" = "1,2,6"
 no "no missing-backlog warning when it exists" "$OUT" has "$OUT" MISSING
+ok "reports what was fetched, not what survived the filter" "$OUT" \
+  has "$OUT" "fetched: 6 of at most 200"
 run "$code" "$WORK/ms-without-backlog.json" /dev/null
 ok "missing backlog is reported with the create pointer" "$OUT" has "$OUT" "/milestone new backlog"
 ok "still lists the gap when backlog is missing" "got: $(numbers "$OUT")" test "$(numbers "$OUT")" = "1,2,6"
@@ -167,6 +205,79 @@ run "$code" "$WORK/ms-without-backlog.json" "$WORK/issue-in-v12.json"
 ok "stops when backlog is missing" "$OUT" test "$RC" -ne 0
 no "writes nothing when backlog is missing" "$(cat "$LOG")" grep -qE '^gh issue (comment|edit)' "$LOG"
 ok "points at /milestone new backlog" "$OUT" has "$OUT" "/milestone new backlog"
+
+# --- /parked repark (Forgejo) -----------------------------------------------
+
+section "/parked repark — Forgejo"
+code="$(blocks "$CMDS/parked.md" Forgejo repark | subst)"
+run "$code" "$WORK/ms-with-backlog.json" "$WORK/issue-in-v12.json"
+ok "runs cleanly" "$OUT" test "$RC" -eq 0
+ok "moves the issue to backlog" "$(cat "$LOG")" \
+  grep -qx 'tea milestones issues add --login git-home backlog 42' "$LOG"
+no "never removes the milestone" "$(cat "$LOG")" grep -q 'milestones issues remove' "$LOG"
+ok "records the milestone it moved away from" "$(cat "$LOG")" grep -qx 'milestone-was: v1.2 · goal' "$LOG"
+run "$code" "$WORK/ms-with-backlog.json" "$WORK/issue-in-backlog.json"
+no "records nothing when it was already in backlog" "$(cat "$LOG")" grep -q 'milestone-was:' "$LOG"
+run "$code" "$WORK/ms-without-backlog.json" "$WORK/issue-in-v12.json"
+ok "stops when backlog is missing" "$OUT" test "$RC" -ne 0
+no "writes nothing when backlog is missing" "$(cat "$LOG")" \
+  grep -qE '^tea (comment|milestones issues add)' "$LOG"
+ok "points at /milestone new backlog" "$OUT" has "$OUT" "/milestone new backlog"
+
+# --- /roadmap defer (Forgejo) -----------------------------------------------
+
+section "/roadmap defer — Forgejo"
+code="$(blocks "$CMDS/roadmap.md" Forgejo defer | subst)"
+run "$code" "$WORK/ms-with-backlog.json" "$WORK/issue-in-v12.json"
+ok "runs cleanly" "$OUT" test "$RC" -eq 0
+ok "moves the issue to backlog" "$(cat "$LOG")" \
+  grep -qx 'tea milestones issues add --login git-home backlog 42' "$LOG"
+no "never removes the milestone" "$(cat "$LOG")" grep -q 'milestones issues remove' "$LOG"
+run "$code" "$WORK/ms-without-backlog.json" "$WORK/issue-in-v12.json"
+ok "stops when backlog is missing" "$OUT" test "$RC" -ne 0
+no "writes nothing when backlog is missing" "$(cat "$LOG")" \
+  grep -qE '^tea (comment|milestones issues add)' "$LOG"
+ok "points at /milestone new backlog" "$OUT" has "$OUT" "/milestone new backlog"
+
+# --- Azure DevOps -----------------------------------------------------------
+#
+# The WIQL here is never parsed by anything local, so the query is asserted as
+# the parser would receive it: decoded out of the body azdo_wiql posts. The
+# `NOT CONTAINS` spelling is the whole point — WIQL has no prefix `NOT` on a
+# clause (commands/issues.md), and `NOT [System.Tags] CONTAINS` fails to parse.
+
+section "/milestone triage — Azure DevOps"
+code="$(blocks "$CMDS/milestone.md" "Azure DevOps" triage 1)"
+run_azdo "$FIXTURES/azdo-wiql-rows.json" "$code
+printf 'rc=%s ids=%s\n' \"\$rc\" \"\$(printf '%s' \"\$ids\" | tr '\n' ',')\""
+ok "the query runs and returns ids" "$OUT" has "$OUT" "rc=0 ids=1,2,4"
+q="$(wiql)"
+ok "asks for the project root iteration" "$q" has "$q" "[System.IterationPath] = 'MyProject'"
+ok "filters parked with a single NOT CONTAINS operator" "$q" has "$q" "[System.Tags] NOT CONTAINS 'parked'"
+ok "filters roadmap with a single NOT CONTAINS operator" "$q" has "$q" "[System.Tags] NOT CONTAINS 'roadmap'"
+no "never prefixes a clause with NOT" "$q" has "$q" "NOT [System."
+no "no command spells it NOT ... CONTAINS" "a prefix NOT is in one of the three commands" \
+  grep -qn 'NOT \[System\.' "$CMDS/milestone.md" "$CMDS/parked.md" "$CMDS/roadmap.md"
+
+section "/parked repark — Azure DevOps"
+# shellcheck disable=SC2016  # the heading itself contains backticks; it is a literal
+code="$(blocks "$CMDS/parked.md" "Azure DevOps" 'repark `<n>` "<reason>"' | subst)"
+run_azdo "$WORK/az-iteration-root.tsv" "$code"
+ok "runs cleanly" "$OUT" test "$RC" -eq 0
+ok "moves the item to the project root iteration" "$(cat "$AZ_LOG")" \
+  grep -qE -- '--fields System\.IterationPath=MyProject( |$)' "$AZ_LOG"
+ok "reads the iteration back" "$(cat "$AZ_LOG")" \
+  grep -q -- '--query fields."System.IterationPath"' "$AZ_LOG"
+
+section "/roadmap defer — Azure DevOps"
+# shellcheck disable=SC2016  # the heading itself contains backticks; it is a literal
+code="$(blocks "$CMDS/roadmap.md" "Azure DevOps" 'defer `<n>` "<reason>"' | subst)"
+run_azdo "$WORK/az-iteration-root.tsv" "$code"
+ok "runs cleanly" "$OUT" test "$RC" -eq 0
+ok "moves the item to the project root iteration" "$(cat "$AZ_LOG")" \
+  grep -qE -- '--fields System\.IterationPath=MyProject( |$)' "$AZ_LOG"
+ok "reads the iteration back" "$(cat "$AZ_LOG")" \
+  grep -q -- '--query fields."System.IterationPath"' "$AZ_LOG"
 
 # --- summary ----------------------------------------------------------------
 
