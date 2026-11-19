@@ -86,6 +86,11 @@ cat > "$WORK/issues.json" <<'JSON'
   {"number": 6, "title": "legacy parked, no milestone", "labels": [{"name": "parked"}], "milestone": null, "createdAt": "2026-01-06T00:00:00Z"}
 ]
 JSON
+# A full page: 200 open issues, all but three already scheduled into v1.2, so
+# the filter leaves three rows while the fetch itself hit the cap.
+jq -n '[range(1; 201) | {number: ., title: "issue \(.)", labels: [],
+  milestone: (if . <= 3 then null else {title: "v1.2 · goal"} end),
+  createdAt: "2026-01-01T00:00:00Z"}]' > "$WORK/issues-full-page.json"
 printf '%s\n' '[{"title": "v1.2 · goal", "due_on": null}, {"title": "backlog", "due_on": null}]' > "$WORK/ms-with-backlog.json"
 printf '%s\n' '[{"title": "v1.2 · goal", "due_on": null}]' > "$WORK/ms-without-backlog.json"
 printf '%s\n' '{"number": 42, "milestone": {"title": "v1.2 · goal"}}' > "$WORK/issue-in-v12.json"
@@ -144,11 +149,11 @@ tea() {
 '
 
 # run <code> <milestones fixture> <issue fixture> — runs code with the stubs;
-# sets OUT, RC and LOG.
+# sets OUT, RC and LOG. $ISSUES, when set, replaces the `issue list` fixture.
 run() {
   LOG="$WORK/log.$RANDOM"; : > "$LOG"
   RC=0
-  OUT="$(LOG="$LOG" FIX_MS="$2" FIX_ISSUE="$3" FIX_ISSUES="$WORK/issues.json" \
+  OUT="$(LOG="$LOG" FIX_MS="$2" FIX_ISSUE="$3" FIX_ISSUES="${ISSUES:-$WORK/issues.json}" \
     FIX_COMMENTS="$WORK/comments.json" FIX_FJ_COMMENTS="$WORK/fj-comments.json" \
     bash -c "$STUBS$1" 2>&1)" || RC=$?
   fail_closed
@@ -208,6 +213,11 @@ ok "lists backlog (not parked/roadmap) + every no-milestone issue" "got: $(numbe
 no "no missing-backlog warning when it exists" "$OUT" has "$OUT" MISSING
 ok "reports what was fetched, not what survived the filter" "$OUT" \
   has "$OUT" "fetched: 6 of at most 200"
+ISSUES="$WORK/issues-full-page.json" run "$code" "$WORK/ms-with-backlog.json" /dev/null
+ok "a full page of 200 reports the cap even when the filter leaves 3 rows" \
+  "rows: $(numbers "$OUT"); $OUT" has "$OUT" "fetched: 200 of at most 200"
+ok "the full page still lists only the 3 unscheduled issues" "got: $(numbers "$OUT")" \
+  test "$(numbers "$OUT")" = "1,2,3"
 run "$code" "$WORK/ms-without-backlog.json" /dev/null
 ok "missing backlog is reported with the create pointer" "$OUT" has "$OUT" "/milestone new backlog"
 ok "still lists the gap when backlog is missing" "got: $(numbers "$OUT")" test "$(numbers "$OUT")" = "1,2,6"
