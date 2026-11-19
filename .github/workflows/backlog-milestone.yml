@@ -1,0 +1,116 @@
+# Backlog milestone (reusable) — assign `backlog` to an issue opened or
+# reopened without a milestone (#646, freaxnx01/ai-instructions#61).
+#
+# Consumers call this from their own `issues: [opened, reopened]` stub
+# (scripts/onboard-consumer.sh generates it). The rules live in
+# scripts/assign-backlog-milestone.sh. A missing `backlog` milestone is a
+# warning, never a creation.
+#
+# SECURITY: only the issue number comes in. Nothing user-controlled (title,
+# body, author) is ever interpolated into a step — the script re-reads the
+# issue over REST itself.
+#
+# GitHub-only: there is no Forgejo Actions tier yet (ADR-005,
+# docs/FACTORY-MAP.md). Issues created with a workflow's GITHUB_TOKEN start no
+# workflow, so this never sees them; scripts/backfill-backlog-milestone.sh does.
+name: Backlog milestone (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      issue-number:
+        description: The issue that was just opened or reopened.
+        type: number
+        required: true
+      pipeline-repo:
+        description: Repo holding the shared scripts.
+        type: string
+        default: freaxnx01/agent-workflow
+      pipeline-ref:
+        description: Ref of `pipeline-repo` to check out. Pin the caller's moving major tag.
+        type: string
+        default: main
+      local-scripts:
+        description: Use the caller repo's own scripts/ (agent-workflow dogfooding).
+        type: boolean
+        default: false
+      stub-mode:
+        description: Test-only, with `local-scripts`. Routes every `gh` call through tests/mocks/gh.
+        type: boolean
+        default: false
+      stub-issue-fixture:
+        description: Test-only. REST issue object the mocked `gh api` returns.
+        type: string
+        default: tests/fixtures/backlog-milestone/issue-open.json
+      stub-milestones-fixture:
+        description: Test-only. Milestone list the mocked `gh api` returns.
+        type: string
+        default: tests/fixtures/backlog-milestone/milestones-with-backlog.json
+      timeout-minutes:
+        type: number
+        default: 5
+    outputs:
+      decision:
+        description: '`assigned` or `skipped`.'
+        value: ${{ jobs.milestone.outputs.decision }}
+      reason:
+        description: Why it was skipped; empty when assigned.
+        value: ${{ jobs.milestone.outputs.reason }}
+
+permissions:
+  contents: read
+
+jobs:
+  milestone:
+    name: Assign backlog milestone
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    permissions:
+      contents: read
+      issues: write
+    concurrency:
+      group: backlog-milestone-${{ github.repository }}-${{ inputs.issue-number }}
+      cancel-in-progress: false
+    outputs:
+      decision: ${{ steps.assign.outputs.decision }}
+      reason: ${{ steps.assign.outputs.reason }}
+    steps:
+      - name: Checkout caller repo (local-scripts mode)
+        if: ${{ inputs.local-scripts }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Checkout agent-workflow scripts
+        if: ${{ !inputs.local-scripts }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          repository: ${{ inputs.pipeline-repo }}
+          ref: ${{ inputs.pipeline-ref }}
+          path: .claude-pipeline
+          sparse-checkout: scripts
+
+      - name: Mirror local scripts to .claude-pipeline (self-test mode)
+        if: ${{ inputs.local-scripts }}
+        run: mkdir -p .claude-pipeline/scripts && cp -r scripts/. .claude-pipeline/scripts/
+
+      - name: Wire the gh mock (stub-mode)
+        # Refuses rather than letting real `gh` calls through without the mock.
+        if: ${{ inputs.stub-mode }}
+        env:
+          WORKSPACE: ${{ github.workspace }}
+          RUNNER_TEMP_DIR: ${{ runner.temp }}
+          ISSUE_FIXTURE: ${{ inputs.stub-issue-fixture }}
+          MILESTONES_FIXTURE: ${{ inputs.stub-milestones-fixture }}
+        run: |
+          [[ -x tests/mocks/gh && -r "$ISSUE_FIXTURE" && -r "$MILESTONES_FIXTURE" ]] \
+            || { echo "::error::stub-mode needs local-scripts, tests/mocks/gh and both fixtures"; exit 1; }
+          map="$RUNNER_TEMP_DIR/gh-stdout-map"
+          printf '%s\t%s/%s\n' 'milestones?state=open' "$WORKSPACE" "$MILESTONES_FIXTURE" 'api repos/' "$WORKSPACE" "$ISSUE_FIXTURE" > "$map"
+          printf 'PATH=%s/tests/mocks:%s\nGH_MOCK_LOG=%s\nGH_MOCK_STDOUT_MAP=%s\n' "$WORKSPACE" "$PATH" "$RUNNER_TEMP_DIR/gh-mock.log" "$map" >> "$GITHUB_ENV"
+
+      - name: Assign the backlog milestone
+        id: assign
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+        run: bash .claude-pipeline/scripts/assign-backlog-milestone.sh

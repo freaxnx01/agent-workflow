@@ -1,0 +1,88 @@
+name: backlog-milestone-test
+
+# Layer-2 test for backlog-milestone.yml (#646). Calls the reusable workflow
+# with `local-scripts` + `stub-mode`, so the real
+# scripts/assign-backlog-milestone.sh runs against fixtures through the gh
+# mock: no issue is read, nothing is written, no token is needed. Catches the
+# wiring Layer 1 cannot — inputs reaching the script's env, and
+# `decision`/`reason` travelling out to a caller.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/backlog-milestone.yml
+      - .github/workflows/backlog-milestone.test.yml
+      - scripts/assign-backlog-milestone.sh
+      - scripts/lib/backlog-milestone.sh
+      - tests/fixtures/backlog-milestone/**
+      - tests/mocks/gh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backlog-milestone-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  call-assigned:
+    name: an issue without a milestone (assigned)
+    permissions:
+      contents: read
+      issues: write
+    uses: ./.github/workflows/backlog-milestone.yml
+    with:
+      issue-number: 9001
+      local-scripts: true
+      stub-mode: true
+      stub-issue-fixture: tests/fixtures/backlog-milestone/issue-open.json
+      stub-milestones-fixture: tests/fixtures/backlog-milestone/milestones-with-backlog.json
+
+  call-has-milestone:
+    name: an issue with a milestone (skipped)
+    permissions:
+      contents: read
+      issues: write
+    uses: ./.github/workflows/backlog-milestone.yml
+    with:
+      issue-number: 9002
+      local-scripts: true
+      stub-mode: true
+      stub-issue-fixture: tests/fixtures/backlog-milestone/issue-has-milestone.json
+      stub-milestones-fixture: tests/fixtures/backlog-milestone/milestones-with-backlog.json
+
+  call-no-backlog:
+    name: a repo without backlog (warned, skipped)
+    permissions:
+      contents: read
+      issues: write
+    uses: ./.github/workflows/backlog-milestone.yml
+    with:
+      issue-number: 9003
+      local-scripts: true
+      stub-mode: true
+      stub-issue-fixture: tests/fixtures/backlog-milestone/issue-open.json
+      stub-milestones-fixture: tests/fixtures/backlog-milestone/milestones-without-backlog.json
+
+  verify:
+    name: Assert the three decisions
+    needs: [call-assigned, call-has-milestone, call-no-backlog]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      ASSIGNED_DECISION: ${{ needs.call-assigned.outputs.decision }}
+      ASSIGNED_REASON: ${{ needs.call-assigned.outputs.reason }}
+      HAS_MILESTONE_DECISION: ${{ needs.call-has-milestone.outputs.decision }}
+      HAS_MILESTONE_REASON: ${{ needs.call-has-milestone.outputs.reason }}
+      NO_BACKLOG_DECISION: ${{ needs.call-no-backlog.outputs.decision }}
+      NO_BACKLOG_REASON: ${{ needs.call-no-backlog.outputs.reason }}
+    steps:
+      - name: Assert decision and reason per case
+        run: |
+          [[ "$ASSIGNED_DECISION" == assigned && -z "$ASSIGNED_REASON" ]] || { echo "::error::assigned case: $ASSIGNED_DECISION / $ASSIGNED_REASON"; exit 1; }
+          [[ "$HAS_MILESTONE_DECISION" == skipped && "$HAS_MILESTONE_REASON" == "has milestone v2.3 · intake" ]] || { echo "::error::has-milestone case: $HAS_MILESTONE_DECISION / $HAS_MILESTONE_REASON"; exit 1; }
+          [[ "$NO_BACKLOG_DECISION" == skipped && "$NO_BACKLOG_REASON" == "no backlog milestone" ]] || { echo "::error::no-backlog case: $NO_BACKLOG_DECISION / $NO_BACKLOG_REASON"; exit 1; }
+          echo "backlog-milestone wiring OK"

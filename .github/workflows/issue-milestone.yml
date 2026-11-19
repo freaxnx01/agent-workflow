@@ -1,0 +1,24 @@
+# Dogfood caller — runs the backlog milestone guard (#646) on this repo's own
+# issues. `uses: ./…` + `local-scripts: true` exercise current main, like
+# agent.yml. Consumers get the same stub from scripts/onboard-consumer.sh,
+# pointing at the published workflow instead.
+#
+# SECURITY: public repo — only the issue number is passed on.
+name: Issue milestone
+
+on:
+  issues:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  milestone:
+    permissions:
+      contents: read
+      issues: write   # assigns the backlog milestone
+    uses: ./.github/workflows/backlog-milestone.yml
+    with:
+      issue-number: ${{ github.event.issue.number }}
+      local-scripts: true
