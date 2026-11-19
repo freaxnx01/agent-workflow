@@ -109,13 +109,13 @@ cat > "$WORK/issues.json" <<'JSON'
   {"number": 2, "title": "in backlog", "labels": [{"name": "bug"}], "milestone": {"title": "backlog"}, "createdAt": "2026-01-02T00:00:00Z"},
   {"number": 3, "title": "parked in backlog", "labels": [{"name": "parked"}], "milestone": {"title": "backlog"}, "createdAt": "2026-01-03T00:00:00Z"},
   {"number": 4, "title": "roadmap in backlog", "labels": [{"name": "roadmap"}], "milestone": {"title": "backlog"}, "createdAt": "2026-01-04T00:00:00Z"},
-  {"number": 5, "title": "scheduled in next", "labels": [], "milestone": {"title": "next"}, "createdAt": "2026-01-05T00:00:00Z"},
+  {"number": 5, "title": "scheduled in v1.2", "labels": [], "milestone": {"title": "v1.2 · goal"}, "createdAt": "2026-01-05T00:00:00Z"},
   {"number": 6, "title": "legacy parked, no milestone", "labels": [{"name": "parked"}], "milestone": null, "createdAt": "2026-01-06T00:00:00Z"}
 ]
 JSON
-printf '%s\n' '[{"title": "next", "due_on": null}, {"title": "backlog", "due_on": null}]' > "$WORK/ms-with-backlog.json"
-printf '%s\n' '[{"title": "next", "due_on": null}]' > "$WORK/ms-without-backlog.json"
-printf '%s\n' '{"number": 42, "milestone": {"title": "next"}}' > "$WORK/issue-in-next.json"
+printf '%s\n' '[{"title": "v1.2 · goal", "due_on": null}, {"title": "backlog", "due_on": null}]' > "$WORK/ms-with-backlog.json"
+printf '%s\n' '[{"title": "v1.2 · goal", "due_on": null}]' > "$WORK/ms-without-backlog.json"
+printf '%s\n' '{"number": 42, "milestone": {"title": "v1.2 · goal"}}' > "$WORK/issue-in-v12.json"
 printf '%s\n' '{"number": 42, "milestone": {"title": "backlog"}}' > "$WORK/issue-in-backlog.json"
 printf '%s\n' '{"comments": [{"body": "parked: waiting on vendor"}, {"body": "roadmap: waiting on vendor"}]}' > "$WORK/comments.json"
 
@@ -187,14 +187,14 @@ ok "missing backlog is reported with the create pointer" "$OUT" has "$OUT" "/mil
 
 section "/parked repark — GitHub"
 code="$(blocks "$CMDS/parked.md" GitHub repark | subst)"
-run "$code" "$WORK/ms-with-backlog.json" "$WORK/issue-in-next.json"
+run "$code" "$WORK/ms-with-backlog.json" "$WORK/issue-in-v12.json"
 ok "runs cleanly" "$OUT" test "$RC" -eq 0
 ok "moves the issue to backlog" "$(cat "$LOG")" grep -qx 'gh issue edit 42 --milestone backlog' "$LOG"
 no "never strips the milestone" "$(cat "$LOG")" grep -q -- '--remove-milestone' "$LOG"
-ok "records the milestone it moved away from" "$(cat "$LOG")" grep -qx 'milestone-was: next' "$LOG"
+ok "records the milestone it moved away from" "$(cat "$LOG")" grep -qx 'milestone-was: v1.2 · goal' "$LOG"
 run "$code" "$WORK/ms-with-backlog.json" "$WORK/issue-in-backlog.json"
 no "records nothing when it was already in backlog" "$(cat "$LOG")" grep -q 'milestone-was:' "$LOG"
-run "$code" "$WORK/ms-without-backlog.json" "$WORK/issue-in-next.json"
+run "$code" "$WORK/ms-without-backlog.json" "$WORK/issue-in-v12.json"
 ok "stops when backlog is missing" "$OUT" test "$RC" -ne 0
 no "writes nothing when backlog is missing" "$(cat "$LOG")" grep -qE '^gh issue (comment|edit)' "$LOG"
 ok "points at /milestone new backlog" "$OUT" has "$OUT" "/milestone new backlog"
@@ -203,11 +203,11 @@ ok "points at /milestone new backlog" "$OUT" has "$OUT" "/milestone new backlog"
 
 section "/roadmap defer — GitHub"
 code="$(blocks "$CMDS/roadmap.md" GitHub defer | subst)"
-run "$code" "$WORK/ms-with-backlog.json" "$WORK/issue-in-next.json"
+run "$code" "$WORK/ms-with-backlog.json" "$WORK/issue-in-v12.json"
 ok "runs cleanly" "$OUT" test "$RC" -eq 0
 ok "moves the issue to backlog" "$(cat "$LOG")" grep -qx 'gh issue edit 42 --milestone backlog' "$LOG"
 no "never strips the milestone" "$(cat "$LOG")" grep -q -- '--remove-milestone' "$LOG"
-run "$code" "$WORK/ms-without-backlog.json" "$WORK/issue-in-next.json"
+run "$code" "$WORK/ms-without-backlog.json" "$WORK/issue-in-v12.json"
 ok "stops when backlog is missing" "$OUT" test "$RC" -ne 0
 no "writes nothing when backlog is missing" "$(cat "$LOG")" grep -qE '^gh issue (comment|edit)' "$LOG"
 ok "points at /milestone new backlog" "$OUT" has "$OUT" "/milestone new backlog"
@@ -528,7 +528,7 @@ records no `milestone-was:` and its `unpark` offers none back.
 - [ ] **Step 6: Verify.** `NO_COLOR=1 tests/run-backlog-milestone-tests.sh`.
   All 8 `/parked repark — GitHub` checks pass. Also run the Forgejo guard
   against a fixture and check that it rejects a list without `backlog`:
-  `printf '[{"title":"next"}]' | python3 -c 'import sys, json; sys.exit(0 if any(m["title"] == "backlog" for m in json.load(sys.stdin)) else 1)'; echo $?`
+  `printf '[{"title":"v1.2 · goal"}]' | python3 -c 'import sys, json; sys.exit(0 if any(m["title"] == "backlog" for m in json.load(sys.stdin)) else 1)'; echo $?`
   prints `1`. With `[{"title":"backlog"}]` it prints `0`.
 
 ### Task 4: `/roadmap defer` moves to `backlog`; `promote` moves out of it

@@ -1,7 +1,7 @@
 # `/parked` and `/roadmap` move issues to `backlog` (#644) — design
 
 **Issue:** freaxnx01/agent-workflow#644
-**Convention:** freaxnx01/ai-instructions#61 — every open issue has a milestone;
+**Convention:** freaxnx01/ai-instructions#61, merged as ai-instructions#62 — every open issue has a milestone;
 unscheduled, parked and roadmap work lives in a standing `backlog` milestone.
 **Siblings (enriched in parallel):** #645 (`/new` falls back to `backlog`),
 #646 (CI guard + backfill).
@@ -128,14 +128,14 @@ automatically by `tests/run-all.sh` (`run-*-tests.sh` discovery). It
 
 - It extracts the GitHub and Forgejo triage blocks from `commands/milestone.md`
   and runs them against a fixture of six issues: no milestone, backlog,
-  backlog+parked, backlog+roadmap, `next`, and no milestone+parked. It asserts
+  backlog+parked, backlog+roadmap, a scheduled `v1.2 · goal`, and no milestone+parked. It asserts
   that exactly the expected issue numbers come out.
 - It extracts the GitHub `repark` blocks of `commands/parked.md` and the
   GitHub `defer` blocks of `commands/roadmap.md`, substitutes the placeholders,
   and runs them with a stub `gh` function that serves fixture JSON through the
   real `jq` and logs every write. It asserts:
   - with `backlog` present: a `--milestone backlog` write, no
-    `--remove-milestone`, and a `milestone-was: next` line;
+    `--remove-milestone`, and a `milestone-was: v1.2 · goal` line;
   - with the issue already in `backlog`: no `milestone-was:` line;
   - with `backlog` absent: no write at all, and the output names
     `/milestone new backlog`.
@@ -152,11 +152,14 @@ automatically by `tests/run-all.sh` (`run-*-tests.sh` discovery). It
 
 ## Assumptions
 
-- **A1** [confirmed] `general-<month>-<year>` and `next`: "Drop general-*, keep
-  next": /new stops auto-creating general-<month>-<year> (handled in #645, not
-  here); `next` stays as a documented exception alongside backlog. This issue
-  therefore treats `next` as an ordinary scheduled milestone: triage does not
-  list it, and promote can target it.
+- **A1** [confirmed] `general-<month>-<year>` and `next`, per
+  ai-instructions#62 (`conventions/milestones.md`, merged for #61): "every open
+  issue has a milestone; `backlog` is the default; `next` is DEPRECATED and
+  renamed to `backlog`" (agent-workflow milestone `next` #4 is closed, its issues
+  moved to `backlog` #7), and "`general-<month>-<year>` issues move to `backlog`
+  and that milestone is closed". The user confirmed "deprecate next". So no
+  command here treats `next` specially, and the test fixtures use a neutral
+  `v1.2 · goal` title for a scheduled milestone.
 - **A2** [confirmed] `backlog` existence: "Create in both now": it now exists in
   freaxnx01/agent-workflow (milestone #7) and freaxnx01/ai-instructions
   (milestone #2). The commands must still report a missing backlog in other
