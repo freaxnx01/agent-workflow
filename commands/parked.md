@@ -87,11 +87,11 @@ gh issue view <n> --json comments \
         | sub("^milestone-was:\\s*"; "")'
 ```
 
-- **Empty output** — nothing was recorded (parked by hand, or it had no milestone).
-  Say nothing and carry on to routing.
+- **Empty output** — nothing was recorded (parked by hand, or it was already in
+  `backlog`). The issue stays in `backlog`. Say nothing and carry on to routing.
 - **A still-open milestone** — offer to restore it (`gh issue edit <n> -m "<name>"`),
-  then read back and report from the read-back.
-- **A closed or deleted milestone** — say so and leave it un-milestoned. Do not
+  then read back and report from the read-back. On a decline it stays in `backlog`.
+- **A closed or deleted milestone** — say so and leave it in `backlog`. Do not
   recreate it and do not substitute another.
 
 If the issue also has `needs-enrichment`, say so before routing. Then delegate:
@@ -100,16 +100,25 @@ read and follow `~/.claude/commands/route.md` (i.e. run `/route <n>`).
 
 ### repark
 
-`repark` keeps labels as-is, appends a fresh reason comment, and **strips the
-milestone** — recording the stripped name in that comment so `unpark` can offer it
-back. Capture the milestone **before** stripping, or the name is gone:
+`repark` keeps labels as-is, appends a fresh reason comment, and **moves the
+issue to the `backlog` milestone**. It records the milestone it moved away from
+in that comment, so `unpark` can offer it back. Check `backlog` and capture
+the current milestone **before** writing anything:
 
 ```bash
-# 1 — capture the current milestone (empty string when there is none)
+# 1 — backlog must exist before anything is written
+repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+if [ "$(gh api "repos/$repo/milestones?state=open&per_page=100" \
+        --jq '[.[] | select(.title == "backlog")] | length')" != "1" ]; then
+  echo "No open 'backlog' milestone in $repo. Create it with /milestone new backlog, then re-run."
+  exit 1
+fi
+
+# 2 — capture the current milestone (empty string when there is none)
 was=$(gh issue view <n> --json milestone --jq '.milestone.title // ""')
 
-# 2 — reason comment; the milestone-was line is added only when there was one
-if [ -n "$was" ]; then
+# 3 — reason comment; milestone-was only for a real milestone other than backlog
+if [ -n "$was" ] && [ "$was" != "backlog" ]; then
   gh issue comment <n> --body "parked: <reason>
 milestone-was: $was"
 else
@@ -117,9 +126,14 @@ else
 fi
 ```
 
+**A missing `backlog` stops the command before the comment.** Report it,
+point at `/milestone new backlog`, and never create it yourself. A closed
+`backlog` counts as missing.
+
 `milestone-was:` sits on the **second** line deliberately: every reason read-back
 here takes `split("\n")[0]`, so `/parked list` and the confirmation below keep
-showing the reason alone, never the bookkeeping line.
+showing the reason alone, never the bookkeeping line. It is left out when the
+issue was already in `backlog`, so `unpark` never offers `backlog` back.
 
 Then read back the newest comment whose body starts with `parked:` and confirm
 from it, never from the exit code:
@@ -129,24 +143,23 @@ gh issue view <n> --json comments \
   --jq '[.comments[] | (.body // "") | select(startswith("parked:"))] | last // "—" | split("\n")[0]'
 ```
 
-Only then strip it:
+Only then move it:
 
 ```bash
-# 3 — strip, now that the name is safely recorded in the comment
-gh issue edit <n> --remove-milestone
+# 4 — move it to backlog, now that the previous name is recorded in the comment
+gh issue edit <n> --milestone backlog
 gh issue view <n> --json number,milestone --jq '[.number, (.milestone.title // "-")] | @tsv'
 ```
 
-**Why the strip.** A parked issue is paused on purpose and not scheduled, so a
-milestone contradicts the label — and `/milestone triage` filters `parked`
-out of the un-milestoned gap, so it can never surface the contradiction. `unpark`
-offers the recorded milestone back, so the round trip is recoverable — but only
-when `repark` is what stripped it.
+**Why `backlog`.** A parked issue is paused on purpose and not scheduled, and
+every open issue lives in a milestone. `backlog` is where unscheduled work goes
+(freaxnx01/ai-instructions#61). `/milestone triage` skips `parked` issues inside
+`backlog`, so they do not nag. `unpark` offers the recorded milestone back, so
+the round trip is recoverable, but only when `repark` is what moved it.
 
-Report the milestone from the read-back. Removal on an issue that has no milestone
-is a **no-op that exits 0** (verified 2026-09-09), so run it unconditionally.
-**Coverage is partial by construction:** it only fires when `/parked repark` runs —
-labelling an issue by hand in the web UI leaves its milestone in place.
+Report the milestone from the read-back. It must say `backlog`. **Coverage is
+partial by construction:** the move only happens when `/parked repark` runs.
+Labelling an issue by hand in the web UI leaves its milestone in place.
 
 If no reason argument was provided, ask for one and stop. Never edit the issue
 body and never edit a previous comment.
@@ -273,7 +286,8 @@ print(was[-1].split(":", 1)[1].strip() if was else "")'
 ```
 
 Restore with `tea milestones issues add --login git-home "<name>" <n>`, then read
-back.
+back. On a decline, an empty record, or a closed milestone, the issue stays in
+`backlog` — same as the GitHub section.
 
 If the issue also has `needs-enrichment`, say so before routing. Then delegate:
 read and follow `~/.claude/commands/route.md` (i.e. run `/route <n>`).
@@ -281,19 +295,28 @@ read and follow `~/.claude/commands/route.md` (i.e. run `/route <n>`).
 
 ### repark
 
-`repark` keeps labels as-is, appends a fresh reason comment, and **strips the
-milestone** — recording the stripped name so `unpark` can offer it back. Capture it
-**before** stripping, or the name is gone:
+`repark` keeps labels as-is, appends a fresh reason comment, and **moves the
+issue to the `backlog` milestone** — recording the milestone it moved away from
+so `unpark` can offer it back. Check `backlog` and capture the current milestone
+**before** writing anything:
 
 ```bash
+# 0 — backlog must exist before anything is written
+if ! tea api --login git-home "repos/$repo/milestones?state=open&limit=50" | python3 -c '
+import sys, json
+sys.exit(0 if any(m["title"] == "backlog" for m in json.load(sys.stdin)) else 1)'; then
+  echo "No open 'backlog' milestone in $repo. Create it with /milestone new backlog, then re-run."
+  exit 1
+fi
+
 # 1 — capture the current milestone (empty when there is none)
 was=$(tea api --login git-home "repos/$repo/issues/<n>" | python3 -c '
 import sys, json
 m = json.load(sys.stdin).get("milestone") or {}
 print(m.get("title") or "")')
 
-# 2 — reason comment; the milestone-was line only when there was one
-if [ -n "$was" ]; then
+# 2 — reason comment; milestone-was only for a real milestone other than backlog
+if [ -n "$was" ] && [ "$was" != "backlog" ]; then
   tea comment <n> "parked: <reason>
 milestone-was: $was"
 else
@@ -315,35 +338,36 @@ reasons=[(c.get("body") or "") for c in comments if (c.get("body") or "").starts
 print(reasons[-1].split("\n")[0] if reasons else "—")'
 ```
 
-Parking also **strips the milestone**:
+Only then move it:
 
 ```bash
-# read the current milestone — `remove` takes the name, not an id
+# move it to backlog — `add` replaces any milestone the issue had
+tea milestones issues add --login git-home "backlog" <n>
 tea api --login git-home "repos/$repo/issues/<n>" | python3 -c '
 import sys, json
-m = json.load(sys.stdin).get("milestone") or {}
-print(m.get("title") or "")'
-
-# then, only if that printed a name:
-tea milestones issues remove --login git-home "<name>" <n>
+i = json.load(sys.stdin)
+print(i["number"], (i.get("milestone") or {}).get("title") or "-", sep="\t")'
 ```
 
-**Why the strip.** A parked issue is paused on purpose and not scheduled, so a
-milestone contradicts the label — and `/milestone triage` filters `parked`
-out of the un-milestoned gap, so it can never surface the contradiction. `unpark`
-offers the recorded milestone back, so the round trip is recoverable — but only
-when `repark` is what stripped it.
+**A missing `backlog` stops the command before the comment.** Report it,
+point at `/milestone new backlog`, and never create it yourself. A closed
+`backlog` counts as missing.
 
-Report the milestone from the read-back. Removal on an issue that has no milestone
-is a **no-op that exits 0** (verified 2026-09-09), so run it unconditionally.
-**Coverage is partial by construction:** it only fires when `/parked repark` runs —
-labelling an issue by hand in the web UI leaves its milestone in place.
+**Why `backlog`.** A parked issue is paused on purpose and not scheduled, and
+every open issue lives in a milestone. `backlog` is where unscheduled work goes
+(freaxnx01/ai-instructions#61). `/milestone triage` skips `parked` issues inside
+`backlog`, so they do not nag. `unpark` offers the recorded milestone back, so
+the round trip is recoverable, but only when `repark` is what moved it.
 
-`tea milestones issues remove` mirrors the `add` form used by `/milestone assign`
-and carries the same epistemic caveat as every other `tea` flag here — taken from
-tea's source, not a live run. If it misbehaves, the fallback is
-`tea api --login git-home -X PATCH "repos/$repo/issues/<n>"` with `{"milestone":0}`;
-fix it and update this command.
+Report the milestone from the read-back. It must say `backlog`. **Coverage is
+partial by construction:** the move only happens when `/parked repark` runs.
+Labelling an issue by hand in the web UI leaves its milestone in place.
+
+Forgejo issues hold one milestone, so `tea milestones issues add` moves the
+issue rather than adding a second one. That is taken from tea's source, not
+a live run. If the read-back shows the old milestone, fall back to
+`tea api --login git-home -X PATCH "repos/$repo/issues/<n>"` with the
+`backlog` milestone's id, then fix and update this command.
 
 If no reason argument was provided, ask for one and stop. Never edit the issue
 body and never edit a previous comment.
@@ -437,6 +461,18 @@ comment — there is no field for it:
 az boards work-item update --id "<n>" --org "$(azdo_org_url)" \
   --discussion "<reason>" --output none --only-show-errors
 ```
+
+Then move the item to the project **root iteration**, this forge's `backlog`.
+The root always exists, so there is no missing-backlog case here:
+
+```bash
+az boards work-item update --id "<n>" --org "$(azdo_org_url)" \
+  --fields "System.IterationPath=$AZDO_PROJECT" \
+  --output tsv --only-show-errors --query 'fields."System.IterationPath"'
+```
+
+Report from that read-back: it must print `$AZDO_PROJECT` alone. This forge
+records no `milestone-was:` and its `unpark` offers none back.
 
 ### review
 
