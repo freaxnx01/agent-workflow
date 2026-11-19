@@ -620,6 +620,64 @@ jobs:
       - run: echo "not stamped — ${{ needs.intake.outputs.reason }}"
 ```
 
+## 3d. Backlog milestone guard (recommended)
+
+Every open issue carries a milestone (freaxnx01/ai-instructions#61); the
+standing `backlog` milestone holds whatever is not scheduled. Issues filed by
+agents and scripts often arrive without one. This stub assigns `backlog` to an
+issue opened or reopened without a milestone (#646).
+`scripts/onboard-consumer.sh` writes it on every onboarding.
+
+```yaml
+# .github/workflows/issue-milestone.yml
+name: Issue milestone
+on:
+  issues:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  milestone:
+    permissions:
+      contents: read
+      issues: write
+    uses: freaxnx01/agent-workflow/.github/workflows/backlog-milestone.yml@v2
+    with:
+      issue-number: ${{ github.event.issue.number }}
+      pipeline-ref: v2
+```
+
+Rules (`scripts/assign-backlog-milestone.sh`):
+
+- An issue that already has **any** milestone is left alone.
+- Closed issues and pull requests are left alone.
+- Only an **open** milestone titled exactly `backlog` counts. If there is
+  none, the run logs a `::warning::` and exits green — it **never creates**
+  the milestone. Create it with `/milestone new backlog`.
+- Only the issue number is passed in; the script re-reads the issue itself.
+  No title, body or author ever reaches a step, so the stub is safe in a
+  public repo where anyone can open an issue.
+
+Not covered:
+
+- **Issues created with a workflow's `GITHUB_TOKEN`** start no workflow, so
+  the guard never sees them — for example the pipeline alarm that
+  `pipeline-health.yml` raises. Sweep those, and every issue opened before the
+  stub was merged, with the backfill:
+
+  ```bash
+  scripts/backfill-backlog-milestone.sh -R <owner/repo>          # dry run: prints the count
+  scripts/backfill-backlog-milestone.sh -R <owner/repo> --apply  # assigns
+  ```
+
+- **Forgejo.** GitHub-only for now: there is no Forgejo Actions tier yet
+  (ADR-005, `docs/DESIGN.md`), and most Forgejo repos have no runner
+  (`docs/FACTORY-MAP.md`).
+- **Azure DevOps** needs nothing: every work item has at least the root
+  iteration.
+
 ## 4. Issue chaining (optional, requires ai-review-ai-merge)
 
 When an auto-merged PR closes an issue, the pipeline can dispatch a follow-up issue that was `Blocked by:` it. Conventions live in [ADR-003](DECISIONS.md#adr-003--issue-chain-dispatch-on-auto-merge); this section is just the wiring.

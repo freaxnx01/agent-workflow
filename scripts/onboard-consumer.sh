@@ -11,8 +11,9 @@
 #   3. Labels       — run ensure-issue-labels.sh against the target repo.
 #   4. Repo settings— enable "Actions can create PRs"; for --ai-review-ai-merge also
 #                     enable allow-auto-merge + allow-squash-merge.
-#   5. Consumer stub— commit .github/workflows/agent.yml, pipeline-health.yml
-#                     and issue-intake.yml (and chain-dispatch.yml with
+#   5. Consumer stub— commit .github/workflows/agent.yml, pipeline-health.yml,
+#                     issue-intake.yml and issue-milestone.yml (and
+#                     chain-dispatch.yml with
 #                     --chain) — via the GitHub API, no local clone
 #                     required. Idempotent. Commits DIRECTLY to the repo's
 #                     default branch by default (this is operator-invoked,
@@ -425,6 +426,32 @@ jobs:
 YAML
 }
 
+# The backlog milestone guard (#646). Unconditional, like the intake stub:
+# every open issue carries a milestone (freaxnx01/ai-instructions#61). It
+# never creates `backlog` — onboarding does not either; a repo without one
+# gets a warning per issue until `/milestone new backlog` is run.
+build_milestone_yml() {
+  cat <<YAML
+name: Issue milestone
+on:
+  issues:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  milestone:
+    permissions:
+      contents: read
+      issues: write   # assigns the backlog milestone
+    uses: $PIPELINE_REPO/.github/workflows/backlog-milestone.yml@$REF
+    with:
+      issue-number: \${{ github.event.issue.number }}
+      pipeline-ref: $REF
+YAML
+}
+
 build_chain_yml() {
   cat <<YAML
 name: Chain-dispatch on merged ai-implement PR
@@ -505,6 +532,8 @@ elif [[ "$DIRECT_TO_MAIN" == true ]]; then
     "ci(agent-workflow): add pipeline health stub"
   build_intake_yml | put_file ".github/workflows/issue-intake.yml" \
     "ci(agent-workflow): add issue intake stub"
+  build_milestone_yml | put_file ".github/workflows/issue-milestone.yml" \
+    "ci(agent-workflow): add backlog milestone stub"
   if [[ "$CHAIN" == true ]]; then
     build_chain_yml | put_file ".github/workflows/chain-dispatch.yml" \
       "ci(agent-workflow): add chain-dispatch stub"
@@ -518,6 +547,8 @@ else
     "ci(agent-workflow): add pipeline health stub"
   build_intake_yml | put_file ".github/workflows/issue-intake.yml" \
     "ci(agent-workflow): add issue intake stub"
+  build_milestone_yml | put_file ".github/workflows/issue-milestone.yml" \
+    "ci(agent-workflow): add backlog milestone stub"
   if [[ "$CHAIN" == true ]]; then
     build_chain_yml | put_file ".github/workflows/chain-dispatch.yml" \
       "ci(agent-workflow): add chain-dispatch stub"
