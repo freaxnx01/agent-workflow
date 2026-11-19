@@ -159,7 +159,7 @@ tea issues create --login git-home \
   --title "<type>(<scope>): <concise title>" \
   --description "<cleaned-up notes>" \
   --labels needs-enrichment \
-  -m "<milestone>"            # only when my notes named one
+  -m "<milestone>"            # the case 1-4 result, backlog included
 ```
 
 `tea api` needs the explicit `owner/name` path (plain `tea` subcommands infer it
@@ -191,8 +191,9 @@ isn't `git.home.freaxnx01.ch`), say so and stop.
 
 Same four cases as the GitHub section — **the first that matches wins** — with
 `tea` mechanics. The behavioural rules (confirm before creating, declining never
-aborts, silence is never an assignment, `none` always offered, no roadmap/parked
-guessing) are identical and are not restated here; read them there.
+aborts issue creation, silence is never an assignment to an active milestone,
+`backlog` as the fallback, no roadmap/parked guessing) are identical and are not
+restated here; read them there.
 
 **1 — My notes name a milestone.** Pass it as `-m "<name>"`. If it doesn't exist
 yet, **ask** before creating it (and ask for a due date); never create one
@@ -201,39 +202,34 @@ value.
 
 Otherwise read the open milestones. This is the existing `/milestone list` idiom,
 and its `"9999"` sentinel is already the sort rule — soonest due first, **undated
-last**:
+last**. `backlog` is the fallback bucket, not an active milestone, so the snippet
+prints the **active** ones as `active` rows and reports `backlog` on its own line:
 
 ```bash
 tea api --login git-home "repos/$repo/milestones?state=open&limit=50" | python3 -c '
 import sys, json
-for m in sorted(json.load(sys.stdin), key=lambda x: x.get("due_on") or "9999"):
-    print(m["title"], m.get("due_on") or "-", sep="\t")'
+ms = json.load(sys.stdin)
+for m in sorted(ms, key=lambda x: x.get("due_on") or "9999"):
+    if m["title"] != "backlog":
+        print("active", m["title"], m.get("due_on") or "-", sep="\t")
+print("backlog", "yes" if any(m["title"] == "backlog" for m in ms) else "no", sep="\t")
+'
 ```
 
-**2 — Zero open milestones.** Offer to create `general-<month>-<year>`, due the
-**30th clamped to the month length**. Forgejo has **no `already_exists` guard**
-(unlike GitHub's `422`), so check for a closed one of that name first — same rule
-as `/milestone new`: on a match, report it and stop, no variant name.
+**2 — Zero active milestones.** Assign `backlog` with `-m "backlog"`, silently,
+and report it from the read-back. The monthly general bucket is no longer offered
+or created.
 
-```bash
-month=$(LC_ALL=C date +%B | tr 'A-Z' 'a-z')   # locale-pinned, see the GitHub section
-year=$(date +%Y)
-last_day=$(date -d "$(date +%Y-%m-01) +1 month -1 day" +%d)
-due_day=$(( last_day < 30 ? last_day : 30 ))
+**3 — Exactly one active milestone.** Assign it silently, and let the read-back
+report it. `backlog` is not counted.
 
-tea milestones create --login git-home \
-  --title "general-$month-$year" \
-  --deadline "$year-$(date +%m)-$due_day"
-```
+**4 — Two or more active milestones.** Ask, first active entry pre-selected, then
+`backlog` as the last option; silence or a decline means `backlog`.
 
-`--deadline` takes a bare `YYYY-MM-DD` — `tea` parses loose date strings itself, so
-there is no time component to add here. The GitHub side appends `T00:00:00Z` only
-because its API wants a full timestamp.
-
-**3 — Exactly one open milestone.** Assign it silently, and let the read-back
-report it.
-
-**4 — Two or more open milestones.** Ask, first entry pre-selected, plus `none`.
+**`backlog` missing** (the snippet's last line says `no`). Say so — "no `backlog`
+milestone in `<repo>`; create it with `/milestone new backlog`" — and never create
+it from `/new`. Where the fallback was needed, file the issue with no milestone and
+say so; leave the `backlog` option out of case 4.
 
 `tea`'s milestone flags carry the same epistemic caveat as `/milestone`'s — verified
 from tea's source, not a live run. If one misbehaves, fix it and update this command.
@@ -285,6 +281,10 @@ az boards work-item create --org "$(azdo_org_url)" --project "$AZDO_PROJECT" \
             "System.Description=<body>" \
   --output json --only-show-errors
 ```
+
+**No milestone fallback here.** A milestone on this forge is an iteration (ADR-012)
+and this create sets only Area Path and description, so the `backlog` fallback
+`/new` applies on GitHub and Forgejo does not apply to a work item.
 
 **Do not apply `needs-enrichment`.** That tag exists to gate GitHub's
 `/gh:implement`, and there is no pipeline dispatch on this forge (ADR-017), so it
