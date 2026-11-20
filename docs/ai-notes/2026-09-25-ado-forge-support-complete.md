@@ -47,7 +47,7 @@ Entry point: **`scripts/implement-azdo.sh`**. Shape is
 
 ## The test rig — do not delete
 
-`agent-workflow-sandbox` in the personal org `AndreasImboden0022` is the only place
+`agent-workflow-sandbox` in the personal org `<personal-org>` is the only place
 ADO changes can be verified. Credentials: `direnv exec ~/repos/ado/personal …`.
 Preserved fixtures, each chosen to prove something:
 

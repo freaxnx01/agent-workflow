@@ -17,7 +17,7 @@ writing `System.Description`.
 
 ## The decisive fact
 
-Read live from `AndreasImboden0022` on 2026-10-08:
+Read live from `<personal-org>` on 2026-10-08:
 
 | Field | Type | Read-only |
 |---|---|---|

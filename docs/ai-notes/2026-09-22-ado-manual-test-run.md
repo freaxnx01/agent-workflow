@@ -278,7 +278,7 @@ the org has **no "+ New project" button** for this account, confirming the
 identity lacks org-level project-create rights. Testing moved to the user's own
 organization instead.
 
-- **Org:** `AndreasImboden0022` (personal). **Project:** `agent-workflow-sandbox`,
+- **Org:** `<personal-org>` (personal). **Project:** `agent-workflow-sandbox`,
   created for this run with the **Basic** process template.
 - **Repo:** `agent-workflow-sandbox`, auto-created with the project, initialized
   here with `main` + `feat/sandbox-pr`.
