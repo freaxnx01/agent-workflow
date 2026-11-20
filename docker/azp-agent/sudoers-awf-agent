@@ -8,6 +8,9 @@
 # Keep env_keep in lockstep with AWF_ENV_ALLOWLIST in
 # docker/azp-agent/boundary/awf-agent-run; tests/run-azp-agent-dockerfile-tests.sh
 # pins both.
+#
+# NUGET_FALLBACK_PACKAGES is deliberately NOT here: it is a constant
+# awf-agent-run sets itself (#641), never a value the caller may pass.
 Defaults:azp env_reset
 Defaults:azp env_keep = "CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY MODEL MAX_TURNS"
 azp ALL=(awf-agent) NOPASSWD: /usr/local/libexec/awf-agent/awf-agent-run, /usr/local/libexec/awf-agent/awf-agent-git, /usr/local/libexec/awf-agent/awf-agent-reap

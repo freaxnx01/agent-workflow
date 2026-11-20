@@ -46,6 +46,8 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 BASE_FROM='FROM debian:13-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4 AS base'
+NUGET_CACHE_DIR=/var/cache/awf-nuget
+BOUNDARY_PROTOCOL=2
 
 # normalize <file> — logical Dockerfile instructions, one per line: comment lines
 # dropped, `\`-continued lines joined, whitespace runs collapsed.
@@ -202,6 +204,27 @@ check_boundary() {
   rc=1; grep -qE '^RUN .*chmod 0700 /home/azp( |$)' <<<"$norm" && rc=0
   check dockerfile_azp_home_is_private "$(verdict "$rc")" \
     "no RUN sets /home/azp to 0700"
+
+  check_nuget_cache "$norm"
+}
+
+# check_nuget_cache <norm> — the read-only NuGet fallback folder of #641. `azp`
+# (the driver) writes it; `awf-agent` can only read it, so a package the agent
+# restored cannot poison the next run.
+check_nuget_cache() {
+  local norm="$1" base line rc
+  base="$(stage_lines "$norm" base)"
+  line="$(grep -E "^RUN .*$NUGET_CACHE_DIR" <<<"$base" | head -n1 || true)"
+  rc=0
+  [[ -n "$line" ]] || rc=1
+  if [[ "$line" == *"install -d"* ]]; then
+    [[ "$line" == *"-o azp"* && "$line" == *"-g azp"* && "$line" == *"-m 0755"* ]] || rc=1
+  else
+    [[ "$line" == *"chown azp:azp $NUGET_CACHE_DIR"* || "$line" == *"chown -R azp:azp $NUGET_CACHE_DIR"* ]] || rc=1
+    [[ "$line" == *"chmod 0755 $NUGET_CACHE_DIR"* ]] || rc=1
+  fi
+  check dockerfile_creates_nuget_cache_dir "$(verdict "$rc")" \
+    "base stage must create $NUGET_CACHE_DIR as azp:azp 0755; found: $line"
 }
 
 check_install_run() { # check_install_run <dotnet-stage>
@@ -302,6 +325,9 @@ mutate_drop_awf_agent_claude_install() {
 mutate_open_azp_home() {
   sed -E 's#chmod 0700 /home/azp#chmod 0755 /home/azp#' "$1" > "$2"
 }
+mutate_drop_nuget_cache_dir() {
+  grep -v -F "$NUGET_CACHE_DIR" "$1" > "$2"
+}
 
 # negative <case-name> <mutator> <check-that-must-fail>
 negative() {
@@ -338,6 +364,8 @@ negative negative_no_agent_cli_is_caught mutate_drop_awf_agent_claude_install \
   dockerfile_installs_claude_for_awf_agent
 negative negative_readable_azp_home_is_caught mutate_open_azp_home \
   dockerfile_azp_home_is_private
+negative negative_no_nuget_cache_dir_is_caught mutate_drop_nuget_cache_dir \
+  dockerfile_creates_nuget_cache_dir
 
 # --- the sudoers drop-in ------------------------------------------------------
 
@@ -415,6 +443,33 @@ negative_sudoers negative_sudoers_root_runas_is_caught mutate_sudoers_runas_root
   sudoers_runas_is_awf_agent_only
 negative_sudoers negative_sudoers_credential_in_env_keep_is_caught mutate_sudoers_env_keep_extra \
   sudoers_env_keep_is_the_allowlist
+
+# --- the boundary protocol and the entry-point allowlist ----------------------
+
+# The protocol is what makes a stale image refuse (#641): the driver compares
+# every entry point's answer against its own one value, so the four pins have to
+# move together or a rebuilt image is unreachable.
+section "boundary protocol and allowlist"
+
+BOUNDARY="$ROOT/docker/azp-agent/boundary"
+PROTO_RC=0
+PROTO_DETAIL=''
+for entry_file in "$BOUNDARY/awf-agent-run" "$BOUNDARY/awf-agent-git" "$BOUNDARY/awf-agent-reap"; do
+  declared="$(sed -n 's/^AWF_PROTOCOL=//p' "$entry_file" | head -n1)"
+  [[ "$declared" == "$BOUNDARY_PROTOCOL" ]] ||
+    { PROTO_RC=1; PROTO_DETAIL+=" ${entry_file##*/}=$declared"; }
+done
+declared="$(sed -n 's/^AWF_BOUNDARY_PROTOCOL=//p' "$ROOT/scripts/lib/agent-boundary.sh" | head -n1)"
+[[ "$declared" == "$BOUNDARY_PROTOCOL" ]] ||
+  { PROTO_RC=1; PROTO_DETAIL+=" agent-boundary.sh=$declared"; }
+check entry_points_share_one_protocol "$(verdict "$PROTO_RC")" \
+  "expected $BOUNDARY_PROTOCOL;$PROTO_DETAIL"
+
+# #641 adds non-secret constants to the rebuilt environment; the allowlist of
+# names taken FROM THE CALLER must stay exactly the four of the sudoers rule.
+assert_eq "awf_agent_run_allowlist_unchanged" \
+  "AWF_ENV_ALLOWLIST=($ENV_ALLOWLIST)" \
+  "$(grep -E '^AWF_ENV_ALLOWLIST=' "$BOUNDARY/awf-agent-run")"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then printf 'Failed: %s\n' "${FAIL_NAMES[*]}"; exit 1; fi

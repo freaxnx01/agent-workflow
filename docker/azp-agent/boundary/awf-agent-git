@@ -33,7 +33,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-AWF_PROTOCOL=1
+AWF_PROTOCOL=2
 AWF_WS_ROOT="${AWF_WS_ROOT:-/home/awf-agent/ws}"
 AWF_COMMIT_NAME=ai-implement
 AWF_COMMIT_EMAIL=ai-implement@noreply.invalid

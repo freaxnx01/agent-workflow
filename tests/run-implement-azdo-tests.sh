@@ -699,7 +699,7 @@ printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$MOCKS/awf-boundary/awf-agent-run"
 printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$ROOT/docker/azp-agent/boundary/awf-agent-git" > "$SURVIVOR_DIR/awf-agent-git"
 # The preflight reap finds nothing; every reap after it reports survivors.
 # shellcheck disable=SC2016  # the $1 belongs to the generated reap, not to this shell
-printf '#!/usr/bin/env bash\n[[ "${1:-}" != --protocol ]] || { printf "1\\n"; exit 0; }\ncount=%q\nn=$(( $(cat "$count" 2>/dev/null || echo 0) + 1 ))\nprintf "%%s\\n" "$n" > "$count"\n(( n > 1 )) || { printf "0\\n"; exit 0; }\nprintf "2\\n"\nexit 1\n' \
+printf '#!/usr/bin/env bash\n[[ "${1:-}" != --protocol ]] || { printf "2\\n"; exit 0; }\ncount=%q\nn=$(( $(cat "$count" 2>/dev/null || echo 0) + 1 ))\nprintf "%%s\\n" "$n" > "$count"\n(( n > 1 )) || { printf "0\\n"; exit 0; }\nprintf "2\\n"\nexit 1\n' \
   "$TMP/survivor-reap.count" > "$SURVIVOR_DIR/awf-agent-reap"
 chmod +x "$SURVIVOR_DIR"/*
 PIPE_BOUNDARY_DIR="$SURVIVOR_DIR"
@@ -751,7 +751,7 @@ LEFTOVER_DIR="$TMP/boundary-leftover"
 mkdir -p "$LEFTOVER_DIR"
 cp "$SURVIVOR_DIR/awf-agent-run" "$SURVIVOR_DIR/awf-agent-git" "$LEFTOVER_DIR/"
 # shellcheck disable=SC2016  # the $1 belongs to the generated reap, not to this shell
-printf '#!/usr/bin/env bash\n[[ "${1:-}" != --protocol ]] || { printf "1\\n"; exit 0; }\nprintf "1\\n"\nexit 1\n' > "$LEFTOVER_DIR/awf-agent-reap"
+printf '#!/usr/bin/env bash\n[[ "${1:-}" != --protocol ]] || { printf "2\\n"; exit 0; }\nprintf "1\\n"\nexit 1\n' > "$LEFTOVER_DIR/awf-agent-reap"
 chmod +x "$LEFTOVER_DIR"/*
 PIPE_BOUNDARY_DIR="$LEFTOVER_DIR"
 run_pipeline success

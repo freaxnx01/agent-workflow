@@ -48,7 +48,7 @@
 AWF_BOUNDARY_DIR="${AWF_BOUNDARY_DIR:-/usr/local/libexec/awf-agent}"
 AWF_WS_ROOT="${AWF_WS_ROOT:-/home/awf-agent/ws}"
 AWF_AGENT_USER=awf-agent
-AWF_BOUNDARY_PROTOCOL=1
+AWF_BOUNDARY_PROTOCOL=2
 
 # bgit <git-args...> — the only git in this file. Hooks and fsmonitor are off on
 # EVERY call: a bundle, a fetch and a rev-list all run repo config, and the
