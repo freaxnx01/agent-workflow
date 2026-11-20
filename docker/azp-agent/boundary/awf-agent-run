@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+#
+# awf-agent-run — run the agent CLI as the boundary user (#591, ADR-024).
+#
+# One of the three root-owned entry points `azp` may run as `awf-agent` through
+# /etc/sudoers.d/awf-agent. Nothing else about the agent call is in the image:
+# the (trusted) driver computes the CLI arguments and passes them after `--`,
+# so the model denylist and the CLI flags change without an image rebuild.
+#
+# Usage:
+#   awf-agent-run --protocol                     prints the protocol version
+#   awf-agent-run <workspace> -- <claude-args…>  runs the agent in <workspace>
+#
+# The prompt arrives on stdin and the result JSON leaves on stdout, both passed
+# straight through.
+#
+# THE ENVIRONMENT IS REBUILT, NOT INHERITED. sudo's env_reset/env_keep already
+# drops everything but the allowlist; this repeats the allowlist here so the
+# entry point is safe on its own — a misconfigured sudoers rule cannot hand the
+# agent AZURE_DEVOPS_EXT_PAT or SYSTEM_ACCESSTOKEN through this door.
+#
+# Optional environment:
+#   AWF_WS_ROOT       where agent workspaces live. Default /home/awf-agent/ws.
+#   AWF_AGENT_CLAUDE  the CLI. Default /home/awf-agent/.local/bin/claude.
+#
+# Exit codes: the agent's own; 2 on a usage error or a workspace outside the
+# root.
+set -euo pipefail
+IFS=$'\n\t'
+
+AWF_PROTOCOL=1
+AWF_WS_ROOT="${AWF_WS_ROOT:-/home/awf-agent/ws}"
+AWF_AGENT_CLAUDE="${AWF_AGENT_CLAUDE:-/home/awf-agent/.local/bin/claude}"
+AWF_AGENT_HOME=/home/awf-agent
+
+# Exactly the allowlist of the sudoers rule. Keep the two in lockstep.
+AWF_ENV_ALLOWLIST=(CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY MODEL MAX_TURNS)
+
+usage() {
+  printf 'usage: awf-agent-run --protocol | awf-agent-run <workspace> -- <agent-args...>\n' >&2
+  exit 2
+}
+
+# require_workspace <path> — the workspace must be a direct child of the root.
+# `realpath -m` resolves symlinks and `..` without requiring the path to exist,
+# so neither a traversal nor a symlinked workspace escapes.
+require_workspace() {
+  local resolved root
+  resolved="$(realpath -m -- "$1")" || exit 2
+  root="$(realpath -m -- "$AWF_WS_ROOT")" || exit 2
+  if [[ "$(dirname -- "$resolved")" != "$root" || "$resolved" == "$root" ]]; then
+    printf 'awf-agent-run: workspace %s is not a direct child of %s\n' "$1" "$root" >&2
+    exit 2
+  fi
+  printf '%s\n' "$resolved"
+}
+
+[[ $# -ge 1 ]] || usage
+if [[ "$1" == "--protocol" ]]; then
+  printf '%s\n' "$AWF_PROTOCOL"
+  exit 0
+fi
+[[ $# -ge 2 && "$2" == "--" ]] || usage
+
+workspace="$(require_workspace "$1")"
+shift 2
+[[ -d "$workspace" ]] || { printf 'awf-agent-run: no such workspace: %s\n' "$workspace" >&2; exit 2; }
+
+env_args=("HOME=$AWF_AGENT_HOME" "PATH=/usr/local/bin:/usr/bin:/bin")
+for name in "${AWF_ENV_ALLOWLIST[@]}"; do
+  [[ -n "${!name+set}" ]] || continue
+  env_args+=("$name=${!name}")
+done
+
+cd "$workspace"
+exec env -i "${env_args[@]}" "$AWF_AGENT_CLAUDE" "$@"

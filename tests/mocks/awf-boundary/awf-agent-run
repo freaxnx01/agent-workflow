@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#
+# awf-agent-run — TEST DOUBLE of docker/azp-agent/boundary/awf-agent-run.
+#
+# The real entry point rebuilds the environment from a four-name allowlist, so
+# the test mocks it would exec (tests/mocks/claude) could never read their own
+# configuration. This double keeps the same confinement rule and the same
+# argument contract, drops every Azure DevOps credential — which is what the
+# driver tests assert about — and passes the rest of the environment through.
+#
+# The real allowlist is pinned by tests/run-azp-agent-dockerfile-tests.sh (the
+# sudoers rule) and tests/run-agent-boundary-entrypoint-tests.sh (the entry
+# point itself), not here.
+#
+# Env:
+#   AWF_WS_ROOT        workspace root the <workspace> argument must sit in.
+#   AWF_AGENT_CLAUDE   CLI to exec. Default `claude` off PATH.
+#   AWF_RUN_ENV_LOG    when set, the environment handed to the CLI is appended
+#                      to it, so a test can prove what the agent could read.
+set -euo pipefail
+IFS=$'\n\t'
+
+[[ "${1:-}" != "--protocol" ]] || { printf '1\n'; exit 0; }
+[[ $# -ge 2 && "$2" == "--" ]] || { printf 'usage: awf-agent-run <workspace> -- <args...>\n' >&2; exit 2; }
+
+workspace="$(realpath -m -- "$1")"
+root="$(realpath -m -- "${AWF_WS_ROOT:-/home/awf-agent/ws}")"
+if [[ "$(dirname -- "$workspace")" != "$root" || "$workspace" == "$root" ]]; then
+  printf 'awf-agent-run: workspace %s is not a direct child of %s\n' "$1" "$root" >&2
+  exit 2
+fi
+shift 2
+
+unset AZURE_DEVOPS_EXT_PAT SYSTEM_ACCESSTOKEN AZP_TOKEN VSTS_AGENT_INPUT_TOKEN
+cd "$workspace"
+[[ -z "${AWF_RUN_ENV_LOG:-}" ]] || env >> "$AWF_RUN_ENV_LOG"
+exec "${AWF_AGENT_CLAUDE:-claude}" "$@"

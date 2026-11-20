@@ -1,0 +1,13 @@
+# /etc/sudoers.d/awf-agent — the agent user boundary of #591 / ADR-024.
+#
+# `azp` (the driver) may run exactly three fixed, root-owned entry points as
+# `awf-agent`, and nothing as root. env_reset drops the job's environment;
+# env_keep passes only what the agent CLI itself needs, so AZURE_DEVOPS_EXT_PAT
+# and SYSTEM_ACCESSTOKEN are dropped by sudo rather than by the caller.
+#
+# Keep env_keep in lockstep with AWF_ENV_ALLOWLIST in
+# docker/azp-agent/boundary/awf-agent-run; tests/run-azp-agent-dockerfile-tests.sh
+# pins both.
+Defaults:azp env_reset
+Defaults:azp env_keep = "CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY MODEL MAX_TURNS"
+azp ALL=(awf-agent) NOPASSWD: /usr/local/libexec/awf-agent/awf-agent-run, /usr/local/libexec/awf-agent/awf-agent-git, /usr/local/libexec/awf-agent/awf-agent-reap

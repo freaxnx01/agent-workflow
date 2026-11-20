@@ -78,6 +78,8 @@ source "$HERE/lib/ci-host.sh"
 source "$HERE/lib/pipeline-file-guard.sh"
 # shellcheck source=scripts/lib/retry-policy.sh
 source "$HERE/lib/retry-policy.sh"
+# shellcheck source=scripts/lib/agent-boundary.sh
+source "$HERE/lib/agent-boundary.sh"
 
 # Run state. Initialised here so the file can be sourced under `set -u`.
 DRY_RUN="${DRY_RUN:-0}"
@@ -107,7 +109,16 @@ SELF_FIX_ITERATIONS=''
 SELF_FIX_STOP=''
 PROMPT_FILE=''
 RESULT_FILE=''
+AGENT_WORKSPACE=''   # the agent's own workspace in pipeline mode; empty locally
+EVIDENCE_ERROR=''    # why this attempt's evidence cannot be trusted, one line
+BOUNDARY_REFUSAL=''  # why preflight refuses to start an agent in pipeline mode
+RESULT_MAX_BYTES=65536   # 64 KiB, as the GitHub gate caps it (#571)
 declare -A RUN_PUSHED=()   # branch -> tip a failed attempt of THIS run left on the server
+
+# Pipeline mode is where the user boundary applies: the agent runs as
+# `awf-agent`, never as this driver (#591, ADR-024). A local run is a human at a
+# terminal in a repo they chose, and keeps today's behaviour.
+pipeline_mode() { [[ "$(ci_host)" == "pipelines" ]]; }
 
 # --- phases ------------------------------------------------------------------
 
@@ -157,8 +168,44 @@ preflight() {
 
   # Where this run happens, for the banner and the work-item report.
   RUN_CONTEXT=local
-  [[ "$(ci_host)" == "pipelines" ]] && RUN_CONTEXT=pipeline
+  pipeline_mode && RUN_CONTEXT=pipeline
+  # A dry run starts no agent, so it needs no boundary to put one behind.
+  [[ "$RUN_CONTEXT" != pipeline || "$DRY_RUN" == 1 ]] || preflight_boundary
   return 0
+}
+
+# Both checks fail the whole run closed before any agent starts: in pipeline
+# mode there is no fallback to running the agent as the driver, which is the
+# weakness #591 closes. The refusal is recorded here and reported by
+# refuse_without_boundary, once the work item is read.
+preflight_boundary() {
+  if checkout_has_credentials; then
+    BOUNDARY_REFUSAL='the checkout carries a credential (persistCredentials must be false); refusing to run the agent'
+    return 0
+  fi
+  local cause
+  if ! cause="$(boundary_check 2>&1)"; then
+    BOUNDARY_REFUSAL="the agent user boundary is not available: $(printf '%s' "$cause" | head -n1)"
+    return 0
+  fi
+  # The container outlives the job: a crashed earlier run can have left an
+  # agent process behind, and nothing authenticated runs while one exists.
+  boundary_reap >/dev/null 2>&1 ||
+    BOUNDARY_REFUSAL='an agent process from an earlier run survived the reap'
+  return 0
+}
+
+# Exits 1 with a run report on the work item when preflight refused the run.
+# No agent ran, so the report states 0 turns and $0.00: check-attempt-cap.sh
+# counts that as a non-start (#393), and a misconfigured image does not use up
+# the work item's attempts.
+refuse_without_boundary() {
+  [[ -n "$BOUNDARY_REFUSAL" ]] || return 0
+  printf 'error: %s\n' "$BOUNDARY_REFUSAL" >&2
+  RESULT_FILE="$WORK_DIR/no-agent-ran.json"
+  printf '{"num_turns":0,"total_cost_usd":0}\n' > "$RESULT_FILE"
+  post_report "failed: $BOUNDARY_REFUSAL" "next: stopping, no agent ran (see AZDO-PIPELINE-SETUP.md §13)"
+  exit 1
 }
 
 print_banner() {
@@ -214,26 +261,128 @@ resolve_default_branch() {
 # permissions. Pointed at an implement prompt it reads the task, cannot write a
 # file, and exits 0 having done nothing -- observed on the first real run here.
 run_attempt() {
+  EVIDENCE_ERROR=''
+  AGENT_WORKSPACE=''
   PROMPT_FILE="$WORK_DIR/prompt.md"
   RESULT_FILE="$WORK_DIR/result.json"
   : > "$RESULT_FILE"
+  if pipeline_mode; then
+    run_attempt_boundary
+  else
+    run_attempt_local
+  fi
+  ATTEMPT_CLASS="$(classify_attempt "$AGENT_RC" "$RESULT_FILE")"
+  # Evidence that cannot be trusted is not a verdict about the work: the run
+  # reports `bug`, which lib/retry-policy.sh does not retry.
+  [[ -z "$EVIDENCE_ERROR" ]] || ATTEMPT_CLASS=bug
+  printf '\noutcome: %s (agent rc=%s)\n' "$ATTEMPT_CLASS" "$AGENT_RC"
+}
+
+# The agent works in the driver's own checkout and the driver reads the result
+# straight out of it. That is the trust model of a human at a terminal.
+run_attempt_local() {
   # build-agent-prompt takes its injected ISSUE_JSON path, so it reads the work
   # item's description and comments without ever calling gh.
   PROMPT_FILE="$PROMPT_FILE" PROMPT_FORGE=azdo bash "$HERE/build-agent-prompt.sh" >/dev/null
-
-  printf 'running the agent (max %s turns)...\n\n' "$TURNS_BUDGET"
-  AGENT_RC=0
-  SECONDS=0
-  MODEL="$MODEL" MAX_TURNS="$TURNS_BUDGET" \
-    timeout --kill-after=30s "${IMPLEMENT_TIMEOUT_MIN:-45}m" \
-    bash "$HERE/lib/agent-cmd-claude-implement.sh" "$PROMPT_FILE" "$RESULT_FILE" || AGENT_RC=$?
-  ATTEMPT_SECONDS="$SECONDS"
-
+  invoke_agent "$RESULT_FILE"
   # Empty on a detached HEAD, which is how Azure Pipelines checks out: there is
   # no branch called HEAD to push, report or delete.
   HEAD_BRANCH="$(git symbolic-ref --quiet --short HEAD || true)"
-  ATTEMPT_CLASS="$(classify_attempt "$AGENT_RC" "$RESULT_FILE")"
-  printf '\noutcome: %s (agent rc=%s)\n' "$ATTEMPT_CLASS" "$AGENT_RC"
+}
+
+# The agent works as `awf-agent` in a workspace of its own, seeded from a bundle
+# of this checkout, and everything that comes back is treated as hostile data.
+run_attempt_boundary() {
+  HEAD_BRANCH=''
+  AGENT_WORKSPACE="$(boundary_new_workspace "$RUN_ATTEMPT")"
+  if ! boundary_seed "$AGENT_WORKSPACE" "$WORK_DIR/handoff" "origin/$DEFAULT_BRANCH"; then
+    note_evidence_error 'the agent workspace could not be prepared'
+    AGENT_RC=1
+    ATTEMPT_SECONDS=0
+    return 0
+  fi
+  PROMPT_FILE="$PROMPT_FILE" PROMPT_FORGE=azdo PROMPT_PUSH=0 \
+    bash "$HERE/build-agent-prompt.sh" >/dev/null
+  invoke_agent "$WORK_DIR/raw-result.json"
+  # Nothing the agent left is read while a process of its own can still run.
+  if ! boundary_reap; then
+    note_evidence_error 'an agent process survived the attempt'
+    return 0
+  fi
+  import_agent_result || return 0
+  collect_agent_commits || return 0
+}
+
+# Records the first thing that made this attempt's evidence untrustworthy; the
+# report names it on one line.
+note_evidence_error() {
+  [[ -z "$EVIDENCE_ERROR" ]] || return 0
+  EVIDENCE_ERROR="$1"
+}
+
+# Same wrapper, same timeout, same arguments as a local run. AGENT_WORKSPACE —
+# empty locally — is what sends the call through the boundary.
+invoke_agent() {
+  local result="$1"
+  printf 'running the agent (max %s turns)...\n\n' "$TURNS_BUDGET"
+  AGENT_RC=0
+  SECONDS=0
+  MODEL="$MODEL" MAX_TURNS="$TURNS_BUDGET" AGENT_WORKSPACE="$AGENT_WORKSPACE" \
+    timeout --kill-after=30s "${IMPLEMENT_TIMEOUT_MIN:-45}m" \
+    bash "$HERE/lib/agent-cmd-claude-implement.sh" "$PROMPT_FILE" "$result" || AGENT_RC=$?
+  ATTEMPT_SECONDS="$SECONDS"
+}
+
+# The agent's result JSON never reaches a consumer as it was written: it is
+# size-capped here and rebuilt field by field, with strict types, by
+# import-result-output.sh — the same gate the GitHub path uses (#571).
+import_agent_result() {
+  local raw="$WORK_DIR/raw-result.json" out="$WORK_DIR/import" valid
+  mkdir -p "$out"
+  : > "$out/outputs"
+  if ! cap_file_bytes "$raw" "$RESULT_MAX_BYTES"; then
+    printf 'warning: the agent result is missing or over %s bytes; treating it as empty\n' \
+      "$RESULT_MAX_BYTES" >&2
+    : > "$raw"
+  fi
+  RESULT_JSON_FILE="$raw" OUT_DIR="$out" GITHUB_OUTPUT="$out/outputs" \
+    bash "$HERE/import-result-output.sh" >/dev/null 2>&1 || true
+  RESULT_FILE="$(_output_value result-file "$out/outputs")"
+  valid="$(_output_value valid "$out/outputs")"
+  if [[ -z "$RESULT_FILE" || ! -r "$RESULT_FILE" || "$valid" != true ]]; then
+    [[ -n "$RESULT_FILE" && -r "$RESULT_FILE" ]] || RESULT_FILE="$WORK_DIR/result.json"
+    note_evidence_error 'the agent handed over no valid result evidence'
+    return 1
+  fi
+  return 0
+}
+
+# The agent's commits come back only as a verified bundle, on a branch name the
+# driver has validated. Sets HEAD_BRANCH and puts the commits on that branch in
+# this checkout, which the agent cannot write.
+collect_agent_commits() {
+  local branch rc=0
+  branch="$(boundary_collect "$AGENT_WORKSPACE" "$(git rev-parse "origin/$DEFAULT_BRANCH")" \
+    "$WORK_DIR/handoff")" || rc=$?
+  case "$rc" in
+    0) ;;
+    3) # The agent committed nothing, which is a run outcome and not bad
+       # evidence: open_draft_pr reports that there is nothing to PR.
+       printf 'error: the agent committed nothing in its workspace; nothing to PR.\n' >&2
+       return 0 ;;
+    4) note_evidence_error 'the agent named an unusable branch'; return 1 ;;
+    *) note_evidence_error 'the agent commits could not be verified'; return 1 ;;
+  esac
+  if ! valid_branch_name "$branch"; then
+    note_evidence_error 'the agent named an unusable branch'
+    return 1
+  fi
+  if ! git checkout -B "$branch" refs/awf/collected >/dev/null 2>&1; then
+    note_evidence_error 'the agent commits could not be put on their branch'
+    return 1
+  fi
+  HEAD_BRANCH="$branch"
+  return 0
 }
 
 # classify-failure.sh is the one pipeline script that was already forge-agnostic.
@@ -256,19 +405,15 @@ classify_attempt() {
 
 # `ls-remote` against an https origin needs the same Basic auth as the push, or
 # it fails on the server and the "branch left on the server" line never appears.
-_azdo_auth_header() {
-  printf 'Authorization: Basic %s' "$(printf ':%s' "$AZURE_DEVOPS_EXT_PAT" | base64 -w0)"
-}
-
+# azdo_git (lib/agent-boundary.sh) carries that header in the environment, not
+# in argv: /proc/<pid>/cmdline is world readable and the agent user can read it.
 remote_branch_exists() {
-  git -c http.extraheader="$(_azdo_auth_header)" \
-    ls-remote --exit-code --heads origin "refs/heads/$1" >/dev/null 2>&1
+  azdo_git ls-remote --exit-code --heads origin "refs/heads/$1" >/dev/null 2>&1
 }
 
 # Prints the branch's SHA on the server, or nothing when it is absent.
 remote_branch_sha() {
-  git -c http.extraheader="$(_azdo_auth_header)" \
-    ls-remote --heads origin "refs/heads/$1" 2>/dev/null | awk 'NR == 1 {print $1}'
+  azdo_git ls-remote --heads origin "refs/heads/$1" 2>/dev/null | awk 'NR == 1 {print $1}'
 }
 
 # push_branch <branch> [<expected-remote-sha>]: with a SHA, overwrite only that
@@ -276,7 +421,7 @@ remote_branch_sha() {
 push_branch() {
   local lease=()
   [[ -z "${2:-}" ]] || lease=("--force-with-lease=refs/heads/$1:$2")
-  git -c http.extraheader="$(_azdo_auth_header)" push -q -u "${lease[@]}" origin "$1"
+  azdo_git push -q -u "${lease[@]}" origin "$1"
 }
 
 # Remembers the tip a failed attempt left on the server, so a later attempt of
@@ -407,6 +552,7 @@ render_report() {
   printf '## ai-implement run (%s, Azure DevOps) — attempt %s\n\n' "$RUN_CONTEXT" "$RUN_ATTEMPT"
   printf '**Outcome:** %s\n' "$outcome"
   report_metrics_line "$RESULT_FILE"
+  [[ -z "$EVIDENCE_ERROR" ]] || printf -- '- evidence: %s\n' "$EVIDENCE_ERROR"
   printf -- '- agent: %s, model: %s\n' "$AGENT_NAME" "$MODEL"
   printf -- '- cap: attempt %s of %s\n' "${CAP_ATTEMPT:-?}" "${MAX_ATTEMPTS:-2}"
   [[ -z "$PR_ID" ]] || printf -- '- draft PR: !%s\n' "$PR_ID"
@@ -501,10 +647,13 @@ decide_retry() {
 # run keeps ignored files (.envrc); a pipeline checkout is disposable.
 reset_workspace() {
   local clean_flags=-ffd
-  [[ "$(ci_host)" != "pipelines" ]] || clean_flags=-ffdx
+  ! pipeline_mode || clean_flags=-ffdx
   git checkout --force "$DEFAULT_BRANCH" || return 1
   git reset --hard "origin/$DEFAULT_BRANCH" || return 1
   git clean "$clean_flags" || return 1
+  # The next attempt collects into this ref again, and gets a workspace of its
+  # own: nothing of the last agent's is inherited.
+  git update-ref -d refs/awf/collected 2>/dev/null || true
   if [[ -n "$HEAD_BRANCH" && "$HEAD_BRANCH" != "$DEFAULT_BRANCH" ]]; then
     git branch -D "$HEAD_BRANCH" || return 1
   fi
@@ -613,6 +762,11 @@ review_draft_pr() {
   if [[ "${SELF_FIX:-0}" == 1 && "$REVIEW_VERDICT" == request_changes \
         && "$SELF_FIX_MAX_ITERATIONS" -gt 0 ]]; then
     run_self_fix
+    # The fix agent's own stop paths reap, but a timeout or a crash of the
+    # self-fix script does not reach them; the verdict posts with the token.
+    if pipeline_mode && ! boundary_reap >/dev/null 2>&1; then
+      SELF_FIX_STOP="${SELF_FIX_STOP:+$SELF_FIX_STOP; }an agent process survived the self-fix"
+    fi
   fi
   report_file="$(mktemp -p "$WORK_DIR")"
   render_review_report > "$report_file"
@@ -673,10 +827,16 @@ main() {
   preflight
   print_banner
   read_work_item
+  umask 077
   WORK_DIR="$(mktemp -d)"
   trap '[[ -z "$WORK_DIR" ]] || rm -rf "$WORK_DIR"' EXIT
+  # 0711, so the agent user can reach the one file it is given
+  # (handoff/seed.bundle, mode 0644) and can neither list nor read the prompt,
+  # the result or anything else the driver keeps here.
+  ! pipeline_mode || chmod 0711 "$WORK_DIR"
   RUN_ATTEMPT=1
   classify_issue
+  refuse_without_boundary
 
   if [[ "$DRY_RUN" == "1" ]]; then
     print_cap_preview

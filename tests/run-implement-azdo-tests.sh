@@ -133,6 +133,9 @@ run_loop() {
   git -C "$WORK" config user.email t@example.invalid
   # Azure Pipelines checks out a detached HEAD; LOOP_DETACH=1 reproduces that.
   [[ -z "${LOOP_DETACH:-}" ]] || git -C "$WORK" checkout -q --detach
+  # LOOP_PERSIST_CREDENTIALS=1 is what `persistCredentials: true` leaves behind.
+  [[ -z "${LOOP_PERSIST_CREDENTIALS:-}" ]] ||
+    git -C "$WORK" config http.extraheader 'Authorization: Basic c2VjcmV0'
   tr ',' '\n' <<<"$steps" > "$dir/steps"
   : > "$dir/az.log"; : > "$dir/claude.log"; : > "$dir/az.stdin"
   : > "$dir/fix.log"; : > "$dir/review.log"
@@ -165,6 +168,34 @@ run_loop() {
 }
 
 count_reports() { grep -c 'ai-implement run (local, Azure DevOps) — attempt' <<<"$1" || true; }
+count_pipeline_reports() { grep -c 'ai-implement run (pipeline, Azure DevOps) — attempt' <<<"$1" || true; }
+
+# run_pipeline <steps-csv> [VAR=value ...] — run_loop in pipeline mode, with the
+# agent user boundary in place: tests/mocks/sudo stands in for sudo and
+# tests/mocks/awf-boundary for the image's entry point dir (the git and reap
+# entry points are the real ones). Each run gets its own workspace root, so a
+# seed never meets a workspace an earlier run left. Sets PIPE_WS, PIPE_SUDO and
+# PIPE_AGENT_ENV on top of run_loop's own variables.
+PIPE_N=0
+PIPE_WS=''; PIPE_SUDO=''; PIPE_AGENT_ENV=''
+PIPE_PAT='tok-SECRET-9f3a'
+# What the mock sudo passes through on top of the production allowlist: the test
+# mocks' own configuration, which the real rule has no reason to carry.
+PIPE_SUDO_KEEP='CLAUDE_MOCK_STEPS,CLAUDE_MOCK_STATE,CLAUDE_MOCK_LOG,CLAUDE_MOCK_FIX_LOG,CLAUDE_MOCK_FIX_TOUCH,CLAUDE_MOCK_FIX_FAIL,CLAUDE_MOCK_REVIEWS,CLAUDE_MOCK_REVIEW_LOG,CLAUDE_MOCK_REVIEW_DIR,CLAUDE_MOCK_DROP_ORIGIN_MAIN,GIT_MOCK_REAL,GIT_MOCK_ORIGIN_URL,GIT_MOCK_LOG'
+run_pipeline() {
+  local steps="$1"; shift
+  PIPE_N=$((PIPE_N + 1))
+  local dir="$TMP/pipe-$PIPE_N"
+  PIPE_WS="$dir/ws"; PIPE_SUDO="$dir/sudo.log"; PIPE_AGENT_ENV="$dir/agent-env.log"
+  mkdir -p "$PIPE_WS"
+  : > "$PIPE_SUDO"; : > "$PIPE_AGENT_ENV"
+  run_loop "$steps" TF_BUILD=True SYSTEM_ACCESSTOKEN="$PIPE_PAT" \
+    AZURE_DEVOPS_EXT_PAT="$PIPE_PAT" \
+    AWF_BOUNDARY_DIR="${PIPE_BOUNDARY_DIR:-$MOCKS/awf-boundary}" \
+    AWF_WS_ROOT="$PIPE_WS" AWF_RUN_ID="p$PIPE_N" \
+    AWF_RUN_ENV_LOG="$PIPE_AGENT_ENV" \
+    SUDO_LOG="$PIPE_SUDO" SUDO_MOCK_KEEP="$PIPE_SUDO_KEEP" "$@"
+}
 
 section "token source"
 
@@ -286,6 +317,26 @@ cap_roundtrip() {
   env -i HOME="$TMP" PATH="$PATH" ISSUE_NUMBER=7 REPO=contoso/my-repo DRY_RUN=1 \
     ISSUE_COMMENTS_JSON="$comments" bash "$ROOT/scripts/check-attempt-cap.sh"
 }
+# A boundary refusal starts no agent, so its report is a non-start (#393), not
+# an attempt: a misconfigured image must not park the work item.
+# shellcheck disable=SC2016  # $1/$2 are for the inner bash, not this one
+env -i HOME="$TMP" PATH="$PATH" bash -c '
+  source "$1"
+  REFUSAL_OUT="$2"
+  forge_issue_comment() { cp "$2" "$REFUSAL_OUT"; }
+  remote_branch_exists() { return 1; }
+  WORK_DIR="$(mktemp -d)" ISSUE_NUMBER=7 RUN_CONTEXT=pipeline RUN_ATTEMPT=1 TURNS_BUDGET=80
+  BOUNDARY_REFUSAL="the agent user boundary is not available: sudo: a password is required"
+  refuse_without_boundary' _ "$ROOT/scripts/implement-azdo.sh" "$TMP/refusal.md" >/dev/null 2>&1 || true
+refusal_body="$(cat "$TMP/refusal.md" 2>/dev/null || true)"
+cap_out="$(env -i HOME="$TMP" PATH="$PATH" ISSUE_NUMBER=7 REPO=contoso/my-repo DRY_RUN=1 \
+  ISSUE_COMMENTS_JSON="$(jq -Rs '[{body: .}]' <<<"$refusal_body")" \
+  bash "$ROOT/scripts/check-attempt-cap.sh")"
+assert_contains "refusalReport_IsANonStart: names the refusal" \
+  "the agent user boundary is not available" "$refusal_body"
+assert_contains "refusalReport_IsANonStart: attempt not consumed" "attempt=1" "$cap_out"
+assert_contains "refusalReport_IsANonStart: counted as a non-start" "non-starts=1" "$cap_out"
+
 cap_out="$(cap_roundtrip "$FIXTURES/result-max-turns.json")"
 assert_contains "cap_roundtrip_max_turns: attempt" "attempt=2" "$cap_out"
 assert_contains "cap_roundtrip_max_turns: non-starts" "non-starts=0" "$cap_out"
@@ -570,6 +621,164 @@ attempt_body="$(env -i HOME="$TMP" PATH="$PATH" bash -c '
   render_report success "next: x"' _ "$ROOT/scripts/implement-azdo.sh" "$FIXTURES/result-max-turns.json")"
 both_comments="$(jq -s '.[0] + .[1]' <(jq -Rs '[{body: .}]' <<<"$attempt_body") <<<"$verdict_comments")"
 assert_contains "verdict_comment_not_counted_by_cap: with one attempt" "attempt=2" "$(cap_check "$both_comments")"
+
+section "pipeline mode: the agent runs behind the user boundary (#591)"
+
+# The boundary is a requirement, not a preference. A sudo that exists but
+# refuses must stop the run before the agent starts — never fall back to
+# running the agent as the driver, which is the weakness #591 closes.
+run_pipeline success SUDO_MOCK_DENY=1
+assert_eq "preflight_BoundaryRefused_ExitsBeforeAgent: rc" "1" "$RC"
+assert_contains "preflight_BoundaryRefused_ExitsBeforeAgent: names the boundary" \
+  "the agent user boundary is not available" "$ERR"
+assert_contains "preflight_BoundaryRefused_ExitsBeforeAgent: names sudo as the cause" "sudo" "$ERR"
+assert_eq "preflight_BoundaryRefused_ExitsBeforeAgent: the agent never ran" "" "$CLAUDELOG"
+# Spec acceptance: "exits 1 with a report when the boundary is missing".
+assert_contains "preflight_BoundaryRefused_ExitsBeforeAgent: a run report is posted" \
+  "ai-implement run" "$AZLOG"
+assert_contains "preflight_BoundaryRefused_ExitsBeforeAgent: the report says why" \
+  "the agent user boundary is not available" "$AZLOG"
+
+# `persistCredentials: true` leaves an http.extraheader in the checkout, and
+# nothing in this repo can enforce that setting on the consumer's YAML.
+LOOP_PERSIST_CREDENTIALS=1 run_pipeline success
+assert_eq "preflight_CheckoutHasCredentials_Refuses: rc" "1" "$RC"
+assert_contains "preflight_CheckoutHasCredentials_Refuses: names the setting" \
+  "persistCredentials must be false" "$ERR"
+assert_eq "preflight_CheckoutHasCredentials_Refuses: the agent never ran" "" "$CLAUDELOG"
+assert_contains "preflight_CheckoutHasCredentials_Refuses: the report says why" \
+  "persistCredentials must be false" "$AZLOG"
+
+run_pipeline success
+assert_eq "attempt_Success_PushesCollectedBranch: rc" "0" "$RC"
+assert_contains "attempt_Success_PushesCollectedBranch: the agent ran through the boundary" \
+  "awf-agent-run $PIPE_WS/p3-1 --" "$(cat "$PIPE_SUDO")"
+assert_contains "attempt_Success_PushesCollectedBranch: as awf-agent, non-interactively" \
+  "-n -u awf-agent" "$(cat "$PIPE_SUDO")"
+assert_contains "attempt_Success_PushesCollectedBranch: the collected branch is pushed" \
+  "ai/7-ok-1" "$(git -C "$BARE" branch --list 'ai/7-ok-1')"
+assert_contains "attempt_Success_PushesCollectedBranch: PR created" "repos pr create" "$AZLOG"
+assert_eq "attempt_Success_PushesCollectedBranch: one report" "1" "$(count_pipeline_reports "$AZLOG")"
+assert_contains "attempt_Success_PushesCollectedBranch: outcome" "**Outcome:** success" "$AZLOG"
+assert_contains "attempt_Success_PushesCollectedBranch: the imported result still carries the metrics" \
+  "**Turns:** 4 / cap" "$AZLOG"
+assert_not_contains "attempt_Success_PushesCollectedBranch: no evidence line on a clean run" \
+  "- evidence:" "$AZLOG"
+assert_eq "attempt_Success_PushesCollectedBranch: the driver ends on the agent's branch" \
+  "ai/7-ok-1" "$(git -C "$WORK" symbolic-ref --quiet --short HEAD)"
+for leak in AZURE_DEVOPS_EXT_PAT SYSTEM_ACCESSTOKEN "$PIPE_PAT"; do
+  assert_not_contains "attempt_Success_PushesCollectedBranch: the agent could not read $leak" \
+    "$leak" "$(cat "$PIPE_AGENT_ENV")"
+done
+assert_contains "attempt_Success_PushesCollectedBranch: the agent only ever saw its own workspace" \
+  "PWD=$PIPE_WS/p3-1" "$(cat "$PIPE_AGENT_ENV")"
+assert_not_contains "authGit_TokenNeverInArgv: no git call carried the token" \
+  "$PIPE_PAT" "$(cat "$LOOPDIR/git.log")"
+assert_not_contains 'authGit_TokenNeverInArgv: no git -c header either' \
+  "-c http.extraheader" "$(cat "$LOOPDIR/git.log")"
+assert_contains "authGit_HeaderTravelsInTheEnvironment" "env:GIT_CONFIG_KEY_0=http.extraheader" \
+  "$(grep -E '(^| )push ' "$LOOPDIR/git.log" || true)"
+
+# A second attempt gets a workspace of its own: an attempt never inherits what
+# the previous agent left behind.
+run_pipeline transient,success
+assert_eq "retry_Pipeline_UsesAFreshWorkspace: rc" "0" "$RC"
+assert_eq "retry_Pipeline_UsesAFreshWorkspace: two reports" "2" "$(count_pipeline_reports "$AZLOG")"
+assert_contains "retry_Pipeline_UsesAFreshWorkspace: first workspace" "$PIPE_WS/p4-1 --" "$(cat "$PIPE_SUDO")"
+assert_contains "retry_Pipeline_UsesAFreshWorkspace: second workspace" "$PIPE_WS/p4-2 --" "$(cat "$PIPE_SUDO")"
+assert_contains "retry_Pipeline_UsesAFreshWorkspace: the second attempt's branch is pushed" \
+  "ai/7-ok-2" "$(git -C "$BARE" branch --list 'ai/7-ok-2')"
+assert_eq "retry_Pipeline_UsesAFreshWorkspace: refs/awf/collected is not left behind" "" \
+  "$(git -C "$WORK" for-each-ref --format='%(refname)' 'refs/awf/collected' | grep -v 'refs/awf/collected$' || true)"
+
+# A reap that reports survivors fails the attempt closed: nothing the agent
+# left is used, nothing is pushed, and the class does not retry.
+SURVIVOR_DIR="$TMP/boundary-survivor"
+mkdir -p "$SURVIVOR_DIR"
+printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$MOCKS/awf-boundary/awf-agent-run" > "$SURVIVOR_DIR/awf-agent-run"
+printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$ROOT/docker/azp-agent/boundary/awf-agent-git" > "$SURVIVOR_DIR/awf-agent-git"
+# The preflight reap finds nothing; every reap after it reports survivors.
+# shellcheck disable=SC2016  # the $1 belongs to the generated reap, not to this shell
+printf '#!/usr/bin/env bash\n[[ "${1:-}" != --protocol ]] || { printf "1\\n"; exit 0; }\ncount=%q\nn=$(( $(cat "$count" 2>/dev/null || echo 0) + 1 ))\nprintf "%%s\\n" "$n" > "$count"\n(( n > 1 )) || { printf "0\\n"; exit 0; }\nprintf "2\\n"\nexit 1\n' \
+  "$TMP/survivor-reap.count" > "$SURVIVOR_DIR/awf-agent-reap"
+chmod +x "$SURVIVOR_DIR"/*
+PIPE_BOUNDARY_DIR="$SURVIVOR_DIR"
+rm -f "$TMP/survivor-reap.count"
+run_pipeline success
+PIPE_BOUNDARY_DIR=''
+assert_eq "attempt_ReapFails_InvalidEvidence: rc" "1" "$RC"
+assert_contains "attempt_ReapFails_InvalidEvidence: outcome" "**Outcome:** failed: bug" "$AZLOG"
+assert_contains "attempt_ReapFails_InvalidEvidence: evidence line" \
+  "- evidence: an agent process survived the attempt" "$AZLOG"
+assert_not_contains "attempt_ReapFails_InvalidEvidence: no PR" "repos pr create" "$AZLOG"
+assert_eq "attempt_ReapFails_InvalidEvidence: nothing pushed" "" "$(git -C "$BARE" branch --list 'ai/7-ok-1')"
+assert_eq "attempt_ReapFails_InvalidEvidence: no retry" "1" "$(grep -c . <<<"$CLAUDELOG" || true)"
+
+# The agent names its own branch, so the name is hostile input. One git would
+# accept but the driver will not must fail the attempt, not reach a push.
+run_pipeline success-longbranch
+assert_eq "attempt_HostileBranchName_InvalidEvidence: rc" "1" "$RC"
+assert_contains "attempt_HostileBranchName_InvalidEvidence: outcome" "**Outcome:** failed: bug" "$AZLOG"
+assert_contains "attempt_HostileBranchName_InvalidEvidence: evidence line" \
+  "- evidence: the agent named an unusable branch" "$AZLOG"
+assert_not_contains "attempt_HostileBranchName_InvalidEvidence: no PR" "repos pr create" "$AZLOG"
+assert_eq "attempt_HostileBranchName_InvalidEvidence: nothing pushed" "" \
+  "$(git -C "$BARE" branch --list 'ai/7-ok-x*')"
+
+run_pipeline success-oversized
+assert_eq "attempt_OversizedResult_InvalidEvidence: rc" "1" "$RC"
+assert_contains "attempt_OversizedResult_InvalidEvidence: outcome" "**Outcome:** failed: bug" "$AZLOG"
+assert_contains "attempt_OversizedResult_InvalidEvidence: evidence line" \
+  "- evidence: the agent handed over no valid result evidence" "$AZLOG"
+assert_not_contains "attempt_OversizedResult_InvalidEvidence: no PR" "repos pr create" "$AZLOG"
+
+# The pipeline-file guard still runs on what came back through the boundary.
+run_pipeline pipeline-file
+assert_eq "attempt_PipelineFileInBundle_Refused: rc" "1" "$RC"
+assert_contains "attempt_PipelineFileInBundle_Refused: names the file" "azure-pipelines.yml" "$AZLOG"
+assert_not_contains "attempt_PipelineFileInBundle_Refused: no PR" "repos pr create" "$AZLOG"
+assert_eq "attempt_PipelineFileInBundle_Refused: nothing pushed" "" \
+  "$(git -C "$BARE" branch --list 'ai/7-pf-1')"
+
+# A crashed earlier job can leave an agent process on the long-lived container:
+# it is reaped before anything authenticated runs.
+run_pipeline success
+first_call="$(grep -v -- '--protocol' "$PIPE_SUDO" | head -n1)"
+assert_contains "preflight_ReapsLeftoversBeforeTheRun: first boundary call is the reap" \
+  "awf-agent-reap" "$first_call"
+
+LEFTOVER_DIR="$TMP/boundary-leftover"
+mkdir -p "$LEFTOVER_DIR"
+cp "$SURVIVOR_DIR/awf-agent-run" "$SURVIVOR_DIR/awf-agent-git" "$LEFTOVER_DIR/"
+# shellcheck disable=SC2016  # the $1 belongs to the generated reap, not to this shell
+printf '#!/usr/bin/env bash\n[[ "${1:-}" != --protocol ]] || { printf "1\\n"; exit 0; }\nprintf "1\\n"\nexit 1\n' > "$LEFTOVER_DIR/awf-agent-reap"
+chmod +x "$LEFTOVER_DIR"/*
+PIPE_BOUNDARY_DIR="$LEFTOVER_DIR"
+run_pipeline success
+PIPE_BOUNDARY_DIR=''
+assert_eq "preflight_LeftoverSurvivesReap_Refuses: rc" "1" "$RC"
+assert_contains "preflight_LeftoverSurvivesReap_Refuses: the report says why" \
+  "an agent process from an earlier run survived the reap" "$AZLOG"
+assert_eq "preflight_LeftoverSurvivesReap_Refuses: the agent never ran" "" "$CLAUDELOG"
+
+# Nothing posts the review verdict while the fix agent could still be running.
+run_pipeline success AI_REVIEW=1 SELF_FIX=1 \
+  CLAUDE_MOCK_REVIEWS=review-request-changes.json,review-approve.json
+last_call="$(grep -v -- '--protocol' "$PIPE_SUDO" | tail -n1)"
+assert_eq "selfFix_Pipeline_ReapsBeforeTheVerdict: rc" "0" "$RC"
+assert_contains "selfFix_Pipeline_ReapsBeforeTheVerdict: the fix ran in the boundary" \
+  "awf-agent-run" "$(grep -c 'awf-agent-run' "$PIPE_SUDO" | awk '$1 >= 2 {print "awf-agent-run"}')"
+assert_contains "selfFix_Pipeline_ReapsBeforeTheVerdict: last boundary call is the reap" \
+  "awf-agent-reap" "$last_call"
+
+# Local mode is untouched: no sudo, no boundary, today's behaviour.
+: > "$TMP/local-sudo.log"
+run_loop success SUDO_LOG="$TMP/local-sudo.log"
+assert_eq "local_Mode_Unchanged: rc" "0" "$RC"
+assert_eq "local_Mode_Unchanged: no sudo call" "" "$(cat "$TMP/local-sudo.log")"
+assert_eq "local_Mode_Unchanged: one report" "1" "$(count_reports "$AZLOG")"
+assert_contains "local_Mode_Unchanged: branch pushed" "ai/7-ok-1" \
+  "$(git -C "$BARE" branch --list 'ai/7-ok-1')"
 
 section "B6: never vote"
 

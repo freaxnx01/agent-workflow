@@ -10,6 +10,11 @@
 # When $GIT_MOCK_LOG is set, every call's space-joined argv is appended to it,
 # with the Basic auth header value replaced by "<redacted>" so a test can prove
 # a push used http.extraheader without the log holding the credential.
+#
+# Since #591 the header arrives through GIT_CONFIG_* instead of `git -c`, to
+# keep the token out of /proc/<pid>/cmdline. The KEY is appended to the logged
+# line as `env:GIT_CONFIG_KEY_0=<key>` so a test can still prove the call was
+# authenticated; the VALUE, which holds the credential, is never logged.
 set -euo pipefail
 
 if [[ -n "${GIT_MOCK_LOG:-}" ]]; then
@@ -20,6 +25,7 @@ if [[ -n "${GIT_MOCK_LOG:-}" ]]; then
     fi
     logged+=("$arg")
   done
+  [[ -z "${GIT_CONFIG_KEY_0:-}" ]] || logged+=("env:GIT_CONFIG_KEY_0=$GIT_CONFIG_KEY_0")
   printf '%s\n' "${logged[*]}" >> "$GIT_MOCK_LOG"
 fi
 

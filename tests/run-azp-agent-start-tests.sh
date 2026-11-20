@@ -259,6 +259,19 @@ assert_eq "start_unconfigured_without_token_exits_64" "64" "$rc"
 assert_eq "start_unconfigured_without_token_exits_64: nothing downloaded" "0" \
   "$(wc -l < "$WORK/notoken.curl.log" | tr -d ' ')"
 
+section "agent volume privacy"
+
+# /azp/agent holds the agent's registration credentials. A named volume keeps
+# its root-directory mode across an image rebuild, so the image alone cannot
+# make it private (#591): every start does it.
+dir="$(new_agent_dir volmode)"
+touch "$dir/.agent"
+chmod 0755 "$dir"
+assert_eq "start_SetsAgentDirMode0700: exits 0" "0" "$(start "$dir")"
+assert_eq "start_SetsAgentDirMode0700: mode" "700" "$(stat -c '%a' "$dir")"
+assert_eq "start_SetsAgentDirMode0700: run.sh still started" "yes" \
+  "$([[ -e "$dir/run.env" ]] && echo yes || echo no)"
+
 section "token validation"
 
 dir="$(new_agent_dir badtoken)"

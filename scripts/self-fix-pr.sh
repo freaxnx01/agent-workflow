@@ -43,6 +43,10 @@
 #                     Default: github-actions[bot]@users.noreply.github.com.
 #   SKIP_PUSH         "1" to skip `git push` (Layer-1 tests assert the
 #                     local commit instead of a network push).
+#   SKIP_COMMIT       "1" to skip the "agent made no changes" check and the
+#                     commit: the caller owns both. Used by the Azure DevOps
+#                     pipeline path, where the agent commits inside the user
+#                     boundary (#591) and WORK_DIR is clean by construction.
 #
 # Exit codes:
 #   0  fix committed (and pushed, unless SKIP_PUSH=1)
@@ -150,14 +154,20 @@ if ! ( cd "$WORK_DIR" && "$FIX_AGENT_CMD" "$PROMPT_FILE" ); then
 fi
 rm -f "$PROMPT_FILE"
 
-if [[ -z "$( cd "$WORK_DIR" && git status --porcelain )" ]]; then
-  printf 'error: agent made no changes -- nothing to commit\n' >&2
-  exit 1
-fi
+# SKIP_COMMIT=1: the caller owns both the no-change verdict and the commit. The
+# Azure DevOps pipeline path needs that, because the agent worked in a workspace
+# of its own behind the user boundary (#591) — this checkout is clean by
+# construction, and the commit has to be made where the changes are.
+if [[ "${SKIP_COMMIT:-0}" != "1" ]]; then
+  if [[ -z "$( cd "$WORK_DIR" && git status --porcelain )" ]]; then
+    printf 'error: agent made no changes -- nothing to commit\n' >&2
+    exit 1
+  fi
 
-FIX_GIT_NAME="${FIX_GIT_NAME:-github-actions[bot]}"
-FIX_GIT_EMAIL="${FIX_GIT_EMAIL:-github-actions[bot]@users.noreply.github.com}"
-( cd "$WORK_DIR" && git add -A && git -c user.name="$FIX_GIT_NAME" -c user.email="$FIX_GIT_EMAIL" commit --quiet -m "address self-review (iteration $ITERATION)" )
+  FIX_GIT_NAME="${FIX_GIT_NAME:-github-actions[bot]}"
+  FIX_GIT_EMAIL="${FIX_GIT_EMAIL:-github-actions[bot]@users.noreply.github.com}"
+  ( cd "$WORK_DIR" && git add -A && git -c user.name="$FIX_GIT_NAME" -c user.email="$FIX_GIT_EMAIL" commit --quiet -m "address self-review (iteration $ITERATION)" )
+fi
 
 if [[ "${SKIP_PUSH:-0}" != "1" ]]; then
   ( cd "$WORK_DIR" && git push --quiet origin "HEAD:$HEAD_REF" )

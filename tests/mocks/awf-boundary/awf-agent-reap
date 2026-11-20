@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+#
+# awf-agent-reap — TEST DOUBLE of docker/azp-agent/boundary/awf-agent-reap.
+#
+# The real entry point kills every process of its own uid. In a Layer-1 test
+# that uid is the test runner's, so the real one refuses outright (it insists on
+# being `awf-agent`, or on AWF_REAP_TEST=1 inside a throwaway namespace — see
+# tests/run-agent-boundary-entrypoint-tests.sh, which is where the kill itself
+# is proved). This double answers the clean case: nothing survived.
+#
+# A test that needs the survivor case writes its own failing reap into a
+# boundary dir of its own; tests/run-implement-azdo-tests.sh does.
+set -euo pipefail
+IFS=$'\n\t'
+
+[[ "${1:-}" != "--protocol" ]] || { printf '1\n'; exit 0; }
+printf '0\n'
