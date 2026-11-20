@@ -165,6 +165,8 @@ section "add-milestone-guard — dry run"
 
 MG="$(mktemp -d)"
 printf 'deadbeef\n' > "$MG/sha"
+printf 'main\n' > "$MG/default-branch"
+printf 'cafe1234\n' > "$MG/base-sha"
 printf 'https://github.com/o/a/pull/12\n' > "$MG/pr-url"
 printf 'https://github.com/o/a/pull/7\n' > "$MG/open-pr"
 
@@ -174,7 +176,9 @@ printf 'https://github.com/o/a/pull/7\n' > "$MG/open-pr"
 mg_map() {
   local agent="$1" milestones="$2"; shift 2
   base64 -w0 < "$FIX/$agent" > "$MG/agent.b64"
-  { printf '.sha\t%s\n' "$MG/sha"
+  { printf -- '--jq .default_branch\t%s\n' "$MG/default-branch"
+    printf 'git/ref/heads/\t%s\n' "$MG/base-sha"
+    printf '.sha\t%s\n' "$MG/sha"
     printf 'contents/.github/workflows/agent.yml\t%s\n' "$MG/agent.b64"
     printf 'milestones?state=all\t%s\n' "$FIX/$milestones"
     printf 'milestone=none\t%s\n' "$FIX/unmilestoned-two-pages.json"
@@ -184,10 +188,15 @@ mg_map() {
   } > "$MG/map"
 }
 
+GUARD_PATH='.github/workflows/issue-milestone.yml'
+# The stub's *lookup*, and nothing else: an argv pattern of just the path would
+# also match the PUT that writes it.
+GUARD_GET="api repos/o/a/contents/$GUARD_PATH"
+
 # mg_absent — the normal state of a repo that has not been rolled out yet: the
 # stub lookup 404s, exactly as `gh api` reports a missing file.
 mg_absent() {
-  printf '%s\t%s\n' 'contents/.github/workflows/issue-milestone.yml' 'gh: Not Found (HTTP 404)' > "$MG/fail"
+  printf '%s\t%s\n' "$GUARD_GET" 'gh: Not Found (HTTP 404)' > "$MG/fail"
   MG_FAIL="$MG/fail"
 }
 
@@ -248,7 +257,7 @@ done
 # An outage must not read as "the file is not there" — that would hand the repo
 # a second stub, or a PR nobody expected.
 mg_map agent-v2.yml milestones-open.json
-printf '%s\t%s\n' 'contents/.github/workflows/issue-milestone.yml' 'gh: HTTP 500: Internal Server Error' > "$MG/fail"
+printf '%s\t%s\n' "$GUARD_GET" 'gh: HTTP 500: Internal Server Error' > "$MG/fail"
 MG_FAIL="$MG/fail"
 mg_run
 assert_contains "a guard lookup that is not a 404 fails the repo" "$OUT" 'o/a  v2  CHECK FAILED'
@@ -273,7 +282,7 @@ assert_eq "  → exit 0" "0" "$RC"
 
 mg_map agent-v2.yml milestones-open.json
 printf '%s\t%s\n%s\t%s\n' \
-  'contents/.github/workflows/issue-milestone.yml' 'gh: Not Found (HTTP 404)' \
+  "$GUARD_GET" 'gh: Not Found (HTTP 404)' \
   'milestones?state=all' 'gh: HTTP 502: Bad Gateway' > "$MG/fail"
 MG_FAIL="$MG/fail"
 mg_run
@@ -282,13 +291,110 @@ assert_eq "  → the run exits 1" "1" "$RC"
 
 mg_map agent-v2.yml milestones-open.json
 printf '%s\t%s\n%s\t%s\n' \
-  'contents/.github/workflows/issue-milestone.yml' 'gh: Not Found (HTTP 404)' \
+  "$GUARD_GET" 'gh: Not Found (HTTP 404)' \
   'milestone=none' 'gh: HTTP 502: Bad Gateway' > "$MG/fail"
 MG_FAIL="$MG/fail"
 mg_run
 assert_contains "an unreadable issue list fails the repo" "$OUT" 'o/a  v2  CHECK FAILED'
 assert_eq "  → the run exits 1" "1" "$RC"
 MG_FAIL=''
+
+section "add-milestone-guard — apply"
+
+# log_line <pattern> — the gh log's first line number matching <pattern>, so
+# the order of the writes can be asserted, not just their presence.
+log_line() { local n; n="$(grep -nF -m1 -- "$1" "$MG/log" | cut -d: -f1)"; printf '%s' "${n:-0}"; }
+
+mg_map agent-v2.yml milestones-missing.json; mg_absent
+mg_run --apply
+assert_contains "apply -> says what it did, with the milestone it created" "$OUT" \
+  'added guard → PR https://github.com/o/a/pull/12  backlog:created  unmilestoned:3'
+assert_eq "  → exit 0" "0" "$RC"
+log="$(cat "$MG/log")"
+assert_contains "  → the milestone is created" "$log" '-X POST repos/o/a/milestones -f title=backlog'
+assert_contains "  → the stub is written on the rollout branch" "$log" \
+  '-X PUT repos/o/a/contents/.github/workflows/issue-milestone.yml'
+assert_contains "  → never on the default branch" "$log" 'branch=ci/backlog-milestone-guard'
+assert_contains "  → and one PR is opened for it" "$log" \
+  'pr create --repo o/a --head ci/backlog-milestone-guard'
+# The milestone has to exist before the stub lands: the guard would otherwise
+# warn on every issue until an operator noticed.
+if (( $(log_line '-X POST repos/o/a/milestones') < $(log_line '-X PUT repos/o/a/contents/.github/workflows/issue-milestone.yml') )); then
+  pass "  → the milestone is created before the stub is written"
+else
+  fail "  → the milestone is created before the stub is written" "$log"
+fi
+if (( $(log_line '-X PUT repos/o/a/contents/.github/workflows/issue-milestone.yml') < $(log_line 'pr create') )); then
+  pass "  → and the stub is written before the PR is opened"
+else
+  fail "  → and the stub is written before the PR is opened" "$log"
+fi
+assert_contains "  → the branch is cut from the default branch's head" "$log" \
+  '-X POST repos/o/a/git/refs -f ref=refs/heads/ci/backlog-milestone-guard -f sha=cafe1234'
+assert_not_contains "  → and the new file is created without a sha" "$log" \
+  'issue-milestone.yml -f message'$'\n''-f sha'
+
+# The bytes a consumer gets are the bytes onboarding writes.
+# shellcheck disable=SC1091
+expected="$(source "$ROOT/scripts/lib/milestone-stub.sh"; build_milestone_yml freaxnx01/agent-workflow v2)"
+written="$(grep -o 'content=[A-Za-z0-9+/=]*' "$MG/log" | head -1 | sed 's/^content=//' | base64 -d)"
+assert_eq "apply -> the written stub is the shared stub at the consumer's own ref" \
+  "$expected" "$written"
+
+mg_map agent-v2.yml milestones-open.json; mg_absent
+mg_run --apply
+assert_contains "an existing backlog is used as it is" "$OUT" 'added guard → PR'
+assert_contains "  → and reported as present" "$OUT" 'backlog:present'
+assert_not_contains "  → no second milestone is created" "$(cat "$MG/log")" '-X POST repos/o/a/milestones'
+
+mg_map agent-v2.yml milestones-missing.json
+printf '%s\t%s\n%s\n' \
+  "$GUARD_GET" 'gh: Not Found (HTTP 404)' \
+  '-X POST repos/o/a/milestones' > "$MG/fail"
+MG_FAIL="$MG/fail"
+mg_run --apply
+assert_contains "a failed milestone creation stops the repo there" "$OUT" 'o/a  v2  MILESTONE CREATE FAILED'
+assert_eq "  → the run exits 1" "1" "$RC"
+assert_not_contains "  → nothing is written" "$(cat "$MG/log")" '-X PUT'
+assert_not_contains "  → and no PR is opened" "$(cat "$MG/log")" 'pr create'
+
+mg_map agent-v2.yml milestones-missing.json
+printf '%s\t%s\n%s\n' \
+  "$GUARD_GET" 'gh: Not Found (HTTP 404)' \
+  '-X PUT' > "$MG/fail"
+MG_FAIL="$MG/fail"
+mg_run --apply
+# The created milestone is named so a re-run does not look surprising.
+assert_contains "a failed write says the milestone was already created" "$OUT" \
+  'o/a  v2  WRITE FAILED  backlog:created'
+assert_eq "  → the run exits 1" "1" "$RC"
+assert_not_contains "  → and no PR is opened" "$(cat "$MG/log")" 'pr create'
+
+mg_map agent-v2.yml milestones-open.json
+printf '%s\t%s\n%s\n' \
+  "$GUARD_GET" 'gh: Not Found (HTTP 404)' \
+  'pr create' > "$MG/fail"
+MG_FAIL="$MG/fail"
+mg_run --apply
+assert_contains "a failed pr create names the branch that was written" "$OUT" \
+  'o/a  v2  PR FAILED (branch ci/backlog-milestone-guard written)  backlog:present'
+assert_eq "  → the run exits 1" "1" "$RC"
+
+# --apply must not turn a skipped verdict into a write.
+for case in 'agent-v2.2.1.yml:milestones-open.json:404' \
+            'agent-v2.yml:milestones-closed.json:404' \
+            'agent-v2.yml:milestones-open.json:present'; do
+  IFS=':' read -r agent milestones guard <<< "$case"
+  mg_map "$agent" "$milestones"
+  MG_FAIL=''
+  if [[ "$guard" == 404 ]]; then mg_absent; fi
+  mg_run --apply
+  assert_not_contains "$agent + $milestones (guard $guard) -> no milestone created" \
+    "$(cat "$MG/log")" '-X POST repos/o/a/milestones'
+  assert_not_contains "  → and nothing written" "$(cat "$MG/log")" '-X PUT'
+done
+MG_FAIL=''
+rm -rf "$MG"
 
 section "add-milestone-guard — argument handling"
 

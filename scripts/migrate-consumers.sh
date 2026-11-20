@@ -428,6 +428,55 @@ pipeline_repo_from_stub() {
     | head -1 | sed 's|/\.github/.*||' || printf ''
 }
 
+# put_new_file <repo> <path> <content> <message> — create a file that is not
+# there yet, on $BRANCH (cut from the default branch's head if it does not
+# exist). Separate from put_stub, which updates a file and therefore has to
+# send its blob sha: sending one for a file that does not exist is rejected.
+# Returns 1 when the write failed. Command.
+put_new_file() {
+  local repo="$1" path="$2" content="$3" msg="$4" base_sha
+  base_sha="$(gh api "repos/${repo}" --jq '.default_branch' \
+              | xargs -I{} gh api "repos/${repo}/git/ref/heads/{}" --jq '.object.sha')"
+  gh api -X POST "repos/${repo}/git/refs" -f "ref=refs/heads/${BRANCH}" \
+         -f "sha=${base_sha}" >/dev/null 2>&1 || true
+  gh api -X PUT "repos/${repo}/contents/${path}" \
+         -f "message=${msg}" \
+         -f "content=$(printf '%s' "$content" | base64 -w0)" \
+         -f "branch=${BRANCH}" >/dev/null 2>&1
+}
+
+# apply_guard_repo <repo> <cur> <content> <state> <count> — create `backlog`
+# where it is missing, write the stub and open the PR. In that order: the
+# milestone has to exist before the guard runs, or the consumer collects a
+# warning per issue instead. Each step reports what already happened, so a
+# re-run after a failure holds no surprises. Updates the counters. Command.
+apply_guard_repo() {
+  local repo="$1" cur="$2" content="$3" state="$4" count="$5"
+  local backlog='present' pipeline stub title msg url
+  if [[ "$state" == missing ]]; then
+    if ! create_backlog_milestone "$repo" >/dev/null; then
+      printf '%s  %s  MILESTONE CREATE FAILED\n' "$repo" "$cur"; failed=$((failed+1)); return
+    fi
+    backlog='created'
+  fi
+  pipeline="$(printf '%s' "$content" | pipeline_repo_from_stub)"
+  stub="$(build_milestone_yml "$pipeline" "$cur")"
+  title='ci(milestone): assign backlog to issues opened without a milestone'
+  msg="${title}"$'\n\n'"Adds the caller stub for ${pipeline}'s backlog-milestone.yml: an issue opened or reopened without a milestone gets the standing \`backlog\` one. This is the stub scripts/onboard-consumer.sh writes for a new consumer; see https://github.com/freaxnx01/agent-workflow/issues/646 and freaxnx01/ai-instructions#61. Only the issue number reaches the workflow."
+  if ! put_new_file "$repo" "$GUARD_PATH" "$stub"$'\n' "$msg"; then
+    printf '%s  %s  WRITE FAILED  backlog:%s\n' "$repo" "$cur" "$backlog"; failed=$((failed+1)); return
+  fi
+  # One PR per repo in a tight loop: back off on the secondary rate limit.
+  if ! url="$(with_backoff gh pr create --repo "$repo" --head "$BRANCH" \
+                --title "$title" --body "$msg" 2>/dev/null)"; then
+    printf '%s  %s  PR FAILED (branch %s written)  backlog:%s\n' "$repo" "$cur" "$BRANCH" "$backlog"
+    failed=$((failed+1)); return
+  fi
+  printf '%s  %s  added guard → PR %s  backlog:%s  unmilestoned:%s\n' \
+    "$repo" "$cur" "$url" "$backlog" "$count"
+  changed=$((changed+1))
+}
+
 # add_guard_repo <repo> <cur> <content> — the --add-milestone-guard verdict
 # and, with --apply, the milestone and the PR for one repo. Updates the
 # changed/skipped/failed counters.
