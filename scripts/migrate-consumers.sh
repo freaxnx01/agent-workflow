@@ -477,15 +477,14 @@ put_new_file() {
 # warning per issue instead. Each step reports what already happened, so a
 # re-run after a failure holds no surprises. Updates the counters. Command.
 apply_guard_repo() {
-  local repo="$1" cur="$2" content="$3" state="$4" count="$5"
-  local backlog='present' pipeline stub title msg url
+  local repo="$1" cur="$2" pipeline="$3" state="$4" count="$5"
+  local backlog='present' stub title msg url
   if [[ "$state" == missing ]]; then
     if ! create_backlog_milestone "$repo" >/dev/null; then
       printf '%s  %s  MILESTONE CREATE FAILED\n' "$repo" "$cur"; failed=$((failed+1)); return
     fi
     backlog='created'
   fi
-  pipeline="$(printf '%s' "$content" | pipeline_repo_from_stub)"
   stub="$(build_milestone_yml "$pipeline" "$cur")"
   title='ci(milestone): assign backlog to issues opened without a milestone'
   msg="${title}"$'\n\n'"Adds the caller stub for ${pipeline}'s backlog-milestone.yml: an issue opened or reopened without a milestone gets the standing \`backlog\` one. This is the stub scripts/onboard-consumer.sh writes for a new consumer; see https://github.com/freaxnx01/agent-workflow/issues/646 and freaxnx01/ai-instructions#61. Only the issue number reaches the workflow."
@@ -508,10 +507,17 @@ apply_guard_repo() {
 # changed/skipped/failed counters.
 add_guard_repo() {
   local repo="$1" cur="$2" content="$3"
-  local state issues count=0 backlog open rc=0
+  local pipeline state issues count=0 backlog open rc=0
   if ! guard_ref_ok "$cur"; then
     printf '%s  %s  skipped (pins %s; guard needs v2.3.0+)\n' "$repo" "$cur" "$cur"
     skipped=$((skipped+1)); return
+  fi
+  # The stub to be written names the pipeline repo, which only the consumer's
+  # own stub can say. Without it the new `uses:` would have no owner at all.
+  pipeline="$(printf '%s' "$content" | pipeline_repo_from_stub)"
+  if [[ -z "$pipeline" ]]; then
+    printf '%s  %s  CHECK FAILED (no pipeline repo in %s)\n' "$repo" "$cur" "$STUB_PATH"
+    failed=$((failed+1)); return
   fi
   rc=0; guard_file_state "$repo" || rc=$?
   case "$rc" in
@@ -551,7 +557,7 @@ add_guard_repo() {
     printf '%s  %s  would add guard  backlog:%s  unmilestoned:%s\n' "$repo" "$cur" "$backlog" "$count"
     changed=$((changed+1)); return
   fi
-  apply_guard_repo "$repo" "$cur" "$content" "$state" "$count"
+  apply_guard_repo "$repo" "$cur" "$pipeline" "$state" "$count"
 }
 
 changed=0; skipped=0; failed=0

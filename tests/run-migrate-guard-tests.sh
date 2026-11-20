@@ -256,6 +256,15 @@ done
 
 # An outage must not read as "the file is not there" — that would hand the repo
 # a second stub, or a PR nobody expected.
+# The stub names the workflow it calls; without an owner/name in it, the ref
+# alone would produce `uses: /.github/workflows/backlog-milestone.yml@v2`.
+mg_map agent-local-uses.yml milestones-open.json; mg_absent
+mg_run --apply
+assert_contains "a stub with no pipeline repo in it fails the repo" "$OUT" \
+  'o/a  v2  CHECK FAILED (no pipeline repo in .github/workflows/agent.yml)'
+assert_eq "  → the run exits 1" "1" "$RC"
+assert_not_contains "  → and nothing is written" "$(cat "$MG/log")" '-X PUT'
+
 mg_map agent-v2.yml milestones-open.json
 printf '%s\t%s\n' "$GUARD_GET" 'gh: HTTP 500: Internal Server Error' > "$MG/fail"
 MG_FAIL="$MG/fail"
