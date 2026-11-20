@@ -712,7 +712,7 @@ then follow it. Today: re-scan and report drift.
 One `list_repos` call re-derives the ground truth. Update the map, commit,
 move on.
 
-# FILE: agent-workflow/docs/DECISIONS.md (@778422c)
+# FILE: agent-workflow/docs/DECISIONS.md (@fb23e2e)
 
 # Architecture Decisions
 
@@ -1788,10 +1788,35 @@ sentence rather than needing the comment that used to explain it.
 **Status:** Accepted
 **Tracking:** none — direct change, no issue
 
+> **Amended 2026-11-19:** the `none` option and the zero-milestone
+> `general-<month>-<year>` offer no longer hold (#645, ai-instructions#61). `backlog`
+> is the default milestone: it replaces `none`, it is what a silent or declined
+> answer and zero active milestones resolve to, and it is not counted as an active
+> milestone. A missing `backlog` is reported, never created. The proposal ordering,
+> the sort rule and the silent single assignment stand.
+>
 > **Amended 2026-10-04:** "midday UTC" below no longer holds. GitHub keeps only the
 > date of a milestone's `due_on` and stores any time as `T00:00:00Z` — a midday write
 > to `agent-workflow` milestone #5 read back as midnight. `/new` and `/milestone`
 > now send `T00:00:00Z`, so the read-back matches the request.
+>
+> **Amended 2026-11-19 (#644):** "roadmap/parked carry no milestone" no longer
+> holds. Every open issue now has a milestone, and unscheduled, parked and
+> roadmap work lives in a standing `backlog` milestone
+> (freaxnx01/ai-instructions#61). `/parked repark` and `/roadmap defer` **move**
+> the issue to `backlog` instead of stripping its milestone, and stop with a
+> pointer to `/milestone new backlog` when it is missing. `repark` still records
+> `milestone-was:`, except when the issue was already in `backlog`. `unpark`
+> offers that record back and otherwise leaves the milestone untouched, reporting
+> where the issue sits from its own read-back rather than assuming `backlog` (a
+> hand-parked issue keeps the milestone it had, a legacy one may have none).
+> `/milestone triage` walks `backlog` minus
+> `parked`/`roadmap`, plus every issue with no milestone. On Azure DevOps,
+> `backlog` is the root iteration, and `repark`/`unpark` carry the same round
+> trip under the name `iteration-was:` — written as its own comment, because
+> `azdo_comments` strips the HTML a multi-line body arrives in and would glue a
+> second line onto the reason. The "Consequences" bullets about stripping
+> describe the old behaviour.
 
 ### Context
 
@@ -6632,7 +6657,7 @@ Stack-specific guardrails (e.g. "do not add NuGet packages") live in the stack o
 
 Init-time checklist (every project, regardless of stack) — including baseline, .NET, and WebAPI layers — lives at [`.ai/references/scaffold-checklists.md`](https://github.com/freaxnx01/ai-instructions/blob/main/.ai/references/scaffold-checklists.md). Stack-specific additions are in the same file under their respective sections.
 
-# FILE: ai-instructions/conventions/milestones.md (@fcc8187)
+# FILE: ai-instructions/conventions/milestones.md (@c46d53b)
 
 # Milestone conventions
 
@@ -6641,6 +6666,35 @@ Milestones are the portable, cross-forge unit for grouping Issues into a
 is done when its scope is done, not when a date arrives. This note keeps
 milestones consistent across GitHub and Forgejo so Bridge can derive milestone
 state identically on both.
+
+## Every open issue has a milestone
+
+Every open issue carries **exactly one** milestone. "No milestone" is not a valid
+state — it is the gap this rule closes, not a synonym for "not scheduled".
+
+- Scheduled work sits in a `vX.Y · <goal>` (or `MNN · <goal>`) milestone.
+- Everything else sits in **`backlog`** — the default whenever nothing else fits.
+
+### The `backlog` milestone
+
+Each repo has one standing milestone named exactly `backlog`: the home for
+unscheduled, parked and roadmap issues.
+
+- **Never active.** It is not a manual-test batch, so the scoping rules below do
+  not apply to it and its progress percentage means nothing.
+- **Never closed.** It is a standing collector, not a closure boundary.
+- **No due date.**
+- **Exempt from the naming rule** — the literal `backlog`, no version prefix.
+
+Moving an issue out of `backlog` into a versioned milestone is how it gets
+scheduled; moving it back (when it is parked or deferred) is how it gets
+unscheduled. Neither step ever leaves it milestone-less.
+
+### Labels carry the reason, not the milestone
+
+The `parked` and `roadmap` labels say **why** an issue is in `backlog` (blocked /
+on hold vs. deliberately deferred). They no longer stand in for a missing
+milestone: a parked or roadmap issue still has `backlog` as its milestone.
 
 ## Portability rule (load-bearing)
 
@@ -6666,6 +6720,18 @@ implement identically (per-repo, optional due date, progress = closed/total).
 Fallback for repos that don't cut versioned releases: `MNN · <goal>` with a
 zero-padded ordinal (`M01`, `M02`) so it still sorts.
 
+The only name outside this scheme is `backlog` (see above).
+
+### Legacy names — migrate, don't extend
+
+Two older names don't conform and are **deprecated**:
+
+- **`next`** — rename it to `backlog`. It already plays that role.
+- **`general-<month>-<year>`** (e.g. `general-october-2026`) — move its open
+  issues to `backlog` (or into a versioned milestone if they are genuinely
+  scheduled), then close it. Don't create new ones: new issues default to
+  `backlog`.
+
 ## Scoping rules
 
 These keep "progress = 100%" meaning **"ready for me to test"** — the signal
@@ -6680,8 +6746,9 @@ becomes noise.
 3. **Cap it to one sitting.** If it's too large to test in one pass, split into
    two milestones. (This is the pull principle applied to verification.)
 4. **One active milestone per repo.** Finish and verify the current one before
-   opening the next. A future milestone may exist as a backlog collector but is
-   not *active* until the current is closed.
+   opening the next. A future versioned milestone may exist but is not *active*
+   until the current is closed. Unscheduled work goes in `backlog`, not in a
+   future versioned milestone.
 5. **Due dates are advisory only** — never the completion trigger. Leave empty
    unless there's a real external deadline (e.g. a CAS submission date).
 
@@ -6705,11 +6772,25 @@ alongside the state.
 
 ## Where this applies
 
-Repos with a surface **you** manually exercise: `flowhub`, `bridge`.
+The rules apply in two tiers:
 
-Not `agent-pipeline` (gate is CI/consumption), `ai-instructions` (no runtime
-surface), or `ideas-lab` (deliberately low-ceremony). Employer DMS/HYPARCHIV
-work stays in Azure DevOps with its native iterations — out of scope here.
+- **Every repo** (incl. `agent-workflow`, `ai-instructions`, `ideas-lab`): every
+  open issue has a milestone, `backlog` exists as the default, and new milestones
+  follow the naming rule. This is cheap, and it makes "unscheduled" an explicit,
+  queryable state everywhere.
+- **Repos with a surface you manually exercise** (`flowhub`, `bridge`):
+  additionally the manual-test-batch rules — scoping rules, description as
+  acceptance, completion and failure. Repos whose gate is CI or consumption
+  (`agent-workflow`, `ai-instructions`) or that are deliberately low-ceremony
+  (`ideas-lab`) use versioned milestones for grouping only; closing one there is
+  not a manual-test sign-off.
+
+### Azure DevOps
+
+Employer DMS/HYPARCHIV work stays in Azure DevOps with its native iterations. The
+same shape maps onto them: the **root iteration** plays the role of `backlog`
+(unscheduled work sits there), and sprint/release iterations play the role of
+versioned milestones.
 
 # FILE: ai-instructions/WORKFLOW-ROLE.md (@ce4a815)
 

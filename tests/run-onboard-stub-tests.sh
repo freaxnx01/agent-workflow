@@ -88,6 +88,19 @@ intake_stub() {
   )
 }
 
+# milestone_stub — echoes the generated issue-milestone.yml (#646). Same
+# extraction trick as stub().
+milestone_stub() {
+  # shellcheck disable=SC2034
+  (
+    REF='v2'
+    PIPELINE_REPO='freaxnx01/agent-workflow'
+    # shellcheck disable=SC1090
+    source <(sed -n '/^build_milestone_yml()/,/^}/p' "$SRC")
+    build_milestone_yml
+  )
+}
+
 # --- cases -------------------------------------------------------------
 
 section "consumer stub — permissions"
@@ -172,6 +185,34 @@ if command -v yamllint >/dev/null 2>&1; then
     pass "generated intake stub is valid YAML"
   else
     fail "generated intake stub is valid YAML" "yamllint rejected it"
+  fi
+fi
+
+section "milestone stub — issues without a milestone land in backlog (#646)"
+
+milestone="$(milestone_stub)"
+assert_contains 'uses: freaxnx01/agent-workflow/.github/workflows/backlog-milestone.yml@v2' \
+  "$milestone" "calls the backlog milestone workflow at the pinned ref"
+assert_contains 'types: [opened, reopened]' "$milestone" "runs when an issue is opened or reopened"
+# shellcheck disable=SC2016  # `${{ }}` is Actions expression syntax, not shell
+assert_contains 'issue-number: ${{ github.event.issue.number }}' "$milestone" "passes only the issue number"
+assert_contains 'pipeline-ref: v2' "$milestone" "checks out scripts at the same ref"
+assert_contains 'issues: write' "$milestone" "may set the milestone"
+assert_not_contains 'contents: write' "$milestone" "never writes code"
+assert_not_contains 'github.event.issue.title' "$milestone" "never reads the title"
+assert_not_contains 'github.event.issue.body' "$milestone" "never reads the body"
+# shellcheck disable=SC2016  # `\$NO_STUB` is a sed pattern, not a shell expansion
+writes="$(sed -n '/^if \[\[ "\$NO_STUB"/,/^fi/p' "$SRC" | grep -c 'put_file ".github/workflows/issue-milestone.yml"' || true)"
+if [[ "$writes" == 2 ]]; then
+  pass "both onboarding paths write the milestone stub"
+else
+  fail "both onboarding paths write the milestone stub" "found $writes put_file calls, expected 2"
+fi
+if command -v yamllint >/dev/null 2>&1; then
+  if printf '%s\n' "$milestone" | yamllint -d '{extends: relaxed, rules: {line-length: disable, truthy: disable}}' - >/dev/null 2>&1; then
+    pass "generated milestone stub is valid YAML"
+  else
+    fail "generated milestone stub is valid YAML" "yamllint rejected it"
   fi
 fi
 

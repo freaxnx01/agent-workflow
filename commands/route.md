@@ -216,7 +216,7 @@ whether acceptance criteria exist — so apply the same rubric the GitHub sectio
 uses. Two differences in the inputs:
 
 - **There is no `ai-implement` dispatch here.** agent-workflow's pipeline is
-  GitHub-only (ADR-012), so the "hand it to the pipeline" route is unavailable.
+  GitHub-only (ADR-017), so the "hand it to the pipeline" route is unavailable.
   Recommend local execution instead, and say why rather than silently dropping
   the option.
 - **Complexity signals come from the work-item *type*, not labels.** Azure DevOps

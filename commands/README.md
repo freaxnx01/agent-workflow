@@ -62,6 +62,12 @@ vocabulary (MudBlazor, shadcn/ui, Flutter widgets, …) comes from the project's
 `/issues` · `/prs` · `/parked` · `/triage` · `/queue` · `/done` · `/new` ·
 `/enrich` · `/enrich-phased` · `/route` · `/work` · `/milestone` · `/roadmap`
 
+Every open issue has a milestone. Unscheduled work lives in the standing
+`backlog` milestone: `/parked repark` and `/roadmap defer` move an issue there,
+and `/milestone triage` walks `backlog` (minus `parked`/`roadmap`) plus anything
+with no milestone. None of them creates `backlog`; run `/milestone new backlog`
+once per repo.
+
 **Release** (forge-agnostic, drives the repo's justfile): `/release-package [<customer>]`
 — `bump-auto → release → package` via the recipes ai-instructions syncs, then asks
 before `push-release`. Stops and names any missing recipe instead of improvising.

@@ -127,6 +127,83 @@ jobs:
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
 
+  call-evidence-empty:
+    name: Reusable workflow — evidence the gate cannot read (#592 F9)
+    uses: ./.github/workflows/agent-implement.yml
+    with:
+      issue-number: 9016
+      default-model: claude-sonnet-5
+      timeout-minutes: 10
+      dry-run: true
+      local-scripts: true
+      stub-claude: true
+      stub-fixture: evidence_empty
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
+
+  call-evidence-oversized:
+    name: Reusable workflow — evidence too large to hand over (#592 F9)
+    uses: ./.github/workflows/agent-implement.yml
+    with:
+      issue-number: 9017
+      default-model: claude-sonnet-5
+      timeout-minutes: 10
+      dry-run: true
+      local-scripts: true
+      stub-claude: true
+      stub-fixture: evidence_oversized
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: not-used-by-stub
+
+  verify-evidence-empty:
+    name: Assert unreadable evidence is reported as a failed run
+    needs: call-evidence-empty
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      OUTCOME:   ${{ needs.call-evidence-empty.outputs.outcome }}
+      NUM_TURNS: ${{ needs.call-evidence-empty.outputs.num-turns }}
+      FAILURE:   ${{ needs.call-evidence-empty.outputs.failure-class }}
+    steps:
+      - name: Assert the gate replaced the evidence with its synthetic failure
+        # num-turns is the proof: every stub fixture reports at least one turn,
+        # so 0 can only come from the gate's own error_invalid_evidence result.
+        run: |
+          fail=0
+          [[ "$OUTCOME" == "failed" ]]   || { echo "::error::outcome=$OUTCOME (want failed)"; fail=1; }
+          [[ "$FAILURE" == "bug" ]]      || { echo "::error::failure-class=$FAILURE (want bug)"; fail=1; }
+          [[ "$NUM_TURNS" == "0" ]]      || { echo "::error::num-turns=$NUM_TURNS (want 0)"; fail=1; }
+          (( fail == 0 )) || exit 1
+          echo "evidence-empty OK: outcome=$OUTCOME failure=$FAILURE turns=$NUM_TURNS"
+
+  verify-evidence-oversized:
+    name: Assert oversized evidence is reported as a failed run
+    needs: call-evidence-oversized
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      OUTCOME:   ${{ needs.call-evidence-oversized.outputs.outcome }}
+      NUM_TURNS: ${{ needs.call-evidence-oversized.outputs.num-turns }}
+      FAILURE:   ${{ needs.call-evidence-oversized.outputs.failure-class }}
+    steps:
+      - name: Assert an output too large to carry never becomes a verdict
+        # The stub rewrote the workspace copy of export-result-output.sh — the
+        # #535 threat — so the implement job hands over a canonical-looking
+        # result of 200 KB. The gate's raw-capture step dies with E2BIG before
+        # it starts, and the import finds no file: num-turns=0, not the 1 the
+        # payload claims.
+        run: |
+          fail=0
+          [[ "$OUTCOME" == "failed" ]]   || { echo "::error::outcome=$OUTCOME (want failed)"; fail=1; }
+          [[ "$FAILURE" == "bug" ]]      || { echo "::error::failure-class=$FAILURE (want bug)"; fail=1; }
+          [[ "$NUM_TURNS" == "0" ]]      || { echo "::error::num-turns=$NUM_TURNS (want 0)"; fail=1; }
+          (( fail == 0 )) || exit 1
+          echo "evidence-oversized OK: outcome=$OUTCOME failure=$FAILURE turns=$NUM_TURNS"
+
   verify-success:
     name: Assert success path
     needs: call-success
