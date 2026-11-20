@@ -18,7 +18,7 @@
 - Quote every expansion, `[[ ]]` over `[ ]`, `$(…)` over backticks, no `eval`, `mktemp` + `trap` for temp files.
 - **Exit codes are API.** `0` success, `1` generic error, `2` usage error, `64+` task-specific. `azdo_wiql` uses **2 for `TF51011`** so callers can tell a missing area from an empty result.
 - **Never hardcode a work-item state name.** Derive from metadata, always.
-- **Test rig:** project `agent-workflow-sandbox` in `https://dev.azure.com/AndreasImboden0022`, holding work items 1–4, area `agent-workflow-sandbox\agent-workflow-sandbox`, an abandoned PR, and iteration `Sprint 1\Week A`. Credentials via `direnv exec ~/repos/ado/personal …`; never echo the PAT.
+- **Test rig:** project `agent-workflow-sandbox` in `https://dev.azure.com/<personal-org>`, holding work items 1–4, area `agent-workflow-sandbox\agent-workflow-sandbox`, an abandoned PR, and iteration `Sprint 1\Week A`. Credentials via `direnv exec ~/repos/ado/personal …`; never echo the PAT.
 - **Never write to the `bossinfo` org.** The PAT can reach it and it is production.
 - Layer-1 tests mock `az` in `tests/mocks/` — no network, under 5 seconds. `tests/run-all.sh` discovers `run-*-tests.sh` by `find`; no registration needed.
 - A command not yet ported keeps its guard **unchanged** and still a hard stop.

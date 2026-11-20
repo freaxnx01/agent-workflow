@@ -1,6 +1,6 @@
 # Live run of the Azure Pipelines `ai-implement` PoC (#573)
 
-Run 2026-10-30 to 2026-11-02 against the sandbox org `AndreasImboden0022`,
+Run 2026-10-30 to 2026-11-02 against the sandbox org `<personal-org>`,
 project `agent-workflow-sandbox`, repository `practice`. Spec:
 `docs/superpowers/specs/2026-10-30-azdo-pipeline-poc-design.md`.
 

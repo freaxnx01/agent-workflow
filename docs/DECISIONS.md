@@ -1636,7 +1636,7 @@ one label in the scheme that carried any.
 **Context.** `/enrich`'s GitHub path inlines the whole implementation plan into
 the issue body, because the pipeline agent reads *only* that body.
 `System.Description` on Azure DevOps is an HTML field (`type=html`, read live
-from `AndreasImboden0022` on 2026-10-08); there is no Markdown-format field,
+from `<personal-org>` on 2026-10-08); there is no Markdown-format field,
 and neither `python-markdown` nor `pandoc` is available.
 
 **Decision.** On Azure DevOps the work item gets the original description, the

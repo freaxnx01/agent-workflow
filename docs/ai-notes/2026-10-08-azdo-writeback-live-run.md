@@ -1,6 +1,6 @@
 # Live verification of the Azure DevOps write-back path (#488)
 
-Run 2026-10-08 against the sandbox org `AndreasImboden0022`, project
+Run 2026-10-08 against the sandbox org `<personal-org>`, project
 `agent-workflow-sandbox`, sourcing **the repository's** `scripts/lib/azdo.sh`
 (not the stale installed copy under `$HOME/.claude/`). Credentials via
 `direnv exec ~/repos/ado/personal …`.
@@ -77,7 +77,7 @@ Now recorded as a warning comment above `azdo_set_tags` and `azdo_set_descriptio
 ## Step 1 — create the write-probe work item
 
 ```bash
-az boards work-item create --org "https://dev.azure.com/AndreasImboden0022" \
+az boards work-item create --org "https://dev.azure.com/<personal-org>" \
   --project agent-workflow-sandbox --type Issue \
   --title "write probe — do not delete (#488)" \
   --fields "System.AreaPath=agent-workflow-sandbox\agent-workflow-sandbox" \

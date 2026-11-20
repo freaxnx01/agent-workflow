@@ -187,7 +187,7 @@ Reasoning and caveats are in **ADR-012**; these are the follow-ups it names.
 > **RUN 2026-09-22/23 — every section has now met a live organization.**
 > Read pass against `bossinfo`; write pass (§7–§9) against a purpose-made
 > `agent-workflow-sandbox` project (Basic template) in the personal org
-> `AndreasImboden0022`, which is **left in place** so a fix can be verified.
+> `<personal-org>`, which is **left in place** so a fix can be verified.
 > Full results, per checkbox, in
 > [`docs/ai-notes/2026-09-22-ado-manual-test-run.md`](docs/ai-notes/2026-09-22-ado-manual-test-run.md).
 >
