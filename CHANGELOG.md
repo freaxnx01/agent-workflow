@@ -442,6 +442,7 @@ additions are the optional `NTFY_TOKEN` secret and the
 
 ### Added
 
+- *(migrate)* `scripts/migrate-consumers.sh --add-milestone-guard` rolls the backlog milestone guard out to existing consumers, one PR per repo (#653). Dry run by default; per repo it reports the pinned ref, whether the `issue-milestone.yml` stub and the `backlog` milestone are there, and how many open issues carry no milestone. `--apply` creates a missing `backlog` and opens the PR on `ci/backlog-milestone-guard`. A repo pinned below `v2.3.0` is skipped rather than handed a stub that 404s, and a closed `backlog` fails the repo rather than being reopened.
 - *(milestone)* Issues opened or reopened without a milestone get the standing `backlog` milestone (#646, freaxnx01/ai-instructions#61). New reusable workflow `backlog-milestone.yml`; `scripts/onboard-consumer.sh` writes the `issue-milestone.yml` stub. A repo without an open `backlog` milestone gets a warning — it is never created. `scripts/backfill-backlog-milestone.sh -R <owner/repo> [--apply]` sweeps existing issues (dry run by default). GitHub-only.
 - *(pipeline)* A failure of the implement job **before the agent starts** now posts a run report on the issue naming the failed step, stamps `ai:failed`, and carries an `ai-run` marker with `class: "pre_agent"` (ADR-023, #597). It does not count as an attempt, so a repeated outage is bounded by `MAX_NON_STARTS` rather than burning the issue's budget.
 - **review:** Every GitHub review comment ends with one hidden

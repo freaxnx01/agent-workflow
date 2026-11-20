@@ -406,6 +406,23 @@ for other in '--to:v2' '--fix-perms:' '--rename-flow:'; do
   assert_eq "--add-milestone-guard with $flag is a usage error" "2" "$rc"
 done
 
+section "docs — the operator can find the mode"
+
+# The header is what `--help` prints, so it is the mode's real documentation.
+header="$(sed -n '2,/^set -euo/p' "$MIGRATE")"
+assert_contains "the script header documents the mode" "$header" '--add-milestone-guard'
+assert_contains "  → and its branch default" "$header" 'ci/backlog-milestone-guard'
+assert_contains "  → with the rollout commands an operator runs" "$header" \
+  'migrate-consumers.sh --owner freaxnx01 --add-milestone-guard --apply'
+assert_contains "  → and the backfill that follows it" "$header" \
+  'backfill-backlog-milestone.sh'
+
+setup="$(cat "$ROOT/docs/CONSUMER-SETUP.md")"
+assert_contains "CONSUMER-SETUP.md §3d tells existing consumers how to get the stub" \
+  "$setup" '--add-milestone-guard'
+assert_contains "CHANGELOG.md records the mode" "$(cat "$ROOT/CHANGELOG.md")" \
+  '--add-milestone-guard'
+
 printf '\npassed: %d   failed: %d\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then
   printf 'failed:\n'

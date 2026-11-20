@@ -628,6 +628,24 @@ agents and scripts often arrive without one. This stub assigns `backlog` to an
 issue opened or reopened without a milestone (#646).
 `scripts/onboard-consumer.sh` writes it on every onboarding.
 
+A consumer onboarded before the guard existed gets the same stub from the
+rollout mode (#653) — one PR per repo, and `backlog` created where it is
+missing:
+
+```bash
+scripts/migrate-consumers.sh --owner <owner> --add-milestone-guard          # dry run: reports per repo
+scripts/migrate-consumers.sh --owner <owner> --add-milestone-guard --apply  # creates backlog, opens the PRs
+```
+
+Per repo it prints the current pin, whether the stub and `backlog` are there,
+and how many open issues carry no milestone. A repo pinned below `v2.3.0`
+(the release that shipped the guard) is skipped rather than handed a stub that
+404s on every issue event; a **closed** `backlog` fails the repo rather than
+being reopened. The rollout opens the PRs — merging them, and the backfill
+below, stay separate steps. This is meant for repos whose milestones are
+planning buckets; a repo that scopes releases by milestone wants a decision
+about the default, not this command.
+
 ```yaml
 # .github/workflows/issue-milestone.yml
 name: Issue milestone

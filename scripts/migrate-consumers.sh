@@ -10,7 +10,7 @@
 # fleet — the v1→v2 migration of 70 repos was done with a throwaway script, and
 # it mangled the one repo pinned to a full version.
 #
-# Two modes, because "keep it up to date" is really two questions:
+# Four modes, because "keep it up to date" is really several questions:
 #
 #   inventory (default)  What does each consumer pin right now? Answers "where
 #                        do I stand", needs no target, and is safe to run any
@@ -19,6 +19,11 @@
 #   fix-perms            Add the scopes a perms:MISSING stub lacks to its
 #     (--fix-perms)      caller `permissions:` block, one PR per repo (#441).
 #                        Dry-run unless --apply; always via a PR.
+#   add-milestone-guard  Add the backlog milestone guard's caller stub to a
+#     (--add-milestone-  consumer onboarded before it existed, one PR per repo
+#      guard)            (#653). Reports `backlog` and the un-milestoned issue
+#                        count per repo. Dry-run unless --apply; always via a
+#                        PR, on 'ci/backlog-milestone-guard'.
 #
 # Required environment variables: none.
 #
@@ -44,6 +49,13 @@
 #   --fix-perms          fix-perms mode (see above). Not combinable with --to:
 #                        a pin bump and a permissions fix are separate PRs.
 #                        Branch defaults to 'fix/agent-workflow-caller-permissions'.
+#   --add-milestone-guard
+#                        add-milestone-guard mode (see above). Not combinable
+#                        with --to, --rename-flow or --fix-perms — each is its
+#                        own PR. Branch defaults to
+#                        'ci/backlog-milestone-guard'. Only a ref that has the
+#                        workflow gets a stub (a moving major from v2 on, or an
+#                        exact pin >= v2.3.0); --force does not override that.
 #
 # Seams (tests):
 #   REWRITE_STDIN   When '1', read a stub on stdin, write the rewritten stub on
@@ -63,11 +75,15 @@
 #   One line per repo: `<repo>  <current-ref>  <verdict>  perms:<ok|MISSING …>`.
 #   perms:MISSING names scopes agent-implement.yml's jobs request that the stub
 #   does not grant — that consumer fails every dispatch at startup_failure.
+#   --add-milestone-guard replaces the perms column with
+#   `backlog:<present|would create|created|CLOSED>  unmilestoned:<N>`.
 #
 # Exit codes:
 #   0  success, including "nothing to do"
 #   1  --fix-perms only: at least one repo could not be fixed (perms:ERROR,
 #      uneditable shape, write or PR failure) — the operator must look
+#      --add-milestone-guard only: at least one repo could not be handled (a
+#      closed `backlog`, an unreadable lookup, a write or PR failure)
 #   2  bad arguments
 #   3  FIX_PERMS_STDIN only: the stub's shape cannot be edited safely
 #
@@ -75,6 +91,16 @@
 #   bash scripts/migrate-consumers.sh --owner freaxnx01 --fix-perms           # dry run
 #   bash scripts/migrate-consumers.sh --owner freaxnx01 --fix-perms --apply
 #   bash scripts/migrate-consumers.sh --owner freaxnx01                       # expect perms:ok
+#
+# Rolling out the backlog guard (#653) — an operator step, never run by CI:
+#   bash scripts/migrate-consumers.sh --owner freaxnx01 --add-milestone-guard          # dry run
+#   bash scripts/migrate-consumers.sh --owner freaxnx01 --add-milestone-guard --apply
+# Then merge the PRs it opened, and per repo the run reported
+# `unmilestoned:<N>` with N > 0, sweep the issues that predate the stub:
+#   bash scripts/backfill-backlog-milestone.sh -R <owner/repo>                # dry run
+#   bash scripts/backfill-backlog-milestone.sh -R <owner/repo> --apply
+# The documented rollout covers consumers under the personal owner. A repo
+# whose milestones scope releases wants a decision, not this tool.
 set -euo pipefail
 IFS=$'\n\t'
 
