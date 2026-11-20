@@ -692,7 +692,7 @@ bullet with:
 **Context.** `/enrich`'s GitHub path inlines the whole implementation plan into
 the issue body, because the pipeline agent reads *only* that body. `System.
 Description` on Azure DevOps is an HTML field (`type=html`, read live from
-`AndreasImboden0022` on 2026-10-08); there is no Markdown-format field, and
+`<personal-org>` on 2026-10-08); there is no Markdown-format field, and
 neither `python-markdown` nor `pandoc` is available.
 
 **Decision.** On Azure DevOps the work item gets the original description, the
@@ -757,7 +757,7 @@ corrupts the rig. Create #5 once and keep it:
 
 ```bash
 direnv exec ~/repos/ado/personal bash -c '
-az boards work-item create --org "https://dev.azure.com/AndreasImboden0022" \
+az boards work-item create --org "https://dev.azure.com/<personal-org>" \
   --project agent-workflow-sandbox --type Issue \
   --title "write probe — do not delete (#488)" \
   --fields "System.AreaPath=agent-workflow-sandbox\\agent-workflow-sandbox" \
@@ -772,7 +772,7 @@ The item just created has none, so this exercises the `add` branch:
 
 ```bash
 direnv exec ~/repos/ado/personal bash -c '
-export AZDO_ORG=AndreasImboden0022 AZDO_PROJECT=agent-workflow-sandbox AZDO_REPO=agent-workflow-sandbox
+export AZDO_ORG="<personal-org>" AZDO_PROJECT=agent-workflow-sandbox AZDO_REPO=agent-workflow-sandbox
 source scripts/lib/azdo.sh
 azdo_set_description 5 "<p>first</p>"'
 ```
@@ -784,7 +784,7 @@ including any HTML the service rewrote.
 
 ```bash
 direnv exec ~/repos/ado/personal bash -c '
-export AZDO_ORG=AndreasImboden0022 AZDO_PROJECT=agent-workflow-sandbox AZDO_REPO=agent-workflow-sandbox
+export AZDO_ORG="<personal-org>" AZDO_PROJECT=agent-workflow-sandbox AZDO_REPO=agent-workflow-sandbox
 source scripts/lib/azdo.sh
 azdo_set_description 5 "<p>second</p>"
 azdo_description 5'
@@ -800,7 +800,7 @@ ADR-016 covers emoji in tag *names* only; a comment body is untested.
 
 ```bash
 direnv exec ~/repos/ado/personal bash -c '
-export AZDO_ORG=AndreasImboden0022 AZDO_PROJECT=agent-workflow-sandbox AZDO_REPO=agent-workflow-sandbox
+export AZDO_ORG="<personal-org>" AZDO_PROJECT=agent-workflow-sandbox AZDO_REPO=agent-workflow-sandbox
 source scripts/lib/azdo.sh
 azdo_comment 5 "🔒 Enrichment lock acquired at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 azdo_comments 5 | tail -1
@@ -820,7 +820,7 @@ and `commands/enrich-phased.md`.
 ```bash
 direnv exec ~/repos/ado/personal bash -c '
 set -euo pipefail
-ORG="https://dev.azure.com/AndreasImboden0022"
+ORG="https://dev.azure.com/<personal-org>"
 rev=$(az boards work-item show --id 5 --org "$ORG" --output json --only-show-errors \
       | python3 -c "import sys,json; print(json.load(sys.stdin)[\"rev\"])")
 printf "user = \":%s\"\n" "$AZURE_DEVOPS_EXT_PAT" | curl -sS -K - \

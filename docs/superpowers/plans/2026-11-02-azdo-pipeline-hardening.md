@@ -20,7 +20,7 @@
 - Retry cap for a revision conflict: **3** attempts.
 - Pinned agent: version **5.281.1**, SHA-256 **c9579f76fd71a013e3b9010155454e20592d935134e4fcd04adc5283a820167e** (packages API `hashValue`, read 2026-11-02).
 - Base image: `debian:13-slim@sha256:f6b08b09a05725f9431502d3b5714f5c4576e82c1a84fa1debe0c24a7e0c3ec4` (index digest, read 2026-11-02).
-- Live work (Task 5) is local-only, against the sandbox org `AndreasImboden0022`; credentials via `direnv exec ~/repos/ado/personal …`.
+- Live work (Task 5) is local-only, against the sandbox org `<personal-org>`; credentials via `direnv exec ~/repos/ado/personal …`.
 
 ## Review Focus
 

@@ -29,7 +29,7 @@ az boards query --org … --project … --output json \
 
 Not `[]` — **zero bytes**. Reproduced across:
 
-- **two independent organizations** (`bossinfo`, `AndreasImboden0022`)
+- **two independent organizations** (`bossinfo`, `<personal-org>`)
 - **three projects**, including one with four known work items
 - **all four output formats** (`json`, `table`, `tsv`, `yaml`)
 

@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **Only `commands/issues.md` changes.** No script, workflow or test file is touched by this plan.
-- **The sandbox is the test rig:** project `agent-workflow-sandbox` in org `https://dev.azure.com/AndreasImboden0022`, holding work items 1–4, an area path `agent-workflow-sandbox\agent-workflow-sandbox`, one abandoned PR, and iteration `Sprint 1\Week A`.
+- **The sandbox is the test rig:** project `agent-workflow-sandbox` in org `https://dev.azure.com/<personal-org>`, holding work items 1–4, an area path `agent-workflow-sandbox\agent-workflow-sandbox`, one abandoned PR, and iteration `Sprint 1\Week A`.
 - **Reach credentials with direnv** — the agent shell fires no direnv hook: `direnv exec ~/repos/ado/personal <command>`. The PAT is `AZURE_DEVOPS_EXT_PAT`, the org `AZURE_DEVOPS_ORG_URL`. Never echo either.
 - **Do not change** these, all verified correct: the `workitemtypes` resource name and `--api-version 7.1`; the `.value[].states[]` shape; deriving closed states from `category ∈ {Completed, Removed}`; `az repos pr list --query '[].pullRequestId'`; `az repos pr work-item list --query '[].id'`; the `--status active/completed/abandoned/all` values; the single backslash in `'Project\Repo'`; the `--depth` default-of-1 warning.
 - **No state name may appear as a literal** anywhere in Step 2 after Task 1.
