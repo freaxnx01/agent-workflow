@@ -79,9 +79,14 @@ set -euo pipefail
 IFS=$'\n\t'
 
 STUB_PATH='.github/workflows/agent.yml'
+GUARD_PATH='.github/workflows/issue-milestone.yml'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/gh-retry.sh disable=SC1091
 source "$SCRIPT_DIR/lib/gh-retry.sh"
+# shellcheck source=scripts/lib/milestone-stub.sh disable=SC1091
+source "$SCRIPT_DIR/lib/milestone-stub.sh"
+# shellcheck source=scripts/lib/backlog-milestone.sh disable=SC1091
+source "$SCRIPT_DIR/lib/backlog-milestone.sh"
 # The workflow a stub's permissions are checked against. This checkout's copy:
 # run the script from an up-to-date main, which is what @v<latest> points at.
 REUSABLE="${REUSABLE:-$SCRIPT_DIR/../.github/workflows/agent-implement.yml}"
@@ -91,6 +96,7 @@ APPLY=false
 USE_PR=false
 BRANCH=''
 FIX_PERMS=false
+ADD_GUARD=false
 FORCE="${FORCE:-false}"
 OWNER=''
 REPOS=''
@@ -273,11 +279,19 @@ while [[ $# -gt 0 ]]; do
     --force)  FORCE=true; shift ;;
     --path)   STUB_PATH="${2:?}"; shift 2 ;;
     --fix-perms) FIX_PERMS=true; shift ;;
+    --add-milestone-guard) ADD_GUARD=true; shift ;;
     -h|--help) sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     *)        usage_error "unknown argument: $1" ;;
   esac
 done
 
+if [[ "$ADD_GUARD" == "true" ]]; then
+  [[ -z "$TARGET_REF" ]] || usage_error "--add-milestone-guard and --to are separate rollouts; run one at a time"
+  [[ "$RENAME_FLOW" != "true" ]] || usage_error "--add-milestone-guard and --rename-flow are separate rollouts; run one at a time"
+  [[ "$FIX_PERMS" != "true" ]] || usage_error "--add-milestone-guard and --fix-perms are separate rollouts; run one at a time"
+  USE_PR=true
+  BRANCH="${BRANCH:-ci/backlog-milestone-guard}"
+fi
 if [[ "$FIX_PERMS" == "true" ]]; then
   [[ -z "$TARGET_REF" ]] || usage_error "--fix-perms and --to are separate rollouts; run one at a time"
   [[ "$RENAME_FLOW" != "true" ]] || usage_error "--fix-perms and --rename-flow are separate rollouts; run one at a time"
@@ -374,6 +388,97 @@ fix_perms_repo() {
   printf '%s  %s  fixed → PR %s\n' "$repo" "$cur" "$url"; changed=$((changed+1))
 }
 
+# --- the backlog milestone guard rollout (#653) ------------------------------
+
+# guard_ref_ok <ref> — true when backlog-milestone.yml exists at <ref>: a
+# moving major from v2 on, or an exact pin of v2.3.0 or later (the release that
+# shipped the guard, #646). A stub pinned at any other ref — v1, an older exact
+# pin, `main`, a SHA — 404s on every issue event, so such a repo is skipped and
+# `--force` does not override it.
+guard_ref_ok() {
+  local ref="$1" version
+  if [[ "$ref" =~ ^v([0-9]+)$ ]]; then
+    if (( BASH_REMATCH[1] >= 2 )); then return 0; fi
+    return 1
+  fi
+  [[ "$ref" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || return 1
+  # One sortable number; minor and patch stay below 1000, as they have for 2
+  # major lines and 40-odd releases.
+  version=$(( BASH_REMATCH[1] * 1000000 + BASH_REMATCH[2] * 1000 + BASH_REMATCH[3] ))
+  if (( version >= 2003000 )); then return 0; fi
+  return 1
+}
+
+# guard_file_state <repo> — 0 the stub is already there, 1 it is absent, 2 the
+# lookup itself failed. An outage must not read as "absent": that would give
+# the repo a second stub and a PR nobody asked for.
+guard_file_state() {
+  local repo="$1" err rc=0
+  err="$(gh api "repos/${repo}/contents/${GUARD_PATH}" 2>&1 >/dev/null)" || rc=$?
+  if (( rc == 0 )); then return 0; fi
+  if [[ "$err" == *404* || "$err" == *'Not Found'* ]]; then return 1; fi
+  return 2
+}
+
+# pipeline_repo_from_stub — agent.yml on stdin; the owner/name the consumer
+# already calls. Read from the stub rather than hardcoded, so a fork's consumer
+# keeps calling the fork.
+pipeline_repo_from_stub() {
+  grep -oE '[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/\.github/workflows/agent-implement\.yml@' \
+    | head -1 | sed 's|/\.github/.*||' || printf ''
+}
+
+# add_guard_repo <repo> <cur> <content> — the --add-milestone-guard verdict
+# and, with --apply, the milestone and the PR for one repo. Updates the
+# changed/skipped/failed counters.
+add_guard_repo() {
+  local repo="$1" cur="$2" content="$3"
+  local state issues count=0 backlog open rc=0
+  if ! guard_ref_ok "$cur"; then
+    printf '%s  %s  skipped (pins %s; guard needs v2.3.0+)\n' "$repo" "$cur" "$cur"
+    skipped=$((skipped+1)); return
+  fi
+  rc=0; guard_file_state "$repo" || rc=$?
+  case "$rc" in
+    0) printf '%s  %s  guard present\n' "$repo" "$cur"; skipped=$((skipped+1)); return ;;
+    2) printf '%s  %s  CHECK FAILED (could not read %s)\n' "$repo" "$cur" "$GUARD_PATH"
+       failed=$((failed+1)); return ;;
+  esac
+  # A failed lookup is not "none open" (#441): on a re-run it would bypass the
+  # only duplicate guard and write over an existing rollout branch.
+  rc=0
+  open="$(with_backoff gh pr list --repo "$repo" --head "$BRANCH" --state open --json url \
+            --jq '.[0].url // empty' 2>/dev/null)" || rc=$?
+  if (( rc != 0 )); then
+    printf '%s  %s  CHECK FAILED (could not list open PRs)\n' "$repo" "$cur"; failed=$((failed+1)); return
+  fi
+  if [[ -n "$open" ]]; then
+    printf '%s  %s  PR already open %s\n' "$repo" "$cur" "$open"; skipped=$((skipped+1)); return
+  fi
+  rc=0; state="$(backlog_milestone_state "$repo")" || rc=$?
+  if (( rc != 0 )); then
+    printf '%s  %s  CHECK FAILED (could not read the milestones)\n' "$repo" "$cur"; failed=$((failed+1)); return
+  fi
+  # A closed `backlog` is left alone: reopening someone's closed milestone is a
+  # decision, and a stub assigning a closed milestone would hide issues.
+  if [[ "$state" == closed* ]]; then
+    printf '%s  %s  backlog:CLOSED  not edited\n' "$repo" "$cur"; failed=$((failed+1)); return
+  fi
+  rc=0; issues="$(list_unmilestoned_issues "$repo")" || rc=$?
+  if (( rc != 0 )); then
+    printf '%s  %s  CHECK FAILED (could not list the open issues)\n' "$repo" "$cur"; failed=$((failed+1)); return
+  fi
+  [[ -z "$issues" ]] || count="$(printf '%s\n' "$issues" | wc -l | tr -d ' ')"
+
+  if [[ "$APPLY" != "true" ]]; then
+    backlog='present'
+    if [[ "$state" == missing ]]; then backlog='would create'; fi
+    printf '%s  %s  would add guard  backlog:%s  unmilestoned:%s\n' "$repo" "$cur" "$backlog" "$count"
+    changed=$((changed+1)); return
+  fi
+  apply_guard_repo "$repo" "$cur" "$content" "$state" "$count"
+}
+
 changed=0; skipped=0; failed=0
 while IFS= read -r repo; do
   [[ -z "$repo" ]] && continue
@@ -385,6 +490,13 @@ while IFS= read -r repo; do
   content="$(printf '%s' "$blob" | base64 -d)"
   cur="$(printf '%s' "$content" | current_ref)"
   cur="${cur:--}"
+
+  # The guard rollout reads nothing out of the stub but its ref and the
+  # pipeline repo it calls, so it runs before the permissions check.
+  if [[ "$ADD_GUARD" == "true" ]]; then
+    add_guard_repo "$repo" "$cur" "$content"; continue
+  fi
+
   perms="$(printf '%s' "$content" | perms_verdict)"
 
   if [[ "$FIX_PERMS" == "true" ]]; then
@@ -450,3 +562,4 @@ done <<< "$REPOS"
 
 printf '\n%d changed, %d skipped, %d failed\n' "$changed" "$skipped" "$failed"
 if [[ "$FIX_PERMS" == "true" ]] && (( failed > 0 )); then exit 1; fi
+if [[ "$ADD_GUARD" == "true" ]] && (( failed > 0 )); then exit 1; fi

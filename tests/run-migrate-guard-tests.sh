@@ -14,6 +14,7 @@ IFS=$'\n\t'
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FIX="$ROOT/tests/fixtures/migrate-guard"
 MOCKS="$ROOT/tests/mocks"
+MIGRATE="$ROOT/scripts/migrate-consumers.sh"
 
 unset GITHUB_REPOSITORY GITHUB_OUTPUT GITHUB_STEP_SUMMARY REPO
 
@@ -141,6 +142,163 @@ rc=0; in_lib '-X POST repos/o/r/milestones\t'"$FIX/milestone-created.json"'\n' >
 assert_eq "a failed creation returns 1, never a number" "1" "$rc"
 LIB_FAIL=''
 rm -rf "$LIB_DIR"
+
+section "guard_ref_ok — only a ref that has the workflow gets a stub"
+
+# Extracted from the shipped script, which runs the rollout at top level and so
+# cannot be sourced whole. The predicate has no dependencies, so the extract is
+# the real thing — not a copy that could drift.
+# shellcheck disable=SC1090
+source <(sed -n '/^guard_ref_ok()/,/^}/p' "$MIGRATE")
+
+for ref in v2 v3 v10 v2.3.0 v2.10.0 v3.0.0 v11.0.0; do
+  if guard_ref_ok "$ref"; then pass "$ref qualifies"; else fail "$ref qualifies"; fi
+done
+# v1 never had the workflow, v2.2.1 predates it, and a stub pinned at a ref
+# without backlog-milestone.yml fails on every issue event.
+for ref in v1 v1.13.0 v2.2.1 v2.0.0 main master '' v2.3 2.3.0 \
+           0123456789abcdef0123456789abcdef01234567; do
+  if guard_ref_ok "$ref"; then fail "${ref:-(empty)} does not qualify"; else pass "${ref:-(empty)} does not qualify"; fi
+done
+
+section "add-milestone-guard — dry run"
+
+MG="$(mktemp -d)"
+printf 'deadbeef\n' > "$MG/sha"
+printf 'https://github.com/o/a/pull/12\n' > "$MG/pr-url"
+printf 'https://github.com/o/a/pull/7\n' > "$MG/open-pr"
+
+# mg_map <agent-fixture> <milestones-fixture> [extra "<pattern>\t<file>" lines]
+# ORDER MATTERS: the mock answers with the first pattern found in argv, and
+# only the sha call carries `--jq .sha`.
+mg_map() {
+  local agent="$1" milestones="$2"; shift 2
+  base64 -w0 < "$FIX/$agent" > "$MG/agent.b64"
+  { printf '.sha\t%s\n' "$MG/sha"
+    printf 'contents/.github/workflows/agent.yml\t%s\n' "$MG/agent.b64"
+    printf 'milestones?state=all\t%s\n' "$FIX/$milestones"
+    printf 'milestone=none\t%s\n' "$FIX/unmilestoned-two-pages.json"
+    printf -- '-X POST repos/o/a/milestones\t%s\n' "$FIX/milestone-created.json"
+    printf 'pr create\t%s\n' "$MG/pr-url"
+    if (( $# > 0 )); then printf '%b\n' "$@"; fi
+  } > "$MG/map"
+}
+
+# mg_absent — the normal state of a repo that has not been rolled out yet: the
+# stub lookup 404s, exactly as `gh api` reports a missing file.
+mg_absent() {
+  printf '%s\t%s\n' 'contents/.github/workflows/issue-milestone.yml' 'gh: Not Found (HTTP 404)' > "$MG/fail"
+  MG_FAIL="$MG/fail"
+}
+
+# mg_run [args...] — the mode over CONSUMERS='o/a'; sets OUT, RC, and leaves
+# the gh argv log in $MG/log.
+# shellcheck disable=SC2031  # PATH is rebuilt per call from the pristine $MOCKS
+mg_run() {
+  : > "$MG/log"
+  RC=0
+  OUT="$(env PATH="$MOCKS:$PATH" GH_MOCK_LOG="$MG/log" GH_MOCK_STDOUT_MAP="$MG/map" \
+           ${MG_FAIL:+GH_MOCK_FAIL_MAP="$MG_FAIL"} GH_RETRY_SLEEP_CMD=true \
+           CONSUMERS='o/a' bash "$MIGRATE" --add-milestone-guard "$@" 2>&1)" || RC=$?
+}
+MG_FAIL=''
+
+mg_map agent-v2.yml milestones-open.json; mg_absent
+mg_run
+assert_contains "a pinned, guard-less consumer is reported with its counts" "$OUT" \
+  'o/a  v2  would add guard  backlog:present  unmilestoned:3'
+assert_contains "  → and tallied as a change" "$OUT" '1 changed, 0 skipped, 0 failed'
+assert_eq "  → dry run exits 0" "0" "$RC"
+assert_not_contains "  → nothing is created" "$(cat "$MG/log")" '-X POST repos/o/a/milestones'
+assert_not_contains "  → and nothing is written" "$(cat "$MG/log")" '-X PUT'
+
+mg_map agent-v2.yml milestones-missing.json; mg_absent
+mg_run
+assert_contains "a missing backlog is announced, not created" "$OUT" \
+  'o/a  v2  would add guard  backlog:would create  unmilestoned:3'
+assert_not_contains "  → no milestone POST" "$(cat "$MG/log")" '-X POST repos/o/a/milestones'
+
+# No 404 seam: the lookup succeeds, so the stub is already there.
+mg_map agent-v2.yml milestones-open.json; MG_FAIL=''
+mg_run
+assert_contains "a consumer that already has the guard is skipped" "$OUT" 'o/a  v2  guard present'
+assert_contains "  → and tallied as skipped" "$OUT" '0 changed, 1 skipped, 0 failed'
+assert_eq "  → exit 0" "0" "$RC"
+assert_not_contains "  → its milestones are not even read" "$(cat "$MG/log")" 'milestones?state=all'
+
+mg_map agent-v2.2.1.yml milestones-open.json; mg_absent
+mg_run
+assert_contains "an exact pin older than the guard is skipped, never given a 404 stub" "$OUT" \
+  'o/a  v2.2.1  skipped (pins v2.2.1; guard needs v2.3.0+)'
+assert_eq "  → exit 0" "0" "$RC"
+mg_run --force
+assert_contains "  → and --force does not override it" "$OUT" \
+  'o/a  v2.2.1  skipped (pins v2.2.1; guard needs v2.3.0+)'
+
+mg_map agent-v2.3.0.yml milestones-open.json; mg_absent
+mg_run
+assert_contains "the first release with the guard qualifies" "$OUT" 'o/a  v2.3.0  would add guard'
+
+for fixture in agent-v1.yml agent-main.yml; do
+  mg_map "$fixture" milestones-open.json; mg_absent
+  mg_run
+  assert_contains "$fixture is skipped with the reason" "$OUT" 'guard needs v2.3.0+'
+done
+
+# An outage must not read as "the file is not there" — that would hand the repo
+# a second stub, or a PR nobody expected.
+mg_map agent-v2.yml milestones-open.json
+printf '%s\t%s\n' 'contents/.github/workflows/issue-milestone.yml' 'gh: HTTP 500: Internal Server Error' > "$MG/fail"
+MG_FAIL="$MG/fail"
+mg_run
+assert_contains "a guard lookup that is not a 404 fails the repo" "$OUT" 'o/a  v2  CHECK FAILED'
+assert_contains "  → and is tallied as failed" "$OUT" '0 changed, 0 skipped, 1 failed'
+assert_eq "  → the run exits 1" "1" "$RC"
+assert_not_contains "  → nothing is written" "$(cat "$MG/log")" '-X PUT'
+
+mg_map agent-v2.yml milestones-closed.json; mg_absent
+mg_run
+assert_contains "a closed backlog fails the repo instead of being reopened" "$OUT" \
+  'o/a  v2  backlog:CLOSED  not edited'
+assert_eq "  → the run exits 1" "1" "$RC"
+assert_not_contains "  → no milestone is created" "$(cat "$MG/log")" '-X POST repos/o/a/milestones'
+assert_not_contains "  → and no PR is opened" "$(cat "$MG/log")" 'pr create'
+
+mg_map agent-v2.yml milestones-open.json 'pr list --repo o/a\t'"$MG/open-pr"
+mg_absent
+mg_run
+assert_contains "a rollout PR already open is not duplicated" "$OUT" \
+  'o/a  v2  PR already open https://github.com/o/a/pull/7'
+assert_eq "  → exit 0" "0" "$RC"
+
+mg_map agent-v2.yml milestones-open.json
+printf '%s\t%s\n%s\t%s\n' \
+  'contents/.github/workflows/issue-milestone.yml' 'gh: Not Found (HTTP 404)' \
+  'milestones?state=all' 'gh: HTTP 502: Bad Gateway' > "$MG/fail"
+MG_FAIL="$MG/fail"
+mg_run
+assert_contains "an unreadable milestone list fails the repo" "$OUT" 'o/a  v2  CHECK FAILED'
+assert_eq "  → the run exits 1" "1" "$RC"
+
+mg_map agent-v2.yml milestones-open.json
+printf '%s\t%s\n%s\t%s\n' \
+  'contents/.github/workflows/issue-milestone.yml' 'gh: Not Found (HTTP 404)' \
+  'milestone=none' 'gh: HTTP 502: Bad Gateway' > "$MG/fail"
+MG_FAIL="$MG/fail"
+mg_run
+assert_contains "an unreadable issue list fails the repo" "$OUT" 'o/a  v2  CHECK FAILED'
+assert_eq "  → the run exits 1" "1" "$RC"
+MG_FAIL=''
+
+section "add-milestone-guard — argument handling"
+
+for other in '--to:v2' '--fix-perms:' '--rename-flow:'; do
+  flag="${other%%:*}"; value="${other#*:}"
+  rc=0
+  # shellcheck disable=SC2086  # $value is one optional argument, by design
+  bash "$MIGRATE" --repo o/a --add-milestone-guard "$flag" $value >/dev/null 2>&1 || rc=$?
+  assert_eq "--add-milestone-guard with $flag is a usage error" "2" "$rc"
+done
 
 printf '\npassed: %d   failed: %d\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then
