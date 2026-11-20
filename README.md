@@ -272,6 +272,7 @@ will only ever remove names listed there; a hand-written skill is never touched.
 ```text
 skills/
   processing-test-feedback/SKILL.md   → /processing-test-feedback
+  reclaim-memory/SKILL.md             → /reclaim-memory
   retitle/SKILL.md                    → /retitle
 ```
 
