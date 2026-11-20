@@ -20,7 +20,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-[[ "${1:-}" != "--protocol" ]] || { printf '1\n'; exit 0; }
+[[ "${1:-}" != "--protocol" ]] || { printf '2\n'; exit 0; }
 [[ $# -ge 2 && "$2" == "--" ]] || { printf 'usage: awf-agent-run <workspace> -- <args...>\n' >&2; exit 2; }
 
 workspace="$(realpath -m -- "$1")"

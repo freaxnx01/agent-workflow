@@ -101,16 +101,16 @@ git_in() {
 section "protocol"
 
 entry awf-agent-run --protocol
-assert_eq "run_Protocol_PrintsOne: rc" "0" "$RC"
-assert_eq "run_Protocol_PrintsOne: output" "1" "$OUT"
+assert_eq "run_Protocol_PrintsTwo: rc" "0" "$RC"
+assert_eq "run_Protocol_PrintsTwo: output" "2" "$OUT"
 
 entry awf-agent-git --protocol
-assert_eq "git_Protocol_PrintsOne: rc" "0" "$RC"
-assert_eq "git_Protocol_PrintsOne: output" "1" "$OUT"
+assert_eq "git_Protocol_PrintsTwo: rc" "0" "$RC"
+assert_eq "git_Protocol_PrintsTwo: output" "2" "$OUT"
 
 entry awf-agent-reap --protocol
-assert_eq "reap_Protocol_PrintsOne: rc" "0" "$RC"
-assert_eq "reap_Protocol_PrintsOne: output" "1" "$OUT"
+assert_eq "reap_Protocol_PrintsTwo: rc" "0" "$RC"
+assert_eq "reap_Protocol_PrintsTwo: output" "2" "$OUT"
 
 section "awf-agent-run"
 
