@@ -33,6 +33,7 @@
 #   valid_branch_name <name>        the branch-name rule for agent-chosen names
 #   cap_file_bytes <file> <max>     1 when the file is larger, missing or unreadable
 #   checkout_has_credentials        0 when the checkout carries a credential
+#   url_has_credential <url>        0 when the URL's userinfo may carry a secret
 #   azdo_git <git-args...>          git with the Azure DevOps Basic header in its
 #                                   ENVIRONMENT, never in its argv
 #
@@ -242,9 +243,23 @@ checkout_has_credentials() {
   local url
   while read -r url; do
     [[ -n "$url" ]] || continue
-    [[ "$url" =~ ^[A-Za-z+.-]+://[^/@]*@ ]] && return 0
+    url_has_credential "$url" && return 0
   done < <(bgit remote -v 2>/dev/null | awk '{ print $2 }' | sort -u)
   return 1
+}
+
+# url_has_credential <url> — 0 when the URL's userinfo may carry a secret.
+# The one exception is the Azure DevOps checkout's own form,
+# https://<org>@dev.azure.com/<org>/..., which names the organization as the
+# user even with persistCredentials: false. Any other bare user counts, since
+# Azure DevOps accepts a PAT in the user position.
+url_has_credential() {
+  local url="$1"
+  [[ "$url" =~ ^[A-Za-z+.-]+://([^/@]*)@[^/]+/([^/]*) ]] || return 1
+  local userinfo="${BASH_REMATCH[1]}" first_segment="${BASH_REMATCH[2]}"
+  [[ "$userinfo" == *:* ]] && return 0
+  [[ -n "$userinfo" && "$userinfo" == "$first_segment" ]] && return 1
+  return 0
 }
 
 # azdo_git <git-args...> — an authenticated git call. The header goes in through

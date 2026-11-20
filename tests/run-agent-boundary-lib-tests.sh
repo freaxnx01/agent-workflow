@@ -291,6 +291,21 @@ git -C "$CLEAN" remote set-url origin https://user:pw@example.invalid/org/projec
 lib 'cd "$REPO_DIR"; checkout_has_credentials; printf "rc=%s\n" "$?"' REPO_DIR="$CLEAN"
 assert_contains "checkout_has_credentials_DetectsCredentialUrl" "rc=0" "$OUT"
 
+# The Azure DevOps checkout task names the organization as the user
+# (https://<org>@dev.azure.com/<org>/...) even with persistCredentials: false.
+git -C "$CLEAN" remote set-url origin https://myorg@dev.azure.com/myorg/project/_git/repo
+lib 'cd "$REPO_DIR"; checkout_has_credentials; printf "rc=%s\n" "$?"' REPO_DIR="$CLEAN"
+assert_contains "checkout_has_credentials_OrgNameUserIsFalse" "rc=1" "$OUT"
+
+# Any other bare user may be a token: Azure DevOps accepts a PAT as the user.
+git -C "$CLEAN" remote set-url origin https://abcdef0123456789@dev.azure.com/myorg/project/_git/repo
+lib 'cd "$REPO_DIR"; checkout_has_credentials; printf "rc=%s\n" "$?"' REPO_DIR="$CLEAN"
+assert_contains "checkout_has_credentials_DetectsTokenAsUser" "rc=0" "$OUT"
+
+git -C "$CLEAN" remote set-url origin https://myorg:pw@dev.azure.com/myorg/project/_git/repo
+lib 'cd "$REPO_DIR"; checkout_has_credentials; printf "rc=%s\n" "$?"' REPO_DIR="$CLEAN"
+assert_contains "checkout_has_credentials_DetectsOrgNameWithPassword" "rc=0" "$OUT"
+
 section "azdo_git keeps the token out of argv"
 
 GITSTUB="$TMP/gitstub"
