@@ -9,7 +9,7 @@
 > Each section starts with `# FILE: <repo>/<path> (@<sha>)`: the source file and
 > the last commit that touched it.
 
-# FILE: agent-workflow/README.md (@fdd4ef0)
+# FILE: agent-workflow/README.md (@7197663)
 
 # agent-workflow
 
@@ -285,6 +285,7 @@ will only ever remove names listed there; a hand-written skill is never touched.
 ```text
 skills/
   processing-test-feedback/SKILL.md   → /processing-test-feedback
+  reclaim-memory/SKILL.md             → /reclaim-memory
   retitle/SKILL.md                    → /retitle
 ```
 
