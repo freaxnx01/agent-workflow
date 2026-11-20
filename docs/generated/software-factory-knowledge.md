@@ -712,7 +712,7 @@ then follow it. Today: re-scan and report drift.
 One `list_repos` call re-derives the ground truth. Update the map, commit,
 move on.
 
-# FILE: agent-workflow/docs/DECISIONS.md (@fb23e2e)
+# FILE: agent-workflow/docs/DECISIONS.md (@806440c)
 
 # Architecture Decisions
 
@@ -2888,6 +2888,93 @@ that the failure is now visible on the issue.
   renders byte-identically, which `tests/run-run-report-golden-tests.sh` holds
   to unmodified.
 
+## ADR-024 — The Azure DevOps agent runs as its own user, not in its own job (2026-11-16)
+
+**Status:** accepted
+
+**Context.** ADR-020 (#535) established that an implement run must not be judged
+by the job that ran the agent. #571 did that for GitHub by moving every decision
+into a separate `implement_gate` job.
+
+The Azure DevOps path had the same weakness and a worse one.
+`scripts/implement-azdo.sh` ran the agent and then judged it in the same bash
+process, in the same job and container, as the same Linux user (`azp`, uid
+1000). That user could:
+
++ **read the job's access token.** `AZURE_DEVOPS_EXT_PAT` was exported into the
+  agent's environment (from `SYSTEM_ACCESSTOKEN`, `lib/ci-host.sh`), and even
+  without it, `/proc/<pid>/environ` of the agent worker is readable by the same
+  uid, and `/proc/<pid>/cmdline` by anyone — and the token was in the argv of
+  every authenticated git call (`git -c http.extraheader=...`). With the token
+  the agent can push branches, open PRs, and post or delete the run reports
+  `check-attempt-cap.sh` counts.
++ **rewrite the judge.** The pipeline scripts, the run's temp dir and the
+  consumer checkout were all writable by it, and bash reads a running script
+  lazily.
++ **persist past the run.** `/azp/agent` is a persistent Docker volume owned by
+  `azp`, holding the agent binaries and its registration credentials. An agent
+  that rewrites them controls every later job on that registration, secrets
+  included; one that copies them can impersonate the agent.
+
+**Decision.** A **user boundary inside the same job**, not a job split.
+
+1. **The agent runs as `awf-agent`**, a second unprivileged user in the image
+   with its own uid and home, not in group `azp`. It holds no Azure DevOps
+   credential: sudo's `env_reset` plus an `env_keep` of exactly
+   `CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY MODEL MAX_TURNS` drops every other
+   variable, and the entry point rebuilds the environment from the same
+   allowlist, so a misconfigured rule cannot hand it the token either.
+2. **Three fixed, root-owned entry points** are all `azp` may run as that user:
+   `awf-agent-run` (the CLI in the agent's workspace), `awf-agent-git` (seed,
+   commit, bundle) and `awf-agent-reap` (end every process of that uid and
+   report survivors). One sudoers rule names exactly those three, as
+   `awf-agent` only, never root. Each answers `--protocol` with a version the
+   driver refuses if it does not know it.
+3. **Everything that crosses back is hostile data.** The agent's commits return
+   only as a git bundle, verified in the driver's checkout — which the agent
+   cannot write — with `core.hooksPath=/dev/null` and `core.fsmonitor=false` on
+   every call, with the bundle's branch name validated (`git check-ref-format`
+   plus `^[A-Za-z0-9._/-]{1,100}$`) before it can reach a git command line, and
+   with the commits required to descend from the attempt's base. The result JSON
+   is capped at 64 KiB and rebuilt field by field by `import-result-output.sh`,
+   as on GitHub.
+4. **It fails closed, with no fallback.** A missing user, a missing or wrong
+   sudo rule, a sudo that refuses, a checkout that carries a credential: the run
+   exits 1 before any agent starts. A surviving agent process, a bundle that
+   does not verify, an unusable branch name or a rejected result end the attempt
+   as `failed: bug` with an `evidence:` line, and `bug` does not retry. There is
+   no path on which the agent runs as `azp`.
+5. **The token leaves argv.** Authenticated git calls pass `http.extraheader`
+   through `GIT_CONFIG_COUNT` / `GIT_CONFIG_KEY_0` / `GIT_CONFIG_VALUE_0`.
+6. **Local runs are unchanged.** `RUN_CONTEXT=local` is a human at a terminal in
+   a repo they chose; the boundary is a pipeline-mode requirement only.
+
+**Rejected: the GitHub job split.** A separate gate *job* on this pool runs on
+the same persistent `/azp/agent` volume, so it is not a fresh judge, and it
+shares the uid that can read the registration credentials — the token theft and
+the volume access survive the split untouched. A genuinely fresh judge would
+need a second agent registration and pool, plus retry and self-fix rebuilt as
+unrolled stages. The user boundary addresses the actual reachability, in one
+job, for the cost of one image change.
+
+**Consequences.**
+
++ The image must be rebuilt before an `ai-implement` run will start; nothing in
+  the pipeline YAML changes.
++ The container must not run with `no-new-privileges` (sudo is setuid). A broken
+  sudo is detected and named.
++ A logged-in CLI session under `/home/azp` is not usable in pipeline mode; the
+  token variable is.
++ `persistCredentials: false` is enforced by the driver, since nothing in this
+  repo can enforce it on a consumer's pipeline YAML.
++ An agent can still write a plausible lie in its own result text, exactly as on
+  GitHub; the draft PR, the AI review, PR build validation and the human merge
+  are what catch that.
++ `tests/run-azdo-isolation-tests.sh` keeps the boundary from regressing, the
+  counterpart of `run-agent-isolation-tests.sh` for this forge.
+
+**Source:** `docs/superpowers/specs/2026-11-16-azdo-agent-user-boundary-design.md`
+
 # FILE: agent-workflow/docs/AUTOPILOT.md (@e6286d4)
 
 # The unattended enrich lane
@@ -3326,7 +3413,7 @@ An alarm raised before this change lists its issues only in its body. The
 resume no longer reads that list: add `ai:paused` to those issues by hand
 before running `pipeline-resume.sh`, or re-dispatch them by hand.
 
-# FILE: agent-workflow/docs/AZDO-PIPELINE-SETUP.md (@be8f802)
+# FILE: agent-workflow/docs/AZDO-PIPELINE-SETUP.md (@806440c)
 
 # Azure DevOps Pipeline Agent Setup
 
@@ -3356,6 +3443,10 @@ docker build -f docker/azp-agent/Dockerfile --target dotnet -t <image>-dotnet .
 
 The variant is a superset of the default image. It sets
 `AWF_TOOLCHAIN=dotnet`, which section 10 uses to route jobs to it.
+
+Both variants carry the agent user boundary: the agent runs as `awf-agent`, not
+as the pipeline user. An existing deployment needs this rebuild before an
+`ai-implement` run will start at all — see section 13.
 
 Bump `DOTNET_SDK_VERSION` and `DOTNET_SDK_SHA512` together. Read both from the
 channel's `releases.json`: in `releases[].sdk.files[]` (also
@@ -3460,6 +3551,11 @@ Set on the pipeline (not in YAML):
 
 Leave *Let users override this value when running this pipeline* **off** for
 each of them.
+
+`CLAUDE_CODE_OAUTH_TOKEN` is the only credential the agent itself receives; the
+boundary of section 13 drops every other variable from its environment, the
+Azure DevOps token included. A logged-in CLI session instead of this token does
+not work in pipeline mode.
 
 Also override the YAML CI trigger on this pipeline: *Pipelines > (pipeline) >
 Edit > ... > Triggers > Continuous integration*, tick **Override the YAML
@@ -3748,6 +3844,75 @@ Budget:
    re-review failed), the verdict above is for an earlier commit. The loop's
    outputs cannot tell this apart from a normal run, so the comment does not
    say so: compare its `head:` line with the PR's tip.
+
+## 13. Agent user boundary
+
+In a pipeline run the implement agent and the self-fix agent do **not** run as
+the pipeline user. They run as `awf-agent`, a second Linux user in the image
+that holds no Azure DevOps credential and can write nothing the driver later
+trusts (#591, ADR-024). The driver (`azp`, uid 1000) keeps the token, judges
+the run, pushes and opens the PR.
+
+**What an operator has to do: rebuild the image (section 1), and make sure the
+`ai-implement` pipeline's checkout says `persistCredentials: false`.** There
+are no new variables and no new steps. A pipeline set up before this section
+existed usually has `persistCredentials: true`; it now refuses every run
+(item 1 below), so flip it before the rebuilt image takes its first job. The
+driver pushes with its own per-command header and needs no persisted
+credential.
+
+What the rebuild adds:
+
+- the user `awf-agent` (uid 1001, home `/home/awf-agent`, **not** in group
+  `azp`), with the Claude CLI installed as that user;
+- three root-owned entry points in `/usr/local/libexec/awf-agent/`
+  (`awf-agent-run`, `awf-agent-git`, `awf-agent-reap`) — the only things `azp`
+  may run as `awf-agent`;
+- `/etc/sudoers.d/awf-agent` (mode 0440), one rule naming exactly those three
+  commands, as `awf-agent` only and never as root, with the agent's environment
+  reduced to `CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY MODEL MAX_TURNS`;
+- `/home/azp` at mode 0700. `/azp/agent` cannot be fixed by the image — a named
+  volume keeps its root-directory mode across a rebuild — so
+  `azp-agent-start.sh` sets it to 0700 on every start.
+
+Four things follow for the operator:
+
+1. **`persistCredentials: false` is now enforced by the driver.** A checkout
+   that carries an `http.*.extraheader` or a credential in a remote URL makes
+   the run refuse before the agent starts:
+   `error: the checkout carries a credential (persistCredentials must be
+   false); refusing to run the agent`. The repo's own template guard covers
+   only `templates/azdo/pr-validation.yml`, so this check is what covers the
+   `ai-implement` pipeline.
+2. **The container must not run with `no-new-privileges`.** sudo is setuid; with
+   that flag the run fails closed with
+   `error: the agent user boundary is not available: ...`, naming sudo. The
+   unit in section 3 does not set it.
+3. **A logged-in CLI session is not supported in pipeline mode.** The agent's
+   environment is rebuilt from the allowlist above, and `$HOME` is
+   `/home/awf-agent`, so a session stored under `/home/azp` is not reachable.
+   Use `CLAUDE_CODE_OAUTH_TOKEN` (section 7).
+4. **A new report line.** When the attempt's evidence cannot be trusted — an
+   agent process survived, the commits did not verify or did not descend from
+   the attempt's base, the branch name is unusable, or the result JSON was
+   rejected or over 64 KiB — the run report says `failed: bug` and adds one
+   line naming it:
+
+   ```text
+   - evidence: an agent process survived the attempt
+   ```
+
+   `bug` does not retry (section 11), and nothing is pushed.
+
+Local runs (`implement-azdo.sh` from a terminal) are unchanged: no boundary, no
+sudo, today's behaviour.
+
+### Layer-3 check after a rebuild
+
+Once, on the sandbox project, run one `ai-implement` item whose plan asks the
+agent to report `id -un`, `cat /proc/1/environ` and `touch /azp/agent/x` in its
+PR description. Expected: `awf-agent`, permission denied, permission denied.
+Record the result in `docs/ai-notes/`.
 
 # FILE: agent-workflow/docs/DESIGN.md (@5b5df3e)
 
