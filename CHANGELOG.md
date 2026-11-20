@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.4.0) - 2026-11-20
+
+**Upgrading from 2.3.x:** no change to a consumer's `agent.yml` is needed. This
+release restores the AI review: `claude.ai/install.sh` changed upstream, and
+with the old pinned checksum every review job failed with "installer checksum
+mismatch" (#669).
+
+### Added
+
+- **commands:** /parked and /roadmap move issues to backlog instead of stripping the milestone (#656)
+
+### Fixed
+
+- **azdo:** Judge the implement run behind an agent user boundary (#626)
+- **runners:** Re-pin the Claude installer checksum (#669)
+
+### Documentation
+
+- **specs:** Spec for the backlog guard rollout (#653)
+- **plans:** Plan for the backlog guard rollout (#653)
+- Replace the personal Azure DevOps org name with a placeholder (#668)
+
 ## [2.3.0](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.3.0) - 2026-11-19
 
 **Upgrading from 2.2.x:** no change to a consumer's `agent.yml` is needed on
