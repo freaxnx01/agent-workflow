@@ -46,10 +46,11 @@ IFS=$'\n\t'
 CLAUDE_CLI_VERSION="${CLAUDE_CLI_VERSION:-2.1.270}"
 INSTALLER_URL="${INSTALLER_URL:-https://claude.ai/install.sh}"
 
-# SHA-256 of the installer as fetched on 2026-09-23. Refreshing this is a
+# SHA-256 of the installer as fetched on 2026-11-20 (re-pinned after upstream
+# changed it; the #666 review failed on the old pin). Refreshing this is a
 # deliberate commit, reviewed like any other dependency bump: fetch the script,
 # read the diff, then record the new hash here.
-INSTALLER_SHA256="${INSTALLER_SHA256:-3a68d3406cf674e17bed1733a4dcf37805e2e47d87417700007d7e1aa766a944}"
+INSTALLER_SHA256="${INSTALLER_SHA256:-2c5506d110560bf618bbe88f678f2c2a0047c86a9c6585fc84976120b1de0b44}"
 
 DOC='docs/RUNNER-REQUIREMENTS.md'
 
