@@ -712,7 +712,7 @@ then follow it. Today: re-scan and report drift.
 One `list_repos` call re-derives the ground truth. Update the map, commit,
 move on.
 
-# FILE: agent-workflow/docs/DECISIONS.md (@806440c)
+# FILE: agent-workflow/docs/DECISIONS.md (@8ad5304)
 
 # Architecture Decisions
 
@@ -2352,7 +2352,7 @@ one label in the scheme that carried any.
 **Context.** `/enrich`'s GitHub path inlines the whole implementation plan into
 the issue body, because the pipeline agent reads *only* that body.
 `System.Description` on Azure DevOps is an HTML field (`type=html`, read live
-from `AndreasImboden0022` on 2026-10-08); there is no Markdown-format field,
+from `<personal-org>` on 2026-10-08); there is no Markdown-format field,
 and neither `python-markdown` nor `pandoc` is available.
 
 **Decision.** On Azure DevOps the work item gets the original description, the
