@@ -1,0 +1,4 @@
+[
+  { "number": 3, "title": "v1.0", "state": "closed" },
+  { "number": 7, "title": "backlog", "state": "open" }
+]

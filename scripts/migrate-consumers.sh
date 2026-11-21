@@ -10,7 +10,7 @@
 # fleet — the v1→v2 migration of 70 repos was done with a throwaway script, and
 # it mangled the one repo pinned to a full version.
 #
-# Two modes, because "keep it up to date" is really two questions:
+# Four modes, because "keep it up to date" is really several questions:
 #
 #   inventory (default)  What does each consumer pin right now? Answers "where
 #                        do I stand", needs no target, and is safe to run any
@@ -19,6 +19,11 @@
 #   fix-perms            Add the scopes a perms:MISSING stub lacks to its
 #     (--fix-perms)      caller `permissions:` block, one PR per repo (#441).
 #                        Dry-run unless --apply; always via a PR.
+#   add-milestone-guard  Add the backlog milestone guard's caller stub to a
+#     (--add-milestone-  consumer onboarded before it existed, one PR per repo
+#      guard)            (#653). Reports `backlog` and the un-milestoned issue
+#                        count per repo. Dry-run unless --apply; always via a
+#                        PR, on 'ci/backlog-milestone-guard'.
 #
 # Required environment variables: none.
 #
@@ -44,6 +49,13 @@
 #   --fix-perms          fix-perms mode (see above). Not combinable with --to:
 #                        a pin bump and a permissions fix are separate PRs.
 #                        Branch defaults to 'fix/agent-workflow-caller-permissions'.
+#   --add-milestone-guard
+#                        add-milestone-guard mode (see above). Not combinable
+#                        with --to, --rename-flow or --fix-perms — each is its
+#                        own PR. Branch defaults to
+#                        'ci/backlog-milestone-guard'. Only a ref that has the
+#                        workflow gets a stub (a moving major from v2 on, or an
+#                        exact pin >= v2.3.0); --force does not override that.
 #
 # Seams (tests):
 #   REWRITE_STDIN   When '1', read a stub on stdin, write the rewritten stub on
@@ -63,11 +75,15 @@
 #   One line per repo: `<repo>  <current-ref>  <verdict>  perms:<ok|MISSING …>`.
 #   perms:MISSING names scopes agent-implement.yml's jobs request that the stub
 #   does not grant — that consumer fails every dispatch at startup_failure.
+#   --add-milestone-guard replaces the perms column with
+#   `backlog:<present|would create|created|CLOSED>  unmilestoned:<N>`.
 #
 # Exit codes:
 #   0  success, including "nothing to do"
 #   1  --fix-perms only: at least one repo could not be fixed (perms:ERROR,
 #      uneditable shape, write or PR failure) — the operator must look
+#      --add-milestone-guard only: at least one repo could not be handled (a
+#      closed `backlog`, an unreadable lookup, a write or PR failure)
 #   2  bad arguments
 #   3  FIX_PERMS_STDIN only: the stub's shape cannot be edited safely
 #
@@ -75,13 +91,28 @@
 #   bash scripts/migrate-consumers.sh --owner freaxnx01 --fix-perms           # dry run
 #   bash scripts/migrate-consumers.sh --owner freaxnx01 --fix-perms --apply
 #   bash scripts/migrate-consumers.sh --owner freaxnx01                       # expect perms:ok
+#
+# Rolling out the backlog guard (#653) — an operator step, never run by CI:
+#   bash scripts/migrate-consumers.sh --owner freaxnx01 --add-milestone-guard          # dry run
+#   bash scripts/migrate-consumers.sh --owner freaxnx01 --add-milestone-guard --apply
+# Then merge the PRs it opened, and per repo the run reported
+# `unmilestoned:<N>` with N > 0, sweep the issues that predate the stub:
+#   bash scripts/backfill-backlog-milestone.sh -R <owner/repo>                # dry run
+#   bash scripts/backfill-backlog-milestone.sh -R <owner/repo> --apply
+# The documented rollout covers consumers under the personal owner. A repo
+# whose milestones scope releases wants a decision, not this tool.
 set -euo pipefail
 IFS=$'\n\t'
 
 STUB_PATH='.github/workflows/agent.yml'
+GUARD_PATH='.github/workflows/issue-milestone.yml'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/lib/gh-retry.sh disable=SC1091
 source "$SCRIPT_DIR/lib/gh-retry.sh"
+# shellcheck source=scripts/lib/milestone-stub.sh disable=SC1091
+source "$SCRIPT_DIR/lib/milestone-stub.sh"
+# shellcheck source=scripts/lib/backlog-milestone.sh disable=SC1091
+source "$SCRIPT_DIR/lib/backlog-milestone.sh"
 # The workflow a stub's permissions are checked against. This checkout's copy:
 # run the script from an up-to-date main, which is what @v<latest> points at.
 REUSABLE="${REUSABLE:-$SCRIPT_DIR/../.github/workflows/agent-implement.yml}"
@@ -91,6 +122,7 @@ APPLY=false
 USE_PR=false
 BRANCH=''
 FIX_PERMS=false
+ADD_GUARD=false
 FORCE="${FORCE:-false}"
 OWNER=''
 REPOS=''
@@ -273,11 +305,19 @@ while [[ $# -gt 0 ]]; do
     --force)  FORCE=true; shift ;;
     --path)   STUB_PATH="${2:?}"; shift 2 ;;
     --fix-perms) FIX_PERMS=true; shift ;;
+    --add-milestone-guard) ADD_GUARD=true; shift ;;
     -h|--help) sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     *)        usage_error "unknown argument: $1" ;;
   esac
 done
 
+if [[ "$ADD_GUARD" == "true" ]]; then
+  [[ -z "$TARGET_REF" ]] || usage_error "--add-milestone-guard and --to are separate rollouts; run one at a time"
+  [[ "$RENAME_FLOW" != "true" ]] || usage_error "--add-milestone-guard and --rename-flow are separate rollouts; run one at a time"
+  [[ "$FIX_PERMS" != "true" ]] || usage_error "--add-milestone-guard and --fix-perms are separate rollouts; run one at a time"
+  USE_PR=true
+  BRANCH="${BRANCH:-ci/backlog-milestone-guard}"
+fi
 if [[ "$FIX_PERMS" == "true" ]]; then
   [[ -z "$TARGET_REF" ]] || usage_error "--fix-perms and --to are separate rollouts; run one at a time"
   [[ "$RENAME_FLOW" != "true" ]] || usage_error "--fix-perms and --rename-flow are separate rollouts; run one at a time"
@@ -374,6 +414,152 @@ fix_perms_repo() {
   printf '%s  %s  fixed → PR %s\n' "$repo" "$cur" "$url"; changed=$((changed+1))
 }
 
+# --- the backlog milestone guard rollout (#653) ------------------------------
+
+# guard_ref_ok <ref> — true when backlog-milestone.yml exists at <ref>: a
+# moving major from v2 on, or an exact pin of v2.3.0 or later (the release that
+# shipped the guard, #646). A stub pinned at any other ref — v1, an older exact
+# pin, `main`, a SHA — 404s on every issue event, so such a repo is skipped and
+# `--force` does not override it.
+guard_ref_ok() {
+  local ref="$1" version
+  if [[ "$ref" =~ ^v([0-9]+)$ ]]; then
+    if (( BASH_REMATCH[1] >= 2 )); then return 0; fi
+    return 1
+  fi
+  [[ "$ref" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || return 1
+  # One sortable number; minor and patch stay below 1000, as they have for 2
+  # major lines and 40-odd releases.
+  version=$(( BASH_REMATCH[1] * 1000000 + BASH_REMATCH[2] * 1000 + BASH_REMATCH[3] ))
+  if (( version >= 2003000 )); then return 0; fi
+  return 1
+}
+
+# guard_file_state <repo> — 0 the stub is already there, 1 it is absent, 2 the
+# lookup itself failed. An outage must not read as "absent": that would give
+# the repo a second stub and a PR nobody asked for.
+guard_file_state() {
+  local repo="$1" err rc=0
+  err="$(gh api "repos/${repo}/contents/${GUARD_PATH}" 2>&1 >/dev/null)" || rc=$?
+  if (( rc == 0 )); then return 0; fi
+  if [[ "$err" == *404* || "$err" == *'Not Found'* ]]; then return 1; fi
+  return 2
+}
+
+# pipeline_repo_from_stub — agent.yml on stdin; the owner/name the consumer
+# already calls. Read from the stub rather than hardcoded, so a fork's consumer
+# keeps calling the fork.
+pipeline_repo_from_stub() {
+  grep -oE '[A-Za-z0-9._-]+/[A-Za-z0-9._-]+/\.github/workflows/agent-implement\.yml@' \
+    | head -1 | sed 's|/\.github/.*||' || printf ''
+}
+
+# put_new_file <repo> <path> <content> <message> — create a file that is not
+# there yet, on $BRANCH (cut from the default branch's head if it does not
+# exist). Separate from put_stub, which updates a file and therefore has to
+# send its blob sha: sending one for a file that does not exist is rejected.
+# Returns 1 when the write failed. Command.
+put_new_file() {
+  local repo="$1" path="$2" content="$3" msg="$4" base_sha
+  base_sha="$(gh api "repos/${repo}" --jq '.default_branch' \
+              | xargs -I{} gh api "repos/${repo}/git/ref/heads/{}" --jq '.object.sha')"
+  gh api -X POST "repos/${repo}/git/refs" -f "ref=refs/heads/${BRANCH}" \
+         -f "sha=${base_sha}" >/dev/null 2>&1 || true
+  gh api -X PUT "repos/${repo}/contents/${path}" \
+         -f "message=${msg}" \
+         -f "content=$(printf '%s' "$content" | base64 -w0)" \
+         -f "branch=${BRANCH}" >/dev/null 2>&1
+}
+
+# apply_guard_repo <repo> <cur> <content> <state> <count> — create `backlog`
+# where it is missing, write the stub and open the PR. In that order: the
+# milestone has to exist before the guard runs, or the consumer collects a
+# warning per issue instead. Each step reports what already happened, so a
+# re-run after a failure holds no surprises. Updates the counters. Command.
+apply_guard_repo() {
+  local repo="$1" cur="$2" pipeline="$3" state="$4" count="$5"
+  local backlog='present' stub title msg url
+  if [[ "$state" == missing ]]; then
+    if ! create_backlog_milestone "$repo" >/dev/null; then
+      printf '%s  %s  MILESTONE CREATE FAILED\n' "$repo" "$cur"; failed=$((failed+1)); return
+    fi
+    backlog='created'
+  fi
+  stub="$(build_milestone_yml "$pipeline" "$cur")"
+  title='ci(milestone): assign backlog to issues opened without a milestone'
+  msg="${title}"$'\n\n'"Adds the caller stub for ${pipeline}'s backlog-milestone.yml: an issue opened or reopened without a milestone gets the standing \`backlog\` one. This is the stub scripts/onboard-consumer.sh writes for a new consumer; see https://github.com/freaxnx01/agent-workflow/issues/646 and freaxnx01/ai-instructions#61. Only the issue number reaches the workflow."
+  if ! put_new_file "$repo" "$GUARD_PATH" "$stub"$'\n' "$msg"; then
+    printf '%s  %s  WRITE FAILED  backlog:%s\n' "$repo" "$cur" "$backlog"; failed=$((failed+1)); return
+  fi
+  # One PR per repo in a tight loop: back off on the secondary rate limit.
+  if ! url="$(with_backoff gh pr create --repo "$repo" --head "$BRANCH" \
+                --title "$title" --body "$msg" 2>/dev/null)"; then
+    printf '%s  %s  PR FAILED (branch %s written)  backlog:%s\n' "$repo" "$cur" "$BRANCH" "$backlog"
+    failed=$((failed+1)); return
+  fi
+  printf '%s  %s  added guard → PR %s  backlog:%s  unmilestoned:%s\n' \
+    "$repo" "$cur" "$url" "$backlog" "$count"
+  changed=$((changed+1))
+}
+
+# add_guard_repo <repo> <cur> <content> — the --add-milestone-guard verdict
+# and, with --apply, the milestone and the PR for one repo. Updates the
+# changed/skipped/failed counters.
+add_guard_repo() {
+  local repo="$1" cur="$2" content="$3"
+  local pipeline state issues count=0 backlog open rc=0
+  if ! guard_ref_ok "$cur"; then
+    printf '%s  %s  skipped (pins %s; guard needs v2.3.0+)\n' "$repo" "$cur" "$cur"
+    skipped=$((skipped+1)); return
+  fi
+  # The stub to be written names the pipeline repo, which only the consumer's
+  # own stub can say. Without it the new `uses:` would have no owner at all.
+  pipeline="$(printf '%s' "$content" | pipeline_repo_from_stub)"
+  if [[ -z "$pipeline" ]]; then
+    printf '%s  %s  CHECK FAILED (no pipeline repo in %s)\n' "$repo" "$cur" "$STUB_PATH"
+    failed=$((failed+1)); return
+  fi
+  rc=0; guard_file_state "$repo" || rc=$?
+  case "$rc" in
+    0) printf '%s  %s  guard present\n' "$repo" "$cur"; skipped=$((skipped+1)); return ;;
+    2) printf '%s  %s  CHECK FAILED (could not read %s)\n' "$repo" "$cur" "$GUARD_PATH"
+       failed=$((failed+1)); return ;;
+  esac
+  # A failed lookup is not "none open" (#441): on a re-run it would bypass the
+  # only duplicate guard and write over an existing rollout branch.
+  rc=0
+  open="$(with_backoff gh pr list --repo "$repo" --head "$BRANCH" --state open --json url \
+            --jq '.[0].url // empty' 2>/dev/null)" || rc=$?
+  if (( rc != 0 )); then
+    printf '%s  %s  CHECK FAILED (could not list open PRs)\n' "$repo" "$cur"; failed=$((failed+1)); return
+  fi
+  if [[ -n "$open" ]]; then
+    printf '%s  %s  PR already open %s\n' "$repo" "$cur" "$open"; skipped=$((skipped+1)); return
+  fi
+  rc=0; state="$(backlog_milestone_state "$repo")" || rc=$?
+  if (( rc != 0 )); then
+    printf '%s  %s  CHECK FAILED (could not read the milestones)\n' "$repo" "$cur"; failed=$((failed+1)); return
+  fi
+  # A closed `backlog` is left alone: reopening someone's closed milestone is a
+  # decision, and a stub assigning a closed milestone would hide issues.
+  if [[ "$state" == closed* ]]; then
+    printf '%s  %s  backlog:CLOSED  not edited\n' "$repo" "$cur"; failed=$((failed+1)); return
+  fi
+  rc=0; issues="$(list_unmilestoned_issues "$repo")" || rc=$?
+  if (( rc != 0 )); then
+    printf '%s  %s  CHECK FAILED (could not list the open issues)\n' "$repo" "$cur"; failed=$((failed+1)); return
+  fi
+  [[ -z "$issues" ]] || count="$(printf '%s\n' "$issues" | wc -l | tr -d ' ')"
+
+  if [[ "$APPLY" != "true" ]]; then
+    backlog='present'
+    if [[ "$state" == missing ]]; then backlog='would create'; fi
+    printf '%s  %s  would add guard  backlog:%s  unmilestoned:%s\n' "$repo" "$cur" "$backlog" "$count"
+    changed=$((changed+1)); return
+  fi
+  apply_guard_repo "$repo" "$cur" "$pipeline" "$state" "$count"
+}
+
 changed=0; skipped=0; failed=0
 while IFS= read -r repo; do
   [[ -z "$repo" ]] && continue
@@ -385,6 +571,13 @@ while IFS= read -r repo; do
   content="$(printf '%s' "$blob" | base64 -d)"
   cur="$(printf '%s' "$content" | current_ref)"
   cur="${cur:--}"
+
+  # The guard rollout reads nothing out of the stub but its ref and the
+  # pipeline repo it calls, so it runs before the permissions check.
+  if [[ "$ADD_GUARD" == "true" ]]; then
+    add_guard_repo "$repo" "$cur" "$content"; continue
+  fi
+
   perms="$(printf '%s' "$content" | perms_verdict)"
 
   if [[ "$FIX_PERMS" == "true" ]]; then
@@ -450,3 +643,4 @@ done <<< "$REPOS"
 
 printf '\n%d changed, %d skipped, %d failed\n' "$changed" "$skipped" "$failed"
 if [[ "$FIX_PERMS" == "true" ]] && (( failed > 0 )); then exit 1; fi
+if [[ "$ADD_GUARD" == "true" ]] && (( failed > 0 )); then exit 1; fi

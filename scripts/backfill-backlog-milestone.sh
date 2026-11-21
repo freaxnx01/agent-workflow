@@ -41,14 +41,6 @@ parse_args() {
     || usage_error "-R owner/name is required (got: ${REPO:-})"
 }
 
-# list_unmilestoned — open issue numbers with no milestone, every page,
-# pull requests dropped. One number per line. Query.
-list_unmilestoned() {
-  local pages
-  pages="$(gh api "repos/$REPO/issues?state=open&milestone=none&per_page=100" --paginate)" || return 1
-  printf '%s\n' "$pages" | jq -rs '.[][] | select(.pull_request == null) | .number'
-}
-
 # assign_all <milestone-number> <issues> <total> — assigns each, keeps going past a
 # failure, prints the tally. Returns 1 if any write failed. Command.
 assign_all() {
@@ -76,7 +68,7 @@ main() {
       "$REPO" "$BACKLOG_MILESTONE" "$BACKLOG_MILESTONE" >&2
     exit 64
   fi
-  issues="$(list_unmilestoned)" || fatal "could not list the open issues of $REPO"
+  issues="$(list_unmilestoned_issues "$REPO")" || fatal "could not list the open issues of $REPO"
   [[ -z "$issues" ]] || count="$(printf '%s\n' "$issues" | wc -l | tr -d ' ')"
   printf 'backfill: %s open issues without a milestone in %s\n' "$count" "$REPO"
   [[ -z "$issues" ]] || printf '%s\n' "$issues" | sed 's/^/  #/'

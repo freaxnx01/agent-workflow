@@ -129,6 +129,8 @@ DRY_RUN=false
 # (plan Task 4). Flip to freaxnx01/agent-workflow once the rename is verified.
 PIPELINE_REPO='freaxnx01/agent-workflow'
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/milestone-stub.sh disable=SC1091
+source "$SCRIPT_DIR/lib/milestone-stub.sh"
 
 # ---- helpers ---------------------------------------------------------------
 # Diagnostics go to stderr so they survive a caller's stdout redirect
@@ -426,31 +428,9 @@ jobs:
 YAML
 }
 
-# The backlog milestone guard (#646). Unconditional, like the intake stub:
-# every open issue carries a milestone (freaxnx01/ai-instructions#61). It
-# never creates `backlog` — onboarding does not either; a repo without one
-# gets a warning per issue until `/milestone new backlog` is run.
-build_milestone_yml() {
-  cat <<YAML
-name: Issue milestone
-on:
-  issues:
-    types: [opened, reopened]
-
-permissions:
-  contents: read
-
-jobs:
-  milestone:
-    permissions:
-      contents: read
-      issues: write   # assigns the backlog milestone
-    uses: $PIPELINE_REPO/.github/workflows/backlog-milestone.yml@$REF
-    with:
-      issue-number: \${{ github.event.issue.number }}
-      pipeline-ref: $REF
-YAML
-}
+# The backlog milestone guard (#646) is unconditional, like the intake stub:
+# every open issue carries a milestone (freaxnx01/ai-instructions#61). Its stub
+# comes from lib/milestone-stub.sh, shared with the #653 rollout.
 
 build_chain_yml() {
   cat <<YAML
@@ -532,7 +512,7 @@ elif [[ "$DIRECT_TO_MAIN" == true ]]; then
     "ci(agent-workflow): add pipeline health stub"
   build_intake_yml | put_file ".github/workflows/issue-intake.yml" \
     "ci(agent-workflow): add issue intake stub"
-  build_milestone_yml | put_file ".github/workflows/issue-milestone.yml" \
+  build_milestone_yml "$PIPELINE_REPO" "$REF" | put_file ".github/workflows/issue-milestone.yml" \
     "ci(agent-workflow): add backlog milestone stub"
   if [[ "$CHAIN" == true ]]; then
     build_chain_yml | put_file ".github/workflows/chain-dispatch.yml" \
@@ -547,7 +527,7 @@ else
     "ci(agent-workflow): add pipeline health stub"
   build_intake_yml | put_file ".github/workflows/issue-intake.yml" \
     "ci(agent-workflow): add issue intake stub"
-  build_milestone_yml | put_file ".github/workflows/issue-milestone.yml" \
+  build_milestone_yml "$PIPELINE_REPO" "$REF" | put_file ".github/workflows/issue-milestone.yml" \
     "ci(agent-workflow): add backlog milestone stub"
   if [[ "$CHAIN" == true ]]; then
     build_chain_yml | put_file ".github/workflows/chain-dispatch.yml" \

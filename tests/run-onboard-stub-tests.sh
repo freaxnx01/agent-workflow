@@ -88,16 +88,15 @@ intake_stub() {
   )
 }
 
-# milestone_stub — echoes the generated issue-milestone.yml (#646). Same
-# extraction trick as stub().
+# milestone_stub — echoes the generated issue-milestone.yml (#646). No
+# extraction trick here: the stub moved into scripts/lib/milestone-stub.sh so
+# the #653 rollout writes the same bytes as onboarding, and the library is the
+# shipped source both call (see run-migrate-guard-tests.sh).
 milestone_stub() {
-  # shellcheck disable=SC2034
   (
-    REF='v2'
-    PIPELINE_REPO='freaxnx01/agent-workflow'
-    # shellcheck disable=SC1090
-    source <(sed -n '/^build_milestone_yml()/,/^}/p' "$SRC")
-    build_milestone_yml
+    # shellcheck disable=SC1091
+    source "$ROOT/scripts/lib/milestone-stub.sh"
+    build_milestone_yml 'freaxnx01/agent-workflow' 'v2'
   )
 }
 

@@ -1,0 +1,21 @@
+name: AI implement
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  implement:
+    if: github.event.label.name == 'ai-implement'
+    uses: freaxnx01/agent-workflow/.github/workflows/agent-implement.yml@v2.3.0
+    with:
+      issue-number: ${{ github.event.issue.number }}
+      pipeline-ref: v2.3.0
+      agent: claude
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
