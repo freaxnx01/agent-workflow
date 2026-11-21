@@ -193,7 +193,13 @@ Then dispatch to the matching phase below.
 ### Phase `issue`
 
 1. Replace the issue body (`gh issue edit <issue> --body-file …`) with:
-   - the original description (keep it for humans),
+   - the original description, kept for humans, **with any previous enrichment
+     stripped**: read the body with `/enrich` Step 6's guarded fetch, then strip
+     that file into `kept-body.md` with `enrich_body_strip_markdown`, exactly as
+     Step 6 does (it is the source of truth for that block). Never pipe the read
+     straight into the filter, which skips the fetch's guard. Without the strip a
+     re-run appends a second `## Acceptance Criteria` instead of replacing the
+     first (#499),
    - an `## Acceptance Criteria` section as a `- [ ]` checklist,
    - an `## Implementation Plan` section with the **full plan content inlined
      verbatim** (not a link) — read `plan=` and paste its contents in, so the
@@ -472,7 +478,13 @@ Then dispatch to the matching phase below.
 1. Replace the issue body via API PATCH using the **typed** field `-F` so the file
    is read (`-f` stores the literal string; `tea issues edit` has no body flag):
    `tea api -X PATCH "repos/$repo/issues/<issue>" -F body=@bodyfile.md` — with:
-   - the original description (keep it for humans),
+   - the original description, kept for humans, **with any previous enrichment
+     stripped**: read the body with `/enrich` Step 6's guarded fetch, then strip
+     that file into `kept-body.md` with `enrich_body_strip_markdown`, exactly as
+     Step 6 does (it is the source of truth for that block). Never pipe the read
+     straight into the filter, which skips the fetch's guard. Without the strip a
+     re-run appends a second `## Acceptance Criteria` instead of replacing the
+     first (#499),
    - an `## Acceptance Criteria` section as a `- [ ]` checklist,
    - a `## Spec & Implementation Plan` section linking the **relative paths** to
      `spec=` and `plan=`, plus: *"Read the plan before writing any code — it contains
