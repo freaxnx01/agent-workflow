@@ -80,6 +80,8 @@ source "$HERE/lib/pipeline-file-guard.sh"
 source "$HERE/lib/retry-policy.sh"
 # shellcheck source=scripts/lib/agent-boundary.sh
 source "$HERE/lib/agent-boundary.sh"
+# shellcheck source=scripts/lib/private-feed-restore.sh
+source "$HERE/lib/private-feed-restore.sh"
 
 # Run state. Initialised here so the file can be sourced under `set -u`.
 DRY_RUN="${DRY_RUN:-0}"
@@ -171,6 +173,7 @@ preflight() {
   pipeline_mode && RUN_CONTEXT=pipeline
   # A dry run starts no agent, so it needs no boundary to put one behind.
   [[ "$RUN_CONTEXT" != pipeline || "$DRY_RUN" == 1 ]] || preflight_boundary
+  [[ "$RUN_CONTEXT" != pipeline || "$DRY_RUN" == 1 ]] || preflight_restore
   return 0
 }
 
@@ -193,6 +196,32 @@ preflight_boundary() {
   boundary_reap >/dev/null 2>&1 ||
     BOUNDARY_REFUSAL='an agent process from an earlier run survived the reap'
   return 0
+}
+
+# The cheap half of the private-feed pre-restore (#641): `dotnet` is present and
+# every feed URL is an Azure DevOps one, so the token is never written for any
+# other host. It runs before WORK_DIR exists, so like preflight_boundary it only
+# records the refusal. An earlier refusal is kept: it is the first thing to fix.
+preflight_restore() {
+  feed_restore_enabled || return 0
+  [[ -z "$BOUNDARY_REFUSAL" ]] || return 0
+  local cause
+  if ! cause="$(feed_restore_config_check 2>&1)"; then
+    BOUNDARY_REFUSAL="private feed setup: $(printf '%s' "$cause" | head -n1)"
+  fi
+  return 0
+}
+
+# The credentialed restore into the agent's read-only package folder, on a
+# detached worktree of the commit the agent is seeded from. It holds the
+# driver's token, so it runs before any agent exists, and a failure refuses the
+# run: an agent that cannot restore would only burn an attempt.
+restore_private_feeds() {
+  pipeline_mode || return 0
+  feed_restore_enabled || return 0
+  feed_pre_restore "origin/$DEFAULT_BRANCH" "$WORK_DIR" && return 0
+  BOUNDARY_REFUSAL="private feed restore failed (${FEED_URLS[0]}): check that the build service has the Feed Reader role on the feed"
+  refuse_without_boundary
 }
 
 # Exits 1 with a run report on the work item when preflight refused the run.
@@ -845,6 +874,7 @@ main() {
   fi
 
   DEFAULT_BRANCH="$(resolve_default_branch)"
+  restore_private_feeds
   attempt_loop
 }
 

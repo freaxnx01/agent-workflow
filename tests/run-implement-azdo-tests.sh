@@ -771,6 +771,70 @@ assert_contains "selfFix_Pipeline_ReapsBeforeTheVerdict: the fix ran in the boun
 assert_contains "selfFix_Pipeline_ReapsBeforeTheVerdict: last boundary call is the reap" \
   "awf-agent-reap" "$last_call"
 
+section "pipeline mode: private feeds are restored before the agent (#641)"
+
+# tests/mocks/dotnet is on PATH in every run_pipeline call, so "no dotnet call"
+# is a real observation, not an absent binary. An agent run is matched by its
+# workspace argument: preflight's `awf-agent-run --protocol` probe is no agent.
+FEED_URL='https://pkgs.dev.azure.com/contoso/_packaging/feed/nuget/v3/index.json'
+FEED_CACHE="$TMP/awf-nuget"
+mkdir -p "$FEED_CACHE"
+FEED_DOTNET_LOG="$TMP/feed-dotnet.log"
+
+: > "$FEED_DOTNET_LOG"
+run_pipeline success DOTNET_LOG="$FEED_DOTNET_LOG" AWF_NUGET_CACHE="$FEED_CACHE"
+assert_eq "implement_NoFeeds_NoDotnetCall: rc" "0" "$RC"
+assert_eq "implement_NoFeeds_NoDotnetCall: dotnet never ran" "" "$(cat "$FEED_DOTNET_LOG")"
+assert_contains "implement_NoFeeds_NoDotnetCall: the agent ran as before" \
+  "awf-agent-run $PIPE_WS/" "$(cat "$PIPE_SUDO")"
+
+: > "$FEED_DOTNET_LOG"
+run_pipeline success DOTNET_LOG="$FEED_DOTNET_LOG" DOTNET_MOCK_FAIL=1 \
+  AWF_NUGET_FEEDS="$FEED_URL" AWF_NUGET_CACHE="$FEED_CACHE"
+assert_eq "implement_FeedRestoreFails_RefusesBeforeAgent: rc" "1" "$RC"
+assert_contains "implement_FeedRestoreFails_RefusesBeforeAgent: the restore was tried" \
+  "argv=restore" "$(cat "$FEED_DOTNET_LOG")"
+assert_not_contains "implement_FeedRestoreFails_RefusesBeforeAgent: the agent never ran" \
+  "awf-agent-run $PIPE_WS/" "$(cat "$PIPE_SUDO")"
+assert_eq "implement_FeedRestoreFails_RefusesBeforeAgent: no agent call" "" "$CLAUDELOG"
+assert_contains "implement_FeedRestoreFails_RefusesBeforeAgent: the report names the feed" \
+  "private feed restore failed ($FEED_URL)" "$AZLOG"
+assert_contains "implement_FeedRestoreFails_RefusesBeforeAgent: the report names the role" \
+  "Feed Reader" "$AZLOG"
+assert_not_contains "implement_FeedRestoreFails_RefusesBeforeAgent: no PR" "repos pr create" "$AZLOG"
+
+: > "$FEED_DOTNET_LOG"
+run_pipeline success DOTNET_LOG="$FEED_DOTNET_LOG" \
+  AWF_NUGET_FEEDS='https://nuget.contoso.example/v3/index.json' AWF_NUGET_CACHE="$FEED_CACHE"
+assert_eq "implement_ForeignFeedUrl_RefusesBeforeAgent: rc" "1" "$RC"
+assert_eq "implement_ForeignFeedUrl_RefusesBeforeAgent: dotnet never ran" "" "$(cat "$FEED_DOTNET_LOG")"
+assert_contains "implement_ForeignFeedUrl_RefusesBeforeAgent: the report says why" \
+  "private feed setup:" "$AZLOG"
+assert_eq "implement_ForeignFeedUrl_RefusesBeforeAgent: no agent call" "" "$CLAUDELOG"
+assert_not_contains "implement_ForeignFeedUrl_RefusesBeforeAgent: the agent never ran" \
+  "awf-agent-run $PIPE_WS/" "$(cat "$PIPE_SUDO")"
+
+# One ordered log: the dotnet mock appends to the same file the sudo mock does,
+# so the line order is the call order.
+next_sudo_log="$TMP/pipe-$((PIPE_N + 1))/sudo.log"
+run_pipeline success DOTNET_LOG="$next_sudo_log" \
+  AWF_NUGET_FEEDS="$FEED_URL" AWF_NUGET_CACHE="$FEED_CACHE"
+assert_eq "implement_FeedRestoreOk_AgentRuns: rc" "0" "$RC"
+restore_line="$(grep -n '^argv=restore' "$PIPE_SUDO" | head -n1 | cut -d: -f1 || true)"
+agent_line="$(grep -n -F "awf-agent-run $PIPE_WS/" "$PIPE_SUDO" | head -n1 | cut -d: -f1 || true)"
+assert_eq "implement_FeedRestoreOk_AgentRuns: the restore ran, then the agent" "1" \
+  "$([[ -n "$restore_line" && -n "$agent_line" && "$restore_line" -lt "$agent_line" ]] && echo 1 || echo 0)"
+assert_contains "implement_FeedRestoreOk_AgentRuns: the package is in the cache" \
+  "testpkg.1.0.0.nupkg" "$(find "$FEED_CACHE" -type f || true)"
+assert_not_contains "implement_FeedRestoreOk_AgentRuns: the token is not in the restore argv" \
+  "$PIPE_PAT" "$(grep '^argv=' "$PIPE_SUDO" || true)"
+
+: > "$FEED_DOTNET_LOG"
+run_pipeline success DRY_RUN=1 DOTNET_LOG="$FEED_DOTNET_LOG" \
+  AWF_NUGET_FEEDS="$FEED_URL" AWF_NUGET_CACHE="$FEED_CACHE"
+assert_eq "implement_DryRun_NoRestore: rc" "0" "$RC"
+assert_eq "implement_DryRun_NoRestore: dotnet never ran" "" "$(cat "$FEED_DOTNET_LOG")"
+
 # Local mode is untouched: no sudo, no boundary, today's behaviour.
 : > "$TMP/local-sudo.log"
 run_loop success SUDO_LOG="$TMP/local-sudo.log"

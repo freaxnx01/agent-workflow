@@ -464,6 +464,7 @@ additions are the optional `NTFY_TOKEN` secret and the
 
 ### Added
 
+- **azdo:** The driver restores private Azure Artifacts feeds (`AWF_NUGET_FEEDS`) into a read-only package folder before the agent starts, and refuses the run when the restore fails (#641). See `docs/AZDO-PIPELINE-SETUP.md` section 14.
 - *(milestone)* Issues opened or reopened without a milestone get the standing `backlog` milestone (#646, freaxnx01/ai-instructions#61). New reusable workflow `backlog-milestone.yml`; `scripts/onboard-consumer.sh` writes the `issue-milestone.yml` stub. A repo without an open `backlog` milestone gets a warning — it is never created. `scripts/backfill-backlog-milestone.sh -R <owner/repo> [--apply]` sweeps existing issues (dry run by default). GitHub-only.
 - *(pipeline)* A failure of the implement job **before the agent starts** now posts a run report on the issue naming the failed step, stamps `ai:failed`, and carries an `ai-run` marker with `class: "pre_agent"` (ADR-023, #597). It does not count as an attempt, so a repeated outage is bounded by `MAX_NON_STARTS` rather than burning the issue's budget.
 - **review:** Every GitHub review comment ends with one hidden
