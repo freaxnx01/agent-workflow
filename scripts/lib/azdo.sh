@@ -12,6 +12,13 @@
 # AZDO_ORG / AZDO_PROJECT / AZDO_REPO — set those with resolve_azdo_context.
 #
 #   azdo_org_url        echoes https://dev.azure.com/<org>
+#   azdo_project_url_path
+#                       echoes https://dev.azure.com/<org>/<project, percent-encoded>
+#   azdo_create_markdown_item <type> <title> <area> <tags> <description-file>
+#                       creates a work item whose System.Description is Markdown,
+#                       and echoes its new id
+#   azdo_comment_markdown <id> <text-file>
+#                       posts a Markdown comment to the work item
 #   azdo_closed_states  echoes "'A','B'" — the project's closed state names
 #   azdo_wiql <query>   echoes matching work-item ids, one per line
 #   azdo_tag_adder <id> <tag>
@@ -64,6 +71,149 @@ IFS=$'\n\t'
 azdo_org_url() {
   : "${AZDO_ORG:?AZDO_ORG must be set — call resolve_azdo_context first}"
   printf 'https://dev.azure.com/%s' "$AZDO_ORG"
+}
+
+# _azdo_urlquote <text>  echoes <text> percent-encoded for one URL path segment.
+_azdo_urlquote() {
+  python3 -c 'import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
+}
+
+# azdo_project_url_path  echoes <org url>/<project, percent-encoded>.
+#
+# A project name may contain a SPACE — `Contoso Project` is an ordinary name —
+# so every project-scoped URL has to be built through here rather than
+# interpolated, or curl receives two arguments and the request never happens.
+azdo_project_url_path() {
+  : "${AZDO_PROJECT:?AZDO_PROJECT must be set — call resolve_azdo_context first}"
+  printf '%s/%s' "$(azdo_org_url)" "$(_azdo_urlquote "$AZDO_PROJECT")"
+}
+
+# azdo_create_markdown_item <type> <title> <area> <tags> <description-file>
+# creates one work item and echoes its new id.
+#
+# The description is read from a FILE, not an argument, and the serialised patch
+# goes to curl as a file too (`--data-binary @`): a migrated GitHub issue body
+# runs to tens of kilobytes and carries quotes, backslashes and fenced code
+# blocks, so a file keeps it off every argv on the way through. One argument
+# cannot hold it — Linux caps a single argv entry at 128 KiB, and
+# `json.dumps` escapes every non-ASCII character to six bytes, so a 37 KB body
+# of CJK or emoji would pass that cap and the create would die with "Argument
+# list too long" before curl ran.
+#
+# System.Description is an HTML field by default, which would turn that body
+# into mangled markup. The fourth op
+# `{"op":"add","path":"/multilineFieldsFormat/System.Description","value":"Markdown"}`
+# switches the field to Markdown for this item, so the body is stored verbatim —
+# verified against a live project (see docs/superpowers/specs/
+# 2026-11-23-migrate-gh-issues-to-azdo-design.md). It must be sent IN THE SAME
+# create patch; the format is a property of the item.
+#
+# <tags> is the semicolon-delimited string System.Tags takes. Empty omits the op
+# entirely rather than writing an empty value.
+#
+# Unlike the PATCH writers this URL is PROJECT-scoped: a create has no id yet,
+# so the project is what says where the item lands.
+#
+# Exit codes: 0 created (id echoed); 1 the request failed or the response
+# carried no id; 2 usage.
+azdo_create_markdown_item() {
+  local type="${1-}" title="${2-}" area="${3-}" tags="${4-}" desc_file="${5-}"
+  if [[ $# -lt 5 || -z "$type" || -z "$title" || -z "$area" || ! -r "$desc_file" ]]; then
+    echo "usage: azdo_create_markdown_item <type> <title> <area> <tags> <description-file>" >&2
+    return 2
+  fi
+  : "${AZURE_DEVOPS_EXT_PAT:?AZURE_DEVOPS_EXT_PAT must be set}"
+
+  local url body_file out
+  url="$(azdo_project_url_path)/_apis/wit/workitems/\$$(_azdo_urlquote "$type")?api-version=7.1"
+
+  # Removed on both paths rather than with a `trap ... EXIT`: this file is
+  # SOURCED, so a trap here would replace the calling script's own.
+  body_file="$(mktemp)"
+  python3 -c '
+import json, sys
+title, area, tags, path = sys.argv[1:5]
+with open(path, encoding="utf-8") as fh:
+    description = fh.read()
+ops = [
+    {"op": "add", "path": "/fields/System.Title", "value": title},
+    {"op": "add", "path": "/fields/System.AreaPath", "value": area},
+    {"op": "add", "path": "/fields/System.Description", "value": description},
+    {"op": "add", "path": "/multilineFieldsFormat/System.Description", "value": "Markdown"},
+]
+if tags:
+    ops.append({"op": "add", "path": "/fields/System.Tags", "value": tags})
+print(json.dumps(ops))' "$title" "$area" "$tags" "$desc_file" > "$body_file" \
+    || { rm -f "$body_file"; return 1; }
+
+  out=$(printf 'user = ":%s"\n' "$AZURE_DEVOPS_EXT_PAT" \
+    | curl -sS -K - \
+        -H 'Content-Type: application/json-patch+json' \
+        -X POST "$url" --data-binary "@$body_file") || { rm -f "$body_file"; return 1; }
+  rm -f "$body_file"
+
+  printf '%s' "$out" | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    sys.stderr.write("azdo_create_markdown_item: unparseable response\n")
+    sys.exit(1)
+if "id" not in d:
+    sys.stderr.write("azdo_create_markdown_item: %s\n" % (d.get("message") or str(d)[:200]))
+    sys.exit(1)
+print(d["id"])'
+}
+
+# azdo_comment_markdown <id> <text-file>  posts a Markdown comment.
+#
+# `az boards work-item update --discussion` (what azdo_comment uses) writes
+# System.History as HTML, so a Markdown comment needs the comments REST API with
+# `?format=markdown`. Note the resource is spelled `workItems` on this route,
+# unlike the lower-case `workitems` of the create above — both are the service's
+# own spellings.
+#
+# The text comes from a file and the serialised body goes to curl as a file, for
+# the reason spelled out on azdo_create_markdown_item: a migrated GitHub comment
+# is as long and as non-ASCII as an issue body, and one argv entry cannot hold
+# it.
+#
+# Exit codes: 0 posted; 1 the request failed or the response carried no id;
+# 2 usage.
+azdo_comment_markdown() {
+  local id="${1-}" text_file="${2-}"
+  if [[ $# -lt 2 || -z "$id" || ! -r "$text_file" ]]; then
+    echo "usage: azdo_comment_markdown <id> <text-file>" >&2
+    return 2
+  fi
+  : "${AZURE_DEVOPS_EXT_PAT:?AZURE_DEVOPS_EXT_PAT must be set}"
+
+  local url body_file out
+  url="$(azdo_project_url_path)/_apis/wit/workItems/${id}/comments?format=markdown&api-version=7.1-preview.4"
+
+  body_file="$(mktemp)"
+  python3 -c '
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as fh:
+    print(json.dumps({"text": fh.read()}))' "$text_file" > "$body_file" \
+    || { rm -f "$body_file"; return 1; }
+
+  out=$(printf 'user = ":%s"\n' "$AZURE_DEVOPS_EXT_PAT" \
+    | curl -sS -K - \
+        -H 'Content-Type: application/json' \
+        -X POST "$url" --data-binary "@$body_file") || { rm -f "$body_file"; return 1; }
+  rm -f "$body_file"
+
+  printf '%s' "$out" | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    sys.stderr.write("azdo_comment_markdown: unparseable response\n")
+    sys.exit(1)
+if "id" not in d:
+    sys.stderr.write("azdo_comment_markdown: %s\n" % (d.get("message") or str(d)[:200]))
+    sys.exit(1)' >/dev/null
 }
 
 # azdo_closed_states  echoes "'Closed','Completed','Done'" — ready to interpolate

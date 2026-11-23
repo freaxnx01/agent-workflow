@@ -2,9 +2,11 @@
 #
 # curl — stand-in for the real curl in Layer-1 fixture tests.
 #
-# Echoes $CURL_MOCK_FIXTURE. Captures the request body (-d) to
+# Echoes $CURL_MOCK_FIXTURE. Captures the request body (-d, --data and
+# --data-binary, including the `@<file>` form real curl reads a body from) to
 # $CURL_MOCK_BODY_LOG and the argv to $CURL_MOCK_LOG when those are set, so a
-# test can assert what was SENT and not only what came back.
+# test can assert what was SENT and not only what came back. One body stays ONE
+# line in the log, which is what the test parsers key on.
 #
 # Also drains stdin. azdo_set_tags passes credentials via `curl -K -`, and the
 # mock must consume that config rather than leave the writer blocked on a pipe.
@@ -51,7 +53,18 @@ fi
 if [[ -n "${CURL_MOCK_BODY_LOG:-}" ]]; then
   prev=""
   for a in "$@"; do
-    [[ "$prev" == "-d" ]] && printf '%s\n' "$a" >> "$CURL_MOCK_BODY_LOG"
+    case "$prev" in
+      -d|--data|--data-binary)
+        if [[ "$a" == @* ]]; then
+          # The caller passes a file for a body too large for one argv entry;
+          # the log wants its contents, trailing newline trimmed to keep the
+          # one-body-one-line shape.
+          printf '%s\n' "$(cat "${a#@}")" >> "$CURL_MOCK_BODY_LOG"
+        else
+          printf '%s\n' "$a" >> "$CURL_MOCK_BODY_LOG"
+        fi
+        ;;
+    esac
     prev="$a"
   done
 fi

@@ -32,9 +32,9 @@ re-run after a partial failure.
 ## Anti-goals
 
 - Losing content: no Markdown→HTML conversion and no truncation.
-- Carrying pipeline state across forges: `ai:*`, `ai-implement`,
-  `ai-review-human-merge`, `enrichment-ongoing`, `ctx:*` and `turns:*` would
-  trigger or confuse the ADO pipeline.
+- Carrying pipeline state across forges: `ai:*`, `agent:*`, `ai-implement`, the
+  review/merge and chain gates, `enrichment-ongoing`, `ctx:*` and `turns:*`
+  would trigger, pin or confuse the ADO pipeline.
 - A second work item for an issue that was already migrated.
 
 ## Approaches
@@ -107,8 +107,10 @@ checkout of the consumer repository, which has an ADO `origin` or
 **Label → tag:**
 - `bug` stays a tag and also selects the type.
 - Every other label is kept as a tag, `needs-enrichment` and `roadmap` included.
-- Dropped: `ai-implement`, `ai-review-human-merge`, `ai-pre-preview`,
-  `enrichment-ongoing`, and anything matching `ai:*`, `ctx:*` or `turns:*`.
+- Dropped: `ai-implement`, the gates `ai-review-ai-merge`,
+  `ai-review-human-merge`, `ai-chain` and the deprecated spellings
+  `ai-auto-review` and `ai-pre-preview`, `enrichment-ongoing`, and anything
+  matching `ai:*`, `agent:*`, `ctx:*` or `turns:*`.
 - A tag containing `;` has it replaced by `,`.
 
 **Failure:** stop at the first failed write and print which issue and step

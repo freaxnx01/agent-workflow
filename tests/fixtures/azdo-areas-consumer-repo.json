@@ -1,0 +1,17 @@
+{
+  "id": 1,
+  "name": "Contoso Project",
+  "structureType": "area",
+  "children": [
+    {
+      "id": 2,
+      "name": "consumer-repo",
+      "structureType": "area"
+    },
+    {
+      "id": 3,
+      "name": "shared",
+      "structureType": "area"
+    }
+  ]
+}
