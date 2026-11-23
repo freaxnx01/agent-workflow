@@ -21,11 +21,11 @@ harnesses.
 ## Global Constraints
 
 - **Entry syntax:** a regex `^[A-Za-z0-9._/-]+\.(sln|slnx|csproj|fsproj)$`, plus
-  no leading `/` and no `..` path segment.
+  no leading `/`, no `..` path segment and no path component starting with `-`.
 - **Messages, exactly:**
   - Preflight: `private feed setup: AWF_NUGET_RESTORE entry '<entry>' is not a relative solution or project path`
   - Missing entry: `AWF_NUGET_RESTORE entry '<entry>' is not in the seed commit`
-  - No target: `no solution at the repository root; set AWF_NUGET_RESTORE to the solution or project to restore`
+  - No target: `no solution or project at the repository root; set AWF_NUGET_RESTORE to the solution or project to restore`
   - Refusal for rc 2: `private feed restore: <first stderr line>`
 - **Return codes of `feed_pre_restore`:**
   - `0` — ok;
@@ -35,8 +35,8 @@ harnesses.
 
 ## Review Focus
 
-- **An entry that is a symlink in the seed commit:** refused, rc 2. Task 1
-  tests this.
+- **An entry that is a symlink in the seed commit, or that reaches through a
+  symlinked directory:** refused, rc 2. Task 1 tests both.
 - **Several entries, one missing:** rc 2 before any `dotnet` call. Task 1 tests
   this.
 - **A blank variable (only spaces):** treated as unset. Task 1 and Task 2 test
@@ -69,12 +69,14 @@ harnesses.
 # targets_DefaultRootSolutions: unset, root has a.sln b.slnx → FEED_TARGETS=(a.sln b.slnx)
 # targets_BlankIsUnset: AWF_NUGET_RESTORE='  ' → same as unset
 # targets_Explicit: AWF_NUGET_RESTORE='samples/dotnet/Sample.sln' committed → FEED_TARGETS=(samples/dotnet/Sample.sln)
-# targets_NoRootSolution: unset, no root solution → rc 2, stderr == the "no solution at the repository root…" message
+# targets_DefaultRootProject: unset, root has App.csproj and no solution → FEED_TARGETS=(App.csproj)
+# targets_NoRootSolution: unset, no root solution or project → rc 2, stderr == the "no solution or project at the repository root…" message
 # targets_MissingEntry: 'x/Missing.sln' → rc 2, stderr names 'x/Missing.sln' and 'is not in the seed commit'
 # targets_SymlinkEntry: committed symlink 'link.sln' → rc 2
+# targets_SymlinkDirEntry: 'linkdir/Sample.sln' through a committed symlinked dir → rc 2
 # syntax_RejectsAbsolute / _DotDot / _BadExt / _BadChar: '/a.sln', 'a/../b.sln', 'a.txt', 'a b.sln' → rc 1
 # syntax_AcceptsList: 'a.sln sub/b.csproj c/d.fsproj' → rc 0
-# pre_restore_NoTarget_Rc2_NoDotnet_CleansUp: no root solution → rc 2, $DOTNET_LOG empty, no worktree/config left
+# pre_restore_NoTarget_Rc2_NoDotnet_CleansUp: no root solution or project → rc 2, $DOTNET_LOG empty, no worktree/config left
 # pre_restore_Explicit_RestoresThatPath: logged dotnet argv contains 'restore samples/dotnet/Sample.sln'
 ```
 
@@ -119,8 +121,8 @@ git commit -m "fix(azdo): restore named targets when the repo root has no soluti
 ```bash
 # implement_RestoreBadSyntax_RefusedInPreflight: AWF_NUGET_FEEDS set, AWF_NUGET_RESTORE='/abs.sln'
 #   → rc 1, report contains "private feed setup: AWF_NUGET_RESTORE entry '/abs.sln'", $DOTNET_LOG empty, no awf-agent-run workspace call
-# implement_NoRootSolution_RefusedWithHint: feeds set, no root solution in the seed → report contains
-#   'private feed restore: no solution at the repository root; set AWF_NUGET_RESTORE' and '§14', not 'Feed Reader'
+# implement_NoRootSolution_RefusedWithHint: feeds set, no root solution or project in the seed → report contains
+#   'private feed restore: no solution or project at the repository root; set AWF_NUGET_RESTORE' and '§14', not 'Feed Reader'
 # implement_ExplicitTarget_AgentRuns: AWF_NUGET_RESTORE=samples/dotnet/Sample.sln committed → restore then agent call, in order
 # implement_RestoreFailure_KeepsFeedReaderText: DOTNET_MOCK_FAIL=1 → report still contains 'Feed Reader'
 # implement_RestoreVarWithoutFeeds_Ignored: AWF_NUGET_RESTORE set, AWF_NUGET_FEEDS unset → no dotnet call, agent runs

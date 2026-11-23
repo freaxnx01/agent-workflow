@@ -232,15 +232,18 @@ preflight_cache() {
   return 0
 }
 
-# The cheap half of the private-feed pre-restore (#641): `dotnet` is present and
+# The cheap half of the private-feed pre-restore (#641): `dotnet` is present,
 # every feed URL is an Azure DevOps one, so the token is never written for any
-# other host. It runs before WORK_DIR exists, so like preflight_boundary it only
+# other host, and every AWF_NUGET_RESTORE entry is a relative solution or
+# project path (#682). It runs before WORK_DIR and the seed worktree exist, so
+# the targets are checked for syntax only, and like preflight_boundary it only
 # records the refusal. An earlier refusal is kept: it is the first thing to fix.
 preflight_restore() {
   feed_restore_enabled || return 0
   [[ -z "$BOUNDARY_REFUSAL" ]] || return 0
   local cause
-  if ! cause="$(feed_restore_config_check 2>&1)"; then
+  if ! cause="$(feed_restore_config_check 2>&1)" ||
+     ! cause="$(feed_restore_targets_syntax_check 2>&1)"; then
     BOUNDARY_REFUSAL="private feed setup: $(printf '%s' "$cause" | head -n1)"
     REFUSAL_SECTION='§14'
   fi
@@ -260,8 +263,20 @@ restore_private_feeds() {
     BOUNDARY_REFUSAL="private feed setup: could not empty the package cache $AWF_NUGET_CACHE"
     refuse_without_boundary '§14'
   fi
-  feed_pre_restore "origin/$DEFAULT_BRANCH" "$WORK_DIR" && return 0
-  BOUNDARY_REFUSAL="private feed restore failed (${FEED_URLS[0]}): check that the build service has the Feed Reader role on the feed"
+  # The cause goes to a file rather than into a command substitution: the job
+  # log must keep `dotnet restore`'s own error, which §14.6 sends the operator
+  # to read. Only the first line becomes the refusal.
+  local cause_file="$WORK_DIR/feed-restore.err" rc=0
+  feed_pre_restore "origin/$DEFAULT_BRANCH" "$WORK_DIR" 2>"$cause_file" || rc=$?
+  if [[ -s "$cause_file" ]]; then cat "$cause_file" >&2; fi
+  [[ "$rc" -ne 0 ]] || return 0
+  if [[ "$rc" -eq 2 ]]; then
+    # Nothing to restore (#682): the restore never ran, so the Feed Reader role
+    # is not the cause and naming it would send the operator the wrong way.
+    BOUNDARY_REFUSAL="private feed restore: $(head -n1 "$cause_file")"
+  else
+    BOUNDARY_REFUSAL="private feed restore failed (${FEED_URLS[0]}): check that the build service has the Feed Reader role on the feed"
+  fi
   refuse_without_boundary '§14'
 }
 

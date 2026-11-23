@@ -57,7 +57,10 @@ if [[ -n "$config" && -f "$config" ]]; then
   fi
 fi
 
-[[ "${DOTNET_MOCK_FAIL:-}" != "1" ]] || exit 1
+if [[ "${DOTNET_MOCK_FAIL:-}" == "1" ]]; then
+  printf 'error NU1301: unable to load the service index (mock)\n' >&2
+  exit 1
+fi
 
 if [[ -n "$packages" ]]; then
   mkdir -p "$packages/testpkg/1.0.0"

@@ -29,18 +29,26 @@
 #   feed_restore_enabled              AWF_NUGET_FEEDS holds a non-blank value
 #   feed_restore_config_check         `dotnet` is present and every feed URL is
 #                                     an Azure DevOps feed URL
+#   feed_restore_targets_syntax_check every AWF_NUGET_RESTORE entry is a
+#                                     relative solution or project path
 #   feed_write_config <file>          writes the credentialed NuGet config, 0600
 #   feed_cache_clear                  empties AWF_NUGET_CACHE; 0 when it is
 #                                     absent, 1 when it is a symlink or not a
 #                                     directory this user owns
+#   feed_restore_targets <worktree>   sets FEED_TARGETS; 2 when there is none
 #   feed_pre_restore <seed-ref> <work-dir>
-#                                     the whole restore; cleans up on both paths
+#                                     the whole restore; cleans up on both
+#                                     paths; 2 when there is nothing to restore
 #
 # Optional environment:
-#   AWF_NUGET_FEEDS  space-separated feed index URLs. Empty or unset = off.
-#   AWF_NUGET_CACHE  the fallback folder. Default /var/cache/awf-nuget. The
-#                    library tests override it; in a pipeline the driver's
-#                    preflight_cache refuses any other value.
+#   AWF_NUGET_FEEDS   space-separated feed index URLs. Empty or unset = off.
+#   AWF_NUGET_RESTORE space-separated relative paths of the solutions or
+#                     projects to restore. Empty or unset = the solutions at the
+#                     repository root, or its projects when it holds no
+#                     solution (#682).
+#   AWF_NUGET_CACHE   the fallback folder. Default /var/cache/awf-nuget. The
+#                     library tests override it; in a pipeline the driver's
+#                     preflight_cache refuses any other value.
 #
 # Sourcing has no side effects beyond defining these and their defaults.
 
@@ -58,12 +66,59 @@ FEED_URLS=()
 feed_list() {
   FEED_URLS=()
   local IFS=$' \t\n'
-  read -r -a FEED_URLS <<<"${AWF_NUGET_FEEDS:-}"
+  # -d '' reads past newlines (see feed_restore_list); the || true absorbs the
+  # EOF status that read returns for it.
+  read -r -d '' -a FEED_URLS <<<"${AWF_NUGET_FEEDS:-}" || true
 }
 
 feed_restore_enabled() {
   feed_list
   (( ${#FEED_URLS[@]} > 0 ))
+}
+
+# The entries of the current AWF_NUGET_RESTORE, filled by feed_restore_list.
+FEED_RESTORE_ENTRIES=()
+
+# feed_restore_list — splits AWF_NUGET_RESTORE into FEED_RESTORE_ENTRIES. The
+# split is explicit for the same reason feed_list's is: this repo's scripts run
+# with an IFS that does not split on spaces. A blank value yields no entry, so
+# it is the same as an unset one.
+#
+# `-d ''` reads the whole value, not just its first line: the Azure DevOps
+# variables UI makes a multi-line value easy to produce, and a plain `read -r -a`
+# would drop every entry after the first newline without a word of complaint —
+# a partial restore whose missing packages only surface as an agent-side build
+# failure much later. `-d ''` returns 1 at EOF; the array is filled regardless.
+feed_restore_list() {
+  FEED_RESTORE_ENTRIES=()
+  local IFS=$' \t\n'
+  read -r -d '' -a FEED_RESTORE_ENTRIES <<<"${AWF_NUGET_RESTORE:-}" || true
+}
+
+# feed_restore_targets_syntax_check — the cheap half of the target check, safe
+# to run in preflight before the seed worktree exists. An entry must stay inside
+# the worktree and name a solution or project: the path reaches `dotnet restore`
+# in argv, and MSBuild evaluation executes whatever it points at.
+#
+# No path component may start with `-`: such a component reaches `dotnet restore`
+# in argv, where a leading dash parses as an option and not as a path. Nothing
+# harmful is reachable that way, but the refusal belongs here, where it names the
+# variable, rather than as a restore failure that points at the Feed-Reader role.
+feed_restore_targets_syntax_check() {
+  feed_restore_list
+  local entry
+  for entry in "${FEED_RESTORE_ENTRIES[@]}"; do
+    if [[ "$entry" =~ ^[A-Za-z0-9._/-]+\.(sln|slnx|[A-Za-z]+proj)$ ]] &&
+       [[ "$entry" != /* ]] &&
+       [[ "$entry" != -* && "$entry" != */-* ]] &&
+       [[ "$entry" != ../* && "$entry" != */../* && "$entry" != */.. ]]; then
+      continue
+    fi
+    printf "AWF_NUGET_RESTORE entry '%s' is not a relative solution or project path\n" \
+      "$entry" >&2
+    return 1
+  done
+  return 0
 }
 
 # feed_is_azdo_feed <url> — the token is written for these two forms only, so a
@@ -186,34 +241,82 @@ feed_restore_cleanup() {
   return 0
 }
 
-# feed_solutions <dir> — the solution files at the root of <dir>, bare names.
-# A root with both a .sln and a .slnx gets both restored; a root with none is
-# restored as a directory, which is what `dotnet restore` with no argument does.
-FEED_SOLUTIONS=()
-feed_solutions() {
-  local dir="$1" path
-  FEED_SOLUTIONS=()
-  for path in "$dir"/*.sln "$dir"/*.slnx; do
-    [[ -f "$path" ]] || continue
-    FEED_SOLUTIONS+=("${path##*/}")
-  done
+# feed_entry_is_tracked_file <worktree> <entry> — true when <entry> names a
+# regular file that the seed commit itself tracks.
+#
+# `git ls-files` is what rules out a path reaching through a symlinked
+# directory: `-f` follows symlinks and `-L` inspects only the last component, so
+# with `samples` committed as a symlink neither of them sees anything wrong with
+# `samples/Project.csproj` — yet it is a project outside the seed commit, and
+# `dotnet restore` would evaluate, which is to say execute, its MSBuild logic.
+# Only a blob the commit holds at that exact path qualifies; the `-L` / `-f`
+# pair still rejects the last component being a (tracked) symlink.
+feed_entry_is_tracked_file() {
+  local worktree="$1" entry="$2"
+  [[ ! -L "$worktree/$entry" && -f "$worktree/$entry" ]] || return 1
+  bgit -C "$worktree" ls-files --error-unmatch -- "$entry" >/dev/null 2>&1
 }
 
-# feed_restore_one <worktree> <config> [solution] — one `dotnet restore`, run
-# inside the worktree so a relative solution name is all that reaches argv.
+# feed_restore_targets <worktree> — what to restore, as paths relative to
+# <worktree>, in FEED_TARGETS. AWF_NUGET_RESTORE names them; without it, the
+# solution files at the root, a root with both a .sln and a .slnx getting both,
+# falling back to the project files at the root when it holds no solution —
+# which is what `dotnet restore` with no argument restored there before #682.
+#
+# Returns 2 when there is nothing to restore (#682). `dotnet restore` with no
+# argument in a root holding neither a solution nor a project stops with
+# MSB1003, so a consumer whose solution lives in a subdirectory is told which
+# variable to set instead.
+#
+# A named entry must be a regular file the seed commit tracks: the restore
+# executes the MSBuild logic of whatever it points at, and that must be code
+# from the commit the agent is seeded from.
+FEED_TARGETS=()
+feed_restore_targets() {
+  local worktree="$1" entry path
+  FEED_TARGETS=()
+  feed_restore_list
+  if (( ${#FEED_RESTORE_ENTRIES[@]} > 0 )); then
+    for entry in "${FEED_RESTORE_ENTRIES[@]}"; do
+      if ! feed_entry_is_tracked_file "$worktree" "$entry"; then
+        printf "AWF_NUGET_RESTORE entry '%s' is not in the seed commit\n" "$entry" >&2
+        return 2
+      fi
+      FEED_TARGETS+=("$entry")
+    done
+    return 0
+  fi
+  for path in "$worktree"/*.sln "$worktree"/*.slnx; do
+    feed_entry_is_tracked_file "$worktree" "${path##*/}" || continue
+    FEED_TARGETS+=("${path##*/}")
+  done
+  if (( ${#FEED_TARGETS[@]} == 0 )); then
+    for path in "$worktree"/*.*proj; do
+      feed_entry_is_tracked_file "$worktree" "${path##*/}" || continue
+      FEED_TARGETS+=("${path##*/}")
+    done
+  fi
+  if (( ${#FEED_TARGETS[@]} == 0 )); then
+    printf 'no solution or project at the repository root; set AWF_NUGET_RESTORE to the solution or project to restore\n' >&2
+    return 2
+  fi
+  return 0
+}
+
+# feed_restore_one <worktree> <config> <target> — one `dotnet restore`, run
+# inside the worktree so only the target's relative path reaches argv.
 feed_restore_one() {
-  local worktree="$1" config="$2" solution="${3:-}" args=()
-  [[ -z "$solution" ]] || args+=("$solution")
+  local worktree="$1" config="$2" target="$3"
   # No build server or reused MSBuild node may outlive this call: it would keep
   # running with the driver's environment, token included, into the agent run.
-  args+=(--configfile "$config" --packages "$AWF_NUGET_CACHE" --disable-build-servers)
+  local args=("$target" --configfile "$config" --packages "$AWF_NUGET_CACHE" --disable-build-servers)
   ( cd "$worktree" && MSBUILDDISABLENODEREUSE=1 dotnet restore "${args[@]}" )
 }
 
 # feed_pre_restore <seed-ref> <work-dir> — the whole credentialed restore.
 feed_pre_restore() {
   local seed_ref="$1" work_dir="$2"
-  local config_dir='' worktree_root='' worktree='' config='' solution='' rc=0
+  local config_dir='' worktree_root='' worktree='' config='' target='' rc=0
 
   umask 077
 
@@ -235,12 +338,6 @@ feed_pre_restore() {
   config="$config_dir/nuget.config"
   worktree="$worktree_root/seed"
 
-  if ! feed_write_config "$config"; then
-    printf 'could not write the temporary NuGet config\n' >&2
-    feed_restore_cleanup "$worktree_root" "$config_dir"
-    return 1
-  fi
-
   if ! bgit worktree add --quiet --detach "$worktree" "$seed_ref" >/dev/null 2>&1; then
     printf 'could not check out %s for the restore\n' "$seed_ref" >&2
     feed_restore_cleanup "$worktree_root" "$config_dir"
@@ -248,19 +345,26 @@ feed_pre_restore() {
   fi
   chmod 0700 "$worktree" || rc=1
 
+  # The targets come before the config: a run with nothing to restore refuses
+  # without the token ever having been written.
+  if [[ "$rc" -eq 0 ]] && ! feed_restore_targets "$worktree"; then
+    feed_restore_cleanup "$worktree_root" "$config_dir"
+    return 2
+  fi
+
+  if [[ "$rc" -eq 0 ]] && ! feed_write_config "$config"; then
+    printf 'could not write the temporary NuGet config\n' >&2
+    rc=1
+  fi
+
   if [[ "$rc" -eq 0 ]] && ! feed_cache_clear; then
     rc=1
   fi
 
   if [[ "$rc" -eq 0 ]]; then
-    feed_solutions "$worktree"
-    if (( ${#FEED_SOLUTIONS[@]} == 0 )); then
-      feed_restore_one "$worktree" "$config" || rc=1
-    else
-      for solution in "${FEED_SOLUTIONS[@]}"; do
-        feed_restore_one "$worktree" "$config" "$solution" || { rc=1; break; }
-      done
-    fi
+    for target in "${FEED_TARGETS[@]}"; do
+      feed_restore_one "$worktree" "$config" "$target" || { rc=1; break; }
+    done
     [[ "$rc" -eq 0 ]] || printf 'the restore of %s failed\n' "$seed_ref" >&2
   fi
 
