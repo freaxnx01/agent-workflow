@@ -330,7 +330,7 @@ mkdir -p "$SFP_SURVIVOR"
 printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$MOCKS/awf-boundary/awf-agent-run" > "$SFP_SURVIVOR/awf-agent-run"
 printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$ROOT/docker/azp-agent/boundary/awf-agent-git" > "$SFP_SURVIVOR/awf-agent-git"
 # shellcheck disable=SC2016  # the $1 belongs to the generated reap, not to this shell
-printf '#!/usr/bin/env bash\n[[ "${1:-}" != --protocol ]] || { printf "1\\n"; exit 0; }\nprintf "2\\n"\nexit 1\n' > "$SFP_SURVIVOR/awf-agent-reap"
+printf '#!/usr/bin/env bash\n[[ "${1:-}" != --protocol ]] || { printf "2\\n"; exit 0; }\nprintf "2\\n"\nexit 1\n' > "$SFP_SURVIVOR/awf-agent-reap"
 chmod +x "$SFP_SURVIVOR"/*
 
 fresh_world

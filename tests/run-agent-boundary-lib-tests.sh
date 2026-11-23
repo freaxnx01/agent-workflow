@@ -95,7 +95,7 @@ new_driver_checkout() {
 }
 
 # stub_boundary <name> <entry> <body> — a boundary dir whose <entry> is replaced
-# by <body>; the other two entry points answer --protocol with 1.
+# by <body>; the other two entry points answer --protocol with 2.
 stub_boundary() {
   local dir="$TMP/boundary-$1" entry="$2" body="$3" name
   mkdir -p "$dir"
@@ -103,7 +103,7 @@ stub_boundary() {
     if [[ "$name" == "$entry" ]]; then
       printf '#!/usr/bin/env bash\n%s\n' "$body" > "$dir/$name"
     else
-      printf '#!/usr/bin/env bash\n[[ "${1:-}" != --protocol ]] || { printf "1\\n"; exit 0; }\nexit 0\n' > "$dir/$name"
+      printf '#!/usr/bin/env bash\n[[ "${1:-}" != --protocol ]] || { printf "2\\n"; exit 0; }\nexit 0\n' > "$dir/$name"
     fi
     chmod +x "$dir/$name"
   done
@@ -118,10 +118,10 @@ SUDO_LOG="$TMP/sudo.log"
 section "boundary_check"
 
 lib 'boundary_check'
-assert_eq "check_AllProtocolsOne_Succeeds: rc" "0" "$RC"
-assert_eq "check_AllProtocolsOne_Succeeds: one call per entry point" "3" \
+assert_eq "check_AllProtocolsMatch_Succeeds: rc" "0" "$RC"
+assert_eq "check_AllProtocolsMatch_Succeeds: one call per entry point" "3" \
   "$(grep -c 'awf-agent' "$SUDO_LOG" || true)"
-assert_contains "check_AllProtocolsOne_Succeeds: as awf-agent, non-interactive" \
+assert_contains "check_AllProtocolsMatch_Succeeds: as awf-agent, non-interactive" \
   "-n -u awf-agent" "$(cat "$SUDO_LOG")"
 
 lib 'boundary_check' SUDO_MOCK_DENY=1
@@ -129,7 +129,7 @@ assert_eq "check_SudoDenied_FailsNamingSudo: rc" "1" "$RC"
 assert_contains "check_SudoDenied_FailsNamingSudo: names sudo" "sudo" "$ERR"
 
 BOUNDARY_DIR_OVERRIDE="$(stub_boundary wrongproto awf-agent-git \
-  '[[ "${1:-}" != --protocol ]] || { printf "2\n"; exit 0; }')"
+  '[[ "${1:-}" != --protocol ]] || { printf "1\n"; exit 0; }')"
 lib 'boundary_check'
 assert_eq "check_WrongProtocol_Fails: rc" "1" "$RC"
 assert_contains "check_WrongProtocol_Fails: names the version" "protocol" "$ERR"
@@ -353,7 +353,7 @@ assert_not_contains "exec_claude_RunsInTheWorkspace: no Azure DevOps credential"
 assert_not_contains "exec_claude_RunsInTheWorkspace: no job token" "leak-token" "$OUT"
 
 BOUNDARY_DIR_OVERRIDE="$(stub_boundary survivor awf-agent-reap \
-  '[[ "${1:-}" != --protocol ]] || { printf "1\n"; exit 0; }
+  '[[ "${1:-}" != --protocol ]] || { printf "2\n"; exit 0; }
 printf "2\n"; exit 1')"
 lib 'boundary_reap; printf "rc=%s\n" "$?"'
 assert_contains "reap_SurvivorRemains_ReturnsFailure: rc" "rc=1" "$OUT"

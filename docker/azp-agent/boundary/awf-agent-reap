@@ -30,7 +30,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-AWF_PROTOCOL=1
+AWF_PROTOCOL=2
 AWF_AGENT_USER=awf-agent
 
 if [[ "${1:-}" == "--protocol" ]]; then

@@ -139,6 +139,20 @@ check_implement_driver() { # check_implement_driver <root>
   check implement_boundary_check_precedes_the_agent "$(verdict "$rc")" \
     "preflight must call preflight_boundary, which must demand both the boundary and a credential-free checkout"
 
+  # The private-feed pre-restore (#641) holds the driver's token, so it runs
+  # before any agent: its config half in preflight, the restore itself once the
+  # default branch is known, and a failure refuses the run like a missing
+  # boundary does.
+  rc=0
+  grep -q 'preflight_restore' <<<"$(func_body "$text" preflight)" || rc=1
+  before "$(func_body "$text" preflight)" preflight_boundary preflight_restore || rc=1
+  before "$main_body" resolve_default_branch restore_private_feeds || rc=1
+  before "$main_body" restore_private_feeds attempt_loop || rc=1
+  grep -q 'refuse_without_boundary' <<<"$(func_body "$text" restore_private_feeds)" || rc=1
+  grep -q 'pipeline_mode' <<<"$(func_body "$text" restore_private_feeds)" || rc=1
+  check implement_restore_precedes_the_agent "$(verdict "$rc")" \
+    "the private-feed restore must run in pipeline mode, after the default branch and before attempt_loop, and refuse on failure"
+
   local calls missing=0 line
   calls="$(printf '%s\n' "$text" | grep -F 'lib/agent-cmd-claude-implement.sh' || true)"
   while read -r line; do
@@ -272,6 +286,9 @@ mutate_strip_hook_flags() {
 mutate_sudoers_all_commands() {
   sed -i -E 's#NOPASSWD: .*#NOPASSWD: ALL#' "$1/docker/azp-agent/sudoers-awf-agent"
 }
+mutate_restore_after_the_agent() {
+  sed -i '/^  restore_private_feeds$/d' "$1/scripts/implement-azdo.sh"
+}
 mutate_read_the_raw_result() {
   sed -i 's/  RESULT_FILE="\$(_output_value result-file "\$out\/outputs")"/  RESULT_FILE="$raw"/' \
     "$1/scripts/implement-azdo.sh"
@@ -313,6 +330,8 @@ negative negative_broad_sudo_grant_is_caught mutate_sudoers_all_commands \
   sudoers_grants_only_the_three_entry_points
 negative negative_raw_result_read_is_caught mutate_read_the_raw_result \
   agent_result_read_only_through_the_import
+negative negative_no_feed_restore_before_the_agent_is_caught mutate_restore_after_the_agent \
+  implement_restore_precedes_the_agent
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then printf 'Failed: %s\n' "${FAIL_NAMES[*]}"; exit 1; fi

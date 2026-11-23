@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+#
+# dotnet — stand-in for the .NET CLI in the private-feed pre-restore tests (#641).
+#
+# It records everything a test needs to prove about the credentialed restore
+# without a feed, a network or an SDK: the argv (so the token can be shown to be
+# absent from it), the working directory (so the restore can be shown to run on
+# the seed worktree), a copy of the `--configfile` it was handed, and the file
+# mode of that config and of its directory.
+#
+# On success it writes one package into the `--packages` folder with mode 0600,
+# so the caller's world-readable chmod pass has something to fix.
+#
+# Env:
+#   DOTNET_LOG          file the argv, the working directory and that directory's
+#                       git HEAD are appended to, as `argv=…`, `pwd=…` and
+#                       `head=…` lines. HEAD is logged here because the caller
+#                       removes the worktree afterwards, so a test could not
+#                       resolve it later.
+#                       A `nodereuse=…` line records MSBUILDDISABLENODEREUSE,
+#                       so a test can prove no MSBuild node outlives the call.
+#   DOTNET_CONFIG_COPY  file the `--configfile` is copied to.
+#   DOTNET_MODE_LOG     file a `file=<mode> dir=<mode>` line is appended to.
+#   DOTNET_MOCK_FAIL    "1" exits 1 after logging, as a restore against a feed
+#                       the build service cannot read does.
+#
+# Exit codes: 0 restored; 1 when DOTNET_MOCK_FAIL=1.
+set -euo pipefail
+IFS=$'\n\t'
+
+args=("$@")
+
+# The two options the library passes. Everything else is positional noise here.
+config=''
+packages=''
+i=0
+while (( i < ${#args[@]} )); do
+  case "${args[i]}" in
+    --configfile) config="${args[i + 1]:-}"; i=$((i + 2)) ;;
+    --packages)   packages="${args[i + 1]:-}"; i=$((i + 2)) ;;
+    *)            i=$((i + 1)) ;;
+  esac
+done
+
+if [[ -n "${DOTNET_LOG:-}" ]]; then
+  # A space-joined argv: the restricted IFS would otherwise join on a newline.
+  argv="$(IFS=' '; printf '%s' "${args[*]}")"
+  printf 'argv=%s\npwd=%s\nhead=%s\nnodereuse=%s\n' "$argv" "$PWD" \
+    "$(git rev-parse HEAD 2>/dev/null || true)" "${MSBUILDDISABLENODEREUSE:-}" >> "$DOTNET_LOG"
+fi
+
+if [[ -n "$config" && -f "$config" ]]; then
+  [[ -z "${DOTNET_CONFIG_COPY:-}" ]] || cp "$config" "$DOTNET_CONFIG_COPY"
+  if [[ -n "${DOTNET_MODE_LOG:-}" ]]; then
+    printf 'file=%s dir=%s\n' \
+      "$(stat -c %a "$config")" "$(stat -c %a "$(dirname "$config")")" >> "$DOTNET_MODE_LOG"
+  fi
+fi
+
+[[ "${DOTNET_MOCK_FAIL:-}" != "1" ]] || exit 1
+
+if [[ -n "$packages" ]]; then
+  mkdir -p "$packages/testpkg/1.0.0"
+  : > "$packages/testpkg/1.0.0/testpkg.1.0.0.nupkg"
+  chmod 0600 "$packages/testpkg/1.0.0/testpkg.1.0.0.nupkg"
+fi

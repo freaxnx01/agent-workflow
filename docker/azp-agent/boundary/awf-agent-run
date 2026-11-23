@@ -19,6 +19,12 @@
 # entry point is safe on its own — a misconfigured sudoers rule cannot hand the
 # agent AZURE_DEVOPS_EXT_PAT or SYSTEM_ACCESSTOKEN through this door.
 #
+# NUGET_FALLBACK_PACKAGES is a CONSTANT of this entry point, not an allowlisted
+# name (#641): it points NuGet at the read-only folder the driver pre-restored
+# the private-feed packages into. It holds no secret, and a value the caller
+# passes is dropped like any other — the constants go in before the allowlist
+# loop, so nothing can be added on top of them.
+#
 # Optional environment:
 #   AWF_WS_ROOT       where agent workspaces live. Default /home/awf-agent/ws.
 #   AWF_AGENT_CLAUDE  the CLI. Default /home/awf-agent/.local/bin/claude.
@@ -28,10 +34,13 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-AWF_PROTOCOL=1
+AWF_PROTOCOL=2
 AWF_WS_ROOT="${AWF_WS_ROOT:-/home/awf-agent/ws}"
 AWF_AGENT_CLAUDE="${AWF_AGENT_CLAUDE:-/home/awf-agent/.local/bin/claude}"
 AWF_AGENT_HOME=/home/awf-agent
+# Hard-coded, deliberately not read from the environment: the driver pre-restore
+# writes this folder and `awf-agent` can only read it.
+AWF_NUGET_CACHE=/var/cache/awf-nuget
 
 # Exactly the allowlist of the sudoers rule. Keep the two in lockstep.
 AWF_ENV_ALLOWLIST=(CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY MODEL MAX_TURNS)
@@ -67,6 +76,11 @@ shift 2
 [[ -d "$workspace" ]] || { printf 'awf-agent-run: no such workspace: %s\n' "$workspace" >&2; exit 2; }
 
 env_args=("HOME=$AWF_AGENT_HOME" "PATH=/usr/local/bin:/usr/bin:/bin")
+env_args+=(
+  "NUGET_FALLBACK_PACKAGES=$AWF_NUGET_CACHE"
+  DOTNET_CLI_TELEMETRY_OPTOUT=1
+  DOTNET_NOLOGO=1
+)
 for name in "${AWF_ENV_ALLOWLIST[@]}"; do
   [[ -n "${!name+set}" ]] || continue
   env_args+=("$name=${!name}")

@@ -182,18 +182,26 @@ PIPE_PAT='tok-SECRET-9f3a'
 # What the mock sudo passes through on top of the production allowlist: the test
 # mocks' own configuration, which the real rule has no reason to carry.
 PIPE_SUDO_KEEP='CLAUDE_MOCK_STEPS,CLAUDE_MOCK_STATE,CLAUDE_MOCK_LOG,CLAUDE_MOCK_FIX_LOG,CLAUDE_MOCK_FIX_TOUCH,CLAUDE_MOCK_FIX_FAIL,CLAUDE_MOCK_REVIEWS,CLAUDE_MOCK_REVIEW_LOG,CLAUDE_MOCK_REVIEW_DIR,CLAUDE_MOCK_DROP_ORIGIN_MAIN,GIT_MOCK_REAL,GIT_MOCK_ORIGIN_URL,GIT_MOCK_LOG'
+# The package cache every pipeline run uses (see AWF_TEST_CACHE_ROOT below).
+FEED_CACHE="$TMP/root/var/cache/awf-nuget"
+
 run_pipeline() {
   local steps="$1"; shift
   PIPE_N=$((PIPE_N + 1))
   local dir="$TMP/pipe-$PIPE_N"
   PIPE_WS="$dir/ws"; PIPE_SUDO="$dir/sudo.log"; PIPE_AGENT_ENV="$dir/agent-env.log"
+  PIPE_CACHE_SEEN="$dir/cache-seen.log"
   mkdir -p "$PIPE_WS"
-  : > "$PIPE_SUDO"; : > "$PIPE_AGENT_ENV"
+  : > "$PIPE_SUDO"; : > "$PIPE_AGENT_ENV"; : > "$PIPE_CACHE_SEEN"
+  # AWF_TEST_CACHE_ROOT: no pipeline test ever touches the host's real
+  # /var/cache/awf-nuget; the driver uses $TMP/root/var/cache/awf-nuget instead.
   run_loop "$steps" TF_BUILD=True SYSTEM_ACCESSTOKEN="$PIPE_PAT" \
     AZURE_DEVOPS_EXT_PAT="$PIPE_PAT" \
     AWF_BOUNDARY_DIR="${PIPE_BOUNDARY_DIR:-$MOCKS/awf-boundary}" \
     AWF_WS_ROOT="$PIPE_WS" AWF_RUN_ID="p$PIPE_N" \
     AWF_RUN_ENV_LOG="$PIPE_AGENT_ENV" \
+    AWF_TEST_CACHE_ROOT="$TMP/root" \
+    AWF_RUN_CACHE_DIR="$FEED_CACHE" AWF_RUN_CACHE_LOG="$PIPE_CACHE_SEEN" \
     SUDO_LOG="$PIPE_SUDO" SUDO_MOCK_KEEP="$PIPE_SUDO_KEEP" "$@"
 }
 
@@ -699,7 +707,7 @@ printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$MOCKS/awf-boundary/awf-agent-run"
 printf '#!/usr/bin/env bash\nexec %q "$@"\n' "$ROOT/docker/azp-agent/boundary/awf-agent-git" > "$SURVIVOR_DIR/awf-agent-git"
 # The preflight reap finds nothing; every reap after it reports survivors.
 # shellcheck disable=SC2016  # the $1 belongs to the generated reap, not to this shell
-printf '#!/usr/bin/env bash\n[[ "${1:-}" != --protocol ]] || { printf "1\\n"; exit 0; }\ncount=%q\nn=$(( $(cat "$count" 2>/dev/null || echo 0) + 1 ))\nprintf "%%s\\n" "$n" > "$count"\n(( n > 1 )) || { printf "0\\n"; exit 0; }\nprintf "2\\n"\nexit 1\n' \
+printf '#!/usr/bin/env bash\n[[ "${1:-}" != --protocol ]] || { printf "2\\n"; exit 0; }\ncount=%q\nn=$(( $(cat "$count" 2>/dev/null || echo 0) + 1 ))\nprintf "%%s\\n" "$n" > "$count"\n(( n > 1 )) || { printf "0\\n"; exit 0; }\nprintf "2\\n"\nexit 1\n' \
   "$TMP/survivor-reap.count" > "$SURVIVOR_DIR/awf-agent-reap"
 chmod +x "$SURVIVOR_DIR"/*
 PIPE_BOUNDARY_DIR="$SURVIVOR_DIR"
@@ -751,7 +759,7 @@ LEFTOVER_DIR="$TMP/boundary-leftover"
 mkdir -p "$LEFTOVER_DIR"
 cp "$SURVIVOR_DIR/awf-agent-run" "$SURVIVOR_DIR/awf-agent-git" "$LEFTOVER_DIR/"
 # shellcheck disable=SC2016  # the $1 belongs to the generated reap, not to this shell
-printf '#!/usr/bin/env bash\n[[ "${1:-}" != --protocol ]] || { printf "1\\n"; exit 0; }\nprintf "1\\n"\nexit 1\n' > "$LEFTOVER_DIR/awf-agent-reap"
+printf '#!/usr/bin/env bash\n[[ "${1:-}" != --protocol ]] || { printf "2\\n"; exit 0; }\nprintf "1\\n"\nexit 1\n' > "$LEFTOVER_DIR/awf-agent-reap"
 chmod +x "$LEFTOVER_DIR"/*
 PIPE_BOUNDARY_DIR="$LEFTOVER_DIR"
 run_pipeline success
@@ -770,6 +778,137 @@ assert_contains "selfFix_Pipeline_ReapsBeforeTheVerdict: the fix ran in the boun
   "awf-agent-run" "$(grep -c 'awf-agent-run' "$PIPE_SUDO" | awk '$1 >= 2 {print "awf-agent-run"}')"
 assert_contains "selfFix_Pipeline_ReapsBeforeTheVerdict: last boundary call is the reap" \
   "awf-agent-reap" "$last_call"
+
+section "pipeline mode: private feeds are restored before the agent (#641)"
+
+# tests/mocks/dotnet is on PATH in every run_pipeline call, so "no dotnet call"
+# is a real observation, not an absent binary. An agent run is matched by its
+# workspace argument: preflight's `awf-agent-run --protocol` probe is no agent.
+FEED_URL='https://pkgs.dev.azure.com/contoso/_packaging/feed/nuget/v3/index.json'
+mkdir -p "$FEED_CACHE"
+# seed_cache — a package an earlier job on the same agent left behind.
+seed_cache() { mkdir -p "$FEED_CACHE/stale/1.0.0"; : > "$FEED_CACHE/stale/1.0.0/stale.1.0.0.nupkg"; }
+cache_left() { find "$FEED_CACHE" -mindepth 1 | head -n1; }
+FEED_DOTNET_LOG="$TMP/feed-dotnet.log"
+
+: > "$FEED_DOTNET_LOG"
+run_pipeline success DOTNET_LOG="$FEED_DOTNET_LOG"
+assert_eq "implement_NoFeeds_NoDotnetCall: rc" "0" "$RC"
+assert_eq "implement_NoFeeds_NoDotnetCall: dotnet never ran" "" "$(cat "$FEED_DOTNET_LOG")"
+assert_contains "implement_NoFeeds_NoDotnetCall: the agent ran as before" \
+  "awf-agent-run $PIPE_WS/" "$(cat "$PIPE_SUDO")"
+
+# The container outlives the job: an earlier job's private packages must be
+# gone before an agent without feeds starts, and gone again after every run.
+seed_cache
+run_pipeline success
+assert_eq "implement_NoFeeds_ClearsStaleCacheBeforeAgent: rc" "0" "$RC"
+assert_contains "implement_NoFeeds_ClearsStaleCacheBeforeAgent: the agent started" \
+  "agent-start" "$(cat "$PIPE_CACHE_SEEN")"
+assert_not_contains "implement_NoFeeds_ClearsStaleCacheBeforeAgent: no stale package at agent start" \
+  "stale" "$(cat "$PIPE_CACHE_SEEN")"
+assert_eq "implement_NoFeeds_ClearsStaleCacheBeforeAgent: the cache is empty after the run" "" \
+  "$(cache_left)"
+
+seed_cache
+PIPE_BOUNDARY_DIR="$LEFTOVER_DIR"
+run_pipeline success
+PIPE_BOUNDARY_DIR=''
+assert_eq "implement_Refusal_ClearsCacheAfterRun: rc" "1" "$RC"
+assert_eq "implement_Refusal_ClearsCacheAfterRun: the agent never ran" "" "$CLAUDELOG"
+assert_eq "implement_Refusal_ClearsCacheAfterRun: the cache is empty after the run" "" \
+  "$(cache_left)"
+
+# AWF_NUGET_CACHE is not the pipeline's to choose: `find -delete` and `chmod -R`
+# act on it. Another value refuses before anything is deleted.
+EVIL_CACHE="$TMP/evil-cache"
+mkdir -p "$EVIL_CACHE"; : > "$EVIL_CACHE/keep"
+run_pipeline success AWF_NUGET_CACHE="$EVIL_CACHE"
+assert_eq "implement_ForeignCachePath_Refuses: rc" "1" "$RC"
+assert_contains "implement_ForeignCachePath_Refuses: the report says why" \
+  "AWF_NUGET_CACHE" "$AZLOG"
+assert_contains "implement_ForeignCachePath_Refuses: points to the feed section" \
+  "AZDO-PIPELINE-SETUP.md §14" "$AZLOG"
+assert_eq "implement_ForeignCachePath_Refuses: no agent call" "" "$CLAUDELOG"
+assert_eq "implement_ForeignCachePath_Refuses: nothing was deleted" "1" \
+  "$([[ -f "$EVIL_CACHE/keep" ]] && echo 1 || echo 0)"
+
+run_pipeline success AWF_NUGET_CACHE=/var/cache/awf-nuget
+assert_eq "implement_DefaultCachePathSpelledOut_Runs: rc" "0" "$RC"
+
+# A symlinked cache would point `find -delete` at its target.
+mv "$FEED_CACHE" "$FEED_CACHE.real"
+LINK_TARGET="$TMP/cache-link-target"
+mkdir -p "$LINK_TARGET"; : > "$LINK_TARGET/keep"
+ln -s "$LINK_TARGET" "$FEED_CACHE"
+run_pipeline success
+rm "$FEED_CACHE"; mv "$FEED_CACHE.real" "$FEED_CACHE"
+assert_eq "implement_SymlinkedCache_Refuses: rc" "1" "$RC"
+assert_contains "implement_SymlinkedCache_Refuses: the report says why" "symlink" "$AZLOG"
+assert_contains "implement_SymlinkedCache_Refuses: points to the feed section" \
+  "AZDO-PIPELINE-SETUP.md §14" "$AZLOG"
+assert_eq "implement_SymlinkedCache_Refuses: no agent call" "" "$CLAUDELOG"
+assert_eq "implement_SymlinkedCache_Refuses: the target is untouched" "1" \
+  "$([[ -f "$LINK_TARGET/keep" ]] && echo 1 || echo 0)"
+
+: > "$FEED_DOTNET_LOG"
+run_pipeline success DOTNET_LOG="$FEED_DOTNET_LOG" DOTNET_MOCK_FAIL=1 \
+  AWF_NUGET_FEEDS="$FEED_URL"
+assert_eq "implement_FeedRestoreFails_RefusesBeforeAgent: rc" "1" "$RC"
+assert_contains "implement_FeedRestoreFails_RefusesBeforeAgent: the restore was tried" \
+  "argv=restore" "$(cat "$FEED_DOTNET_LOG")"
+assert_not_contains "implement_FeedRestoreFails_RefusesBeforeAgent: the agent never ran" \
+  "awf-agent-run $PIPE_WS/" "$(cat "$PIPE_SUDO")"
+assert_eq "implement_FeedRestoreFails_RefusesBeforeAgent: no agent call" "" "$CLAUDELOG"
+assert_contains "implement_FeedRestoreFails_RefusesBeforeAgent: the report names the feed" \
+  "private feed restore failed ($FEED_URL)" "$AZLOG"
+assert_contains "implement_FeedRestoreFails_RefusesBeforeAgent: the report names the role" \
+  "Feed Reader" "$AZLOG"
+assert_contains "implement_FeedRestoreFails_RefusesBeforeAgent: points to the feed section" \
+  "see AZDO-PIPELINE-SETUP.md §14" "$AZLOG"
+assert_not_contains "implement_FeedRestoreFails_RefusesBeforeAgent: no PR" "repos pr create" "$AZLOG"
+
+: > "$FEED_DOTNET_LOG"
+run_pipeline success DOTNET_LOG="$FEED_DOTNET_LOG" \
+  AWF_NUGET_FEEDS='https://nuget.contoso.example/v3/index.json'
+assert_eq "implement_ForeignFeedUrl_RefusesBeforeAgent: rc" "1" "$RC"
+assert_eq "implement_ForeignFeedUrl_RefusesBeforeAgent: dotnet never ran" "" "$(cat "$FEED_DOTNET_LOG")"
+assert_contains "implement_ForeignFeedUrl_RefusesBeforeAgent: the report says why" \
+  "private feed setup:" "$AZLOG"
+assert_contains "implement_ForeignFeedUrl_RefusesBeforeAgent: points to the feed section" \
+  "see AZDO-PIPELINE-SETUP.md §14" "$AZLOG"
+assert_eq "implement_ForeignFeedUrl_RefusesBeforeAgent: no agent call" "" "$CLAUDELOG"
+assert_not_contains "implement_ForeignFeedUrl_RefusesBeforeAgent: the agent never ran" \
+  "awf-agent-run $PIPE_WS/" "$(cat "$PIPE_SUDO")"
+
+# One ordered log: the dotnet mock appends to the same file the sudo mock does,
+# so the line order is the call order.
+next_sudo_log="$TMP/pipe-$((PIPE_N + 1))/sudo.log"
+run_pipeline success DOTNET_LOG="$next_sudo_log" \
+  AWF_NUGET_FEEDS="$FEED_URL"
+assert_eq "implement_FeedRestoreOk_AgentRuns: rc" "0" "$RC"
+restore_line="$(grep -n '^argv=restore' "$PIPE_SUDO" | head -n1 | cut -d: -f1 || true)"
+agent_line="$(grep -n -F "awf-agent-run $PIPE_WS/" "$PIPE_SUDO" | head -n1 | cut -d: -f1 || true)"
+assert_eq "implement_FeedRestoreOk_AgentRuns: the restore ran, then the agent" "1" \
+  "$([[ -n "$restore_line" && -n "$agent_line" && "$restore_line" -lt "$agent_line" ]] && echo 1 || echo 0)"
+assert_contains "implement_FeedRestoreOk_AgentRuns: the package is in the cache when the agent starts" \
+  "testpkg.1.0.0.nupkg" "$(cat "$PIPE_CACHE_SEEN")"
+assert_eq "implement_FeedRestoreOk_AgentRuns: the cache is empty after the run" "" \
+  "$(cache_left)"
+assert_not_contains "implement_FeedRestoreOk_AgentRuns: the token is not in the restore argv" \
+  "$PIPE_PAT" "$(grep '^argv=' "$PIPE_SUDO" || true)"
+
+: > "$FEED_DOTNET_LOG"
+run_pipeline success DRY_RUN=1 DOTNET_LOG="$FEED_DOTNET_LOG" \
+  AWF_NUGET_FEEDS="$FEED_URL"
+assert_eq "implement_DryRun_NoRestore: rc" "0" "$RC"
+assert_eq "implement_DryRun_NoRestore: dotnet never ran" "" "$(cat "$FEED_DOTNET_LOG")"
+
+seed_cache
+run_pipeline success DRY_RUN=1
+assert_eq "implement_DryRun_LeavesCacheAlone: rc" "0" "$RC"
+assert_contains "implement_DryRun_LeavesCacheAlone: nothing was deleted" "stale" "$(cache_left)"
+rm -rf "${FEED_CACHE:?}"/*
 
 # Local mode is untouched: no sudo, no boundary, today's behaviour.
 : > "$TMP/local-sudo.log"

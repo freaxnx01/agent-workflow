@@ -42,6 +42,11 @@ RUN useradd --create-home --uid 1001 --shell /bin/bash awf-agent \
  && chown -R awf-agent:awf-agent /home/awf-agent \
  && chmod 0700 /home/awf-agent
 
+# The read-only NuGet fallback folder of #641: `azp` (the driver) pre-restores
+# the private-feed packages into it before the agent starts, and `awf-agent`
+# can only read it, so it cannot poison the next run.
+RUN install -d -o azp -g azp -m 0755 /var/cache/awf-nuget
+
 # The installer sources scripts/lib/ relative to itself, so keep the layout.
 COPY scripts/install-claude-cli.sh /opt/agent-workflow/scripts/install-claude-cli.sh
 COPY scripts/lib/fetch-verified-installer.sh /opt/agent-workflow/scripts/lib/fetch-verified-installer.sh

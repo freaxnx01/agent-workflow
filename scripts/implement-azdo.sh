@@ -80,6 +80,8 @@ source "$HERE/lib/pipeline-file-guard.sh"
 source "$HERE/lib/retry-policy.sh"
 # shellcheck source=scripts/lib/agent-boundary.sh
 source "$HERE/lib/agent-boundary.sh"
+# shellcheck source=scripts/lib/private-feed-restore.sh
+source "$HERE/lib/private-feed-restore.sh"
 
 # Run state. Initialised here so the file can be sourced under `set -u`.
 DRY_RUN="${DRY_RUN:-0}"
@@ -112,6 +114,8 @@ RESULT_FILE=''
 AGENT_WORKSPACE=''   # the agent's own workspace in pipeline mode; empty locally
 EVIDENCE_ERROR=''    # why this attempt's evidence cannot be trusted, one line
 BOUNDARY_REFUSAL=''  # why preflight refuses to start an agent in pipeline mode
+REFUSAL_SECTION=''   # the setup-doc section that refusal points to; empty = §13
+FEED_CACHE_CHECKED=0 # 1 once preflight_cache accepted the package cache
 RESULT_MAX_BYTES=65536   # 64 KiB, as the GitHub gate caps it (#571)
 declare -A RUN_PUSHED=()   # branch -> tip a failed attempt of THIS run left on the server
 
@@ -171,6 +175,8 @@ preflight() {
   pipeline_mode && RUN_CONTEXT=pipeline
   # A dry run starts no agent, so it needs no boundary to put one behind.
   [[ "$RUN_CONTEXT" != pipeline || "$DRY_RUN" == 1 ]] || preflight_boundary
+  [[ "$RUN_CONTEXT" != pipeline || "$DRY_RUN" == 1 ]] || preflight_cache
+  [[ "$RUN_CONTEXT" != pipeline || "$DRY_RUN" == 1 ]] || preflight_restore
   return 0
 }
 
@@ -195,16 +201,79 @@ preflight_boundary() {
   return 0
 }
 
+# The package cache the driver empties and fills (#641) is fixed in a pipeline:
+# `find -delete` and `chmod -R` act on it, and Azure Pipelines exports pipeline
+# variables into this environment, so AWF_NUGET_CACHE is not the pipeline's to
+# choose. It must also be a real directory this user owns; an absent one is
+# fine until a restore needs it. Only after this check may the EXIT trap empty
+# it. AWF_TEST_CACHE_ROOT is a test-only prefix, so the tests never touch the
+# host's real folder; whatever it is set to, the path still ends in the fixed one.
+preflight_cache() {
+  local fixed=/var/cache/awf-nuget refusal=''
+  if [[ "$AWF_NUGET_CACHE" != "$fixed" ]]; then
+    refusal="private feed setup: AWF_NUGET_CACHE must be $fixed in a pipeline, not $AWF_NUGET_CACHE"
+  elif [[ -n "${AWF_TEST_CACHE_ROOT:-}" && "$AWF_TEST_CACHE_ROOT" != /* ]]; then
+    refusal='private feed setup: AWF_TEST_CACHE_ROOT must be an absolute path'
+  else
+    AWF_NUGET_CACHE="${AWF_TEST_CACHE_ROOT:-}$fixed"
+    if [[ -L "$AWF_NUGET_CACHE" ]] ||
+       [[ -e "$AWF_NUGET_CACHE" && ( ! -d "$AWF_NUGET_CACHE" || ! -O "$AWF_NUGET_CACHE" ) ]]; then
+      refusal="private feed setup: the package cache $AWF_NUGET_CACHE is a symlink or not a directory owned by $(id -un)"
+    fi
+  fi
+  if [[ -n "$refusal" ]]; then
+    [[ -n "$BOUNDARY_REFUSAL" ]] || { BOUNDARY_REFUSAL="$refusal"; REFUSAL_SECTION='§14'; }
+    return 0
+  fi
+  FEED_CACHE_CHECKED=1
+  return 0
+}
+
+# The cheap half of the private-feed pre-restore (#641): `dotnet` is present and
+# every feed URL is an Azure DevOps one, so the token is never written for any
+# other host. It runs before WORK_DIR exists, so like preflight_boundary it only
+# records the refusal. An earlier refusal is kept: it is the first thing to fix.
+preflight_restore() {
+  feed_restore_enabled || return 0
+  [[ -z "$BOUNDARY_REFUSAL" ]] || return 0
+  local cause
+  if ! cause="$(feed_restore_config_check 2>&1)"; then
+    BOUNDARY_REFUSAL="private feed setup: $(printf '%s' "$cause" | head -n1)"
+    REFUSAL_SECTION='§14'
+  fi
+  return 0
+}
+
+# The credentialed restore into the agent's read-only package folder, on a
+# detached worktree of the commit the agent is seeded from. It holds the
+# driver's token, so it runs before any agent exists, and a failure refuses the
+# run: an agent that cannot restore would only burn an attempt.
+# Without feeds the cache is still emptied: an earlier job on this agent may
+# have left its private packages there.
+restore_private_feeds() {
+  pipeline_mode || return 0
+  if ! feed_restore_enabled; then
+    feed_cache_clear && return 0
+    BOUNDARY_REFUSAL="private feed setup: could not empty the package cache $AWF_NUGET_CACHE"
+    refuse_without_boundary '§14'
+  fi
+  feed_pre_restore "origin/$DEFAULT_BRANCH" "$WORK_DIR" && return 0
+  BOUNDARY_REFUSAL="private feed restore failed (${FEED_URLS[0]}): check that the build service has the Feed Reader role on the feed"
+  refuse_without_boundary '§14'
+}
+
 # Exits 1 with a run report on the work item when preflight refused the run.
 # No agent ran, so the report states 0 turns and $0.00: check-attempt-cap.sh
 # counts that as a non-start (#393), and a misconfigured image does not use up
-# the work item's attempts.
+# the work item's attempts. [section] is the setup-doc section the `next:` line
+# points to: REFUSAL_SECTION when preflight set one, else §13.
 refuse_without_boundary() {
   [[ -n "$BOUNDARY_REFUSAL" ]] || return 0
+  local section="${1:-${REFUSAL_SECTION:-§13}}"
   printf 'error: %s\n' "$BOUNDARY_REFUSAL" >&2
   RESULT_FILE="$WORK_DIR/no-agent-ran.json"
   printf '{"num_turns":0,"total_cost_usd":0}\n' > "$RESULT_FILE"
-  post_report "failed: $BOUNDARY_REFUSAL" "next: stopping, no agent ran (see AZDO-PIPELINE-SETUP.md §13)"
+  post_report "failed: $BOUNDARY_REFUSAL" "next: stopping, no agent ran (see AZDO-PIPELINE-SETUP.md $section)"
   exit 1
 }
 
@@ -823,13 +892,20 @@ attempt_loop() {
   done
 }
 
+# The EXIT trap: the work dir always goes; the package cache is emptied again
+# only once preflight_cache accepted it, so a refused path is never touched.
+cleanup_on_exit() {
+  [[ -z "$WORK_DIR" ]] || rm -rf "$WORK_DIR"
+  [[ "$FEED_CACHE_CHECKED" != 1 ]] || feed_cache_clear >/dev/null 2>&1 || true
+}
+
 main() {
   preflight
   print_banner
   read_work_item
   umask 077
   WORK_DIR="$(mktemp -d)"
-  trap '[[ -z "$WORK_DIR" ]] || rm -rf "$WORK_DIR"' EXIT
+  trap cleanup_on_exit EXIT
   # 0711, so the agent user can reach the one file it is given
   # (handoff/seed.bundle, mode 0644) and can neither list nor read the prompt,
   # the result or anything else the driver keeps here.
@@ -845,6 +921,7 @@ main() {
   fi
 
   DEFAULT_BRANCH="$(resolve_default_branch)"
+  restore_private_feeds
   attempt_loop
 }
 

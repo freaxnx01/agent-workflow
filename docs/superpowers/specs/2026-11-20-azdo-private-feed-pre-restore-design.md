@@ -28,8 +28,13 @@ one.
 
 - Restoring a private package that the agent **adds** during the run. That
   restore fails with NuGet's own "unable to find package" error, and the run
-  reports it like any other failure. Adding a public package still works,
-  because nuget.org stays reachable.
+  reports it like any other failure. Adding a public package works only if
+  the repo's own `nuget.config` does not send that lookup to the private
+  feed: the agent's restore uses the repo's config and has no credential, so a
+  listed private feed answers 401 (`NU1301`) for any package not already in the
+  fallback folder. The repo needs `<packageSourceMapping>` (`*` to nuget.org,
+  the private prefixes to the feed), or must not list the private feed at all
+  and let its own CI add it at build time.
 - Feeds outside the pipeline's own organization, and feeds that need a PAT
   instead of `System.AccessToken`.
 - The GitHub path, where the private-feed case is the consumer's own CI
@@ -95,6 +100,16 @@ one.
   branch>`), from a detached worktree under the driver's `WORK_DIR`, never from
   a tree the agent touched. The restore writes into `/var/cache/awf-nuget`, which
   is emptied first because the container outlives the job.
+- **Cache hygiene:** in pipeline mode (not `DRY_RUN`) the folder is emptied
+  before the first agent call **even when `AWF_NUGET_FEEDS` is unset**, and
+  again on exit, so no run sees another run's private packages. Its path is
+  fixed: any other `AWF_NUGET_CACHE` refuses the run, and so does a folder that
+  is a symlink or not owned by the driver user.
+- **Consumer `nuget.config`:** if the repo's own `nuget.config` lists the
+  private feed, the agent's own restore hits a 401 there for every package not
+  in the fallback folder, public ones included. The repo needs
+  `<packageSourceMapping>`, or must not list the private feed (its CI adds it at
+  build time instead).
 - **Credential:** a temporary NuGet config sits in a `mktemp -d` directory under
   `WORK_DIR` with mode `0700`, and is passed with `--configfile`. It lists
   nuget.org and each feed in `AWF_NUGET_FEEDS`, each feed using the job's token
@@ -146,6 +161,8 @@ The setup gets a new section that tells the operator to:
   - Create an Azure Artifacts feed in the personal sandbox org with one tiny test
     package, and reference it from the practice repo.
   - Run `ai-implement` with a work item whose task needs that package to build.
+  - Have the agent add a public package (nuget.org) during the run, and check
+    that it restores with the repo's `nuget.config` in place.
   - Record the result in `docs/ai-notes/`. The record shows the restore
     succeeding, `env` without a feed token, and `touch /var/cache/awf-nuget/x`
     denied.
@@ -213,6 +230,12 @@ The setup gets a new section that tells the operator to:
   or match `https://<org>.pkgs.visualstudio.com/`. The token is written for
   these URLs only, so a typo or a hostile variable cannot send it to another
   host.
+- **Cleanup without a library trap:** the config directory and the restore
+  worktree are removed by explicit calls on both return paths of
+  `feed_pre_restore`, plus the driver's EXIT trap, which removes `WORK_DIR`
+  (and empties the package cache). The library installs no trap of its own,
+  because one would replace the driver's. Only a SIGKILL could leave the 0600
+  config file behind, inside its 0700 directory.
 - **Worktree permissions:** the detached restore worktree and the config
   directory are both `0700` under `WORK_DIR`. `WORK_DIR` itself is `0711` in
   pipeline mode, so `awf-agent` can neither list nor enter them. Both are removed
