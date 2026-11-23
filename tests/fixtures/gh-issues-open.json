@@ -1,0 +1,73 @@
+[
+  {
+    "number": 1,
+    "title": "A plain issue",
+    "body": "A plain issue with `\"quotes\"`, a path C:\\temp\\x and a fence:\n\n```bash\nprintf \"%s\\n\" \"$x\"\n```\n\n- [ ] a task list entry\n- [x] a done one",
+    "state": "open",
+    "html_url": "https://github.com/contoso/consumer-repo/issues/1",
+    "labels": [
+      {
+        "name": "enhancement"
+      },
+      {
+        "name": "ai:done"
+      },
+      {
+        "name": "ctx:high"
+      },
+      {
+        "name": "needs-enrichment"
+      }
+    ],
+    "user": {
+      "login": "octocat"
+    },
+    "created_at": "2026-01-01T10:00:00Z"
+  },
+  {
+    "number": 4,
+    "title": "A pull request",
+    "body": "not an issue",
+    "state": "open",
+    "html_url": "https://github.com/contoso/consumer-repo/issues/4",
+    "labels": [],
+    "user": {
+      "login": "octocat"
+    },
+    "created_at": "2026-01-04T10:00:00Z",
+    "pull_request": {
+      "url": "https://api.github.com/repos/contoso/consumer-repo/pulls/4"
+    }
+  },
+  {
+    "number": 2,
+    "title": "A broken thing",
+    "body": "It crashes.",
+    "state": "open",
+    "html_url": "https://github.com/contoso/consumer-repo/issues/2",
+    "labels": [
+      {
+        "name": "bug"
+      },
+      {
+        "name": "ai-implement"
+      }
+    ],
+    "user": {
+      "login": "octocat"
+    },
+    "created_at": "2026-01-02T10:00:00Z"
+  },
+  {
+    "number": 3,
+    "title": "A labelless issue",
+    "body": null,
+    "state": "open",
+    "html_url": "https://github.com/contoso/consumer-repo/issues/3",
+    "labels": [],
+    "user": {
+      "login": "octocat"
+    },
+    "created_at": "2026-01-03T10:00:00Z"
+  }
+]
