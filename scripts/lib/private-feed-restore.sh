@@ -66,7 +66,9 @@ FEED_URLS=()
 feed_list() {
   FEED_URLS=()
   local IFS=$' \t\n'
-  read -r -a FEED_URLS <<<"${AWF_NUGET_FEEDS:-}"
+  # -d '' reads past newlines (see feed_restore_list); the || true absorbs the
+  # EOF status that read returns for it.
+  read -r -d '' -a FEED_URLS <<<"${AWF_NUGET_FEEDS:-}" || true
 }
 
 feed_restore_enabled() {
@@ -106,7 +108,7 @@ feed_restore_targets_syntax_check() {
   feed_restore_list
   local entry
   for entry in "${FEED_RESTORE_ENTRIES[@]}"; do
-    if [[ "$entry" =~ ^[A-Za-z0-9._/-]+\.(sln|slnx|csproj|fsproj)$ ]] &&
+    if [[ "$entry" =~ ^[A-Za-z0-9._/-]+\.(sln|slnx|[A-Za-z]+proj)$ ]] &&
        [[ "$entry" != /* ]] &&
        [[ "$entry" != -* && "$entry" != */-* ]] &&
        [[ "$entry" != ../* && "$entry" != */../* && "$entry" != */.. ]]; then
@@ -285,12 +287,12 @@ feed_restore_targets() {
     return 0
   fi
   for path in "$worktree"/*.sln "$worktree"/*.slnx; do
-    [[ -f "$path" ]] || continue
+    feed_entry_is_tracked_file "$worktree" "${path##*/}" || continue
     FEED_TARGETS+=("${path##*/}")
   done
   if (( ${#FEED_TARGETS[@]} == 0 )); then
-    for path in "$worktree"/*.csproj "$worktree"/*.fsproj; do
-      [[ -f "$path" ]] || continue
+    for path in "$worktree"/*.*proj; do
+      feed_entry_is_tracked_file "$worktree" "${path##*/}" || continue
       FEED_TARGETS+=("${path##*/}")
     done
   fi

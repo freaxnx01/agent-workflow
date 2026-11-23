@@ -268,7 +268,7 @@ restore_private_feeds() {
   # to read. Only the first line becomes the refusal.
   local cause_file="$WORK_DIR/feed-restore.err" rc=0
   feed_pre_restore "origin/$DEFAULT_BRANCH" "$WORK_DIR" 2>"$cause_file" || rc=$?
-  cat "$cause_file" >&2
+  if [[ -s "$cause_file" ]]; then cat "$cause_file" >&2; fi
   [[ "$rc" -ne 0 ]] || return 0
   if [[ "$rc" -eq 2 ]]; then
     # Nothing to restore (#682): the restore never ran, so the Feed Reader role

@@ -551,8 +551,8 @@ samples/dotnet/Sample.sln
 ```
 
 Unset or blank, the restore takes every `*.sln` and `*.slnx` **at the
-repository root**, or, when the root holds no solution, every `*.csproj` and
-`*.fsproj` there — which is all a repo with its solution or project at the root
+repository root**, or, when the root holds no solution, every `*.*proj` (`.csproj`,
+`.fsproj`, `.vbproj`, …) there — which is all a repo with its solution or project at the root
 needs. A repo whose solution lives in a subdirectory must name it:
 `dotnet restore` with no project argument stops with `MSB1003` in a root that
 holds neither, so the run is refused before the agent starts with
@@ -561,8 +561,8 @@ holds neither, so the run is refused before the agent starts with
 failed: private feed restore: no solution or project at the repository root; set AWF_NUGET_RESTORE to the solution or project to restore
 ```
 
-Each entry must be a relative path to a `.sln`, `.slnx`, `.csproj` or `.fsproj`
-file, built from `A-Z a-z 0-9 . _ / -`, with no leading `/`, no `..` segment and
+Each entry must be a relative path to a `.sln`, `.slnx` or MSBuild project
+(`*.csproj`, `*.fsproj`, `*.vbproj`, …) file, built from `A-Z a-z 0-9 . _ / -`, with no leading `/`, no `..` segment and
 no path component starting with `-` (a leading dash reaches `dotnet restore` as
 an option, not as a path). Anything else refuses the run at preflight, before
 any `dotnet` call:

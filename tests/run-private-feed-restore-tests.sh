@@ -90,6 +90,15 @@ REPO_PLAIN="$(make_repo repo-plain)"
 # A root with a project but no solution: `dotnet restore` with no argument
 # restored it before #682, so the default must still find it.
 REPO_PROJ="$(make_repo repo-proj App.csproj)"
+# Another MSBuild project type at the root: the old no-argument restore took any
+# *.*proj, so the default and AWF_NUGET_RESTORE must too.
+REPO_VB="$(make_repo repo-vb App.vbproj)"
+# A root whose only solution is a committed symlink: not code of the seed commit.
+REPO_LINKROOT="$(make_repo repo-linkroot)"
+ln -s /etc/hostname "$REPO_LINKROOT/Evil.sln"
+git -C "$REPO_LINKROOT" add -A
+git -C "$REPO_LINKROOT" -c user.name=t -c user.email=t@example.invalid commit -q -m link
+git -C "$REPO_LINKROOT" update-ref refs/remotes/origin/main main
 # A root with no solution of its own: the solution is in a subdirectory, next to
 # a committed symlink, which stands in for an entry pointing out of the tree.
 # `linkdir` is the same trick one component earlier: a path through it is not in
@@ -225,6 +234,9 @@ assert_eq "syntax_ChecksEveryLine: rc" "1" "$RC"
 assert_contains "syntax_ChecksEveryLine: names the second line's entry" \
   "entry 'bad.txt'" "$ERR"
 
+pfr 'feed_restore_targets_syntax_check' AWF_NUGET_RESTORE='sub/App.vbproj x/Db.sqlproj'
+assert_eq "syntax_AcceptsAnyProjExtension: rc" "0" "$RC"
+
 pfr 'feed_restore_targets_syntax_check' AWF_NUGET_RESTORE='   '
 assert_eq "syntax_BlankIsUnset: rc" "0" "$RC"
 
@@ -246,6 +258,16 @@ assert_contains "targets_BlankIsUnset" "rc=0 targets=a.sln,b.slnx" "$OUT"
 # before #682 handled that root, so the default must keep handling it.
 pfr "$TARGETS_BODY" WT="$REPO_PROJ"
 assert_contains "targets_DefaultRootProject" "rc=0 targets=App.csproj" "$OUT"
+
+pfr "$TARGETS_BODY" WT="$REPO_VB"
+assert_contains "targets_DefaultRootOtherProjectType" "rc=0 targets=App.vbproj" "$OUT"
+
+pfr "$TARGETS_BODY" WT="$REPO_LINKROOT"
+assert_contains "targets_DefaultSkipsSymlink: rc" "rc=2 targets=" "$OUT"
+
+pfr 'feed_list; printf "%s\n" "${#FEED_URLS[@]}"' AWF_NUGET_FEEDS='https://a.example/i
+https://b.example/i'
+assert_eq "feed_list_MultiLine: both feeds" "2" "$OUT"
 
 pfr "$TARGETS_BODY" WT="$REPO_SUB" AWF_NUGET_RESTORE='samples/dotnet/Sample.sln'
 assert_contains "targets_Explicit" "rc=0 targets=samples/dotnet/Sample.sln" "$OUT"

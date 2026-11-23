@@ -975,6 +975,8 @@ assert_eq "implement_RestoreFailure_KeepsFeedReaderText: rc" "1" "$RC"
 assert_contains "implement_RestoreFailure_KeepsFeedReaderText: the report names the role" \
   "Feed Reader" "$AZLOG"
 assert_eq "implement_RestoreFailure_KeepsFeedReaderText: no agent call" "" "$CLAUDELOG"
+assert_contains "implement_RestoreFailure_StderrReachesJobLog" \
+  "error NU1301: unable to load the service index (mock)" "$ERR"
 
 # Without feeds there is no restore, so the variable is not even checked.
 : > "$FEED_DOTNET_LOG"
