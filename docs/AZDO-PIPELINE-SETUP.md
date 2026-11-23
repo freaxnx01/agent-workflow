@@ -3,7 +3,9 @@
 How to run the hardened self-hosted Azure Pipelines agent that executes the
 `ai-implement` trigger. The agent runs one job per container, from a pinned and
 hash-verified agent version. Replace `<org>`, `<pool>`, `<project>`, `<name>`,
-`<volume>`, `<image>` and `<agent-host>` throughout.
+`<volume>`, `<image>` and `<agent-host>` throughout. To move a repository that
+runs the GitHub pipeline today, follow the [cutover runbook](AZDO-CUTOVER.md),
+which orders these sections against the GitHub-side steps.
 
 ## 1. Build the image
 
