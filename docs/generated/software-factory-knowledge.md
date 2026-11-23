@@ -3428,14 +3428,16 @@ An alarm raised before this change lists its issues only in its body. The
 resume no longer reads that list: add `ai:paused` to those issues by hand
 before running `pipeline-resume.sh`, or re-dispatch them by hand.
 
-# FILE: agent-workflow/docs/AZDO-PIPELINE-SETUP.md (@42abaf2)
+# FILE: agent-workflow/docs/AZDO-PIPELINE-SETUP.md (@da0f800)
 
 # Azure DevOps Pipeline Agent Setup
 
 How to run the hardened self-hosted Azure Pipelines agent that executes the
 `ai-implement` trigger. The agent runs one job per container, from a pinned and
 hash-verified agent version. Replace `<org>`, `<pool>`, `<project>`, `<name>`,
-`<volume>`, `<image>` and `<agent-host>` throughout.
+`<volume>`, `<image>` and `<agent-host>` throughout. To move a repository that
+runs the GitHub pipeline today, follow the [cutover runbook](AZDO-CUTOVER.md),
+which orders these sections against the GitHub-side steps.
 
 ## 1. Build the image
 
