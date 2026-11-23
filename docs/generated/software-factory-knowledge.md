@@ -3414,7 +3414,7 @@ An alarm raised before this change lists its issues only in its body. The
 resume no longer reads that list: add `ai:paused` to those issues by hand
 before running `pipeline-resume.sh`, or re-dispatch them by hand.
 
-# FILE: agent-workflow/docs/AZDO-PIPELINE-SETUP.md (@806440c)
+# FILE: agent-workflow/docs/AZDO-PIPELINE-SETUP.md (@42abaf2)
 
 # Azure DevOps Pipeline Agent Setup
 
@@ -3549,6 +3549,8 @@ Set on the pipeline (not in YAML):
 - `SELF_FIX` — optional, default 0. `1` lets the agent fix what the review
   found. See section 12.
 - `SELF_FIX_MAX_ITERATIONS` — optional, default 2. See section 12.
+- `AWF_NUGET_FEEDS` — optional, empty by default. Private NuGet feeds to
+  restore before the agent starts. See section 14.
 
 Leave *Let users override this value when running this pipeline* **off** for
 each of them.
@@ -3914,6 +3916,112 @@ Once, on the sandbox project, run one `ai-implement` item whose plan asks the
 agent to report `id -un`, `cat /proc/1/environ` and `touch /azp/agent/x` in its
 PR description. Expected: `awf-agent`, permission denied, permission denied.
 Record the result in `docs/ai-notes/`.
+
+## 14. Private package feeds
+
+Under the agent user boundary (section 13) the agent holds no Azure DevOps
+credential, so it cannot restore a package that only a private Azure Artifacts
+feed serves. The driver does that restore for it, **before the agent starts**,
+into `/var/cache/awf-nuget`, a folder the agent can read but not write. The
+agent's NuGet takes the packages it finds there without asking any source
+(#641).
+
+Nothing changes for a repo that uses only public packages: with
+`AWF_NUGET_FEEDS` empty or unset there is no restore and no `dotnet` call.
+The folder is still emptied before every pipeline run and again when the run
+ends, so no agent sees another job's private packages. Its path is fixed: a
+pipeline variable `AWF_NUGET_CACHE` with any other value refuses the run.
+
+### 14.1 `AWF_NUGET_FEEDS`
+
+A pipeline variable (section 7) holding the feed index URLs, separated by
+spaces:
+
+```text
+https://pkgs.dev.azure.com/<org>/_packaging/<feed>/nuget/v3/index.json
+```
+
+A project-scoped feed has the project in the path
+(`https://pkgs.dev.azure.com/<org>/<project>/_packaging/<feed>/nuget/v3/index.json`).
+Two host forms are accepted:
+
+- `https://pkgs.dev.azure.com/<org>/...`
+- `https://<org>.pkgs.visualstudio.com/...`
+
+Any other URL refuses the run before anything is restored: the job's token is
+written only for these hosts, so a typo cannot send it anywhere else.
+
+The restore runs in pipeline mode only. A local run (`implement-azdo.sh` from a
+terminal) ignores the variable and restores with the operator's own
+credentials, as before. A `DRY_RUN=1` run never restores.
+
+### 14.2 The Feed Reader role
+
+The restore authenticates with the job's token, `System.AccessToken` by
+default. Give the project's build service
+(`<project> Build Service (<org>)`) the **Feed Reader** role on each feed:
+*Artifacts > (feed) > Feed settings > Permissions*.
+
+An operator who set `AZURE_DEVOPS_EXT_PAT` to a PAT instead needs the
+`Packaging (Read)` scope on that PAT.
+
+### 14.3 Rebuild the image with `--target dotnet`
+
+The restore needs the .NET SDK, so the agent that runs these jobs must use the
+`dotnet` image (section 1, section 10):
+
+```bash
+docker build -f docker/azp-agent/Dockerfile --target dotnet -t <image>-dotnet .
+```
+
+The rebuild also creates `/var/cache/awf-nuget` and moves the boundary protocol
+to `2`. An image built before this section existed is refused at preflight with
+`the agent user boundary is not available: ...`, so a stale image never runs an
+agent that cannot restore. With feeds set on the plain image the run is refused
+with `private feed setup: dotnet is not on PATH; rebuild the agent image with
+--target dotnet`.
+
+### 14.4 What it does not cover
+
+The restore runs on the default branch the agent is seeded from, before the
+agent writes anything. A private package the agent **adds** during its run is
+not in the cache and cannot restore: the agent has no credential to fetch it.
+Add such a package to the default branch first, or by hand on the draft PR.
+
+The agent's own restore uses the repo's `nuget.config`. If that file lists
+the private feed, NuGet asks the feed for every package that is not in the
+cache, gets a 401 (`NU1301`), and the restore fails, **even for a public
+package** the agent adds. Give the repo a `<packageSourceMapping>` (`*` to
+nuget.org, the private prefixes to the feed), or keep the private feed out of
+the committed `nuget.config` and let the repo's own CI add it at build time.
+With the feed listed, NuGetAudit also queries it and warns `NU1900`, which
+fails a build that treats warnings as errors; `<NuGetAuditSources>` or
+`<NuGetAudit>false</NuGetAudit>` avoids that.
+
+### 14.5 When the run refuses
+
+A failed restore stops the run before the agent starts, exits 1, and posts a
+report on the work item with `0` turns, so it does not use up an attempt:
+
+```text
+failed: private feed restore failed (<first feed URL>): check that the build service has the Feed Reader role on the feed
+```
+
+Check, in this order:
+
+1. The build service (or the PAT) has the Feed Reader role on every feed in
+   `AWF_NUGET_FEEDS` (14.2). The URL in the message is the first feed, not
+   necessarily the one that failed; the job log has `dotnet restore`'s own
+   error.
+2. Each URL is the feed's v3 index URL, as *Connect to feed > dotnet* shows it.
+3. The default branch itself restores: a broken `*.sln` or a package missing
+   from every source fails here too.
+
+A refusal before the restore starts says `private feed setup: ...` instead and
+names the cause: a URL that is not an Azure DevOps feed URL (14.1), no
+`dotnet` on the image (14.3), an `AWF_NUGET_CACHE` other than
+`/var/cache/awf-nuget`, or a cache folder that is a symlink or not owned by
+the driver user `azp` (rebuild the image).
 
 # FILE: agent-workflow/docs/DESIGN.md (@5b5df3e)
 
