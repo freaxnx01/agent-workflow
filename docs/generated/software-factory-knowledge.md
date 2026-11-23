@@ -713,7 +713,7 @@ then follow it. Today: re-scan and report drift.
 One `list_repos` call re-derives the ground truth. Update the map, commit,
 move on.
 
-# FILE: agent-workflow/docs/DECISIONS.md (@8ad5304)
+# FILE: agent-workflow/docs/DECISIONS.md (@29ded16)
 
 # Architecture Decisions
 
@@ -2386,6 +2386,20 @@ the agent implemented it from the pointed-to files
 the HTML field. The consequence changes accordingly: an enriched item **is**
 dispatchable where the pipeline is installed; `/enrich`'s own wording is not
 changed by the PoC.
+
+**Amendment (2026-11-20, #651).** The pipeline now sizes the agent's turn budget
+from the pointed-to plan **file**, not from the description. `classify-turns.sh`
+counts `## Task` headings under an `## Implementation Plan` section, and a
+description that cannot hold the plan cannot hold those headings either — so
+every ADO run scored as un-enriched and took the 120-turn discovery default:
+far too much for a one-task item, too little for a large plan.
+`implement-azdo.sh` now resolves the pointer (`scripts/lib/azdo-plan-pointer.sh`),
+reads the file with `git show "HEAD:<path>"`, and injects it as the `ISSUE_BODY`
+of that one classifier call; the work item's own body is what the agent prompt
+and `classify-agent.sh` still see. A missing or traversing pointer keeps the
+unplanned default and says so on the `turns :` line. The decision stands: the
+plan stays out of the HTML field, and the reader — human, `/work` session or
+pipeline agent — reads it from the checkout.
 
 ## ADR-018 — The pause state is an open labelled issue, not a repo variable (2026-10-12)
 
