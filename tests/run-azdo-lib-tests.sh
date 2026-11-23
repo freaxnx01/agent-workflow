@@ -611,6 +611,136 @@ rc=0; AZ_MOCK_MAP="$tg3/map-fail.tsv" run_lib azdo-revisions-no-tag.json azdo_ed
 assert_eq "editors_failing_second_page_exits_1" "1" "$rc"
 rm -rf "$tg3"
 
+section "azdo_create_markdown_item / azdo_comment_markdown — the Markdown item"
+
+# #642 — the migration writes Markdown, not HTML, so the body of a GitHub issue
+# survives verbatim. The project name deliberately carries a SPACE here: it has
+# to be percent-encoded into the project-scoped URL, and `Contoso Project` is
+# the shape that catches a raw interpolation.
+md_dir="$(mktemp -d)"
+# shellcheck disable=SC2030,SC2031
+run_md() {
+  local curl_fixture="$1"; shift
+  (
+    export PATH="$MOCKS:$PATH"
+    export CURL_MOCK_FIXTURE="$FIXTURES/$curl_fixture"
+    export CURL_MOCK_BODY_LOG="$md_dir/body.txt" CURL_MOCK_LOG="$md_dir/argv.txt"
+    export AZDO_ORG=contoso AZDO_PROJECT='Contoso Project' AZDO_REPO=consumer-repo
+    export AZURE_DEVOPS_EXT_PAT=s3cr3t
+    # shellcheck disable=SC1090
+    source "$LIB"
+    "$@"
+  )
+}
+
+# A body that has broken every hand-quoted JSON builder: a double quote, a
+# backslash, a fenced code block and a task list.
+desc_file="$md_dir/description.md"
+# SC2016: the `$x` and `$User Story` below are literal issue-body and literal
+# URL text, not expansions — expanding them is exactly what must not happen.
+# shellcheck disable=SC2016
+printf '%s\n' \
+  'He said "hi" and C:\temp\x' \
+  '' \
+  '```bash' \
+  'printf "%s\n" "$x"' \
+  '```' \
+  '' \
+  '- [ ] a task' > "$desc_file"
+
+assert_eq "azdo_project_url_path_percent_encodes_the_project" \
+  "https://dev.azure.com/contoso/Contoso%20Project" \
+  "$(run_md azdo-create-item.json azdo_project_url_path)"
+
+: > "$md_dir/argv.txt"; : > "$md_dir/body.txt"
+assert_eq "azdo_create_markdown_item_PrintsId" "42" \
+  "$(run_md azdo-create-item.json azdo_create_markdown_item \
+      'User Story' 'A migrated issue' 'Contoso Project\consumer-repo' 'enhancement; roadmap' "$desc_file")"
+
+# shellcheck disable=SC2016
+if grep -qF -- 'https://dev.azure.com/contoso/Contoso%20Project/_apis/wit/workitems/$User%20Story?api-version=7.1' "$md_dir/argv.txt"; then
+  pass "azdo_create_markdown_item_PostsProjectScopedUrl"
+else
+  fail "azdo_create_markdown_item_PostsProjectScopedUrl" "argv: $(cat "$md_dir/argv.txt")"
+fi
+
+# json-patch op reader: <body-file> <path> -> the op's value, or MISSING.
+md_op_value() {
+  python3 -c '
+import json, sys
+ops = json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])
+for op in ops:
+    if op["path"] == sys.argv[2]:
+        sys.stdout.write(op["value"]); break
+else:
+    sys.stdout.write("MISSING")' "$@"
+}
+
+assert_eq "azdo_create_markdown_item_SetsMarkdownFormat" "Markdown" \
+  "$(md_op_value "$md_dir/body.txt" /multilineFieldsFormat/System.Description)"
+
+assert_eq "azdo_create_markdown_item_DescriptionByteIdentical" "$(cat "$desc_file")" \
+  "$(md_op_value "$md_dir/body.txt" /fields/System.Description)"
+
+assert_eq "azdo_create_markdown_item_SetsTitleAndArea" "A migrated issue|Contoso Project\\consumer-repo" \
+  "$(md_op_value "$md_dir/body.txt" /fields/System.Title)|$(md_op_value "$md_dir/body.txt" /fields/System.AreaPath)"
+
+assert_eq "azdo_create_markdown_item_SetsTags" "enhancement; roadmap" \
+  "$(md_op_value "$md_dir/body.txt" /fields/System.Tags)"
+
+# No tags at all must not send an empty System.Tags op — an empty value is a
+# write of nothing, and the field is better left untouched.
+: > "$md_dir/body.txt"
+run_md azdo-create-item.json azdo_create_markdown_item \
+  'User Story' 'A migrated issue' 'Contoso Project\consumer-repo' '' "$desc_file" >/dev/null
+assert_eq "azdo_create_markdown_item_OmitsEmptyTags" "MISSING" \
+  "$(md_op_value "$md_dir/body.txt" /fields/System.Tags)"
+
+rc=0
+err="$(run_md azdo-create-item-error.json azdo_create_markdown_item \
+        'Nope' 't' 'a' '' "$desc_file" 2>&1 >/dev/null)" || rc=$?
+assert_eq "azdo_create_markdown_item_ApiErrorFails" "1" "$rc"
+case "$err" in
+  *"TF401232"*) pass "azdo_create_markdown_item_ApiErrorNamesIt" ;;
+  *) fail "azdo_create_markdown_item_ApiErrorNamesIt" "stderr: $err" ;;
+esac
+
+: > "$md_dir/argv.txt"
+comment_file="$md_dir/comment.md"
+printf '**octocat** on GitHub, 2026-03-04:\n\nA comment with "quotes".\n' > "$comment_file"
+rc=0; run_md azdo-comment-created.json azdo_comment_markdown 42 "$comment_file" >/dev/null || rc=$?
+assert_eq "azdo_comment_markdown_Succeeds" "0" "$rc"
+if grep -qF -- '/Contoso%20Project/_apis/wit/workItems/42/comments?format=markdown&api-version=7.1-preview.4' "$md_dir/argv.txt"; then
+  pass "azdo_comment_markdown_UsesFormatMarkdown"
+else
+  fail "azdo_comment_markdown_UsesFormatMarkdown" "argv: $(cat "$md_dir/argv.txt")"
+fi
+assert_eq "azdo_comment_markdown_SendsTheTextVerbatim" "$(cat "$comment_file")" \
+  "$(python3 -c '
+import json, sys
+sys.stdout.write(json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])["text"])' "$md_dir/body.txt")"
+
+rc=0
+err="$(CURL_MOCK_FAIL=1 run_md azdo-comment-created.json azdo_comment_markdown 42 "$comment_file" 2>&1 >/dev/null)" || rc=$?
+assert_eq "azdo_comment_markdown_TransportFailureFails" "1" "$rc"
+
+# The PAT rides in on `curl -K -` stdin. Both writers, one assertion: argv is
+# what a process listing shows, so that is where it must never appear.
+if grep -q 's3cr3t' "$md_dir/argv.txt"; then
+  fail "azdo_writes_PatNotInArgv" "found the PAT in argv"
+else
+  pass "azdo_writes_PatNotInArgv"
+fi
+
+assert_eq "azdo_create_markdown_item_UsageWithoutArguments" "2" \
+  "$( rc=0; run_md azdo-create-item.json azdo_create_markdown_item 'User Story' >/dev/null 2>&1 || rc=$?
+     printf '%s' "$rc" )"
+assert_eq "azdo_comment_markdown_UsageWithoutArguments" "2" \
+  "$( rc=0; run_md azdo-comment-created.json azdo_comment_markdown 42 >/dev/null 2>&1 || rc=$?
+     printf '%s' "$rc" )"
+
+rm -rf "$md_dir"
+
 # --- summary -------------------------------------------------------------
 
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"

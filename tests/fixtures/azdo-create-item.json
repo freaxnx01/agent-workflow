@@ -1,0 +1,10 @@
+{
+  "id": 42,
+  "rev": 1,
+  "fields": {
+    "System.WorkItemType": "User Story",
+    "System.Title": "A migrated issue",
+    "System.AreaPath": "Contoso Project\\consumer-repo"
+  },
+  "url": "https://dev.azure.com/contoso/_apis/wit/workItems/42"
+}

@@ -1,0 +1,9 @@
+{
+  "$id": "1",
+  "innerException": null,
+  "message": "TF401232: Work item type 'Nope' does not exist.",
+  "typeName": "Microsoft.TeamFoundation.WorkItemTracking.Server.WorkItemTypeDeniedOrNotExistException",
+  "typeKey": "WorkItemTypeDeniedOrNotExistException",
+  "errorCode": 0,
+  "eventId": 3200
+}
