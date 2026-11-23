@@ -3428,7 +3428,7 @@ An alarm raised before this change lists its issues only in its body. The
 resume no longer reads that list: add `ai:paused` to those issues by hand
 before running `pipeline-resume.sh`, or re-dispatch them by hand.
 
-# FILE: agent-workflow/docs/AZDO-PIPELINE-SETUP.md (@da0f800)
+# FILE: agent-workflow/docs/AZDO-PIPELINE-SETUP.md (@9d2d774)
 
 # Azure DevOps Pipeline Agent Setup
 
@@ -4038,6 +4038,63 @@ names the cause: a URL that is not an Azure DevOps feed URL (14.1), no
 `dotnet` on the image (14.3), an `AWF_NUGET_CACHE` other than
 `/var/cache/awf-nuget`, or a cache folder that is a symlink or not owned by
 the driver user `azp` (rebuild the image).
+
+## 15. Moving a consumer's open issues
+
+A repository that switches from the GitHub pipeline to this one brings its
+backlog along. `scripts/migrate-gh-issues-to-azdo.sh` migrates the **open**
+GitHub issues to work items, once:
+
+```bash
+export AZURE_DEVOPS_EXT_PAT=<pat>          # the reads need it too, dry run included
+scripts/migrate-gh-issues-to-azdo.sh \
+  --repo <owner>/<name> \
+  --area '<project>\<repo>' \
+  --dry-run
+```
+
+Run it from a checkout whose `origin` is the target Azure DevOps project, or
+set `AZDO_ORG` and `AZDO_PROJECT` instead. Drop `--dry-run` to write.
+
+| Flag | |
+|---|---|
+| `--repo <owner/name>` | required — the GitHub source |
+| `--area <path>` | required — `System.AreaPath` for every item. The service hook filters on it (section 8), so an item outside it is invisible to the pipeline. |
+| `--type <name>` | one type for every issue, overriding the two below |
+| `--bug-type <name>` | type for an issue labelled `bug` (default: `Bug`) |
+| `--story-type <name>` | type for every other issue (default: `User Story`) |
+| `--close` | also close each migrated GitHub issue |
+| `--dry-run` | read everything, write nothing, report per issue |
+| `--limit <n>` | migrate the first n issues only, for a trial (`n > 0`; `0` is refused rather than read as "no limit") |
+
+What it does per issue:
+
+- creates one work item whose `System.Description` is **Markdown**, so the body
+  arrives verbatim — a fenced block, a task list or an inlined plan included —
+  with a `_Migrated from <url>._` line appended;
+- copies the comments in order, each headed `**<login>** on GitHub, <date>:`;
+- maps the labels to tags, leaving the pipeline's own behind (`ai:*`, `agent:*`,
+  `ctx:*`, `turns:*`, `ai-implement`, the gates `ai-review-ai-merge`,
+  `ai-review-human-merge` and `ai-chain`, the deprecated `ai-auto-review` and
+  `ai-pre-preview`, and `enrichment-ongoing`) so nothing triggers a run, pins an
+  agent or opts an item into auto-merge on the new forge;
+- comments the work item link on the GitHub issue, with an invisible marker. A
+  re-run skips any issue carrying it, so a partial run is safe to repeat.
+
+The types and the area are checked against the project before the first issue
+is read; a Basic process has `Issue` rather than `Bug` / `User Story`, which is
+what `--bug-type` and `--story-type` are for. A failure exits 2 and writes
+nothing.
+
+If a write fails after the work item exists, the run stops and prints:
+
+```text
+orphan work item <id> for #<n>: delete it, or add the marker to the issue by hand
+```
+
+That item has no marker on its GitHub issue, so a re-run would create a second
+one. Delete it, or add the marker by hand, before re-running. There is no
+resume mode — the run is one-off and small.
 
 # FILE: agent-workflow/docs/DESIGN.md (@5b5df3e)
 
