@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **azdo:** Restore the named solution when the repo root holds none, through the new `AWF_NUGET_RESTORE` pipeline variable (#682)
+- **azdo:** Refuse a private-feed run that has nothing to restore by naming `AWF_NUGET_RESTORE` instead of the Feed Reader role, which pointed at the wrong cause. A root holding a project but no solution keeps restoring as before, so no consumer has to set the new variable to stay working (#682)
 
 ## [2.4.0](https://github.com/freaxnx01/agent-workflow/releases/tag/v2.4.0) - 2026-11-20
 
