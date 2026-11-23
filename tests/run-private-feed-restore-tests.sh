@@ -68,13 +68,17 @@ trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/no-dotnet"
 ln -s "$(command -v bash)" "$TMP/no-dotnet/bash"
 
-# make_repo <name> [file...] — a repo with an origin/main carrying <file>s.
+# make_repo <name> [file...] — a repo with an origin/main carrying <file>s. A
+# <file> may name a subdirectory, which is created.
 make_repo() {
   local dir="$TMP/$1" file; shift
   mkdir -p "$dir"
   git init -q -b main "$dir"
   printf 'base\n' > "$dir/README.md"
-  for file in "$@"; do printf '<Solution/>\n' > "$dir/$file"; done
+  for file in "$@"; do
+    mkdir -p "$(dirname "$dir/$file")"
+    printf '<Solution/>\n' > "$dir/$file"
+  done
   git -C "$dir" add -A
   git -C "$dir" -c user.name=t -c user.email=t@example.invalid commit -q -m base
   git -C "$dir" update-ref refs/remotes/origin/main main
@@ -83,6 +87,13 @@ make_repo() {
 
 REPO_SLN="$(make_repo repo-sln a.sln b.slnx)"
 REPO_PLAIN="$(make_repo repo-plain)"
+# A root with no solution of its own: the solution is in a subdirectory, next to
+# a committed symlink, which stands in for an entry pointing out of the tree.
+REPO_SUB="$(make_repo repo-sub samples/dotnet/Sample.sln)"
+ln -s Sample.sln "$REPO_SUB/samples/dotnet/Link.sln"
+git -C "$REPO_SUB" add -A
+git -C "$REPO_SUB" -c user.name=t -c user.email=t@example.invalid commit -q -m link
+git -C "$REPO_SUB" update-ref refs/remotes/origin/main main
 
 CASE_N=0
 RC=0; OUT=''; ERR=''
@@ -170,6 +181,59 @@ python3 -c 'import sys,xml.etree.ElementTree as e; e.parse(sys.argv[1])' \
   "$TMP/token.config" >/dev/null 2>&1 || XML_RC=$?
 assert_eq "feed_write_config_EscapesToken: the file is well-formed XML" "0" "$XML_RC"
 
+section "feed_restore_targets_syntax_check (#682)"
+
+pfr 'feed_restore_targets_syntax_check' AWF_NUGET_RESTORE='/abs.sln'
+assert_eq "syntax_RejectsAbsolute: rc" "1" "$RC"
+assert_contains "syntax_RejectsAbsolute: names the entry" \
+  "AWF_NUGET_RESTORE entry '/abs.sln' is not a relative solution or project path" "$ERR"
+
+pfr 'feed_restore_targets_syntax_check' AWF_NUGET_RESTORE='a/../b.sln'
+assert_eq "syntax_RejectsDotDot: rc" "1" "$RC"
+
+pfr 'feed_restore_targets_syntax_check' AWF_NUGET_RESTORE='a.txt'
+assert_eq "syntax_RejectsBadExt: rc" "1" "$RC"
+
+pfr 'feed_restore_targets_syntax_check' AWF_NUGET_RESTORE='a b.sln'
+assert_eq "syntax_RejectsBadChar: rc" "1" "$RC"
+
+pfr 'feed_restore_targets_syntax_check' AWF_NUGET_RESTORE='a.sln sub/b.csproj c/d.fsproj'
+assert_eq "syntax_AcceptsList: rc" "0" "$RC"
+
+pfr 'feed_restore_targets_syntax_check' AWF_NUGET_RESTORE='   '
+assert_eq "syntax_BlankIsUnset: rc" "0" "$RC"
+
+section "feed_restore_targets (#682)"
+
+NO_TARGET_MSG='no solution at the repository root; set AWF_NUGET_RESTORE to the solution or project to restore'
+# One line per case: the return code, then the resolved targets comma-joined.
+TARGETS_BODY='rc=0
+feed_restore_targets "$WT" || rc=$?
+printf "rc=%s targets=%s\n" "$rc" "$(IFS=,; printf "%s" "${FEED_TARGETS[*]}")"'
+
+pfr "$TARGETS_BODY" WT="$REPO_SLN"
+assert_contains "targets_DefaultRootSolutions" "rc=0 targets=a.sln,b.slnx" "$OUT"
+
+pfr "$TARGETS_BODY" WT="$REPO_SLN" AWF_NUGET_RESTORE='  '
+assert_contains "targets_BlankIsUnset" "rc=0 targets=a.sln,b.slnx" "$OUT"
+
+pfr "$TARGETS_BODY" WT="$REPO_SUB" AWF_NUGET_RESTORE='samples/dotnet/Sample.sln'
+assert_contains "targets_Explicit" "rc=0 targets=samples/dotnet/Sample.sln" "$OUT"
+
+pfr "$TARGETS_BODY" WT="$REPO_SUB"
+assert_contains "targets_NoRootSolution: rc" "rc=2 targets=" "$OUT"
+assert_eq "targets_NoRootSolution: says what to set" "$NO_TARGET_MSG" "$ERR"
+
+pfr "$TARGETS_BODY" WT="$REPO_SUB" \
+  AWF_NUGET_RESTORE='samples/dotnet/Sample.sln x/Missing.sln'
+assert_contains "targets_MissingEntry: rc" "rc=2" "$OUT"
+assert_eq "targets_MissingEntry: names the entry" \
+  "AWF_NUGET_RESTORE entry 'x/Missing.sln' is not in the seed commit" "$ERR"
+
+pfr "$TARGETS_BODY" WT="$REPO_SUB" AWF_NUGET_RESTORE='samples/dotnet/Link.sln'
+assert_contains "targets_SymlinkEntry: rc" "rc=2" "$OUT"
+assert_contains "targets_SymlinkEntry: names the entry" "samples/dotnet/Link.sln" "$ERR"
+
 section "feed_pre_restore — the successful run"
 
 # One restore of a root holding both a .sln and a .slnx, with a stale package
@@ -233,19 +297,37 @@ assert_eq "feed_pre_restore_CleansUpOnSuccess: nothing left under the work dir" 
 assert_eq "feed_pre_restore_CleansUpOnSuccess: no worktree left" "1" \
   "$(git -C "$REPO_SLN" worktree list | grep -c . || true)"
 
-section "feed_pre_restore — a root with no solution file"
+section "feed_pre_restore — a root with no solution file (#682)"
 
+# `dotnet restore` with no argument stops with MSB1003 in such a root, so the
+# run is refused with rc 2 before any dotnet call, not with a restore failure.
 CWD="$REPO_PLAIN"
 WD2="$TMP/wd2"; mkdir -p "$WD2"
 DLOG2="$TMP/dotnet2.log"; : > "$DLOG2"
 pfr 'feed_pre_restore origin/main "$WD"' \
   WD="$WD2" AWF_NUGET_FEEDS="$ADO_FEED" AZURE_DEVOPS_EXT_PAT="$SECRET" \
   DOTNET_LOG="$DLOG2"
-assert_eq "feed_pre_restore_NoSolutionRestoresRoot: rc" "0" "$RC"
-assert_eq "feed_pre_restore_NoSolutionRestoresRoot: one call" "1" \
-  "$(grep -c '^argv=' "$DLOG2" || true)"
-assert_contains "feed_pre_restore_NoSolutionRestoresRoot: no project argument" \
-  "argv=restore --configfile" "$(cat "$DLOG2")"
+assert_eq "pre_restore_NoTarget_Rc2_NoDotnet_CleansUp: rc" "2" "$RC"
+assert_contains "pre_restore_NoTarget_Rc2_NoDotnet_CleansUp: says what to set" \
+  "$NO_TARGET_MSG" "$ERR"
+assert_eq "pre_restore_NoTarget_Rc2_NoDotnet_CleansUp: no restore ran" "" "$(cat "$DLOG2")"
+assert_eq "pre_restore_NoTarget_Rc2_NoDotnet_CleansUp: nothing left under the work dir" "" \
+  "$(find "$WD2" -mindepth 1 | head -n1)"
+assert_eq "pre_restore_NoTarget_Rc2_NoDotnet_CleansUp: no worktree left" "1" \
+  "$(git -C "$REPO_PLAIN" worktree list | grep -c . || true)"
+
+# The named target is what reaches `dotnet restore`, as a relative path.
+CWD="$REPO_SUB"
+WD2B="$TMP/wd2b"; mkdir -p "$WD2B"
+DLOG2B="$TMP/dotnet2b.log"; : > "$DLOG2B"
+pfr 'feed_pre_restore origin/main "$WD"' \
+  WD="$WD2B" AWF_NUGET_FEEDS="$ADO_FEED" AZURE_DEVOPS_EXT_PAT="$SECRET" \
+  DOTNET_LOG="$DLOG2B" AWF_NUGET_RESTORE='samples/dotnet/Sample.sln'
+assert_eq "pre_restore_Explicit_RestoresThatPath: rc" "0" "$RC"
+assert_eq "pre_restore_Explicit_RestoresThatPath: one call" "1" \
+  "$(grep -c '^argv=' "$DLOG2B" || true)"
+assert_contains "pre_restore_Explicit_RestoresThatPath: the named solution" \
+  "argv=restore samples/dotnet/Sample.sln " "$(cat "$DLOG2B")"
 
 section "feed_pre_restore — a failed restore"
 
