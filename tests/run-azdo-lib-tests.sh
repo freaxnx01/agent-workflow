@@ -741,6 +741,156 @@ assert_eq "azdo_comment_markdown_UsageWithoutArguments" "2" \
 
 rm -rf "$md_dir"
 
+section "azdo_description_format / azdo_set_markdown_description — the Markdown field"
+
+# #683 — a board now holds HTML items beside Markdown ones, so /enrich has to
+# ask each item which it is before composing a body. Reading it wrong writes
+# HTML into a Markdown item, where it is stored as raw text.
+df_dir="$(mktemp -d)"
+# shellcheck disable=SC2030,SC2031
+run_fmt() {
+  local az_fixture="$1" curl_fixture="$2"; shift 2
+  (
+    export PATH="$MOCKS:$PATH"
+    export AZ_MOCK_FIXTURE="$FIXTURES/$az_fixture"
+    export CURL_MOCK_FIXTURE="$FIXTURES/$curl_fixture"
+    export CURL_MOCK_BODY_LOG="$df_dir/body.txt" CURL_MOCK_LOG="$df_dir/argv.txt"
+    export AZDO_ORG=contoso AZDO_PROJECT='Contoso Project' AZDO_REPO=consumer-repo
+    export AZURE_DEVOPS_EXT_PAT=s3cr3t
+    # shellcheck disable=SC1090
+    source "$LIB"
+    "$@"
+  )
+}
+
+assert_eq "azdo_description_format_Markdown" "markdown" \
+  "$(run_fmt azdo-workitem-with-description.json azdo-workitem-format-markdown.json \
+      azdo_description_format 7)"
+
+# The service has returned both spellings; a case-sensitive compare would read
+# `Markdown` as "not markdown" and send HTML into a Markdown item.
+assert_eq "azdo_description_format_CaseInsensitive" "markdown" \
+  "$(run_fmt azdo-workitem-with-description.json azdo-workitem-format-markdown-capitalised.json \
+      azdo_description_format 7)"
+
+# An absent key is how the API spells "HTML" — every item created before the
+# format op existed omits it.
+assert_eq "azdo_description_format_AbsentIsHtml" "html" \
+  "$(run_fmt azdo-workitem-with-description.json azdo-workitem-format-absent.json \
+      azdo_description_format 7)"
+
+rc=0
+out="$(CURL_MOCK_FAIL=1 run_fmt azdo-workitem-with-description.json azdo-workitem-format-markdown.json \
+        azdo_description_format 7 2>/dev/null)" || rc=$?
+assert_eq "azdo_description_format_ReadFails" "1" "$rc"
+assert_eq "azdo_description_format_ReadFailsPrintsNothing" "" "$out"
+
+# A response without `fields` is the same read failure azdo_description treats
+# it as: guessing `html` from a broken read is how HTML lands in a Markdown item.
+rc=0
+out="$(run_fmt azdo-workitem-with-description.json azdo-workitem-no-fields.json \
+        azdo_description_format 7 2>/dev/null)" || rc=$?
+assert_eq "azdo_description_format_NoFieldsFails" "1" "$rc"
+assert_eq "azdo_description_format_NoFieldsPrintsNothing" "" "$out"
+
+: > "$df_dir/argv.txt"
+run_fmt azdo-workitem-with-description.json azdo-workitem-format-markdown.json \
+  azdo_description_format 7 >/dev/null
+if grep -qF -- 'https://dev.azure.com/contoso/Contoso%20Project/_apis/wit/workitems/7?api-version=7.1' "$df_dir/argv.txt"; then
+  pass "azdo_description_format_ProjectScopedUrl"
+else
+  fail "azdo_description_format_ProjectScopedUrl" "argv: $(cat "$df_dir/argv.txt")"
+fi
+
+# The write. The body carries the characters that break a hand-quoted builder,
+# and it must arrive byte-identical with the format op alongside it.
+md_desc_file="$df_dir/description.md"
+# SC2016: `$x` is literal issue-body text, not an expansion.
+# shellcheck disable=SC2016
+printf '%s\n' \
+  'He said "hi" and C:\temp\x' \
+  '' \
+  '## Implementation Plan' \
+  '' \
+  '```bash' \
+  'printf "%s\n" "$x"' \
+  '```' > "$md_desc_file"
+
+: > "$df_dir/body.txt"; : > "$df_dir/argv.txt"
+rc=0
+run_fmt azdo-workitem-with-description.json azdo-set-markdown-description-stored.json \
+  azdo_set_markdown_description 7 "$md_desc_file" >/dev/null || rc=$?
+assert_eq "azdo_set_markdown_description_Succeeds" "0" "$rc"
+
+# json-patch op reader: <body-file> <path> -> the op's value, or MISSING.
+df_op_value() {
+  python3 -c '
+import json, sys
+ops = json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])
+for op in ops:
+    if op["path"] == sys.argv[2]:
+        sys.stdout.write(op["value"]); break
+else:
+    sys.stdout.write("MISSING")' "$@"
+}
+
+assert_eq "azdo_set_markdown_description_FormatOp" "Markdown" \
+  "$(df_op_value "$df_dir/body.txt" /multilineFieldsFormat/System.Description)"
+
+assert_eq "azdo_set_markdown_description_BodyByteIdentical" "$(cat "$md_desc_file")" \
+  "$(df_op_value "$df_dir/body.txt" /fields/System.Description)"
+
+# An item that already has a description is REPLACED, never appended to.
+assert_eq "azdo_set_markdown_description_ReplacesExisting" "replace" \
+  "$(python3 -c '
+import json, sys
+ops = json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])
+print(next(o["op"] for o in ops if o["path"] == "/fields/System.Description"))' "$df_dir/body.txt")"
+
+: > "$df_dir/body.txt"
+run_fmt azdo-workitem-no-description.json azdo-set-markdown-description-stored.json \
+  azdo_set_markdown_description 7 "$md_desc_file" >/dev/null
+assert_eq "azdo_set_markdown_description_AddsWhenAbsent" "add" \
+  "$(python3 -c '
+import json, sys
+ops = json.loads(open(sys.argv[1]).read().strip().splitlines()[-1])
+print(next(o["op"] for o in ops if o["path"] == "/fields/System.Description"))' "$df_dir/body.txt")"
+
+# A failed read must not become a write: composing from an empty read would
+# pick `add` and append to the body it meant to replace.
+rm -f "$df_dir/body.txt"
+rc=0
+run_fmt azdo-workitem-no-fields.json azdo-set-markdown-description-stored.json \
+  azdo_set_markdown_description 7 "$md_desc_file" >/dev/null 2>&1 || rc=$?
+assert_eq "azdo_set_markdown_description_UnreadableItemFails" "1" "$rc"
+if [[ -s "$df_dir/body.txt" ]]; then
+  fail "azdo_set_markdown_description_UnreadableItemSendsNoPatch" "a request body was recorded"
+else
+  pass "azdo_set_markdown_description_UnreadableItemSendsNoPatch"
+fi
+
+rc=0
+run_fmt azdo-workitem-with-description.json azdo-workitem-no-fields.json \
+  azdo_set_markdown_description 7 "$md_desc_file" >/dev/null 2>&1 || rc=$?
+assert_eq "azdo_set_markdown_description_UnexpectedResponseFails" "1" "$rc"
+
+assert_eq "azdo_set_markdown_description_UsageWithoutFile" "2" \
+  "$( rc=0; run_fmt azdo-workitem-with-description.json azdo-set-markdown-description-stored.json \
+       azdo_set_markdown_description 7 >/dev/null 2>&1 || rc=$?
+     printf '%s' "$rc" )"
+assert_eq "azdo_set_markdown_description_UsageUnreadableFile" "2" \
+  "$( rc=0; run_fmt azdo-workitem-with-description.json azdo-set-markdown-description-stored.json \
+       azdo_set_markdown_description 7 "$df_dir/nope.md" >/dev/null 2>&1 || rc=$?
+     printf '%s' "$rc" )"
+
+if grep -q 's3cr3t' "$df_dir/argv.txt"; then
+  fail "azdo_markdown_helpers_PatNotInArgv" "found the PAT in argv"
+else
+  pass "azdo_markdown_helpers_PatNotInArgv"
+fi
+
+rm -rf "$df_dir"
+
 # --- summary -------------------------------------------------------------
 
 printf '\n%s─────%s\n' "$C_DIM" "$C_OFF"
