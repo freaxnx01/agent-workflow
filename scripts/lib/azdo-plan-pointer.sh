@@ -32,9 +32,15 @@ _AZDO_PLAN_POINTER_RE='/?docs/[A-Za-z0-9._/-]*plans/[A-Za-z0-9._/-]*\.md'
 # azdo_plan_pointer <body>
 azdo_plan_pointer() {
   local body="${1-}" path
-  # `|| true`: grep exits 1 on no match, and under the caller's `set -e` that
-  # would kill the driver instead of returning the documented "no pointer".
-  path="$(grep -oE "$_AZDO_PLAN_POINTER_RE" <<< "$body" | head -1 || true)"
+  local -a matches=()
+  # Collect every match and take the first, rather than `grep ... | head -1`:
+  # head exits on its first line, grep then dies of SIGPIPE, and the caller's
+  # `set -o pipefail` turns a SUCCESSFUL match into a failed pipeline. That is
+  # the trap that silently downgraded a 57 KB enriched body to the default
+  # budget once already -- see the here-string comment in classify-turns.sh.
+  # `|| true`: grep exits 1 on no match, which is a documented answer here.
+  mapfile -t matches < <(grep -oE "$_AZDO_PLAN_POINTER_RE" <<< "$body" || true)
+  path="${matches[0]-}"
 
   [[ -n "$path" ]] || return 1
   [[ "$path" != /* ]] || return 1

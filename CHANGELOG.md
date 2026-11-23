@@ -854,6 +854,16 @@ additions are the optional `NTFY_TOKEN` secret and the
 
 ### Fixed
 
+- **azdo:** an `ai-implement` run now sizes its turn budget from the plan file
+  the work item points to, instead of always taking the 120-turn unplanned
+  default. ADR-017 keeps the plan out of the HTML description field, so the body
+  carried no `## Implementation Plan` section for `classify-turns.sh` to count —
+  every ADO run was budgeted as un-enriched, which is far too much for a
+  one-task item and too little for a large plan. The driver resolves the
+  pointer, reads it with `git show "HEAD:<path>"` and sizes from it, reaching
+  the same tiers a GitHub issue with that plan inlined gets. A `turns:N` tag
+  still wins; a missing or traversing pointer keeps the unplanned default and
+  says which on the `turns :` line (#651).
 - *(pipeline)* `ensure-toolchain.sh` retries transient apt failures (3 attempts, 5s/10s backoff, `APT_ATTEMPTS` / `APT_RETRY_DELAY`) before the release-binary fallback (#597). A mirror failing DNS for one attempt no longer fails the run.
 - **autopilot:** the test-gate eligibility condition now verifies the gate
   gates. "Has completed a run on the default branch" was satisfied by a

@@ -72,6 +72,8 @@ source "$HERE/lib/detect-forge.sh"
 source "$HERE/lib/forge.sh"
 # shellcheck source=scripts/lib/azdo.sh
 source "$HERE/lib/azdo.sh"
+# shellcheck source=scripts/lib/azdo-plan-pointer.sh
+source "$HERE/lib/azdo-plan-pointer.sh"
 # shellcheck source=scripts/lib/ci-host.sh
 source "$HERE/lib/ci-host.sh"
 # shellcheck source=scripts/lib/pipeline-file-guard.sh
@@ -102,6 +104,7 @@ ATTEMPT_SECONDS=''
 ATTEMPT_ERROR=''     # why a PR step failed, one line
 AGENT_NAME=''
 TURNS_BUDGET=''
+PLAN_FALLBACK_REASON='' # why the budget could not be sized from a plan file
 WORK_DIR=''
 REVIEW_VERDICT=''
 REVIEW_NOTE=''
@@ -299,19 +302,63 @@ read_work_item() {
   printf 'title : %s\n' "$(printf '%s' "$ISSUE_JSON" | python3 -c 'import sys,json; print(json.load(sys.stdin)["title"])')"
 }
 
+# plan_body_for_classify — print the body classify-turns.sh should size this
+# work item from: the pointed-to plan file under an `## Implementation Plan`
+# heading, which is the exact shape /enrich inlines into a GitHub issue.
+#
+# ADR-017 keeps the plan out of `System.Description` because that field is HTML,
+# so the work item body alone NEVER carries a plan section and classify-turns.sh
+# scored every ADO run as un-enriched: 120 turns for a one-task item, 120 for a
+# twelve-task one (#651). The pointer is the only thing the body does carry.
+#
+# The plan is read from HEAD, never from the working tree: on a retry the agent
+# has already edited the checkout, and its own edits must not resize its budget.
+#
+# Returns 1 and sets PLAN_FALLBACK_REASON when there is nothing to size from.
+# Call it with stdout redirected to a file, NOT in a command substitution: a
+# subshell would throw the reason away.
+plan_body_for_classify() {
+  local path
+  PLAN_FALLBACK_REASON=''
+  path="$(azdo_plan_pointer "$ISSUE_BODY")" || {
+    PLAN_FALLBACK_REASON='no plan pointer'
+    return 1
+  }
+  # The group's status is `git show`'s, so a pointer to a path that is not in
+  # this checkout -- a plan committed to another branch, or never committed --
+  # falls back instead of sizing from an empty body.
+  { printf '%s\n## Implementation Plan\n' "${ISSUE_BODY%%$'\n'*}"
+    git show "HEAD:$path"; } 2>/dev/null || {
+    PLAN_FALLBACK_REASON="$path not in checkout"
+    return 1
+  }
+}
+
 # These scripts are untouched. They take their injected path because
 # forge_export_issue filled the variables they already prefer.
 classify_issue() {
-  local out agent turns
+  local out agent turns plan_body suffix=''
+  local -a sizing_env=()
   out="$WORK_DIR/classify.out"
+  plan_body="$WORK_DIR/classify-plan-body.txt"
   export ATTEMPT="$RUN_ATTEMPT"
   GITHUB_OUTPUT="$out" bash "$HERE/classify-agent.sh" >/dev/null 2>&1 || true
-  GITHUB_OUTPUT="$out" bash "$HERE/classify-turns.sh" >/dev/null 2>&1 || true
+
+  # The plan body is injected into THIS call only. The agent's prompt reads
+  # ISSUE_JSON and classify-agent.sh reads the tags; both keep the work item's
+  # own content, and the global ISSUE_BODY is left exactly as it was read.
+  if plan_body_for_classify > "$plan_body"; then
+    sizing_env=(ISSUE_BODY="$(< "$plan_body")")
+  else
+    suffix=" (unplanned default: $PLAN_FALLBACK_REASON)"
+  fi
+  env GITHUB_OUTPUT="$out" "${sizing_env[@]}" bash "$HERE/classify-turns.sh" >/dev/null 2>&1 || true
+
   agent="$(sed -n 's/^agent=//p' "$out" | tail -1)"
   turns="$(sed -n 's/^turns=//p' "$out" | tail -1)"
   AGENT_NAME="${agent:-claude}"
   TURNS_BUDGET="${turns:-80}"
-  printf 'agent : %s\nturns : %s\n\n' "$AGENT_NAME" "${turns:-?}"
+  printf 'agent : %s\nturns : %s%s\n\n' "$AGENT_NAME" "${turns:-?}" "$suffix"
 }
 
 # `|| true` is load-bearing. origin/HEAD is only set by `git clone`, not by

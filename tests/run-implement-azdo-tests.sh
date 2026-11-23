@@ -919,6 +919,115 @@ assert_eq "local_Mode_Unchanged: one report" "1" "$(count_reports "$AZLOG")"
 assert_contains "local_Mode_Unchanged: branch pushed" "ai/7-ok-1" \
   "$(git -C "$BARE" branch --list 'ai/7-ok-1')"
 
+section "turn budget sized from the pointed-to plan file (#651)"
+
+# ADR-017 keeps the plan out of the HTML description, so the budget has to come
+# from the file the work item points to. The expected tiers are never hard-coded
+# here: each one is whatever classify-turns.sh returns for the same plan inlined
+# into a GitHub issue, which is the parity the issue asks for.
+
+# plan_checkout <name> <task-count> — a checkout whose HEAD holds a plan at
+# docs/superpowers/plans/p.md with <task-count> `## Task N:` headings.
+plan_checkout() {
+  local dir="$TMP/$1" count="$2" i
+  mkdir -p "$dir/docs/superpowers/plans"
+  { printf '# Plan\n\n'
+    for ((i = 1; i <= count; i++)); do printf '## Task %d: step %d\n\nDo it.\n\n' "$i" "$i"; done
+  } > "$dir/docs/superpowers/plans/p.md"
+  git -C "$dir" init -q -b main
+  git -C "$dir" add -A
+  git -C "$dir" -c user.name=t -c user.email=t@example.invalid commit -q -m plan
+  printf '%s' "$dir"
+}
+
+# inlined_budget <task-count> — the budget classify-turns.sh gives a GitHub
+# issue carrying the same plan inline.
+inlined_budget() {
+  local count="$1" i body out="$TMP/inlined-$1.out"
+  body="$(printf 'the title\n## Implementation Plan\n'
+          for ((i = 1; i <= count; i++)); do printf '## Task %d: step %d\n' "$i" "$i"; done)"
+  : > "$out"
+  env -i HOME="$TMP" PATH="$PATH" ISSUE_NUMBER=7 REPO=contoso/my-repo \
+    ISSUE_LABELS='' ISSUE_BODY="$body" GITHUB_OUTPUT="$out" \
+    bash "$ROOT/scripts/classify-turns.sh" >/dev/null 2>&1 || true
+  sed -n 's/^turns=//p' "$out" | tail -1
+}
+
+# classify_in <checkout> <body> [tags] — calls classify_issue with the driver
+# sourced, in <checkout>; sets OUT, BUDGET and BODY_UNCHANGED.
+BUDGET=''; BODY_UNCHANGED=''
+classify_in() {
+  local dir="$1" body="$2" tags="${3-}" work
+  work="$(mktemp -d "$TMP/classify-XXXXXX")"
+  # shellcheck disable=SC2016  # $1/$2/$3 are for the inner bash, not this one
+  OUT="$(env -i HOME="$TMP" PATH="$MOCKS:$PATH" \
+    ISSUE_NUMBER=7 REPO=MyProject/my-repo ISSUE_BODY="$body" ISSUE_LABELS="$tags" \
+    bash -c 'cd "$1" && source "$2"
+      WORK_DIR="$3" RUN_ATTEMPT=1
+      before="$ISSUE_BODY"
+      classify_issue
+      printf "budget=%s\nbody_unchanged=%s\n" "$TURNS_BUDGET" \
+        "$([[ "$ISSUE_BODY" == "$before" ]] && printf yes || printf no)"' \
+    _ "$dir" "$ROOT/scripts/implement-azdo.sh" "$work" 2>&1)" || true
+  BUDGET="$(sed -n 's/^budget=//p' <<<"$OUT" | tail -1)"
+  BODY_UNCHANGED="$(sed -n 's/^body_unchanged=//p' <<<"$OUT" | tail -1)"
+}
+
+POINTER_BODY='Do the thing
+<p>Plan: <code>docs/superpowers/plans/p.md</code></p>'
+
+small_repo="$(plan_checkout plan-small 1)"
+large_repo="$(plan_checkout plan-large 6)"
+
+classify_in "$small_repo" "$POINTER_BODY"
+assert_eq "classify_issue_SizesFromPlanFile: matches the inlined tier" \
+  "$(inlined_budget 1)" "$BUDGET"
+
+classify_in "$large_repo" "$POINTER_BODY"
+assert_eq "classify_issue_LargePlan: matches the inlined tier" "$(inlined_budget 6)" "$BUDGET"
+# A positive control: without this the two cases could both be passing on 120.
+assert_eq "classify_issue_LargePlan: a 6-task plan outranks a 1-task one" "1" \
+  "$([[ "$(inlined_budget 6)" -gt "$(inlined_budget 1)" ]] && printf 1 || printf 0)"
+
+classify_in "$large_repo" 'Do the thing
+<p>No plan here, just <code>scripts/x.sh</code>.</p>'
+assert_eq "classify_issue_NoPointer: unplanned default" "120" "$BUDGET"
+assert_contains "classify_issue_NoPointer: says why" "(unplanned default: no plan pointer)" "$OUT"
+
+classify_in "$large_repo" 'Do the thing
+<p>Plan: <code>docs/superpowers/plans/missing.md</code></p>'
+assert_eq "classify_issue_MissingFile: unplanned default" "120" "$BUDGET"
+assert_contains "classify_issue_MissingFile: names the path" \
+  "(unplanned default: docs/superpowers/plans/missing.md not in checkout)" "$OUT"
+
+# The agent's own uncommitted edits must not resize its budget mid-run.
+printf '## Task 1: a\n## Task 2: b\n## Task 3: c\n## Task 4: d\n## Task 5: e\n## Task 6: f\n' \
+  > "$small_repo/docs/superpowers/plans/untracked.md"
+classify_in "$small_repo" 'Do the thing
+<p>Plan: <code>docs/superpowers/plans/untracked.md</code></p>'
+assert_eq "classify_issue_UncommittedFileIgnored: unplanned default" "120" "$BUDGET"
+assert_contains "classify_issue_UncommittedFileIgnored: names the path" \
+  "docs/superpowers/plans/untracked.md not in checkout" "$OUT"
+
+# A traversing pointer is refused before any read, so a plan that really exists
+# outside the repository cannot size the run.
+mkdir -p "$TMP/outside/plans"
+printf '## Task 1: a\n## Task 2: b\n## Task 3: c\n## Task 4: d\n## Task 5: e\n## Task 6: f\n' \
+  > "$TMP/outside/plans/p.md"
+classify_in "$small_repo" 'Do the thing
+<p>Plan: <code>docs/../../outside/plans/p.md</code></p>'
+assert_eq "classify_issue_TraversalIgnored: unplanned default" "120" "$BUDGET"
+assert_contains "classify_issue_TraversalIgnored: says no pointer" \
+  "(unplanned default: no plan pointer)" "$OUT"
+
+classify_in "$large_repo" "$POINTER_BODY" 'turns:50'
+assert_eq "classify_issue_TagWins: tag beats the plan file" "50" "$BUDGET"
+
+classify_in "$large_repo" "$POINTER_BODY"
+assert_eq "classify_issue_LeavesBodyAlone: ISSUE_BODY untouched" "yes" "$BODY_UNCHANGED"
+assert_contains "classify_issue_LeavesBodyAlone: no fallback suffix when sized" \
+  "turns : $(inlined_budget 6)" "$OUT"
+
 section "B6: never vote"
 
 # The agent never votes, completes or publishes a PR. Every pattern is a call
