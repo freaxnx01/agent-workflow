@@ -510,6 +510,9 @@ agent's NuGet takes the packages it finds there without asking any source
 
 Nothing changes for a repo that uses only public packages: with
 `AWF_NUGET_FEEDS` empty or unset there is no restore and no `dotnet` call.
+The folder is still emptied before every pipeline run and again when the run
+ends, so no agent sees another job's private packages. Its path is fixed: a
+pipeline variable `AWF_NUGET_CACHE` with any other value refuses the run.
 
 ### 14.1 `AWF_NUGET_FEEDS`
 
@@ -567,6 +570,16 @@ agent writes anything. A private package the agent **adds** during its run is
 not in the cache and cannot restore: the agent has no credential to fetch it.
 Add such a package to the default branch first, or by hand on the draft PR.
 
+The agent's own restore uses the repo's `nuget.config`. If that file lists
+the private feed, NuGet asks the feed for every package that is not in the
+cache, gets a 401 (`NU1301`), and the restore fails, **even for a public
+package** the agent adds. Give the repo a `<packageSourceMapping>` (`*` to
+nuget.org, the private prefixes to the feed), or keep the private feed out of
+the committed `nuget.config` and let the repo's own CI add it at build time.
+With the feed listed, NuGetAudit also queries it and warns `NU1900`, which
+fails a build that treats warnings as errors; `<NuGetAuditSources>` or
+`<NuGetAudit>false</NuGetAudit>` avoids that.
+
 ### 14.5 When the run refuses
 
 A failed restore stops the run before the agent starts, exits 1, and posts a
@@ -576,8 +589,7 @@ report on the work item with `0` turns, so it does not use up an attempt:
 failed: private feed restore failed (<first feed URL>): check that the build service has the Feed Reader role on the feed
 ```
 
-The report's `next:` line points to section 13, which this refusal shares its
-mechanism with. Check, in this order:
+Check, in this order:
 
 1. The build service (or the PAT) has the Feed Reader role on every feed in
    `AWF_NUGET_FEEDS` (14.2). The URL in the message is the first feed, not
@@ -588,5 +600,7 @@ mechanism with. Check, in this order:
    from every source fails here too.
 
 A refusal before the restore starts says `private feed setup: ...` instead and
-names the cause: a URL that is not an Azure DevOps feed URL (14.1), or no
-`dotnet` on the image (14.3).
+names the cause: a URL that is not an Azure DevOps feed URL (14.1), no
+`dotnet` on the image (14.3), an `AWF_NUGET_CACHE` other than
+`/var/cache/awf-nuget`, or a cache folder that is a symlink or not owned by
+the driver user `azp` (rebuild the image).

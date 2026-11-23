@@ -30,13 +30,17 @@
 #   feed_restore_config_check         `dotnet` is present and every feed URL is
 #                                     an Azure DevOps feed URL
 #   feed_write_config <file>          writes the credentialed NuGet config, 0600
+#   feed_cache_clear                  empties AWF_NUGET_CACHE; 0 when it is
+#                                     absent, 1 when it is a symlink or not a
+#                                     directory this user owns
 #   feed_pre_restore <seed-ref> <work-dir>
 #                                     the whole restore; cleans up on both paths
 #
 # Optional environment:
 #   AWF_NUGET_FEEDS  space-separated feed index URLs. Empty or unset = off.
-#   AWF_NUGET_CACHE  the fallback folder. Default /var/cache/awf-nuget; it is
-#                    overridable for tests only, never from a pipeline.
+#   AWF_NUGET_CACHE  the fallback folder. Default /var/cache/awf-nuget. The
+#                    library tests override it; in a pipeline the driver's
+#                    preflight_cache refuses any other value.
 #
 # Sourcing has no side effects beyond defining these and their defaults.
 
@@ -147,6 +151,27 @@ feed_write_config() {
   } >> "$file"
 }
 
+# feed_cache_clear — the container outlives the job, so a previous run's
+# packages are stale and must not be offered to the next agent. `-mindepth 1`
+# empties, dotfiles included, without removing the folder the image created
+# with the right ownership. The folder must be a real directory this user owns:
+# `find -delete` and the `chmod -R` after a restore would otherwise act on
+# whatever a symlink or a foreign path points at.
+feed_cache_clear() {
+  local cache="$AWF_NUGET_CACHE"
+  [[ -e "$cache" || -L "$cache" ]] || return 0
+  if [[ -L "$cache" || ! -d "$cache" || ! -O "$cache" ]]; then
+    printf 'the package cache %s is a symlink or not a directory owned by %s\n' \
+      "$cache" "$(id -un)" >&2
+    return 1
+  fi
+  if ! find "$cache" -mindepth 1 -delete; then
+    printf 'could not empty the package cache %s\n' "$cache" >&2
+    return 1
+  fi
+  return 0
+}
+
 # feed_restore_cleanup <worktree-root> <config-dir> — runs on BOTH exit paths of
 # feed_pre_restore, and deliberately not from an EXIT trap: the driver owns its
 # trap, and installing a second one here would replace the driver's.
@@ -179,8 +204,10 @@ feed_solutions() {
 feed_restore_one() {
   local worktree="$1" config="$2" solution="${3:-}" args=()
   [[ -z "$solution" ]] || args+=("$solution")
-  args+=(--configfile "$config" --packages "$AWF_NUGET_CACHE")
-  ( cd "$worktree" && dotnet restore "${args[@]}" )
+  # No build server or reused MSBuild node may outlive this call: it would keep
+  # running with the driver's environment, token included, into the agent run.
+  args+=(--configfile "$config" --packages "$AWF_NUGET_CACHE" --disable-build-servers)
+  ( cd "$worktree" && MSBUILDDISABLENODEREUSE=1 dotnet restore "${args[@]}" )
 }
 
 # feed_pre_restore <seed-ref> <work-dir> — the whole credentialed restore.
@@ -190,7 +217,7 @@ feed_pre_restore() {
 
   umask 077
 
-  if [[ ! -d "$AWF_NUGET_CACHE" ]]; then
+  if [[ ! -e "$AWF_NUGET_CACHE" && ! -L "$AWF_NUGET_CACHE" ]]; then
     printf 'the package cache %s does not exist; rebuild the agent image\n' \
       "$AWF_NUGET_CACHE" >&2
     return 1
@@ -221,11 +248,7 @@ feed_pre_restore() {
   fi
   chmod 0700 "$worktree" || rc=1
 
-  # The container outlives the job, so a previous run's packages are stale and
-  # must not be offered to this agent. `-mindepth 1` empties, dotfiles included,
-  # without removing the folder the image created with the right ownership.
-  if [[ "$rc" -eq 0 ]] && ! find "$AWF_NUGET_CACHE" -mindepth 1 -delete; then
-    printf 'could not empty the package cache %s\n' "$AWF_NUGET_CACHE" >&2
+  if [[ "$rc" -eq 0 ]] && ! feed_cache_clear; then
     rc=1
   fi
 

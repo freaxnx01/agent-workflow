@@ -17,6 +17,9 @@
 #   AWF_AGENT_CLAUDE   CLI to exec. Default `claude` off PATH.
 #   AWF_RUN_ENV_LOG    when set, the environment handed to the CLI is appended
 #                      to it, so a test can prove what the agent could read.
+#   AWF_RUN_CACHE_DIR  with AWF_RUN_CACHE_LOG: an `agent-start` line and then
+#   AWF_RUN_CACHE_LOG  every path under AWF_RUN_CACHE_DIR are appended to the
+#                      log, so a test sees the package cache as the agent did.
 set -euo pipefail
 IFS=$'\n\t'
 
@@ -34,4 +37,9 @@ shift 2
 unset AZURE_DEVOPS_EXT_PAT SYSTEM_ACCESSTOKEN AZP_TOKEN VSTS_AGENT_INPUT_TOKEN
 cd "$workspace"
 [[ -z "${AWF_RUN_ENV_LOG:-}" ]] || env >> "$AWF_RUN_ENV_LOG"
+if [[ -n "${AWF_RUN_CACHE_LOG:-}" ]]; then
+  printf 'agent-start\n' >> "$AWF_RUN_CACHE_LOG"
+  find "${AWF_RUN_CACHE_DIR:-/nonexistent}" -mindepth 1 -printf '%P\n' \
+    >> "$AWF_RUN_CACHE_LOG" 2>/dev/null || true
+fi
 exec "${AWF_AGENT_CLAUDE:-claude}" "$@"

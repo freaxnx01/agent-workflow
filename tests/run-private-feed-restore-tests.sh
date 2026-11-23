@@ -190,8 +190,9 @@ DLOG_TEXT="$(cat "$DLOG")"
 assert_not_contains "feed_pre_restore_TokenNotInArgv" "$SECRET" "$DLOG_TEXT"
 assert_contains "feed_pre_restore_TokenReachesTheConfig" "$SECRET" \
   "$(cat "$CFG_COPY" 2>/dev/null || true)"
-assert_eq "feed_pre_restore_ConfigPrivate" "file=600 dir=700" \
-  "$(sort -u "$MLOG" | head -n1)"
+# Every restore call logged one line; all of them must be private, so the
+# distinct lines are exactly one.
+assert_eq "feed_pre_restore_ConfigPrivate" "file=600 dir=700" "$(sort -u "$MLOG")"
 
 CFG_PATH="$(grep -o -- '--configfile [^ ]*' <<<"$DLOG_TEXT" | head -n1 | cut -d' ' -f2)"
 CFG_OK=0
@@ -210,6 +211,12 @@ assert_eq "feed_pre_restore_RestoresEachSolution: two calls" "2" \
   "$(grep -c '^argv=' <<<"$DLOG_TEXT" || true)"
 assert_contains "feed_pre_restore_RestoresEachSolution: a.sln" "argv=restore a.sln " "$DLOG_TEXT"
 assert_contains "feed_pre_restore_RestoresEachSolution: b.slnx" "argv=restore b.slnx " "$DLOG_TEXT"
+
+# No build server or MSBuild worker node may outlive the credentialed call.
+assert_eq "feed_pre_restore_NoBuildServers: every call disables build servers" "2" \
+  "$(grep -c '^argv=.* --disable-build-servers' <<<"$DLOG_TEXT" || true)"
+assert_eq "feed_pre_restore_NoBuildServers: every call disables node reuse" "2" \
+  "$(grep -c '^nodereuse=1$' <<<"$DLOG_TEXT" || true)"
 
 assert_eq "feed_pre_restore_EmptiesStaleCache" "" \
   "$(find "$CACHE" -name '.hidden' -o -name 'old' | head -n1)"
@@ -256,6 +263,82 @@ assert_eq "feed_pre_restore_CleansUpOnFailure: no worktree left" "1" \
   "$(git -C "$REPO_SLN" worktree list | grep -c . || true)"
 assert_eq "feed_pre_restore_CleansUpOnFailure: the cache is not left writable" "" \
   "$(find "$CACHE" -mindepth 1 -perm -o+w | head -n1)"
+
+section "feed_cache_clear"
+
+CLR="$TMP/clear-cache"; mkdir -p "$CLR/pkg"; : > "$CLR/pkg/a.nupkg"; : > "$CLR/.dot"
+pfr 'feed_cache_clear' AWF_NUGET_CACHE="$CLR"
+assert_eq "feed_cache_clear_Populated: rc" "0" "$RC"
+assert_eq "feed_cache_clear_Populated: emptied" "" "$(find "$CLR" -mindepth 1 | head -n1)"
+assert_eq "feed_cache_clear_Populated: the folder itself stays" "1" \
+  "$([[ -d "$CLR" ]] && echo 1 || echo 0)"
+
+pfr 'feed_cache_clear' AWF_NUGET_CACHE="$CLR"
+assert_eq "feed_cache_clear_Empty: rc" "0" "$RC"
+
+pfr 'feed_cache_clear' AWF_NUGET_CACHE="$TMP/no-such-cache"
+assert_eq "feed_cache_clear_Absent: rc" "0" "$RC"
+
+LINK_TARGET="$TMP/link-target"; mkdir -p "$LINK_TARGET"; : > "$LINK_TARGET/keep"
+ln -s "$LINK_TARGET" "$TMP/link-cache"
+pfr 'feed_cache_clear' AWF_NUGET_CACHE="$TMP/link-cache"
+assert_eq "feed_cache_clear_Symlink: rc" "1" "$RC"
+assert_contains "feed_cache_clear_Symlink: says why" "symlink" "$ERR"
+assert_eq "feed_cache_clear_Symlink: the target is untouched" "1" \
+  "$([[ -f "$LINK_TARGET/keep" ]] && echo 1 || echo 0)"
+
+section "feed_pre_restore — the failure branches"
+
+WD4="$TMP/wd4"; mkdir -p "$WD4"
+pfr 'feed_pre_restore origin/main "$WD"' \
+  WD="$WD4" AWF_NUGET_FEEDS="$ADO_FEED" AZURE_DEVOPS_EXT_PAT="$SECRET" \
+  AWF_NUGET_CACHE="$TMP/no-such-cache"
+assert_eq "feed_pre_restore_MissingCache: rc" "1" "$RC"
+assert_contains "feed_pre_restore_MissingCache: says why" "does not exist" "$ERR"
+assert_eq "feed_pre_restore_MissingCache: nothing left under the work dir" "" \
+  "$(find "$WD4" -mindepth 1 | head -n1)"
+
+WD5="$TMP/wd5"; mkdir -p "$WD5"
+pfr 'feed_pre_restore origin/main "$WD"' \
+  WD="$WD5" AWF_NUGET_FEEDS="$ADO_FEED" AZURE_DEVOPS_EXT_PAT="$SECRET" \
+  AWF_NUGET_CACHE="$TMP/link-cache"
+assert_eq "feed_pre_restore_SymlinkCache: rc" "1" "$RC"
+assert_eq "feed_pre_restore_SymlinkCache: the target is untouched" "1" \
+  "$([[ -f "$LINK_TARGET/keep" ]] && echo 1 || echo 0)"
+assert_eq "feed_pre_restore_SymlinkCache: nothing left under the work dir" "" \
+  "$(find "$WD5" -mindepth 1 | head -n1)"
+
+WD6="$TMP/wd6"; mkdir -p "$WD6"
+DLOG6="$TMP/dotnet6.log"; : > "$DLOG6"
+pfr 'feed_pre_restore origin/no-such-branch "$WD"' \
+  WD="$WD6" AWF_NUGET_FEEDS="$ADO_FEED" AZURE_DEVOPS_EXT_PAT="$SECRET" DOTNET_LOG="$DLOG6"
+assert_eq "feed_pre_restore_WorktreeAddFails: rc" "1" "$RC"
+assert_contains "feed_pre_restore_WorktreeAddFails: says why" "could not check out" "$ERR"
+assert_eq "feed_pre_restore_WorktreeAddFails: no restore ran" "" "$(cat "$DLOG6")"
+assert_eq "feed_pre_restore_WorktreeAddFails: nothing left under the work dir" "" \
+  "$(find "$WD6" -mindepth 1 | head -n1)"
+assert_eq "feed_pre_restore_WorktreeAddFails: no worktree left" "1" \
+  "$(git -C "$REPO_SLN" worktree list | grep -c . || true)"
+
+# A subfolder this user cannot write into makes `find -delete` fail. root
+# ignores the mode, so the case cannot fail there and is skipped.
+if [[ "$(id -u)" != 0 ]]; then
+  STUCK="$TMP/stuck-cache"; mkdir -p "$STUCK/locked"; : > "$STUCK/locked/pkg"
+  chmod 0500 "$STUCK/locked"
+  WD7="$TMP/wd7"; mkdir -p "$WD7"
+  DLOG7="$TMP/dotnet7.log"; : > "$DLOG7"
+  pfr 'feed_pre_restore origin/main "$WD"' \
+    WD="$WD7" AWF_NUGET_FEEDS="$ADO_FEED" AZURE_DEVOPS_EXT_PAT="$SECRET" \
+    AWF_NUGET_CACHE="$STUCK" DOTNET_LOG="$DLOG7"
+  chmod 0700 "$STUCK/locked"
+  assert_eq "feed_pre_restore_CacheEmptyFails: rc" "1" "$RC"
+  assert_contains "feed_pre_restore_CacheEmptyFails: says why" "could not empty" "$ERR"
+  assert_eq "feed_pre_restore_CacheEmptyFails: no restore ran" "" "$(cat "$DLOG7")"
+  assert_eq "feed_pre_restore_CacheEmptyFails: nothing left under the work dir" "" \
+    "$(find "$WD7" -mindepth 1 | head -n1)"
+else
+  printf '  - feed_pre_restore_CacheEmptyFails skipped: running as root\n'
+fi
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if (( FAIL > 0 )); then printf 'Failed: %s\n' "${FAIL_NAMES[*]}"; exit 1; fi
