@@ -133,6 +133,8 @@ Set on the pipeline (not in YAML):
 - `SELF_FIX_MAX_ITERATIONS` — optional, default 2. See section 12.
 - `AWF_NUGET_FEEDS` — optional, empty by default. Private NuGet feeds to
   restore before the agent starts. See section 14.
+- `AWF_NUGET_RESTORE` — optional, empty by default. What that restore restores,
+  for a repo whose solution is not at the root. See section 14.2.
 
 Leave *Let users override this value when running this pipeline* **off** for
 each of them.
@@ -537,7 +539,41 @@ The restore runs in pipeline mode only. A local run (`implement-azdo.sh` from a
 terminal) ignores the variable and restores with the operator's own
 credentials, as before. A `DRY_RUN=1` run never restores.
 
-### 14.2 The Feed Reader role
+### 14.2 `AWF_NUGET_RESTORE`
+
+A pipeline variable (section 7) naming what to restore: the paths of the
+solutions or projects, relative to the repository root and separated by spaces.
+
+```text
+samples/dotnet/Sample.sln
+```
+
+Unset or blank, the restore takes every `*.sln` and `*.slnx` **at the
+repository root** — which is all a repo with its solution there needs. A repo
+whose solution lives in a subdirectory must name it: `dotnet restore` with no
+project argument stops with `MSB1003` in such a root, so the run is refused
+before the agent starts with
+
+```text
+failed: private feed restore: no solution at the repository root; set AWF_NUGET_RESTORE to the solution or project to restore
+```
+
+Each entry must be a relative path to a `.sln`, `.slnx`, `.csproj` or `.fsproj`
+file, built from `A-Z a-z 0-9 . _ / -`, with no leading `/` and no `..`
+segment. Anything else refuses the run at preflight, before any `dotnet` call:
+
+```text
+failed: private feed setup: AWF_NUGET_RESTORE entry '<entry>' is not a relative solution or project path
+```
+
+The entry must also exist as a regular file in the default branch the agent is
+seeded from; a path that is missing there, or that is a symlink, is refused
+with `AWF_NUGET_RESTORE entry '<entry>' is not in the seed commit`. The restore
+runs on that commit, so a symlink could point at a project outside it.
+
+Without `AWF_NUGET_FEEDS` there is no restore and the variable is ignored.
+
+### 14.3 The Feed Reader role
 
 The restore authenticates with the job's token, `System.AccessToken` by
 default. Give the project's build service
@@ -547,7 +583,7 @@ default. Give the project's build service
 An operator who set `AZURE_DEVOPS_EXT_PAT` to a PAT instead needs the
 `Packaging (Read)` scope on that PAT.
 
-### 14.3 Rebuild the image with `--target dotnet`
+### 14.4 Rebuild the image with `--target dotnet`
 
 The restore needs the .NET SDK, so the agent that runs these jobs must use the
 `dotnet` image (section 1, section 10):
@@ -563,7 +599,7 @@ agent that cannot restore. With feeds set on the plain image the run is refused
 with `private feed setup: dotnet is not on PATH; rebuild the agent image with
 --target dotnet`.
 
-### 14.4 What it does not cover
+### 14.5 What it does not cover
 
 The restore runs on the default branch the agent is seeded from, before the
 agent writes anything. A private package the agent **adds** during its run is
@@ -580,7 +616,7 @@ With the feed listed, NuGetAudit also queries it and warns `NU1900`, which
 fails a build that treats warnings as errors; `<NuGetAuditSources>` or
 `<NuGetAudit>false</NuGetAudit>` avoids that.
 
-### 14.5 When the run refuses
+### 14.6 When the run refuses
 
 A failed restore stops the run before the agent starts, exits 1, and posts a
 report on the work item with `0` turns, so it does not use up an attempt:
@@ -592,7 +628,7 @@ failed: private feed restore failed (<first feed URL>): check that the build ser
 Check, in this order:
 
 1. The build service (or the PAT) has the Feed Reader role on every feed in
-   `AWF_NUGET_FEEDS` (14.2). The URL in the message is the first feed, not
+   `AWF_NUGET_FEEDS` (14.3). The URL in the message is the first feed, not
    necessarily the one that failed; the job log has `dotnet restore`'s own
    error.
 2. Each URL is the feed's v3 index URL, as *Connect to feed > dotnet* shows it.
@@ -600,7 +636,12 @@ Check, in this order:
    from every source fails here too.
 
 A refusal before the restore starts says `private feed setup: ...` instead and
-names the cause: a URL that is not an Azure DevOps feed URL (14.1), no
-`dotnet` on the image (14.3), an `AWF_NUGET_CACHE` other than
+names the cause: a URL that is not an Azure DevOps feed URL (14.1), an
+`AWF_NUGET_RESTORE` entry that is not a relative solution or project path
+(14.2), no `dotnet` on the image (14.4), an `AWF_NUGET_CACHE` other than
 `/var/cache/awf-nuget`, or a cache folder that is a symlink or not owned by
 the driver user `azp` (rebuild the image).
+
+A refusal with nothing to restore says `private feed restore: ...` and names
+the entry that is not in the seed commit, or asks for `AWF_NUGET_RESTORE`
+(14.2). The restore never ran, so the Feed Reader role is not the cause.

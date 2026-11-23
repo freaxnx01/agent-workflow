@@ -117,6 +117,20 @@ run_loop() {
   git init -q -b main "$seed"
   git -C "$seed" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m init
   git -C "$seed" push -q "$BARE" main
+  # LOOP_SEED_FILES='<path>…' commits those paths on main before the run. The
+  # private-feed cases need it: the pre-restore refuses a seed with nothing to
+  # restore (#682), so a case that reaches `dotnet restore` names a solution.
+  if [[ -n "${LOOP_SEED_FILES:-}" ]]; then
+    local file files
+    IFS=' ' read -r -a files <<<"$LOOP_SEED_FILES"
+    for file in "${files[@]}"; do
+      mkdir -p "$(dirname "$seed/$file")"
+      printf '<Solution/>\n' > "$seed/$file"
+    done
+    git -C "$seed" add -A
+    git -C "$seed" -c user.name=t -c user.email=t@example.invalid commit -q -m solutions
+    git -C "$seed" push -q "$BARE" main
+  fi
   # LOOP_SEED_BRANCH=<name> puts a foreign commit on that branch of the origin
   # before the run, as a human's salvage of an earlier run would.
   if [[ -n "${LOOP_SEED_BRANCH:-}" ]]; then
@@ -852,8 +866,8 @@ assert_eq "implement_SymlinkedCache_Refuses: the target is untouched" "1" \
   "$([[ -f "$LINK_TARGET/keep" ]] && echo 1 || echo 0)"
 
 : > "$FEED_DOTNET_LOG"
-run_pipeline success DOTNET_LOG="$FEED_DOTNET_LOG" DOTNET_MOCK_FAIL=1 \
-  AWF_NUGET_FEEDS="$FEED_URL"
+LOOP_SEED_FILES='App.sln' run_pipeline success DOTNET_LOG="$FEED_DOTNET_LOG" \
+  DOTNET_MOCK_FAIL=1 AWF_NUGET_FEEDS="$FEED_URL"
 assert_eq "implement_FeedRestoreFails_RefusesBeforeAgent: rc" "1" "$RC"
 assert_contains "implement_FeedRestoreFails_RefusesBeforeAgent: the restore was tried" \
   "argv=restore" "$(cat "$FEED_DOTNET_LOG")"
@@ -884,7 +898,7 @@ assert_not_contains "implement_ForeignFeedUrl_RefusesBeforeAgent: the agent neve
 # One ordered log: the dotnet mock appends to the same file the sudo mock does,
 # so the line order is the call order.
 next_sudo_log="$TMP/pipe-$((PIPE_N + 1))/sudo.log"
-run_pipeline success DOTNET_LOG="$next_sudo_log" \
+LOOP_SEED_FILES='App.sln' run_pipeline success DOTNET_LOG="$next_sudo_log" \
   AWF_NUGET_FEEDS="$FEED_URL"
 assert_eq "implement_FeedRestoreOk_AgentRuns: rc" "0" "$RC"
 restore_line="$(grep -n '^argv=restore' "$PIPE_SUDO" | head -n1 | cut -d: -f1 || true)"
@@ -909,6 +923,67 @@ run_pipeline success DRY_RUN=1
 assert_eq "implement_DryRun_LeavesCacheAlone: rc" "0" "$RC"
 assert_contains "implement_DryRun_LeavesCacheAlone: nothing was deleted" "stale" "$(cache_left)"
 rm -rf "${FEED_CACHE:?}"/*
+
+section "pipeline mode: what the pre-restore restores (#682)"
+
+# A solution in a subdirectory is named by AWF_NUGET_RESTORE. A bad value is
+# refused in preflight, and a seed with nothing to restore before the agent.
+: > "$FEED_DOTNET_LOG"
+run_pipeline success DOTNET_LOG="$FEED_DOTNET_LOG" AWF_NUGET_FEEDS="$FEED_URL" \
+  AWF_NUGET_RESTORE='/abs.sln'
+assert_eq "implement_RestoreBadSyntax_RefusedInPreflight: rc" "1" "$RC"
+assert_contains "implement_RestoreBadSyntax_RefusedInPreflight: the report names the entry" \
+  "private feed setup: AWF_NUGET_RESTORE entry '/abs.sln'" "$AZLOG"
+assert_contains "implement_RestoreBadSyntax_RefusedInPreflight: points to the feed section" \
+  "see AZDO-PIPELINE-SETUP.md §14" "$AZLOG"
+assert_eq "implement_RestoreBadSyntax_RefusedInPreflight: dotnet never ran" "" \
+  "$(cat "$FEED_DOTNET_LOG")"
+assert_not_contains "implement_RestoreBadSyntax_RefusedInPreflight: the agent never ran" \
+  "awf-agent-run $PIPE_WS/" "$(cat "$PIPE_SUDO")"
+
+: > "$FEED_DOTNET_LOG"
+run_pipeline success DOTNET_LOG="$FEED_DOTNET_LOG" AWF_NUGET_FEEDS="$FEED_URL"
+assert_eq "implement_NoRootSolution_RefusedWithHint: rc" "1" "$RC"
+assert_contains "implement_NoRootSolution_RefusedWithHint: the report says what to set" \
+  "private feed restore: no solution at the repository root; set AWF_NUGET_RESTORE" "$AZLOG"
+assert_contains "implement_NoRootSolution_RefusedWithHint: points to the feed section" \
+  "see AZDO-PIPELINE-SETUP.md §14" "$AZLOG"
+assert_not_contains "implement_NoRootSolution_RefusedWithHint: not the Feed Reader cause" \
+  "Feed Reader" "$AZLOG"
+assert_eq "implement_NoRootSolution_RefusedWithHint: dotnet never ran" "" \
+  "$(cat "$FEED_DOTNET_LOG")"
+assert_eq "implement_NoRootSolution_RefusedWithHint: no agent call" "" "$CLAUDELOG"
+
+next_sudo_log="$TMP/pipe-$((PIPE_N + 1))/sudo.log"
+LOOP_SEED_FILES='samples/dotnet/Sample.sln' run_pipeline success \
+  DOTNET_LOG="$next_sudo_log" AWF_NUGET_FEEDS="$FEED_URL" \
+  AWF_NUGET_RESTORE='samples/dotnet/Sample.sln'
+assert_eq "implement_ExplicitTarget_AgentRuns: rc" "0" "$RC"
+assert_contains "implement_ExplicitTarget_AgentRuns: the named solution was restored" \
+  "argv=restore samples/dotnet/Sample.sln " "$(cat "$PIPE_SUDO")"
+restore_line="$(grep -n '^argv=restore' "$PIPE_SUDO" | head -n1 | cut -d: -f1 || true)"
+agent_line="$(grep -n -F "awf-agent-run $PIPE_WS/" "$PIPE_SUDO" | head -n1 | cut -d: -f1 || true)"
+assert_eq "implement_ExplicitTarget_AgentRuns: the restore ran, then the agent" "1" \
+  "$([[ -n "$restore_line" && -n "$agent_line" && "$restore_line" -lt "$agent_line" ]] && echo 1 || echo 0)"
+
+# A restore that fails on a named target is a restore failure, not a missing
+# target: the Feed-Reader hint is still the right one.
+LOOP_SEED_FILES='samples/dotnet/Sample.sln' run_pipeline success \
+  DOTNET_MOCK_FAIL=1 AWF_NUGET_FEEDS="$FEED_URL" \
+  AWF_NUGET_RESTORE='samples/dotnet/Sample.sln'
+assert_eq "implement_RestoreFailure_KeepsFeedReaderText: rc" "1" "$RC"
+assert_contains "implement_RestoreFailure_KeepsFeedReaderText: the report names the role" \
+  "Feed Reader" "$AZLOG"
+assert_eq "implement_RestoreFailure_KeepsFeedReaderText: no agent call" "" "$CLAUDELOG"
+
+# Without feeds there is no restore, so the variable is not even checked.
+: > "$FEED_DOTNET_LOG"
+run_pipeline success DOTNET_LOG="$FEED_DOTNET_LOG" AWF_NUGET_RESTORE='/abs.sln'
+assert_eq "implement_RestoreVarWithoutFeeds_Ignored: rc" "0" "$RC"
+assert_eq "implement_RestoreVarWithoutFeeds_Ignored: dotnet never ran" "" \
+  "$(cat "$FEED_DOTNET_LOG")"
+assert_contains "implement_RestoreVarWithoutFeeds_Ignored: the agent ran as before" \
+  "awf-agent-run $PIPE_WS/" "$(cat "$PIPE_SUDO")"
 
 # Local mode is untouched: no sudo, no boundary, today's behaviour.
 : > "$TMP/local-sudo.log"
