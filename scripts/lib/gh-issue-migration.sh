@@ -29,15 +29,28 @@ IFS=$'\n\t'
 
 # The labels that drive the GitHub pipeline. Carried across as tags they would
 # either start a run on the new forge or confuse its guards, so they stay
-# behind. Everything else — needs-enrichment, roadmap, bug — is backlog
+# behind. The GATES go with them: `ai-review-ai-merge` (and `ai-auto-review`,
+# its pre-ADR-009 alias) is the per-issue auto-merge opt-in and `ai-chain` the
+# per-issue chain-dispatch opt-in, so an item arriving with one would carry a
+# decision taken for the old forge — the more so because autopilot.sh applies
+# `ai-implement,ai-review-ai-merge` as a pair, and only one half of it can be
+# dropped. Everything else — needs-enrichment, roadmap, bug — is backlog
 # information and travels.
 MIGRATION_DROPPED_LABELS='ai-implement
+ai-review-ai-merge
 ai-review-human-merge
+ai-auto-review
 ai-pre-preview
+ai-chain
 enrichment-ongoing'
 
-# ...and the prefixed families of the same kind: ai:*, ctx:* and turns:*.
+# ...and the prefixed families of the same kind: ai:*, agent:*, ctx:* and
+# turns:*. `agent:*` is dropped for the same reason as the gates and more
+# literally: the ADO side reads System.Tags back into ISSUE_LABELS
+# (forge_export_issue) and classify-agent.sh honours `agent:opencode` there, so
+# a carried one would force that agent on every future run of the work item.
 MIGRATION_DROPPED_PREFIXES='ai:
+agent:
 ctx:
 turns:'
 

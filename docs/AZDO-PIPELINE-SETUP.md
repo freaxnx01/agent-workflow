@@ -631,7 +631,7 @@ set `AZDO_ORG` and `AZDO_PROJECT` instead. Drop `--dry-run` to write.
 | `--story-type <name>` | type for every other issue (default: `User Story`) |
 | `--close` | also close each migrated GitHub issue |
 | `--dry-run` | read everything, write nothing, report per issue |
-| `--limit <n>` | migrate the first n issues only, for a trial |
+| `--limit <n>` | migrate the first n issues only, for a trial (`n > 0`; `0` is refused rather than read as "no limit") |
 
 What it does per issue:
 
@@ -639,9 +639,11 @@ What it does per issue:
   arrives verbatim — a fenced block, a task list or an inlined plan included —
   with a `_Migrated from <url>._` line appended;
 - copies the comments in order, each headed `**<login>** on GitHub, <date>:`;
-- maps the labels to tags, leaving the pipeline's own behind (`ai:*`, `ctx:*`,
-  `turns:*`, `ai-implement`, `ai-review-human-merge`, `ai-pre-preview`,
-  `enrichment-ongoing`) so nothing triggers a run on the new forge;
+- maps the labels to tags, leaving the pipeline's own behind (`ai:*`, `agent:*`,
+  `ctx:*`, `turns:*`, `ai-implement`, the gates `ai-review-ai-merge`,
+  `ai-review-human-merge` and `ai-chain`, the deprecated `ai-auto-review` and
+  `ai-pre-preview`, and `enrichment-ongoing`) so nothing triggers a run, pins an
+  agent or opts an item into auto-merge on the new forge;
 - comments the work item link on the GitHub issue, with an invisible marker. A
   re-run skips any issue carrying it, so a partial run is safe to repeat.
 

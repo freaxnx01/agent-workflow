@@ -91,9 +91,14 @@ azdo_project_url_path() {
 # azdo_create_markdown_item <type> <title> <area> <tags> <description-file>
 # creates one work item and echoes its new id.
 #
-# The description is read from a FILE, not an argument: a migrated GitHub issue
-# body runs to tens of kilobytes and carries quotes, backslashes and fenced code
-# blocks, and a file keeps it off every argv on the way through.
+# The description is read from a FILE, not an argument, and the serialised patch
+# goes to curl as a file too (`--data-binary @`): a migrated GitHub issue body
+# runs to tens of kilobytes and carries quotes, backslashes and fenced code
+# blocks, so a file keeps it off every argv on the way through. One argument
+# cannot hold it — Linux caps a single argv entry at 128 KiB, and
+# `json.dumps` escapes every non-ASCII character to six bytes, so a 37 KB body
+# of CJK or emoji would pass that cap and the create would die with "Argument
+# list too long" before curl ran.
 #
 # System.Description is an HTML field by default, which would turn that body
 # into mangled markup. The fourth op
@@ -119,10 +124,13 @@ azdo_create_markdown_item() {
   fi
   : "${AZURE_DEVOPS_EXT_PAT:?AZURE_DEVOPS_EXT_PAT must be set}"
 
-  local url body out
+  local url body_file out
   url="$(azdo_project_url_path)/_apis/wit/workitems/\$$(_azdo_urlquote "$type")?api-version=7.1"
 
-  body=$(python3 -c '
+  # Removed on both paths rather than with a `trap ... EXIT`: this file is
+  # SOURCED, so a trap here would replace the calling script's own.
+  body_file="$(mktemp)"
+  python3 -c '
 import json, sys
 title, area, tags, path = sys.argv[1:5]
 with open(path, encoding="utf-8") as fh:
@@ -135,12 +143,14 @@ ops = [
 ]
 if tags:
     ops.append({"op": "add", "path": "/fields/System.Tags", "value": tags})
-print(json.dumps(ops))' "$title" "$area" "$tags" "$desc_file")
+print(json.dumps(ops))' "$title" "$area" "$tags" "$desc_file" > "$body_file" \
+    || { rm -f "$body_file"; return 1; }
 
   out=$(printf 'user = ":%s"\n' "$AZURE_DEVOPS_EXT_PAT" \
     | curl -sS -K - \
         -H 'Content-Type: application/json-patch+json' \
-        -X POST "$url" -d "$body") || return 1
+        -X POST "$url" --data-binary "@$body_file") || { rm -f "$body_file"; return 1; }
+  rm -f "$body_file"
 
   printf '%s' "$out" | python3 -c '
 import sys, json
@@ -163,6 +173,11 @@ print(d["id"])'
 # unlike the lower-case `workitems` of the create above — both are the service's
 # own spellings.
 #
+# The text comes from a file and the serialised body goes to curl as a file, for
+# the reason spelled out on azdo_create_markdown_item: a migrated GitHub comment
+# is as long and as non-ASCII as an issue body, and one argv entry cannot hold
+# it.
+#
 # Exit codes: 0 posted; 1 the request failed or the response carried no id;
 # 2 usage.
 azdo_comment_markdown() {
@@ -173,18 +188,21 @@ azdo_comment_markdown() {
   fi
   : "${AZURE_DEVOPS_EXT_PAT:?AZURE_DEVOPS_EXT_PAT must be set}"
 
-  local url body out
+  local url body_file out
   url="$(azdo_project_url_path)/_apis/wit/workItems/${id}/comments?format=markdown&api-version=7.1-preview.4"
 
-  body=$(python3 -c '
+  body_file="$(mktemp)"
+  python3 -c '
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as fh:
-    print(json.dumps({"text": fh.read()}))' "$text_file")
+    print(json.dumps({"text": fh.read()}))' "$text_file" > "$body_file" \
+    || { rm -f "$body_file"; return 1; }
 
   out=$(printf 'user = ":%s"\n' "$AZURE_DEVOPS_EXT_PAT" \
     | curl -sS -K - \
         -H 'Content-Type: application/json' \
-        -X POST "$url" -d "$body") || return 1
+        -X POST "$url" --data-binary "@$body_file") || { rm -f "$body_file"; return 1; }
+  rm -f "$body_file"
 
   printf '%s' "$out" | python3 -c '
 import sys, json

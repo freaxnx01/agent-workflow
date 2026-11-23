@@ -66,8 +66,22 @@ assert_eq "migration_tags_DropsPipelineState" "enhancement; needs-enrichment" \
   "$(run_lib migration_tags \
       $'enhancement\nai-implement\nai:done\nctx:high\nturns:120\nenrichment-ongoing\nai-review-human-merge\nai-pre-preview\nneeds-enrichment')"
 
-# Only the `ai:` PREFIX is dropped, not every label that starts with the letters.
-assert_eq "migration_tags_KeepsLookalike" "aide" "$(run_lib migration_tags 'aide')"
+# The per-issue GATES are decisions taken for the old forge, so they stay with
+# it — including the deprecated `ai-auto-review` spelling, which
+# check-ai-merge-gate.sh still honours.
+assert_eq "migration_tags_DropsGates" "enhancement" \
+  "$(run_lib migration_tags \
+      $'enhancement\nai-review-ai-merge\nai-auto-review\nai-chain\nai:chain-paused')"
+
+# `agent:claude` / `agent:opencode` are read back out of System.Tags on the ADO
+# side (forge_export_issue -> classify-agent.sh), so a carried one would force
+# that agent on every future run of the work item.
+assert_eq "migration_tags_DropsAgentOverride" "bug" \
+  "$(run_lib migration_tags $'agent:opencode\nbug\nagent:claude')"
+
+# Only the PREFIXES are dropped, not every label that starts with the letters.
+assert_eq "migration_tags_KeepsLookalike" "aide; agentic" \
+  "$(run_lib migration_tags $'aide\nagentic')"
 
 # `;` is the tag separator Azure DevOps uses, so a label containing one would
 # silently become two tags.

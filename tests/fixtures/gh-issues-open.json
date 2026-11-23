@@ -16,6 +16,9 @@
         "name": "ctx:high"
       },
       {
+        "name": "agent:claude"
+      },
+      {
         "name": "needs-enrichment"
       }
     ],
@@ -51,6 +54,12 @@
       },
       {
         "name": "ai-implement"
+      },
+      {
+        "name": "ai-review-ai-merge"
+      },
+      {
+        "name": "agent:opencode"
       }
     ],
     "user": {

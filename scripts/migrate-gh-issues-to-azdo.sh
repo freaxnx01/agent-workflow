@@ -27,7 +27,7 @@
 #   --story-type  type for every other issue (default: User Story)
 #   --close       also close each migrated GitHub issue
 #   --dry-run     read everything, write nothing, report per issue
-#   --limit <n>   migrate the first n issues only, for a trial run
+#   --limit <n>   migrate the first n issues only, for a trial run (n > 0)
 #
 # Env: AZURE_DEVOPS_EXT_PAT is required — by the WRITES, and by the up-front
 # validation reads, so a dry run needs it too. `gh` reads GitHub with its own
@@ -62,13 +62,15 @@ source "$HERE/lib/gh-issue-migration.sh"
 
 SELF="migrate-gh-issues-to-azdo"
 
+# usage  prints the header comment — the whole of it, exit codes included — on
+# stdout, so `--help` is readable output and not an error stream.
 usage() {
-  sed -n '3,45p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2
+  sed -n '3,51p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 die_usage() {
   printf '%s: %s\n\n' "$SELF" "$1" >&2
-  usage
+  usage >&2
   exit 2
 }
 
@@ -81,7 +83,9 @@ BUG_TYPE="Bug"
 STORY_TYPE="User Story"
 CLOSE=0
 DRY_RUN=0
-LIMIT=0
+# Unset, not 0: 0 is explode_issues' sentinel for "no limit", so it must not
+# double as a value an operator can pass — see the check below.
+LIMIT=""
 
 need_value() { [[ $2 -ge 2 ]] || die_usage "$1 requires a value"; }
 
@@ -103,7 +107,14 @@ done
 [[ -n "$REPO" ]] || die_usage "--repo <owner/name> is required"
 [[ "$REPO" == */* ]] || die_usage "--repo must be <owner>/<name>, got '$REPO'"
 [[ -n "$AREA" ]] || die_usage "--area <path> is required — the ADO service hook filters on it"
-[[ "$LIMIT" =~ ^[0-9]+$ ]] || die_usage "--limit must be a number, got '$LIMIT'"
+if [[ -n "$LIMIT" ]]; then
+  [[ "$LIMIT" =~ ^[0-9]+$ ]] || die_usage "--limit must be a number, got '$LIMIT'"
+  # Zero is refused rather than accepted: it is explode_issues' sentinel for
+  # "no limit", so `--limit 0` on a flag whose whole purpose is a cautious
+  # trial run would quietly migrate the entire backlog. The value is known to
+  # be digits by now, so "carries a non-zero one" is the whole test.
+  [[ "$LIMIT" =~ [1-9] ]] || die_usage "--limit must be greater than 0, got '$LIMIT'"
+fi
 
 # --- validation, before a single issue is read --------------------------
 
@@ -375,7 +386,7 @@ issues_raw="$(gh api --paginate "repos/$REPO/issues?state=open&per_page=100&dire
 }
 
 mkdir -p "$WORK/issues"
-open_count="$(printf '%s' "$issues_raw" | explode_issues "$WORK/issues" "$LIMIT")"
+open_count="$(printf '%s' "$issues_raw" | explode_issues "$WORK/issues" "${LIMIT:-0}")"
 printf '%s open issue(s) to migrate from %s to %s\n' "$open_count" "$REPO" "$AZDO_PROJECT"
 
 for issue_dir in "$WORK/issues"/*; do

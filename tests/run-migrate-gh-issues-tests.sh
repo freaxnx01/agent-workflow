@@ -7,7 +7,8 @@
 # organization. The fixture repository has three open issues (1, 2, 3 — oldest
 # first) and one pull request, which the same REST endpoint returns and the
 # script must drop. Issue 2 is labelled `bug` and has three comments served over
-# two pages.
+# two pages. Both labelled issues carry pipeline state — an `agent:*` override
+# and, on issue 2, the `ai-review-ai-merge` gate — which must not become tags.
 #
 # Usage: tests/run-migrate-gh-issues-tests.sh
 # Exit codes: 0 all pass; 1 at least one assertion failed.
@@ -153,10 +154,21 @@ for line in open(sys.argv[1], encoding="utf-8"):
         creates.append(ops)
 for op in creates[wanted]:
     if op.get("path") == path:
-        sys.stdout.write(op["value"])
+        # bytes, not text: one case asserts a non-ASCII body is byte-identical,
+        # which an encoding chosen by the locale would decide instead of us.
+        sys.stdout.buffer.write(op["value"].encode("utf-8"))
         break
 else:
     sys.stdout.write("MISSING")' "$WORK/curl-body.txt" "$1" "$2"
+}
+
+# digest — reads stdin and echoes "<n> bytes sha256=<hex>", so a case can assert
+# that two very large strings are identical without printing either of them.
+digest() {
+  python3 -c '
+import hashlib, sys
+raw = sys.stdin.buffer.read()
+print("%d bytes sha256=%s" % (len(raw), hashlib.sha256(raw).hexdigest()))'
 }
 
 # comment_texts — the text of every comment POST, newlines shown as \n so one
@@ -207,6 +219,33 @@ assert_contains "migrate_UnknownType: names the type" "$err" "User Story"
 assert_contains "migrate_UnknownType: names the flag" "$err" "--story-type"
 assert_eq "migrate_UnknownType: writes nothing" "0" \
   "$(count_matches "$WORK/curl-argv.txt" '-X POST')"
+
+# --type replaces both defaults, so it is the only name checked — and the one
+# named back. An Agile project has no `Impediment`.
+reset_case
+rc=0; err="$(run_migrate --repo "$REPO" --area "$AREA" --type Impediment 2>&1 >/dev/null)" || rc=$?
+assert_eq "migrate_UnknownTypeOverride: exit 2" "2" "$rc"
+assert_contains "migrate_UnknownTypeOverride: names the type" "$err" "'Impediment' does not exist"
+assert_contains "migrate_UnknownTypeOverride: names the flag" "$err" "--type"
+assert_eq "migrate_UnknownTypeOverride: the defaults are not checked too" "1" \
+  "$(printf '%s\n' "$err" | grep -c 'does not exist' || true)"
+assert_eq "migrate_UnknownTypeOverride: writes nothing" "0" \
+  "$(count_matches "$WORK/curl-argv.txt" '-X POST')"
+
+reset_case
+rc=0; err="$(run_migrate --repo "$REPO" --area "$AREA" --limit 0 2>&1 >/dev/null)" || rc=$?
+assert_eq "migrate_UsageZeroLimit: exit 2" "2" "$rc"
+assert_contains "migrate_UsageZeroLimit: says so" "$err" "--limit must be greater than 0"
+assert_eq "migrate_UsageZeroLimit: migrates nothing" "0 0" \
+  "$(wc -c < "$WORK/gh-argv.txt" | tr -d ' ') $(wc -c < "$WORK/curl-argv.txt" | tr -d ' ')"
+
+# --help is output, not an error: it goes to stdout, and it carries the whole
+# header comment including the exit codes.
+reset_case
+rc=0; help_out="$(run_migrate --help 2>/dev/null)" || rc=$?
+assert_eq "migrate_HelpOnStdout: exit 0" "0" "$rc"
+assert_contains "migrate_HelpOnStdout: the usage line" "$help_out" "Usage:"
+assert_contains "migrate_HelpOnStdout: through to the exit codes" "$help_out" "Exit codes:"
 
 reset_case gh-issue-comments-none.json azdo-workitemtypes-agile.json azdo-areas-nested.json
 rc=0; err="$(run_migrate --repo "$REPO" --area "$AREA" 2>&1 >/dev/null)" || rc=$?
@@ -321,6 +360,52 @@ reset_case
 run_migrate --repo "$REPO" --area "$AREA" --limit 1 >/dev/null
 assert_eq "migrate_Limit: exactly one create" "A plain issue" "$(created_titles | paste -sd, -)"
 
+section "a large non-ASCII body survives byte for byte"
+
+# The first consumer's largest issue body is 37 KB (#642), and `json.dumps`
+# escapes every non-ASCII character to a six-byte \uXXXX — so the serialised
+# patch is a multiple of the body. This one is deliberately past the 128 KiB
+# Linux allows in ONE argv entry, which is what handing the patch to curl as a
+# file rather than as `-d <string>` buys: as a string the create would die with
+# "Argument list too long" before curl ran.
+reset_case
+big_issues="$WORK/gh-issues-big.json"
+python3 - "$big_issues" <<'PY'
+import json, sys
+
+line = "見出し — a 日本語 line with an emoji 🎉 and a `fence`\n"
+body = "```bash\nprintf '%s\\n' \"$x\"\n```\n\n" + line * 2000
+json.dump([{
+    "number": 9,
+    "title": "A huge issue",
+    "body": body,
+    "state": "open",
+    "html_url": "https://github.com/contoso/consumer-repo/issues/9",
+    "labels": [],
+    "user": {"login": "octocat"},
+    "created_at": "2026-01-05T10:00:00Z",
+}], open(sys.argv[1], "w", encoding="utf-8"))
+PY
+{
+  printf 'issues/9/comments\t%s/gh-issue-comments-none.json\n' "$FIXTURES"
+  printf 'issues?state=open\t%s\n' "$big_issues"
+} > "$GH_MAP"
+
+rc=0; out="$(run_migrate --repo "$REPO" --area "$AREA")" || rc=$?
+assert_eq "migrate_LargeNonAsciiBody: exit 0" "0" "$rc"
+assert_contains "migrate_LargeNonAsciiBody: the item is created" "$out" "#9 -> work item 42"
+
+# Asserted as a length plus a digest: both sides are hundreds of kilobytes, and
+# a failure message carrying them whole would be unreadable.
+expected_big="$(python3 -c '
+import json, sys
+issue = json.load(open(sys.argv[1], encoding="utf-8"))[0]
+sys.stdout.buffer.write((issue["body"].rstrip("\r\n")
+                         + "\n\n_Migrated from %s._" % issue["html_url"]).encode("utf-8"))' \
+  "$big_issues" | digest)"
+assert_eq "migrate_LargeNonAsciiBody: byte-identical description" \
+  "$expected_big" "$(create_field 0 /fields/System.Description | digest)"
+
 section "a failed write stops the run and names the orphan"
 
 # Issue 1 has no comments, so it completes. Issue 2's first comment POST fails
@@ -361,6 +446,39 @@ case "$out" in
   *orphan*) fail "migrate_CreateFailureIsNotAnOrphan: no orphan reported" "$out" ;;
   *) pass "migrate_CreateFailureIsNotAnOrphan: no orphan reported" ;;
 esac
+
+# A failed --close is the one write failure that leaves no orphan: the marker is
+# already on the issue, so a re-run skips it and only the closing is left undone.
+reset_case
+printf 'issue close\n' > "$WORK/gh-fail.tsv"
+rc=0
+out="$(GH_MOCK_FAIL_MAP="$WORK/gh-fail.tsv" \
+       run_migrate --repo "$REPO" --area "$AREA" --close 2>&1)" || rc=$?
+assert_eq "migrate_CloseFailureIsNotAnOrphan: exit 1" "1" "$rc"
+assert_contains "migrate_CloseFailureIsNotAnOrphan: the exact message" "$out" \
+  "#1: work item 42 is created and linked, but closing the issue failed"
+assert_eq "migrate_CloseFailureIsNotAnOrphan: the link comment was posted" "1" \
+  "$(count_matches "$WORK/gh-argv.txt" 'issue comment')"
+assert_eq "migrate_CloseFailureIsNotAnOrphan: stops at the first issue" "1" \
+  "$(created_titles | wc -l | tr -d ' ')"
+case "$out" in
+  *orphan*) fail "migrate_CloseFailureIsNotAnOrphan: no orphan reported" "$out" ;;
+  *) pass "migrate_CloseFailureIsNotAnOrphan: no orphan reported" ;;
+esac
+
+# A READ that fails stops the run just as a write does: without an issue's
+# comments the marker check cannot say whether it was migrated already, and
+# guessing would risk a second work item.
+reset_case
+printf 'issues/1/comments\n' > "$WORK/gh-fail.tsv"
+rc=0
+out="$(GH_MOCK_FAIL_MAP="$WORK/gh-fail.tsv" \
+       run_migrate --repo "$REPO" --area "$AREA" 2>&1)" || rc=$?
+assert_eq "migrate_CommentReadFailure: exit 1" "1" "$rc"
+assert_contains "migrate_CommentReadFailure: the exact message" "$out" \
+  "#1: could not read the comments"
+assert_eq "migrate_CommentReadFailure: writes nothing" "0" \
+  "$(count_matches "$WORK/curl-argv.txt" '-X POST')"
 
 section "the PAT never reaches an argv"
 

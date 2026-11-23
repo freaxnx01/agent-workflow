@@ -33,8 +33,10 @@ and the repo's Layer-1 harness with `tests/mocks/{gh,curl}`.
   The write-back comment is
   `Migrated to Azure DevOps work item [#<id>](<org url>/<project percent-encoded>/_workitems/edit/<id>).`,
   then a newline and the marker.
-- **Dropped labels:** `ai-implement`, `ai-review-human-merge`, `ai-pre-preview`,
-  `enrichment-ongoing`, and every label matching `ai:*`, `ctx:*` or `turns:*`.
+- **Dropped labels:** `ai-implement`, the gates `ai-review-ai-merge`,
+  `ai-review-human-merge` and `ai-chain`, the deprecated `ai-auto-review` and
+  `ai-pre-preview`, `enrichment-ongoing`, and every label matching `ai:*`,
+  `agent:*`, `ctx:*` or `turns:*`.
   In the remaining labels, `;` is replaced by `,`. They are joined with `; `.
 - **Type:** an issue labelled `bug` gets `--bug-type`, default `Bug`. Every other
   issue gets `--story-type`, default `User Story`. `--type` overrides both.
