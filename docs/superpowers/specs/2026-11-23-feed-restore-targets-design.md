@@ -4,18 +4,20 @@
 
 `feed_solutions` (`scripts/lib/private-feed-restore.sh`) restores the `*.sln` /
 `*.slnx` files at the repository root, and when there are none, runs
-`dotnet restore` with no argument there. That stops with `MSB1003` ("Specify a
-project or solution file"), and `restore_private_feeds` then refuses the run
-with the Feed-Reader hint, which points at the wrong cause. Any consumer whose
-solution lives in a subdirectory cannot use the private-feed path at all.
+`dotnet restore` with no argument there. In a root that holds neither a solution
+nor a project that stops with `MSB1003` ("Specify a project or solution file"),
+and `restore_private_feeds` then refuses the run with the Feed-Reader hint,
+which points at the wrong cause. Any consumer whose solution lives in a
+subdirectory cannot use the private-feed path at all.
 
 ## Decided (by the user, 2026-11-23)
 
 - **A new pipeline variable `AWF_NUGET_RESTORE`** lists the restore targets:
   relative paths to `.sln`, `.slnx`, `.csproj` or `.fsproj` files, separated by
   spaces.
-- **Unset or blank:** today's default, the solutions at the root.
-- **No target at all** (unset and no root solution): a clear refusal that
+- **Unset or blank:** today's default, the solutions at the root, or its
+  projects when the root holds no solution.
+- **No target at all** (unset and neither at the root): a clear refusal that
   names `AWF_NUGET_RESTORE`, never `MSB1003`.
 
 ## Non-goals
@@ -43,12 +45,16 @@ solution lives in a subdirectory cannot use the private-feed path at all.
   A failure refuses with `private feed setup: AWF_NUGET_RESTORE entry '<entry>' is not a relative solution or project path`.
 - **`feed_restore_targets <worktree>`** replaces `feed_solutions`. It sets the
   array `FEED_TARGETS`:
-  - **`AWF_NUGET_RESTORE` set:** each entry must exist as a regular file in the
-    worktree. A symlink is refused, because the worktree is the seed commit and
-    a symlink could point outside it. A missing entry makes it return 2 with
+  - **`AWF_NUGET_RESTORE` set:** each entry must be a regular file the seed
+    commit tracks at that exact path. A symlink, or a path reaching through a
+    symlinked directory, is refused, because it could point outside the commit.
+    Anything not in the commit makes it return 2 with
     `AWF_NUGET_RESTORE entry '<entry>' is not in the seed commit`.
-  - **Unset:** the root `*.sln` / `*.slnx`. When there are none, it returns 2
-    with `no solution at the repository root; set AWF_NUGET_RESTORE to the solution or project to restore`.
+  - **Unset:** the root `*.sln` / `*.slnx`, falling back to the root `*.csproj`
+    / `*.fsproj` when the root holds no solution — the no-argument
+    `dotnet restore` this replaces handled such a root. When there is neither,
+    it returns 2 with
+    `no solution or project at the repository root; set AWF_NUGET_RESTORE to the solution or project to restore`.
 - **`feed_pre_restore`** returns **2** when there is no target, and 1 on a
   restore failure as before. Cleanup runs on both paths.
 - **`restore_private_feeds`:**
@@ -65,8 +71,10 @@ solution lives in a subdirectory cannot use the private-feed path at all.
 - [ ] With `AWF_NUGET_RESTORE=samples/dotnet/Sample.sln`, the pre-restore
       restores exactly that solution.
 - [ ] With the variable unset and a root solution, behaviour is unchanged.
-- [ ] With the variable unset and no root solution, the run is refused before the
-      agent, with the "set AWF_NUGET_RESTORE" text. No `dotnet` call is made.
+- [ ] With the variable unset and a root project but no root solution, that
+      project is restored.
+- [ ] With the variable unset and neither at the root, the run is refused before
+      the agent, with the "set AWF_NUGET_RESTORE" text. No `dotnet` call is made.
 - [ ] An absolute path, a `..` segment, a wrong extension or a disallowed
       character is refused in preflight. No `dotnet` call is made.
 - [ ] An entry missing from the seed commit, or a symlink, is refused with its

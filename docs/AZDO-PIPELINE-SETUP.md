@@ -134,7 +134,7 @@ Set on the pipeline (not in YAML):
 - `AWF_NUGET_FEEDS` — optional, empty by default. Private NuGet feeds to
   restore before the agent starts. See section 14.
 - `AWF_NUGET_RESTORE` — optional, empty by default. What that restore restores,
-  for a repo whose solution is not at the root. See section 14.2.
+  for a repo whose solution or project is not at the root. See section 14.2.
 
 Leave *Let users override this value when running this pipeline* **off** for
 each of them.
@@ -549,27 +549,34 @@ samples/dotnet/Sample.sln
 ```
 
 Unset or blank, the restore takes every `*.sln` and `*.slnx` **at the
-repository root** — which is all a repo with its solution there needs. A repo
-whose solution lives in a subdirectory must name it: `dotnet restore` with no
-project argument stops with `MSB1003` in such a root, so the run is refused
-before the agent starts with
+repository root**, or, when the root holds no solution, every `*.csproj` and
+`*.fsproj` there — which is all a repo with its solution or project at the root
+needs. A repo whose solution lives in a subdirectory must name it:
+`dotnet restore` with no project argument stops with `MSB1003` in a root that
+holds neither, so the run is refused before the agent starts with
 
 ```text
-failed: private feed restore: no solution at the repository root; set AWF_NUGET_RESTORE to the solution or project to restore
+failed: private feed restore: no solution or project at the repository root; set AWF_NUGET_RESTORE to the solution or project to restore
 ```
 
 Each entry must be a relative path to a `.sln`, `.slnx`, `.csproj` or `.fsproj`
-file, built from `A-Z a-z 0-9 . _ / -`, with no leading `/` and no `..`
-segment. Anything else refuses the run at preflight, before any `dotnet` call:
+file, built from `A-Z a-z 0-9 . _ / -`, with no leading `/`, no `..` segment and
+no path component starting with `-` (a leading dash reaches `dotnet restore` as
+an option, not as a path). Anything else refuses the run at preflight, before
+any `dotnet` call:
 
 ```text
 failed: private feed setup: AWF_NUGET_RESTORE entry '<entry>' is not a relative solution or project path
 ```
 
-The entry must also exist as a regular file in the default branch the agent is
-seeded from; a path that is missing there, or that is a symlink, is refused
-with `AWF_NUGET_RESTORE entry '<entry>' is not in the seed commit`. The restore
-runs on that commit, so a symlink could point at a project outside it.
+The entry must also be a regular file that the default branch the agent is
+seeded from tracks at exactly that path; a path that is missing there, that is
+a symlink, or that reaches through a symlinked directory, is refused with
+`AWF_NUGET_RESTORE entry '<entry>' is not in the seed commit`. The restore
+evaluates — which is to say executes — the MSBuild logic of what it points at,
+and that has to be code from the seed commit.
+
+Entries may be separated by newlines as well as spaces; every entry is checked.
 
 Without `AWF_NUGET_FEEDS` there is no restore and the variable is ignored.
 

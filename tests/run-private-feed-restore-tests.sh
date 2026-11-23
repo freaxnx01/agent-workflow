@@ -87,10 +87,16 @@ make_repo() {
 
 REPO_SLN="$(make_repo repo-sln a.sln b.slnx)"
 REPO_PLAIN="$(make_repo repo-plain)"
+# A root with a project but no solution: `dotnet restore` with no argument
+# restored it before #682, so the default must still find it.
+REPO_PROJ="$(make_repo repo-proj App.csproj)"
 # A root with no solution of its own: the solution is in a subdirectory, next to
 # a committed symlink, which stands in for an entry pointing out of the tree.
+# `linkdir` is the same trick one component earlier: a path through it is not in
+# the commit either, though `-f` follows it and `-L` never looks at it.
 REPO_SUB="$(make_repo repo-sub samples/dotnet/Sample.sln)"
 ln -s Sample.sln "$REPO_SUB/samples/dotnet/Link.sln"
+ln -s samples/dotnet "$REPO_SUB/linkdir"
 git -C "$REPO_SUB" add -A
 git -C "$REPO_SUB" -c user.name=t -c user.email=t@example.invalid commit -q -m link
 git -C "$REPO_SUB" update-ref refs/remotes/origin/main main
@@ -197,15 +203,34 @@ assert_eq "syntax_RejectsBadExt: rc" "1" "$RC"
 pfr 'feed_restore_targets_syntax_check' AWF_NUGET_RESTORE='a b.sln'
 assert_eq "syntax_RejectsBadChar: rc" "1" "$RC"
 
+# A leading dash in any component would reach `dotnet restore` in argv as an
+# option rather than a path.
+pfr 'feed_restore_targets_syntax_check' AWF_NUGET_RESTORE='-foo.csproj'
+assert_eq "syntax_RejectsLeadingDash: rc" "1" "$RC"
+
+pfr 'feed_restore_targets_syntax_check' AWF_NUGET_RESTORE='sub/-p.sln'
+assert_eq "syntax_RejectsDashComponent: rc" "1" "$RC"
+
+pfr 'feed_restore_targets_syntax_check' AWF_NUGET_RESTORE='a-b/c-d.sln'
+assert_eq "syntax_AcceptsInnerDash: rc" "0" "$RC"
+
 pfr 'feed_restore_targets_syntax_check' AWF_NUGET_RESTORE='a.sln sub/b.csproj c/d.fsproj'
 assert_eq "syntax_AcceptsList: rc" "0" "$RC"
+
+# A multi-line value is easy to produce in the Azure DevOps variables UI; every
+# line must be seen, not silently dropped after the first.
+pfr 'feed_restore_targets_syntax_check' AWF_NUGET_RESTORE='a.sln
+bad.txt'
+assert_eq "syntax_ChecksEveryLine: rc" "1" "$RC"
+assert_contains "syntax_ChecksEveryLine: names the second line's entry" \
+  "entry 'bad.txt'" "$ERR"
 
 pfr 'feed_restore_targets_syntax_check' AWF_NUGET_RESTORE='   '
 assert_eq "syntax_BlankIsUnset: rc" "0" "$RC"
 
 section "feed_restore_targets (#682)"
 
-NO_TARGET_MSG='no solution at the repository root; set AWF_NUGET_RESTORE to the solution or project to restore'
+NO_TARGET_MSG='no solution or project at the repository root; set AWF_NUGET_RESTORE to the solution or project to restore'
 # One line per case: the return code, then the resolved targets comma-joined.
 TARGETS_BODY='rc=0
 feed_restore_targets "$WT" || rc=$?
@@ -216,6 +241,11 @@ assert_contains "targets_DefaultRootSolutions" "rc=0 targets=a.sln,b.slnx" "$OUT
 
 pfr "$TARGETS_BODY" WT="$REPO_SLN" AWF_NUGET_RESTORE='  '
 assert_contains "targets_BlankIsUnset" "rc=0 targets=a.sln,b.slnx" "$OUT"
+
+# The root holds a project and no solution: the no-argument `dotnet restore` of
+# before #682 handled that root, so the default must keep handling it.
+pfr "$TARGETS_BODY" WT="$REPO_PROJ"
+assert_contains "targets_DefaultRootProject" "rc=0 targets=App.csproj" "$OUT"
 
 pfr "$TARGETS_BODY" WT="$REPO_SUB" AWF_NUGET_RESTORE='samples/dotnet/Sample.sln'
 assert_contains "targets_Explicit" "rc=0 targets=samples/dotnet/Sample.sln" "$OUT"
@@ -233,6 +263,19 @@ assert_eq "targets_MissingEntry: names the entry" \
 pfr "$TARGETS_BODY" WT="$REPO_SUB" AWF_NUGET_RESTORE='samples/dotnet/Link.sln'
 assert_contains "targets_SymlinkEntry: rc" "rc=2" "$OUT"
 assert_contains "targets_SymlinkEntry: names the entry" "samples/dotnet/Link.sln" "$ERR"
+
+# The symlink one component earlier: the file at the end of the path is real and
+# not a symlink, so only the commit's own file list rules it out.
+pfr "$TARGETS_BODY" WT="$REPO_SUB" AWF_NUGET_RESTORE='linkdir/Sample.sln'
+assert_contains "targets_SymlinkDirEntry: rc" "rc=2" "$OUT"
+assert_contains "targets_SymlinkDirEntry: names the entry" "linkdir/Sample.sln" "$ERR"
+
+# A multi-line value: the entry after the newline is resolved, not dropped.
+pfr "$TARGETS_BODY" WT="$REPO_SUB" AWF_NUGET_RESTORE='samples/dotnet/Sample.sln
+x/Missing.sln'
+assert_contains "targets_EveryLine: rc" "rc=2" "$OUT"
+assert_eq "targets_EveryLine: names the second line's entry" \
+  "AWF_NUGET_RESTORE entry 'x/Missing.sln' is not in the seed commit" "$ERR"
 
 section "feed_pre_restore — the successful run"
 
@@ -299,8 +342,21 @@ assert_eq "feed_pre_restore_CleansUpOnSuccess: no worktree left" "1" \
 
 section "feed_pre_restore — a root with no solution file (#682)"
 
-# `dotnet restore` with no argument stops with MSB1003 in such a root, so the
-# run is refused with rc 2 before any dotnet call, not with a restore failure.
+# A root holding a project but no solution: restored by name, as the
+# no-argument `dotnet restore` of before #682 did, not refused.
+CWD="$REPO_PROJ"
+WD2A="$TMP/wd2a"; mkdir -p "$WD2A"
+DLOG2A="$TMP/dotnet2a.log"; : > "$DLOG2A"
+pfr 'feed_pre_restore origin/main "$WD"' \
+  WD="$WD2A" AWF_NUGET_FEEDS="$ADO_FEED" AZURE_DEVOPS_EXT_PAT="$SECRET" \
+  DOTNET_LOG="$DLOG2A"
+assert_eq "pre_restore_RootProject_Restores: rc" "0" "$RC"
+assert_contains "pre_restore_RootProject_Restores: the root project" \
+  "argv=restore App.csproj " "$(cat "$DLOG2A")"
+
+# `dotnet restore` with no argument stops with MSB1003 in a root that holds
+# neither, so the run is refused with rc 2 before any dotnet call, not with a
+# restore failure.
 CWD="$REPO_PLAIN"
 WD2="$TMP/wd2"; mkdir -p "$WD2"
 DLOG2="$TMP/dotnet2.log"; : > "$DLOG2"

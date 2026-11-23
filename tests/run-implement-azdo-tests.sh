@@ -945,7 +945,7 @@ assert_not_contains "implement_RestoreBadSyntax_RefusedInPreflight: the agent ne
 run_pipeline success DOTNET_LOG="$FEED_DOTNET_LOG" AWF_NUGET_FEEDS="$FEED_URL"
 assert_eq "implement_NoRootSolution_RefusedWithHint: rc" "1" "$RC"
 assert_contains "implement_NoRootSolution_RefusedWithHint: the report says what to set" \
-  "private feed restore: no solution at the repository root; set AWF_NUGET_RESTORE" "$AZLOG"
+  "private feed restore: no solution or project at the repository root; set AWF_NUGET_RESTORE" "$AZLOG"
 assert_contains "implement_NoRootSolution_RefusedWithHint: points to the feed section" \
   "see AZDO-PIPELINE-SETUP.md §14" "$AZLOG"
 assert_not_contains "implement_NoRootSolution_RefusedWithHint: not the Feed Reader cause" \

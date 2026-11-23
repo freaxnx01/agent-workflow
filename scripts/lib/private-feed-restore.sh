@@ -44,7 +44,8 @@
 #   AWF_NUGET_FEEDS   space-separated feed index URLs. Empty or unset = off.
 #   AWF_NUGET_RESTORE space-separated relative paths of the solutions or
 #                     projects to restore. Empty or unset = the solutions at the
-#                     repository root (#682).
+#                     repository root, or its projects when it holds no
+#                     solution (#682).
 #   AWF_NUGET_CACHE   the fallback folder. Default /var/cache/awf-nuget. The
 #                     library tests override it; in a pipeline the driver's
 #                     preflight_cache refuses any other value.
@@ -80,22 +81,34 @@ FEED_RESTORE_ENTRIES=()
 # split is explicit for the same reason feed_list's is: this repo's scripts run
 # with an IFS that does not split on spaces. A blank value yields no entry, so
 # it is the same as an unset one.
+#
+# `-d ''` reads the whole value, not just its first line: the Azure DevOps
+# variables UI makes a multi-line value easy to produce, and a plain `read -r -a`
+# would drop every entry after the first newline without a word of complaint —
+# a partial restore whose missing packages only surface as an agent-side build
+# failure much later. `-d ''` returns 1 at EOF; the array is filled regardless.
 feed_restore_list() {
   FEED_RESTORE_ENTRIES=()
   local IFS=$' \t\n'
-  read -r -a FEED_RESTORE_ENTRIES <<<"${AWF_NUGET_RESTORE:-}"
+  read -r -d '' -a FEED_RESTORE_ENTRIES <<<"${AWF_NUGET_RESTORE:-}" || true
 }
 
 # feed_restore_targets_syntax_check — the cheap half of the target check, safe
 # to run in preflight before the seed worktree exists. An entry must stay inside
 # the worktree and name a solution or project: the path reaches `dotnet restore`
 # in argv, and MSBuild evaluation executes whatever it points at.
+#
+# No path component may start with `-`: such a component reaches `dotnet restore`
+# in argv, where a leading dash parses as an option and not as a path. Nothing
+# harmful is reachable that way, but the refusal belongs here, where it names the
+# variable, rather than as a restore failure that points at the Feed-Reader role.
 feed_restore_targets_syntax_check() {
   feed_restore_list
   local entry
   for entry in "${FEED_RESTORE_ENTRIES[@]}"; do
     if [[ "$entry" =~ ^[A-Za-z0-9._/-]+\.(sln|slnx|csproj|fsproj)$ ]] &&
        [[ "$entry" != /* ]] &&
+       [[ "$entry" != -* && "$entry" != */-* ]] &&
        [[ "$entry" != ../* && "$entry" != */../* && "$entry" != */.. ]]; then
       continue
     fi
@@ -226,16 +239,36 @@ feed_restore_cleanup() {
   return 0
 }
 
+# feed_entry_is_tracked_file <worktree> <entry> — true when <entry> names a
+# regular file that the seed commit itself tracks.
+#
+# `git ls-files` is what rules out a path reaching through a symlinked
+# directory: `-f` follows symlinks and `-L` inspects only the last component, so
+# with `samples` committed as a symlink neither of them sees anything wrong with
+# `samples/Project.csproj` — yet it is a project outside the seed commit, and
+# `dotnet restore` would evaluate, which is to say execute, its MSBuild logic.
+# Only a blob the commit holds at that exact path qualifies; the `-L` / `-f`
+# pair still rejects the last component being a (tracked) symlink.
+feed_entry_is_tracked_file() {
+  local worktree="$1" entry="$2"
+  [[ ! -L "$worktree/$entry" && -f "$worktree/$entry" ]] || return 1
+  bgit -C "$worktree" ls-files --error-unmatch -- "$entry" >/dev/null 2>&1
+}
+
 # feed_restore_targets <worktree> — what to restore, as paths relative to
 # <worktree>, in FEED_TARGETS. AWF_NUGET_RESTORE names them; without it, the
-# solution files at the root, a root with both a .sln and a .slnx getting both.
+# solution files at the root, a root with both a .sln and a .slnx getting both,
+# falling back to the project files at the root when it holds no solution —
+# which is what `dotnet restore` with no argument restored there before #682.
 #
 # Returns 2 when there is nothing to restore (#682). `dotnet restore` with no
-# argument in a root that holds no solution stops with MSB1003, so a consumer
-# whose solution lives in a subdirectory is told which variable to set instead.
+# argument in a root holding neither a solution nor a project stops with
+# MSB1003, so a consumer whose solution lives in a subdirectory is told which
+# variable to set instead.
 #
-# A named entry must be a regular file in the worktree: the worktree is the seed
-# commit, and a symlink there could point at a project outside it.
+# A named entry must be a regular file the seed commit tracks: the restore
+# executes the MSBuild logic of whatever it points at, and that must be code
+# from the commit the agent is seeded from.
 FEED_TARGETS=()
 feed_restore_targets() {
   local worktree="$1" entry path
@@ -243,7 +276,7 @@ feed_restore_targets() {
   feed_restore_list
   if (( ${#FEED_RESTORE_ENTRIES[@]} > 0 )); then
     for entry in "${FEED_RESTORE_ENTRIES[@]}"; do
-      if [[ -L "$worktree/$entry" || ! -f "$worktree/$entry" ]]; then
+      if ! feed_entry_is_tracked_file "$worktree" "$entry"; then
         printf "AWF_NUGET_RESTORE entry '%s' is not in the seed commit\n" "$entry" >&2
         return 2
       fi
@@ -256,7 +289,13 @@ feed_restore_targets() {
     FEED_TARGETS+=("${path##*/}")
   done
   if (( ${#FEED_TARGETS[@]} == 0 )); then
-    printf 'no solution at the repository root; set AWF_NUGET_RESTORE to the solution or project to restore\n' >&2
+    for path in "$worktree"/*.csproj "$worktree"/*.fsproj; do
+      [[ -f "$path" ]] || continue
+      FEED_TARGETS+=("${path##*/}")
+    done
+  fi
+  if (( ${#FEED_TARGETS[@]} == 0 )); then
+    printf 'no solution or project at the repository root; set AWF_NUGET_RESTORE to the solution or project to restore\n' >&2
     return 2
   fi
   return 0
