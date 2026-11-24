@@ -364,7 +364,7 @@ classify_issue() {
   # own content, and the global ISSUE_BODY is left exactly as it was read.
   if plan_body_for_classify > "$plan_body"; then
     sizing_env=(ISSUE_BODY="$(< "$plan_body")")
-  elif grep -q '^## Implementation Plan' <<<"$ISSUE_BODY"; then
+  elif grep -qi '^## Implementation Plan' <<<"$ISSUE_BODY"; then
     # A Markdown work item carries the plan inline (ADR-025): size it as it
     # stands, with the inherited ISSUE_BODY and no fallback suffix.
     :

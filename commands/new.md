@@ -277,9 +277,15 @@ project root and will not be found by any of the repo-scoped queries in
 
 ```bash
 body_file="$(mktemp)"; trap 'rm -f "$body_file"' EXIT
-printf '%s\n' "<body>" > "$body_file"
+cat > "$body_file" <<'BODY'
+<body>
+BODY
 azdo_create_markdown_item "<type>" "<title>" "$AZDO_PROJECT\\$AZDO_REPO" "" "$body_file"
 ```
+
+The heredoc delimiter is quoted (`'BODY'`), so backticks, `$VAR` and `$(…)`
+in the Markdown body are written literally instead of being run or expanded.
+Alternatively write the body file with the Write tool.
 
 The tags argument is the semicolon-delimited `System.Tags` string; empty
 creates the item without tags.
