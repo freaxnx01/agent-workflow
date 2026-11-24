@@ -859,8 +859,11 @@ Blocked item and the issue is handed over with `needs-human`. See
 
 ## Azure DevOps
 
-The write path works. `System.Description` is an **HTML** field, so what goes
-into it is not `/enrich`'s GitHub body — see ADR-017 for why that is deliberate.
+The write path works. A work item's `System.Description` is either a
+**Markdown** field (items `/new` and the migration create) or an **HTML** field
+(older items). A Markdown item gets `/enrich`'s GitHub-shaped body with the plan
+inlined (ADR-025). An HTML item keeps criteria and pointers, not the plan
+(ADR-017, which ADR-025 amends for Markdown items only).
 
 ```bash
 source "$HOME/.claude/scripts/lib/detect-forge.sh"
@@ -931,9 +934,41 @@ sessions can both pass detection before either tags the item, and nothing in
 this section re-verifies after acquiring — treat the window between detect and
 acquire as unprotected.
 
-**Write the description** once the spec and plan are committed and pushed. The
-work item gets the original description, then the acceptance criteria, then
-pointers — not the inlined plan:
+**Write the description** once the spec and plan are committed and pushed.
+First read the item's description format. A failed read stops the run and
+releases the lock — never fall through to the HTML path:
+
+```bash
+fmt="$(azdo_description_format "$ISSUE")" || {
+  azdo_remove_tag "$ISSUE" enrichment-ongoing
+  echo "format read failed — not writing"; exit 1
+}
+```
+
+If the read fails, stop here: do not guess HTML, because writing HTML into a
+Markdown item stores it as raw text and the format cannot be patched back.
+
+**Markdown item** (`fmt` is `markdown`). Compose the body exactly as the GitHub
+section's Step 6 does — the original description, then these headings, in this
+order — and write it verbatim:
+
+- `## Acceptance Criteria`
+- `## Implementation Plan`, holding the full plan verbatim
+- `## Spec`, a link to the committed spec
+
+```bash
+orig="$(azdo_description "$ISSUE")" || { echo "read failed — not writing"; exit 1; }
+# Build "$BODY_FILE" from "$orig" plus the three sections above, then:
+azdo_set_markdown_description "$ISSUE" "$BODY_FILE"
+```
+
+`azdo_set_markdown_description` prints the stored description; assert that the
+read-back contains all three headings. Azure DevOps long-text fields hold far
+more than GitHub's 65,536 characters, so no elision is needed below 1,000,000
+characters. Above that, stop and say so.
+
+**HTML item.** The work item gets the original description, then the acceptance
+criteria, then pointers — not the inlined plan:
 
 ```bash
 orig="$(azdo_description "$ISSUE")" || { echo "read failed — not writing"; exit 1; }
