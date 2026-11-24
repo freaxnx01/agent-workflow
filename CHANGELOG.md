@@ -856,6 +856,7 @@ additions are the optional `NTFY_TOKEN` secret and the
 
 ### Fixed
 
+- **azdo:** The driver sizes the turn budget from a plan inlined in a Markdown work item and prints no "unplanned default" suffix for it (#683). A plan pointer still wins.
 - **azdo:** Restore the named solution when the repo root holds none, through the new `AWF_NUGET_RESTORE` pipeline variable (#682)
 - **azdo:** Refuse a private-feed run that has nothing to restore by naming `AWF_NUGET_RESTORE` instead of the Feed Reader role, which pointed at the wrong cause. A root holding a project but no solution keeps restoring as before, so no consumer has to set the new variable to stay working (#682)
 - **azdo:** an `ai-implement` run now sizes its turn budget from the plan file

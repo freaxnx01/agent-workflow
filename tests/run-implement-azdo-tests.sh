@@ -1105,6 +1105,29 @@ assert_eq "classify_issue_LeavesBodyAlone: ISSUE_BODY untouched" "yes" "$BODY_UN
 assert_contains "classify_issue_LeavesBodyAlone: no fallback suffix when sized" \
   "turns : $(inlined_budget 6)" "$OUT"
 
+# A Markdown work item carries the plan inline (#683, ADR-025), exactly like a
+# GitHub issue body, so classify-turns.sh can size it as it stands.
+inline_body() {
+  local count="$1" i
+  printf 'the title\n## Implementation Plan\n'
+  for ((i = 1; i <= count; i++)); do printf '## Task %d: step %d\n' "$i" "$i"; done
+}
+
+classify_in "$small_repo" "$(inline_body 6)"
+assert_eq "classify_issue_InlinePlanNoPointer: matches the inlined tier" \
+  "$(inlined_budget 6)" "$BUDGET"
+assert_not_contains "classify_issue_InlinePlanNoPointer: no fallback suffix" \
+  "unplanned default" "$OUT"
+
+# The pointer wins: the committed file is the source of truth.
+classify_in "$small_repo" "$(printf '%s\n<p>Plan: <code>docs/superpowers/plans/p.md</code></p>' "$(inline_body 6)")"
+assert_eq "classify_issue_PointerWinsOverInline: sized from the 1-task file" \
+  "$(inlined_budget 1)" "$BUDGET"
+
+classify_in "$small_repo" 'Do the thing, no plan anywhere'
+assert_contains "classify_issue_NeitherKeepsSuffix: suffix stays" \
+  "(unplanned default: no plan pointer)" "$OUT"
+
 section "B6: never vote"
 
 # The agent never votes, completes or publishes a PR. Every pattern is a call
