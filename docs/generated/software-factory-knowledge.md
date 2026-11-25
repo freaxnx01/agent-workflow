@@ -713,7 +713,7 @@ then follow it. Today: re-scan and report drift.
 One `list_repos` call re-derives the ground truth. Update the map, commit,
 move on.
 
-# FILE: agent-workflow/docs/DECISIONS.md (@29ded16)
+# FILE: agent-workflow/docs/DECISIONS.md (@c49e151)
 
 # Architecture Decisions
 
@@ -2375,6 +2375,10 @@ dependency the guardrails forbid adding unasked, and makes the write lossy.
 **Consequence.** `/enrich` reports the paths and stops; it never claims the item
 is dispatchable, because nothing dispatches it.
 
+**Amended by ADR-025 (2026-11-23):** the "no Markdown-format field" premise no
+longer holds. A Markdown-format work item carries the plan inline; this ADR
+stays in force for HTML items only.
+
 **Amendment (2026-11-02, #573).** A pipeline now runs on this forge: tagging a
 work item `ai-implement` dispatches `scripts/azdo-pipeline-run.sh` from an Azure
 Pipeline. The "no pipeline agent here" reason above no longer holds, but the
@@ -2989,6 +2993,43 @@ job, for the cost of one image change.
   counterpart of `run-agent-isolation-tests.sh` for this forge.
 
 **Source:** `docs/superpowers/specs/2026-11-16-azdo-agent-user-boundary-design.md`
+
+## ADR-025 — A Markdown work item carries the plan inline (2026-11-23)
+
+**Status:** accepted; amends ADR-017 for Markdown items.
+
+**Context.** ADR-017 kept the plan out of the work item because
+`System.Description` was HTML-only. The work item API takes
+`{"op":"add","path":"/multilineFieldsFormat/System.Description","value":"Markdown"}`
+and stores Markdown verbatim (probed on a sandbox project on 2026-11-23). #642
+creates Markdown-format items. `/enrich` writing HTML into one stores raw tags,
+and the format cannot be patched back without a value.
+
+**Decision.**
+
++ `/enrich` reads the item's format with `azdo_description_format`. A
+  Markdown item gets the GitHub-shaped body: the original description, then
+  `## Acceptance Criteria`, `## Implementation Plan` (the full plan) and
+  `## Spec`, written with `azdo_set_markdown_description`.
++ An HTML item keeps ADR-017's criteria and pointers.
++ `/new` creates Markdown items through `azdo_create_markdown_item`.
++ `classify_issue` sizes the turn budget from an inlined plan when the body has
+  no plan pointer, and prints no fallback suffix. A pointer still wins.
++ A failed format read stops the run and releases the lock; it never falls
+  through to HTML.
+
+**Rejected.** Forcing every item to Markdown on first enrich: an HTML
+description written as Markdown renders as raw tags, and converting HTML needs a
+converter the host does not have.
+
+**Consequences.**
+
++ Parity with the GitHub body, so one reader contract serves both forges.
++ Mixed boards work: old HTML items and new Markdown items coexist.
++ #651's plan-file lookup is the fallback for HTML items.
++ No elision below 1,000,000 characters; above that the run stops.
+
+**Source:** `docs/superpowers/specs/2026-11-23-azdo-markdown-work-items-design.md`
 
 # FILE: agent-workflow/docs/AUTOPILOT.md (@e6286d4)
 
