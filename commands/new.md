@@ -269,18 +269,26 @@ the project's general type rather than inventing one.
 
 ### Create
 
-`az boards work-item create` has **no `--tags` flag**; tags go through `--fields`,
-semicolon-delimited. Set the Area Path too, or the item lands at the project root
-and will not be found by any of the repo-scoped queries in `/issues`, `/queue` or
-`/triage`:
+Create **Markdown-format** items, so the body is stored verbatim and `/enrich`
+can later inline the plan (ADR-025). `azdo_create_markdown_item` takes the type,
+title, area, tags and a body file. Set the Area Path, or the item lands at the
+project root and will not be found by any of the repo-scoped queries in
+`/issues`, `/queue` or `/triage`:
 
 ```bash
-az boards work-item create --org "$(azdo_org_url)" --project "$AZDO_PROJECT" \
-  --type "<type>" --title "<title>" \
-  --fields "System.AreaPath=$AZDO_PROJECT\\$AZDO_REPO" \
-            "System.Description=<body>" \
-  --output json --only-show-errors
+body_file="$(mktemp)"; trap 'rm -f "$body_file"' EXIT
+cat > "$body_file" <<'BODY'
+<body>
+BODY
+azdo_create_markdown_item "<type>" "<title>" "$AZDO_PROJECT\\$AZDO_REPO" "" "$body_file"
 ```
+
+The heredoc delimiter is quoted (`'BODY'`), so backticks, `$VAR` and `$(…)`
+in the Markdown body are written literally instead of being run or expanded.
+Alternatively write the body file with the Write tool.
+
+The tags argument is the semicolon-delimited `System.Tags` string; empty
+creates the item without tags.
 
 **No milestone fallback here.** A milestone on this forge is an iteration (ADR-012)
 and this create sets only Area Path and description, so the `backlog` fallback

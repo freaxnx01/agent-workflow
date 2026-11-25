@@ -464,6 +464,7 @@ additions are the optional `NTFY_TOKEN` secret and the
 
 ### Added
 
+- **azdo:** `azdo_description_format` and `azdo_set_markdown_description` in `scripts/lib/azdo.sh` read a work item's description format and write a Markdown description, keeping the Markdown format (#683).
 - **azdo:** `scripts/migrate-gh-issues-to-azdo.sh` migrates a consumer's **open** GitHub issues to Azure DevOps work items for the cutover (#642). One Markdown-format work item per issue, so the body arrives verbatim; comments copied in order with an author/date header; labels mapped to tags with the pipeline's own left behind. Each migrated issue gets a link comment carrying a marker, so a re-run skips it, and `--dry-run` writes nothing. See `docs/AZDO-PIPELINE-SETUP.md` section 15.
 - **azdo:** `docs/AZDO-CUTOVER.md` — the ordered runbook for moving a consumer repository from GitHub to Azure DevOps as its only forge, with the GitHub repository kept as a read-only archive (#643). Ten checkable steps: preconditions, backup, freeze, last mirror sync, disabling the GitHub workflows, the ADO setup, the issue migration, verification, closing and archiving, and rollback. Linked from `docs/AZDO-PIPELINE-SETUP.md`.
 - **azdo:** The driver restores private Azure Artifacts feeds (`AWF_NUGET_FEEDS`) into a read-only package folder before the agent starts, and refuses the run when the restore fails (#641). See `docs/AZDO-PIPELINE-SETUP.md` section 14.
@@ -758,6 +759,7 @@ additions are the optional `NTFY_TOKEN` secret and the
 
 ### Changed
 
+- **azdo:** `/enrich` on a Markdown work item writes the GitHub-shaped body with the plan inlined (`## Acceptance Criteria`, `## Implementation Plan`, `## Spec`); an HTML item behaves as before. `/new` creates Markdown items. Recorded as ADR-025, which amends ADR-017 (#683).
 - **commands:** `/parked repark` and `/roadmap defer` move an issue to the
   standing `backlog` milestone instead of stripping its milestone, and stop with
   a pointer to `/milestone new backlog` when that milestone is missing — never
@@ -856,6 +858,7 @@ additions are the optional `NTFY_TOKEN` secret and the
 
 ### Fixed
 
+- **azdo:** The driver sizes the turn budget from a plan inlined in a Markdown work item and prints no "unplanned default" suffix for it (#683). A plan pointer still wins.
 - **azdo:** Restore the named solution when the repo root holds none, through the new `AWF_NUGET_RESTORE` pipeline variable (#682)
 - **azdo:** Refuse a private-feed run that has nothing to restore by naming `AWF_NUGET_RESTORE` instead of the Feed Reader role, which pointed at the wrong cause. A root holding a project but no solution keeps restoring as before, so no consumer has to set the new variable to stay working (#682)
 - **azdo:** an `ai-implement` run now sizes its turn budget from the plan file

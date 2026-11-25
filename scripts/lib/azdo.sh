@@ -19,6 +19,11 @@
 #                       and echoes its new id
 #   azdo_comment_markdown <id> <text-file>
 #                       posts a Markdown comment to the work item
+#   azdo_description_format <id>
+#                       echoes `markdown` or `html` — the stored format of the
+#                       item's System.Description
+#   azdo_set_markdown_description <id> <body-file>
+#                       writes System.Description as Markdown, echoes it back
 #   azdo_closed_states  echoes "'A','B'" — the project's closed state names
 #   azdo_wiql <query>   echoes matching work-item ids, one per line
 #   azdo_tag_adder <id> <tag>
@@ -40,9 +45,10 @@
 #   1  error (the underlying az stderr is passed through)
 #   2  meaning depends on the function:
 #        - azdo_wiql: the Area Path in the query does not exist (TF51011)
-#        - azdo_set_description, azdo_comment, azdo_add_tag, azdo_remove_tag,
-#          _azdo_edit_tags, azdo_tag_adder, azdo_editors_since_tag: a usage
-#          error (missing/malformed arguments)
+#        - azdo_set_description, azdo_set_markdown_description,
+#          azdo_description_format, azdo_comment, azdo_add_tag,
+#          azdo_remove_tag, _azdo_edit_tags, azdo_tag_adder,
+#          azdo_editors_since_tag: a usage error (missing/malformed arguments)
 #   64 azdo_tag_adder, azdo_editors_since_tag: the tag is in no revision of the
 #      work item. azdo_set_tags, azdo_remove_tag, _azdo_edit_tags: a revision
 #      conflict (TestPatchOperationFailedException) when an expected revision
@@ -562,6 +568,131 @@ import sys, json
 d = json.load(sys.stdin)
 if "fields" not in d:
     sys.stderr.write("azdo_set_description: unexpected response: %s\n" % str(d)[:200])
+    sys.exit(1)
+sys.stdout.write(d["fields"].get("System.Description", ""))'
+}
+
+# azdo_description_format <id>  echoes `markdown` or `html` (#683).
+#
+# A board carries both. Items created before #642 are HTML; anything created or
+# migrated since is Markdown. Writing the wrong one is not cosmetic: HTML stored
+# in a Markdown item is kept as raw text, and a later patch cannot put the format
+# back without also resending a value ("The type changed without a value").
+#
+# `az boards work-item show` does not carry the format, so this reads the REST
+# resource itself. The key is multilineFieldsFormat["System.Description"]; an
+# ABSENT key is how the service spells HTML. The value has been observed as both
+# `markdown` and `Markdown`, so the comparison is case-insensitive and the echo
+# is always lower case.
+#
+# Unlike the PATCH writers this URL is PROJECT-scoped, so the project name is
+# percent-encoded through azdo_project_url_path -- a project name may hold a
+# space, which would otherwise split into a second curl argument.
+#
+# Exit 0 with the format echoed; 1 on a read failure or a response without
+# `fields`, echoing NOTHING. A caller must never read silence as `html`: that is
+# exactly how HTML gets written into a Markdown item. 2 usage.
+azdo_description_format() {
+  local id="${1-}"
+  if [[ -z "$id" ]]; then
+    echo "usage: azdo_description_format <id>" >&2
+    return 2
+  fi
+  : "${AZURE_DEVOPS_EXT_PAT:?AZURE_DEVOPS_EXT_PAT must be set}"
+
+  local url out
+  url="$(azdo_project_url_path)/_apis/wit/workitems/${id}?api-version=7.1"
+
+  out=$(printf 'user = ":%s"\n' "$AZURE_DEVOPS_EXT_PAT" \
+    | curl -sS -K - "$url") || return 1
+
+  printf '%s' "$out" | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    sys.stderr.write("azdo_description_format: unparseable response\n")
+    sys.exit(1)
+if "fields" not in d:
+    sys.stderr.write("azdo_description_format: unexpected response: %s\n" % str(d)[:200])
+    sys.exit(1)
+fmt = (d.get("multilineFieldsFormat") or {}).get("System.Description") or "html"
+print(str(fmt).lower())'
+}
+
+# azdo_set_markdown_description <id> <body-file>  writes System.Description as
+# Markdown and echoes the stored value back (#683).
+#
+# The counterpart of azdo_set_description for an item whose description format
+# is `markdown` -- ask azdo_description_format first, never guess. The body is
+# stored verbatim: no HTML escaping, headings and fenced code intact.
+#
+# The format op rides in the SAME patch as the value, as it does on the create
+# in azdo_create_markdown_item. The format is a property of the item, and the
+# service rejects a format change sent on its own.
+#
+# The body comes from a FILE and the serialised patch goes to curl as a file,
+# for the reason spelled out on azdo_create_markdown_item: an enriched body runs
+# to tens of kilobytes and one argv entry cannot hold it.
+#
+# The op is chosen from a read, exactly as azdo_set_description chooses it, and
+# a failed read refuses the write -- composing from an empty read would pick
+# `add`, which appends to the body it meant to replace. The PATCH URL is the
+# same org-scoped one azdo_set_description uses, so the warning on that function
+# about passing an id read back from the project you mean to touch applies here
+# in full.
+#
+# Exit 0 success, 1 read or write failure, 2 usage.
+azdo_set_markdown_description() {
+  local id="${1-}" body_file="${2-}"
+  if [[ $# -lt 2 || -z "$id" || ! -r "$body_file" ]]; then
+    echo "usage: azdo_set_markdown_description <id> <body-file>" >&2
+    return 2
+  fi
+  : "${AZURE_DEVOPS_EXT_PAT:?AZURE_DEVOPS_EXT_PAT must be set}"
+
+  local current rc=0
+  current="$(azdo_description "$id")" || rc=$?
+  if [[ $rc -ne 0 ]]; then
+    echo "azdo_set_markdown_description: could not read work item $id — refusing to write" >&2
+    return 1
+  fi
+
+  local op=add
+  [[ -n "$current" ]] && op=replace
+
+  local url patch_file out
+  url="$(azdo_org_url)/_apis/wit/workitems/${id}?api-version=7.1"
+
+  # Removed on both paths rather than with a `trap ... EXIT`: this file is
+  # SOURCED, so a trap here would replace the calling script's own.
+  patch_file="$(mktemp)"
+  python3 -c '
+import json, sys
+op, path = sys.argv[1:3]
+with open(path, encoding="utf-8") as fh:
+    description = fh.read()
+print(json.dumps([
+    {"op": op, "path": "/fields/System.Description", "value": description},
+    {"op": "add", "path": "/multilineFieldsFormat/System.Description", "value": "Markdown"},
+]))' "$op" "$body_file" > "$patch_file" \
+    || { rm -f "$patch_file"; return 1; }
+
+  out=$(printf 'user = ":%s"\n' "$AZURE_DEVOPS_EXT_PAT" \
+    | curl -sS -K - \
+        -H 'Content-Type: application/json-patch+json' \
+        -X PATCH "$url" --data-binary "@$patch_file") || { rm -f "$patch_file"; return 1; }
+  rm -f "$patch_file"
+
+  printf '%s' "$out" | python3 -c '
+import sys, json
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    sys.stderr.write("azdo_set_markdown_description: unparseable response\n")
+    sys.exit(1)
+if "fields" not in d:
+    sys.stderr.write("azdo_set_markdown_description: unexpected response: %s\n" % str(d)[:200])
     sys.exit(1)
 sys.stdout.write(d["fields"].get("System.Description", ""))'
 }
