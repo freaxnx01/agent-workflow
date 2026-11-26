@@ -5316,7 +5316,7 @@ Tab completion: run `bridge.exe init --shell powershell` and paste the printed l
 - GitHub API `per_page=100`: owners with 100+ repos in a single visibility will be truncated.
 - Forgejo owner is hardcoded to `freax` in path-inference.
 
-# FILE: bridge/docs/cockpit.md (@43f639c)
+# FILE: bridge/docs/cockpit.md (@2b0bc3d)
 
 # Cockpit (WebUI), the Inbox and the Pipeline board
 
@@ -5356,6 +5356,7 @@ and Azure DevOps have no run marker and never appear.
 | `ActionHuman`, any other reason | **Cards**, kind `human` (●) |
 | `ActionRetry` | **Cards**, kind `retry` (↻) |
 | `ActionWait` | **Running & waiting**, one line each |
+| `ActionNone` + `ai:done` + merge evidence | **Cards**, kind `merge` (✓), see below |
 | `ActionNone` | not shown |
 
 The reasons are `Action.Reason` verbatim; the row-by-row mapping that produces
@@ -5363,7 +5364,7 @@ them is in [`dispatch.md`](dispatch.md) ("When a run fails").
 
 Cards sort by urgency group, oldest first within a group:
 
-1. Work exists and waits for review: `review blocked`, `review failed`, `checks blocked`, `partial`.
+1. Work exists and waits for review: `review blocked`, `review failed`, `checks blocked`, `partial`, plus every `merge` card.
 2. A run stopped: every other `human` reason except group 4.
 3. `retry` cards.
 4. No information: `no run marker`, `retry never reported`, `re-dispatch never reported`.
@@ -5374,6 +5375,51 @@ marker's `posted`, or the issue's `updated` when there is none. Tapping a card o
 a waiting line opens the issue detail: every trusted marker on the issue, newest
 first, read live unless the collector already read that thread in the last
 minute. Esc or ← closes it.
+
+### Merge cards
+
+A successful run (`ai:done`) leaves nothing for the dispatcher to do, but its
+PR still waits for a person. Such an issue becomes a **merge card** when all of
+this holds:
+
+- the issue is open, carries `ai:done`, is not parked, and does **not** carry
+  `ai-review-ai-merge` (that lane merges its own PRs);
+- any failure / blocked / paused / parked state would keep its own card — the
+  merge rule only ever applies where `NextAction` is `ActionNone`;
+- exactly **one** open PR closes the issue (`Closes #N`) **and** was opened by a
+  trusted pipeline identity (see `BRIDGE_PIPELINE_BOTS`). More than one → the
+  card shows `several open PRs close this issue` and no Merge.
+
+The card shows the PR's `## Summary` section (or "no summary in PR body"), the
+AI review verdict with a "for the current head" check, `checks passed/total`,
+and the changed files with +/− counts (first 100). **Merge** renders only when
+nothing blocks it; otherwise its slot shows the reason:
+
+`draft` · `checks running` · `checks failing` · `no checks reported` ·
+`no review yet` · `review on older commit` · `review: request_changes` /
+`block` / `review_failed` · `conflicts` · `several open PRs close this issue` ·
+`forge read failed (evidence stale)`.
+
+Checks are green when every check run on the head SHA is `completed` with
+conclusion `success`, `neutral` or `skipped` **and** every commit status is
+`success`. A head with no checks at all is `no checks reported`, never green.
+`mergeable_state` `blocked` or `behind` is left to GitHub, which refuses the
+merge itself and whose message is then shown; only `dirty` reads as
+`conflicts`.
+
+The verdict is read from PR comments by trusted identities only: ADR-022's
+`<!-- ai-review: {…} -->` marker (v1) when present, else the
+`<!-- review-pr:<sha> -->` anchor plus a ``verdict: `…` `` line. The latest
+verdict on the PR's **current** head SHA wins; one only on an older commit
+reads as `review on older commit`. The comparison ignores case and accepts an
+abbreviated SHA (7 hex or more) as naming the head it is a prefix of, so a
+short anchor is not mistaken for a verdict on another commit.
+
+Evidence is gathered on the issues tick and cached per `(repo, PR, head SHA)` —
+a push invalidates it, and checks that are still running or absent are re-read
+every tick. `GET /api/inbox` makes no forge call. A failed read keeps the last
+reading, marks it `stale`, drops Merge and adds a `merge owner/name#N` entry to
+`errors`.
 
 ### Freshness
 
@@ -5458,6 +5504,10 @@ while the old data stays on the board. To spare the GitHub rate limit:
 
 - PRs and milestones are fetched only for wired repos that have at least one gate candidate (an issue not carrying any of the labels above).
 - Workflow runs are fetched only for repos that have an `ai-implement` issue.
+- Merge evidence (PR, its comments, the head's checks and statuses, the files)
+  costs five calls per merge candidate, and only when the cached reading is for
+  another head SHA, older than the issues interval, or had checks still
+  running. Waiting agent PRs are single digits in practice.
 - The issue detail re-reads a thread at most once a minute; inside that window
   it is answered from the collector's comment cache. The endpoint is open, so
   without the window any page the operator visits could loop it and exhaust the
@@ -5501,7 +5551,7 @@ Open and read-only, like `GET /api/pipeline`.
 ```json
 {
   "cards": [{"repo": "owner/name", "number": 412, "title": "", "url": "",
-             "kind": "human|retry|wait|parked", "reason": "review blocked",
+             "kind": "human|retry|wait|parked|merge", "reason": "review blocked",
              "since": "RFC3339",
              "run": {"attempt": 2, "counts": true, "retryAttempt": 0,
                      "class": "task_failure", "decision": "stop", "status": "ai:failed",
@@ -5515,6 +5565,25 @@ Open and read-only, like `GET /api/pipeline`.
 
 `run` is omitted when the issue has no readable marker. Empty sections are `[]`,
 never `null`; `errors` is omitted when empty. `collectedAt` is the issues tick's.
+
+A `merge` card carries one extra field, omitted on every other kind:
+
+```json
+{"merge": {"pr": 9, "prUrl": "", "headSha": "40-hex", "headRef": "", "baseRef": "main",
+           "draft": false, "mergeableState": "clean",
+           "summary": "the PR body's ## Summary section, or \"\"",
+           "review": {"verdict": "approve|request_changes|block|review_failed",
+                      "headSha": "40-hex", "current": true, "blocking": 0, "nits": 2,
+                      "source": "marker|fallback"},
+           "checks": {"state": "green|running|failing|none", "passed": 6, "total": 6},
+           "files": [{"path": "a.go", "additions": 3, "deletions": 1}], "filesTruncated": false,
+           "stale": false, "canMerge": true, "reason": ""}}
+```
+
+`review` is `null` when no trusted comment carried a verdict; `blocking` and
+`nits` are omitted for the `fallback` source, which does not carry counts.
+`reason` is `""` exactly when `canMerge` is true, and the card's own `reason` is
+`ready to merge` or that same blocker.
 
 ### `GET /api/inbox/{owner}/{repo}/{number}`
 
@@ -5602,6 +5671,47 @@ Same statuses as enrich and dispatch, plus:
 | 502 | `forge call failed` (the forge detail is in the server log, never in the body) |
 | 500 | `launch failed` — `clear-reenrich` only: the lock stays cleared and the board reloads |
 
+### `POST /api/inbox/merge`
+
+Body (max 4 KiB): `{"repo": "owner/name", "number": 5, "pr": 9, "headSha": "<40-hex>"}`,
+behind the same guard as the pipeline actions (token configured + bearer +
+same origin). `headSha` is the head the card showed; `number` is the **issue**,
+`pr` the pull request.
+
+The issue must be a `merge` card of the current snapshot whose `merge.pr` is
+exactly this `pr`. The server then re-reads the PR, its comments, checks and
+statuses **live** and re-applies the same eligibility rule the card used — the
+snapshot is never what a merge is decided on. The merge is
+`PUT /repos/{o}/{r}/pulls/{n}/merge` with `merge_method: squash` and
+`sha: headSha`, using the repo owner's **own** token, so a push between render
+and click fails at GitHub even if bridge's re-check raced. Nothing is bypassed:
+no admin merge, no retry with other parameters.
+
+Success (`200`): `{"merged": true, "branchDeleted": true}`. The head branch is
+deleted afterwards (`DELETE /git/refs/heads/<head_ref>`), and only when the
+PR's `head.repo` names the base repo — never a fork's, and never when GitHub
+reports no head repo at all (a deleted fork), because a blank head repo read as
+"ours" would delete whatever base branch shares the head ref's name. A failed
+delete does not fail the
+merge: the answer is still `200`, with `"branchDeleted": false` and
+`"branchError": "…"`. A ref that is already gone (the repo's own
+`delete_branch_on_merge` got there first) counts as deleted.
+
+| Status | Meaning |
+|---|---|
+| 400 | Invalid JSON, `repo` not `owner/name`, `number`/`pr` not positive, or `headSha` not a full 40-hex SHA |
+| 401 | Missing or wrong bearer token |
+| 403 | Origin missing or not allowed — or GitHub refused with 403, with its message as the reason |
+| 405 | Wrong method (`Allow: POST`) |
+| 409 | Not mergeable, with the reason: `not on the inbox`, `head moved`, `PR is not open`, or any card reason above — also GitHub's own 405/409/422 refusal, with its message (e.g. a required status check branch protection wants) |
+| 422 | `no token for this owner`, or `merge is not supported for this forge` (everything but GitHub) |
+| 502 | The forge call failed; the detail is in the server log, never in the body |
+| 503 | `BRIDGE_API_TOKEN` is not set (writes fail closed) |
+
+After a successful merge the repo is re-collected in the background, so the card
+leaves the inbox on the next `inbox-updated` event rather than at the next
+10-minute tick.
+
 ### SSE
 
 `GET /api/events` emits `pipeline-updated` whenever the board changes and
@@ -5637,6 +5747,14 @@ rejected for any other agent.
 - The `Origin` header must be `localhost:<port>`, `127.0.0.1:<port>`, or an entry in `BRIDGE_COCKPIT_ORIGINS` (comma-separated `host[:port]`). The allowlist is explicit and never derived from the request's `Host`, which defends against DNS rebinding.
 - `bridge-serve.service` binds `0.0.0.0:7777` because FlowHub needs `/api/capture` over the LAN. Reads are therefore LAN-open, as they were before; writes still need token and origin.
 - The page stores the token in the browser after you enter it once with the 🔑 button.
+- `BRIDGE_PIPELINE_BOTS` (comma-separated GitHub logins, default
+  `github-actions[bot]`) are the identities the merge card trusts for PR
+  authorship **and** for the review verdict. A repo whose pipeline runs under
+  its own App (`PIPELINE_APP_ID`) posts re-reviews as that App's bot, so list
+  that login here too — otherwise its re-review never counts and the card says
+  `review on older commit`. Logins are matched case-insensitively, the way
+  GitHub treats them. A verdict comment by anyone else is ignored, which
+  is what stops an approval anyone could post from enabling Merge.
 
 ## Known limits
 
@@ -5657,8 +5775,14 @@ rejected for any other agent.
 - Issues whose last run predates agent-workflow v2.2.0 carry no marker and read
   "no run marker" (urgency group 4). There is no fallback parser for the visible
   report: a pre-marker report carries neither class nor decision.
-- The Inbox is read-only. Retry, Retry with another agent/model and Park are a
-  follow-up (#374), as are blocked interactive sessions (#375).
+- The Inbox's only write is Merge. Retry, Retry with another agent/model and
+  Park are a follow-up (#374), as are blocked interactive sessions (#375), and
+  the PR diff in the merge card is #383.
+- A merge card's verdict comes from the PR's comment thread, which is paged
+  with the same cap as an issue's. On a thread longer than that the latest
+  verdict can fall past the cap, and the card then says `no review yet` or
+  `review on older commit` — it fails safe, so no merge happens on a verdict
+  bridge could not read.
 
 ## Rollout (operator steps)
 
