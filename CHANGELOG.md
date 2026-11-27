@@ -760,6 +760,7 @@ additions are the optional `NTFY_TOKEN` secret and the
 
 ### Changed
 
+- **azdo:** PR build validation runs on its own agent pool, never the `ai-implement` one (#703, ADR-026). `templates/azdo/pr-validation.yml` now says `pool: <validation-pool>`. A validation build step runs as the agent's user, which owns the persistent `/azp/agent` volume and so can read the registration's `.credentials_rsaparams` and impersonate the agent for the next `ai-implement` job — the ADR-024 boundary covers an implement run's own agent, not an earlier job on the same registration. **Operator action:** register a second agent with its own volume and unit, and set the implement pool's *Pipeline permissions* to list only the `ai-implement` pipeline with **Grant access permission to all pipelines** off. See `docs/AZDO-PIPELINE-SETUP.md` section 9.7.
 - **azdo:** The package-cache path check is shared by the implement run and PR validation (`feed_cache_path_check` in `scripts/lib/private-feed-restore.sh`), so both refuse the same values with the same words (#699).
 - **azdo:** `/enrich` on a Markdown work item writes the GitHub-shaped body with the plan inlined (`## Acceptance Criteria`, `## Implementation Plan`, `## Spec`); an HTML item behaves as before. `/new` creates Markdown items. Recorded as ADR-025, which amends ADR-017 (#683).
 - **commands:** `/parked repark` and `/roadmap defer` move an issue to the
