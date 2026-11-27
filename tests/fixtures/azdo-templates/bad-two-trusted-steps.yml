@@ -1,0 +1,20 @@
+# At most one step may be the §9.6 restore step: a second copy would be a
+# second step holding the job token.
+trigger: none
+pr: none
+
+pool: <pool>
+
+steps:
+  - checkout: self
+    persistCredentials: false
+
+  - bash: '/usr/bin/bash "$(Agent.TempDirectory)/aw/scripts/azdo-pr-feed-restore.sh"'
+    displayName: restore private feeds (target branch)
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+
+  - bash: '/usr/bin/bash "$(Agent.TempDirectory)/aw/scripts/azdo-pr-feed-restore.sh"'
+    displayName: restore private feeds again
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)

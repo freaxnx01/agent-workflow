@@ -59,17 +59,22 @@ SECRET_KEY = re.compile(r"CLAUDE|SYSTEM_ACCESSTOKEN", re.I)
 # The one step that may hold the job token (#699, section 9.6): it runs
 # agent-workflow's own code at a pinned ref, before any step from the PR, and
 # only on the PR's target-branch commit. The exception is exactly this one
-# mapping in that one step — any other key, value or step still trips.
-TRUSTED_STEP = "azdo-pr-feed-restore.sh"
+# mapping in that one step — any other key, value or step still trips. The
+# step is recognised by its exact command, not by a mention of the script, and
+# there may be at most one.
+TRUSTED_STEP = '/usr/bin/bash "$(Agent.TempDirectory)/aw/scripts/azdo-pr-feed-restore.sh"'
 TRUSTED_ENV = {"SYSTEM_ACCESSTOKEN": "$(System.AccessToken)"}
 found = []
+trusted_steps = []
 
 
 def walk(node):
     if isinstance(node, dict):
         if "checkout" in node and node.get("persistCredentials"):
             found.append("persist_credentials")
-        trusted = TRUSTED_STEP in str(node.get("bash", ""))
+        trusted = node.get("bash") == TRUSTED_STEP
+        if trusted:
+            trusted_steps.append(node)
         # CLAUDE.md (CI overlay): no inline bash over 5 lines in a YAML step.
         if len(str(node.get("bash", "")).rstrip("\n").splitlines()) > 5:
             found.append("inline_bash_over_5_lines")
@@ -105,6 +110,8 @@ if doc.get("trigger") != "none":
 if doc.get("pr") != "none":
     found.append("pr_not_none")
 walk(doc)
+if len(trusted_steps) > 1:
+    found.append("multiple_trusted_steps")
 for violation in dict.fromkeys(found):
     print(violation)
 sys.exit(1 if found else 0)
@@ -172,6 +179,8 @@ detects bad-script-macro access_token_anywhere
 detects bad-variable-group variable_group
 detects bad-nested-variable-group variable_group
 detects bad-trusted-step-extra-secret env_secret
+detects bad-trusted-step-in-comment env_secret
+detects bad-two-trusted-steps multiple_trusted_steps
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
