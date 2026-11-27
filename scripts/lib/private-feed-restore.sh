@@ -32,6 +32,9 @@
 #   feed_restore_targets_syntax_check every AWF_NUGET_RESTORE entry is a
 #                                     relative solution or project path
 #   feed_write_config <file>          writes the credentialed NuGet config, 0600
+#   feed_cache_path_check             accepts only the fixed cache path and sets
+#                                     AWF_NUGET_CACHE to it; the cause of a
+#                                     refusal is also in FEED_CACHE_CAUSE
 #   feed_cache_clear                  empties AWF_NUGET_CACHE; 0 when it is
 #                                     absent, 1 when it is a symlink or not a
 #                                     directory this user owns
@@ -204,6 +207,40 @@ feed_write_config() {
     printf '  </packageSourceCredentials>\n'
     printf '</configuration>\n'
   } >> "$file"
+}
+
+# The cause of the last failed feed_cache_path_check, for a caller that cannot
+# read the function's stderr through a command substitution.
+FEED_CACHE_CAUSE=''
+
+# feed_cache_path_check — the package cache every pipeline path shares (#699).
+# It is fixed: `find -delete` and `chmod -R` act on it, and Azure Pipelines
+# exports pipeline variables into this environment, so AWF_NUGET_CACHE is not
+# the pipeline's to choose. It must also be a real directory this user owns; an
+# absent one is fine until a restore needs it. AWF_TEST_CACHE_ROOT is a
+# test-only prefix, so the tests never touch the host's real folder; whatever it
+# is set to, the path still ends in the fixed one.
+#
+# On success it sets AWF_NUGET_CACHE to the accepted path, which is why callers
+# run it in their own shell: a command substitution would swallow that. The
+# cause of a refusal therefore goes to FEED_CACHE_CAUSE as well as to stderr.
+feed_cache_path_check() {
+  local fixed=/var/cache/awf-nuget
+  FEED_CACHE_CAUSE=''
+  if [[ "$AWF_NUGET_CACHE" != "$fixed" ]]; then
+    FEED_CACHE_CAUSE="AWF_NUGET_CACHE must be $fixed in a pipeline, not $AWF_NUGET_CACHE"
+  elif [[ -n "${AWF_TEST_CACHE_ROOT:-}" && "$AWF_TEST_CACHE_ROOT" != /* ]]; then
+    FEED_CACHE_CAUSE='AWF_TEST_CACHE_ROOT must be an absolute path'
+  else
+    AWF_NUGET_CACHE="${AWF_TEST_CACHE_ROOT:-}$fixed"
+    if [[ -L "$AWF_NUGET_CACHE" ]] ||
+       [[ -e "$AWF_NUGET_CACHE" && ( ! -d "$AWF_NUGET_CACHE" || ! -O "$AWF_NUGET_CACHE" ) ]]; then
+      FEED_CACHE_CAUSE="the package cache $AWF_NUGET_CACHE is a symlink or not a directory owned by $(id -un)"
+    fi
+  fi
+  [[ -n "$FEED_CACHE_CAUSE" ]] || return 0
+  printf '%s\n' "$FEED_CACHE_CAUSE" >&2
+  return 1
 }
 
 # feed_cache_clear — the container outlives the job, so a previous run's
