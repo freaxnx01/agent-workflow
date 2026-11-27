@@ -292,6 +292,10 @@ already vouched for, which is why the restore may evaluate its MSBuild logic
 while the token is set. Nothing from the PR is ever evaluated. The template's
 `fetchDepth: 2` is what makes that parent available.
 
+`fetchDepth: 2` is in every copy of the template, with or without private
+feeds, and makes the checkout shallow. A repo without private feeds whose build
+needs history — GitVersion, MinVer, Nerdbank.GitVersioning — may drop the line.
+
 **Variables.** On the validation pipeline (9.2), all non-secret:
 
 - `AGENT_WORKFLOW_REF` — the same pinned SHA as the `ai-implement` pipeline.
