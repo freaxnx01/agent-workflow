@@ -321,6 +321,23 @@ assert_eq "planted_global_hook_not_run: rc" "0" "$RC"
 assert_eq "planted_global_hook_not_run: the hook did not run" "0" \
   "$([[ -e "$TMP/hook-ran" ]] && echo 1 || echo 0)"
 
+# The same writable directory comes first on the PATH the step inherits, so
+# the tools the outer phase runs before the re-exec, with the token already in
+# the environment, must not be looked up on it.
+PLANTED="$TMP/planted"
+mkdir -p "$PLANTED"
+for tool in env mktemp chmod; do
+  printf '#!/bin/sh\n%s %s/planted-%s-ran\nexec %s "$@"\n' \
+    "$(command -v touch)" "$TMP" "$tool" "$(command -v "$tool")" > "$PLANTED/$tool"
+  chmod 0755 "$PLANTED/$tool"
+done
+run_restore PATH="$PLANTED:$BIN"
+assert_eq "planted_outer_tools_not_run: rc" "0" "$RC"
+for tool in env mktemp chmod; do
+  assert_eq "planted_outer_tools_not_run: $tool" "0" \
+    "$([[ -e "$TMP/planted-$tool-ran" ]] && echo 1 || echo 0)"
+done
+
 # The image's PATH holds a directory the job user can write, so a `dotnet` of
 # an earlier job's making must not be the one that gets the token.
 chmod u+w "$BIN/dotnet"
@@ -411,6 +428,17 @@ assert_contains "template_fetch_hermetic: no global git config" \
   "GIT_CONFIG_GLOBAL=/dev/null" "$FEED_BLOCK"
 assert_contains "template_fetch_hermetic: no hooks" \
   "core.hooksPath=/dev/null" "$FEED_BLOCK"
+# Nothing a trusted step runs may be looked up on the inherited PATH: not the
+# restore's interpreter (its shebang is `/usr/bin/env bash`), not the fetch's
+# tools.
+assert_contains "template_restore_interpreter_absolute" \
+  "bash: '/usr/bin/bash \"\$(Agent.TempDirectory)/aw/scripts/azdo-pr-feed-restore.sh\"'" \
+  "$TEMPLATE_TEXT"
+for tool in env mkdir git; do
+  assert_eq "template_fetch_tool_absolute: $tool" "" \
+    "$(printf '%s\n' "$FEED_BLOCK" | grep -E "(^|[^/[:alnum:]_.-])$tool( |$)" |
+      grep -vE '^ *#|displayName' || true)"
+done
 
 section "the token"
 

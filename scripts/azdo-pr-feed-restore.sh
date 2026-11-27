@@ -47,9 +47,14 @@ HERMETIC_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # only the variables this script needs survive. Section 9.6 still asks for an
 # agent that is fresh per job; this reduces the damage, it does not remove the
 # precondition.
+#
+# Until the re-exec, the PATH is the inherited one, whose first entry the job
+# user can write; every tool this phase runs is therefore named by absolute
+# path. On Debian 13 /bin is a symlink to /usr/bin, so /usr/bin/ always holds
+# them.
 if [[ "${AWF_PR_RESTORE_HERMETIC:-}" != 1 ]]; then
-  hermetic_home="$(mktemp -d)"
-  chmod 0700 "$hermetic_home"
+  hermetic_home="$(/usr/bin/mktemp -d)"
+  /usr/bin/chmod 0700 "$hermetic_home"
   : > "$hermetic_home/no-plugins"
   passthrough=(
     "SYSTEM_ACCESSTOKEN=${SYSTEM_ACCESSTOKEN:-}"
@@ -71,7 +76,7 @@ if [[ "${AWF_PR_RESTORE_HERMETIC:-}" != 1 ]]; then
       passthrough+=("$mock_var=${!mock_var:-}")
     done
   fi
-  exec env -i \
+  exec /usr/bin/env -i \
     "PATH=${AWF_TEST_HERMETIC_PATH:-$HERMETIC_PATH}" \
     "HOME=$hermetic_home" \
     "DOTNET_CLI_HOME=$hermetic_home" \

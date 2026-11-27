@@ -26,11 +26,11 @@ steps:
   # the next step runs.
   - bash: |
       set -euo pipefail
-      mkdir -p "$AWF_HOME"
-      env -i PATH="$AWF_PATH" HOME="$AWF_HOME" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
-        git -c core.hooksPath=/dev/null -c core.fsmonitor=false clone -q --filter=blob:none "$AWF_REPO" "$AWF_DIR"
-      env -i PATH="$AWF_PATH" HOME="$AWF_HOME" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
-        git -c core.hooksPath=/dev/null -c core.fsmonitor=false -C "$AWF_DIR" checkout -q "$AWF_REF"
+      /usr/bin/mkdir -p "$AWF_HOME"
+      /usr/bin/env -i PATH="$AWF_PATH" HOME="$AWF_HOME" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+        /usr/bin/git -c core.hooksPath=/dev/null -c core.fsmonitor=false clone -q --filter=blob:none "$AWF_REPO" "$AWF_DIR"
+      /usr/bin/env -i PATH="$AWF_PATH" HOME="$AWF_HOME" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+        /usr/bin/git -c core.hooksPath=/dev/null -c core.fsmonitor=false -C "$AWF_DIR" checkout -q "$AWF_REF"
     displayName: fetch agent-workflow (pinned, hermetic)
     condition: and(succeeded(), ne(variables['AWF_NUGET_FEEDS'], ''))
     env:
@@ -42,8 +42,10 @@ steps:
 
   # The only step of this pipeline that may hold the job token. It restores the
   # target branch's packages into the fallback folder and, on success, hands
-  # the build step below NUGET_FALLBACK_PACKAGES.
-  - bash: '"$(Agent.TempDirectory)/aw/scripts/azdo-pr-feed-restore.sh"'
+  # the build step below NUGET_FALLBACK_PACKAGES. The interpreter is named by
+  # absolute path: the script's shebang would look `bash` up on the inherited
+  # PATH, whose first entry the job user can write.
+  - bash: '/usr/bin/bash "$(Agent.TempDirectory)/aw/scripts/azdo-pr-feed-restore.sh"'
     displayName: restore private feeds (target branch)
     condition: and(succeeded(), ne(variables['AWF_NUGET_FEEDS'], ''))
     env:
