@@ -18,6 +18,7 @@ IFS=$'\n\t'
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RESTORE="$ROOT/scripts/azdo-pr-feed-restore.sh"
+CLEANUP="$ROOT/scripts/azdo-pr-feed-cleanup.sh"
 MOCKS="$ROOT/tests/mocks"
 
 ADO_FEED='https://pkgs.dev.azure.com/org/_packaging/f/nuget/v3/index.json'
@@ -281,6 +282,40 @@ run_restore BUILD_SOURCESDIRECTORY="$NOSLN"
 assert_eq "nothing_to_restore: rc" "1" "$RC"
 assert_contains "nothing_to_restore: names the cause, not the Feed Reader role" \
   "private feed restore: no solution or project" "$ERR"
+
+section "the cleanup step"
+
+# run_cleanup [VAR=value ...] — the always() step. It holds no token and does
+# not re-exec, so it runs with the PATH it is given.
+run_cleanup() {
+  CASE_N=$((CASE_N + 1))
+  RC=0
+  OUT="$(env -i PATH="$BIN" HOME="$TMP/caller-home" \
+    AWF_TEST_CACHE_ROOT="$CACHE_ROOT" \
+    "$@" bash "$CLEANUP" 2>"$TMP/err-$CASE_N")" || RC=$?
+  ERR="$(cat "$TMP/err-$CASE_N")"
+  TRANSCRIPT+="$OUT$ERR"
+}
+
+: > "$CACHE/x"
+run_cleanup
+assert_eq "cleanup_empties_cache: rc" "0" "$RC"
+assert_eq "cleanup_empties_cache: emptied" "" \
+  "$(find "$CACHE" -mindepth 1 | head -n1)"
+assert_eq "cleanup_empties_cache: the folder itself stays" "1" \
+  "$([[ -d "$CACHE" ]] && echo 1 || echo 0)"
+
+run_cleanup AWF_TEST_CACHE_ROOT="$TMP/no-cache-root"
+assert_eq "cleanup_absent_cache_ok: rc" "0" "$RC"
+
+mkdir -p "$TMP/clink/var/cache" "$TMP/clink-target"
+ln -s "$TMP/clink-target" "$TMP/clink/var/cache/awf-nuget"
+: > "$TMP/clink-target/keep"
+run_cleanup AWF_TEST_CACHE_ROOT="$TMP/clink"
+assert_eq "cleanup_symlink_refused: rc" "1" "$RC"
+assert_contains "cleanup_symlink_refused: says why" "pr feed cleanup:" "$ERR"
+assert_eq "cleanup_symlink_refused: the target is untouched" "1" \
+  "$([[ -f "$TMP/clink-target/keep" ]] && echo 1 || echo 0)"
 
 section "the token"
 
