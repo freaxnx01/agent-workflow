@@ -20,6 +20,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RESTORE="$ROOT/scripts/azdo-pr-feed-restore.sh"
 CLEANUP="$ROOT/scripts/azdo-pr-feed-cleanup.sh"
 MOCKS="$ROOT/tests/mocks"
+TEMPLATE="$ROOT/templates/azdo/pr-validation.yml"
 
 ADO_FEED='https://pkgs.dev.azure.com/org/_packaging/f/nuget/v3/index.json'
 SECRET='tok-SECRET'
@@ -316,6 +317,38 @@ assert_eq "cleanup_symlink_refused: rc" "1" "$RC"
 assert_contains "cleanup_symlink_refused: says why" "pr feed cleanup:" "$ERR"
 assert_eq "cleanup_symlink_refused: the target is untouched" "1" \
   "$([[ -f "$TMP/clink-target/keep" ]] && echo 1 || echo 0)"
+
+section "the template"
+
+# block_from <marker> — the template from the first line holding <marker> to
+# the line before the next `# ---` section comment, so an assertion about one
+# step cannot be satisfied by another step's text.
+block_from() {
+  awk -v marker="$1" 'index($0, marker) { on = 1; print; next }
+    on && index($0, "# ---") { on = 0 }
+    on { print }' "$TEMPLATE"
+}
+
+TEMPLATE_TEXT="$(cat "$TEMPLATE")"
+assert_contains "template_fetch_depth_2" "fetchDepth: 2" "$TEMPLATE_TEXT"
+assert_eq "template_token_only_in_restore_step: one occurrence" "1" \
+  "$(grep -cF 'System.AccessToken' "$TEMPLATE" || true)"
+assert_contains "template_token_only_in_restore_step: it is the restore step" \
+  "System.AccessToken" "$(block_from 'azdo-pr-feed-restore.sh')"
+assert_eq "template_feed_steps_conditional" "3" \
+  "$(grep -cF "ne(variables['AWF_NUGET_FEEDS'], '')" "$TEMPLATE" || true)"
+assert_contains "template_cleanup_always" "always()" \
+  "$(block_from 'azdo-pr-feed-cleanup.sh')"
+BUILD_BLOCK="$(block_from 'BUILD/TEST')"
+assert_not_contains "template_build_step_has_no_env_token: no token" \
+  "System.AccessToken" "$BUILD_BLOCK"
+assert_not_contains "template_build_step_has_no_env_token: no fallback folder" \
+  "NUGET_FALLBACK_PACKAGES" "$BUILD_BLOCK"
+FEED_BLOCK="$(block_from 'PRIVATE FEEDS')"
+assert_contains "template_fetch_hermetic: no global git config" \
+  "GIT_CONFIG_GLOBAL=/dev/null" "$FEED_BLOCK"
+assert_contains "template_fetch_hermetic: no hooks" \
+  "core.hooksPath=/dev/null" "$FEED_BLOCK"
 
 section "the token"
 

@@ -186,9 +186,11 @@ driver refuses to push or open a PR for agent changes to pipeline files
 
 1. *Pipelines > New pipeline > Azure Repos Git > Existing YAML file*, and pick
    `azure-pipelines-pr.yml`.
-2. Create it with **no** variables and link **no** variable group. Never put
-   `CLAUDE_CODE_OAUTH_TOKEN` here. Variables are per pipeline, so this one
-   inherits nothing from the `ai-implement` pipeline.
+2. Create it with **no secret** variables and link **no** variable group. Never
+   put `CLAUDE_CODE_OAUTH_TOKEN` here. Variables are per pipeline, so this one
+   inherits nothing from the `ai-implement` pipeline. Exactly three non-secret
+   variables belong here, and only for a repo with private feeds (9.6):
+   `AGENT_WORKFLOW_REF`, `AWF_NUGET_FEEDS` and `AWF_NUGET_RESTORE`.
 3. Turn on *Project settings > Pipelines > Settings > Limit job authorization
    scope to current project*.
 4. Authorize the pipeline on the agent pool: *Project settings > Agent pools >
@@ -203,7 +205,10 @@ driver refuses to push or open a PR for agent changes to pipeline files
    branch, and an agent-pushed branch could queue this pipeline with no PR.
 
 A build service token is still issued to the job, but no step sees it unless it
-is mapped, and the template maps none.
+is mapped. The template maps it into one step only — the private-feed restore
+of 9.6, which runs agent-workflow's own code and is skipped entirely while
+`AWF_NUGET_FEEDS` is empty or unset. For a repo without private feeds the
+template therefore still maps nothing.
 
 ### 9.3 Require it on the default branch
 
@@ -261,6 +266,87 @@ minutes, and the build started as soon as the PR was published.
 The agent's PRs are always drafts, so validation runs when a human publishes
 the PR, which is also when the policy starts to gate completion. This is
 intended. Do not let the agent publish its own PRs to get an earlier build.
+
+### 9.6 Private feeds
+
+A repo whose build needs a package that only a private Azure Artifacts feed
+serves cannot restore in this pipeline: it maps no credential, because it runs
+code from the PR. With a required build-validation policy every one of its PRs
+would be red. The template's two trusted steps solve that without handing the
+PR's code a token (#699).
+
+**What they do.** The first clones agent-workflow at the pinned
+`AGENT_WORKFLOW_REF`. The second — the only step of this pipeline that holds
+`System.AccessToken` — runs `scripts/azdo-pr-feed-restore.sh`, which restores
+into `/var/cache/awf-nuget` exactly as the implement run does (section 14) and
+then sets `NUGET_FALLBACK_PACKAGES` for the build step. The build step itself
+gets no token and no clone; it reads the private packages out of that folder.
+A final `always()` step empties the folder again, so nothing private outlives
+the job.
+
+**Why the target branch.** For a PR build Azure DevOps checks out
+`refs/pull/<n>/merge`, a merge commit whose **first parent** is the target
+branch's tip at merge time. That parent is the seed: a commit the policy
+already vouched for, which is why the restore may evaluate its MSBuild logic
+while the token is set. Nothing from the PR is ever evaluated. The template's
+`fetchDepth: 2` is what makes that parent available.
+
+**Variables.** On the validation pipeline (9.2), all non-secret:
+
+- `AGENT_WORKFLOW_REF` — the same pinned SHA as the `ai-implement` pipeline.
+- `AWF_NUGET_FEEDS` — the same value as section 14.1. Leave it unset and both
+  steps are skipped, which is the behaviour of a repo without private feeds.
+- `AWF_NUGET_RESTORE` — only if section 14.2 applies.
+
+**No extra permission.** Both pipelines run as the same project build service,
+so the **Feed Reader** role granted in 14.3 already covers this one.
+
+**Preconditions.**
+
+- **A fresh agent per job**, as in
+  `docker/azp-agent/azp-agent.service.example`. The validation pipeline has no
+  user boundary: the PR's build step runs as the same user as the token-holding
+  step. Within one job the order protects the token; across jobs it does not,
+  so an earlier job must not be able to leave anything behind for the next
+  one's trusted step to pick up. Both trusted steps run hermetically — a fresh
+  `HOME`, no global or system git config, a fixed `PATH`, MSBuild user imports
+  and NuGet plugins off, and the entry point refuses a `dotnet` this user can
+  write — which reduces the damage when the precondition is not met, but does
+  not remove the precondition.
+- **The PR targets the default branch.** The restore refuses otherwise:
+  a PR retargeted onto an agent-pushed branch would make agent-written code
+  the seed.
+- **The agent has the .NET SDK and the package folder**, which is the `dotnet`
+  image of 14.4 — the same one the implement pipeline needs.
+- **The repo's tracked `nuget.config` must not list the private feed.** The
+  untokened build would otherwise ask the feed for every package that is not
+  in the fallback folder and fail with `NU1301` — see 14.5 for the
+  `packageSourceMapping` that avoids this.
+
+**The limitation.** A PR that **adds** a private package, or **raises** its
+version, stays red: the new package is not on the target branch, so the
+restore never fetched it and the build cannot. Such a PR needs a human with
+*Bypass policies when completing pull requests* to complete it with an
+override. Add the package to the default branch first and the next PR is green
+again.
+
+**When the step refuses.** The log line says which kind of problem it is:
+
+- `pr feed restore: <cause>` — an input was refused and nothing was restored:
+  a feed URL that is not an Azure DevOps one (14.1), an `AWF_NUGET_RESTORE`
+  entry that is not a relative solution or project path (14.2), a cache folder
+  that is a symlink or not owned by the job user (rebuild the image), a build
+  that is not a PR merge commit (someone queued the pipeline by hand), a PR
+  that does not target the default branch, a `dotnet` that this user can write,
+  or an MSBuild/NuGet file above `Agent.TempDirectory` left by an earlier job.
+- `private feed restore: <cause>` — there was nothing to restore, so the Feed
+  Reader role is not the cause. Set `AWF_NUGET_RESTORE` (14.2).
+- `private feed restore failed (<feed>): check that the build service has the
+  Feed Reader role on the feed` — the restore itself failed. Same checklist as
+  14.6; `dotnet restore`'s own error is in the log just above the line.
+
+A refusal fails the validation build, so a PR is never merged on the strength
+of a build whose private packages were missing.
 
 ## 10. Route .NET jobs to the dotnet agent
 
@@ -517,6 +603,8 @@ Nothing changes for a repo that uses only public packages: with
 The folder is still emptied before every pipeline run and again when the run
 ends, so no agent sees another job's private packages. Its path is fixed: a
 pipeline variable `AWF_NUGET_CACHE` with any other value refuses the run.
+
+PR build validation restores the same feeds: section 9.6.
 
 ### 14.1 `AWF_NUGET_FEEDS`
 

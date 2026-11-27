@@ -6,6 +6,7 @@
 # This pipeline runs agent-written code. Never link a variable group, never map
 # the job access token into a step, and never pass secrets in `env:`.
 # See docs/AZDO-PIPELINE-SETUP.md section 9.
+# With private feeds see docs/AZDO-PIPELINE-SETUP.md section 9.6.
 trigger: none
 pr: none
 
@@ -14,6 +15,40 @@ pool: <pool>
 steps:
   - checkout: self
     persistCredentials: false
+    # The merge commit's first parent is the target branch's tip, which is the
+    # only commit the private-feed restore below ever evaluates (section 9.6).
+    fetchDepth: 2
+
+  # --- PRIVATE FEEDS (section 9.6): leave these two steps as they are ---
+  # Both are skipped while AWF_NUGET_FEEDS is empty or unset, and neither runs
+  # a single line from the PR: this one clones agent-workflow at the pinned
+  # AGENT_WORKFLOW_REF, hermetically, because it is what brings in the script
+  # the next step runs.
+  - bash: |
+      set -euo pipefail
+      mkdir -p "$AWF_HOME"
+      env -i PATH="$AWF_PATH" HOME="$AWF_HOME" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+        git -c core.hooksPath=/dev/null -c core.fsmonitor=false clone -q --filter=blob:none "$AWF_REPO" "$AWF_DIR"
+      env -i PATH="$AWF_PATH" HOME="$AWF_HOME" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
+        git -c core.hooksPath=/dev/null -c core.fsmonitor=false -C "$AWF_DIR" checkout -q "$AWF_REF"
+    displayName: fetch agent-workflow (pinned, hermetic)
+    condition: and(succeeded(), ne(variables['AWF_NUGET_FEEDS'], ''))
+    env:
+      AWF_PATH: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      AWF_HOME: $(Agent.TempDirectory)/awf-home
+      AWF_REPO: https://github.com/freaxnx01/agent-workflow
+      AWF_DIR: $(Agent.TempDirectory)/aw
+      AWF_REF: $(AGENT_WORKFLOW_REF)
+
+  # The only step of this pipeline that may hold the job token. It restores the
+  # target branch's packages into the fallback folder and, on success, hands
+  # the build step below NUGET_FALLBACK_PACKAGES.
+  - bash: '"$(Agent.TempDirectory)/aw/scripts/azdo-pr-feed-restore.sh"'
+    displayName: restore private feeds (target branch)
+    condition: and(succeeded(), ne(variables['AWF_NUGET_FEEDS'], ''))
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+      AWF_PR_RESTORE_WORK_DIR: $(Agent.TempDirectory)
 
   # --- BUILD/TEST: edit this step only ---
   # Default is .NET. Non-.NET repos replace the script (`true` is the minimal placeholder).
@@ -21,3 +56,8 @@ steps:
       dotnet build
       dotnet test --no-build
     displayName: Build and test
+
+  # --- PRIVATE FEEDS (section 9.6): empties the package cache, on every outcome ---
+  - bash: '"$(Agent.TempDirectory)/aw/scripts/azdo-pr-feed-cleanup.sh"'
+    displayName: clear the private package cache
+    condition: and(always(), ne(variables['AWF_NUGET_FEEDS'], ''))

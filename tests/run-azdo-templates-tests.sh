@@ -56,6 +56,12 @@ import yaml
 TOKEN = re.compile(r"System\.AccessToken|SYSTEM_ACCESSTOKEN")
 SECRET_VALUE = re.compile(r"System\.AccessToken|SYSTEM_ACCESSTOKEN|CLAUDE", re.I)
 SECRET_KEY = re.compile(r"CLAUDE|SYSTEM_ACCESSTOKEN", re.I)
+# The one step that may hold the job token (#699, section 9.6): it runs
+# agent-workflow's own code at a pinned ref, before any step from the PR, and
+# only on the PR's target-branch commit. The exception is exactly this one
+# mapping in that one step — any other key, value or step still trips.
+TRUSTED_STEP = "azdo-pr-feed-restore.sh"
+TRUSTED_ENV = {"SYSTEM_ACCESSTOKEN": "$(System.AccessToken)"}
 found = []
 
 
@@ -63,9 +69,12 @@ def walk(node):
     if isinstance(node, dict):
         if "checkout" in node and node.get("persistCredentials"):
             found.append("persist_credentials")
+        trusted = TRUSTED_STEP in str(node.get("bash", ""))
         env = node.get("env")
         if isinstance(env, dict):
             for key, value in env.items():
+                if trusted and TRUSTED_ENV.get(str(key)) == str(value):
+                    continue
                 if SECRET_KEY.search(str(key)) or SECRET_VALUE.search(str(value)):
                     found.append("env_secret")
         variables = node.get("variables")
@@ -73,7 +82,11 @@ def walk(node):
             for item in variables:
                 if isinstance(item, dict) and "group" in item:
                     found.append("variable_group")
-        for value in node.values():
+        for name, value in node.items():
+            # The trusted step's env is judged above; walking into it again
+            # would report its allowed mapping as a bare token string.
+            if trusted and name == "env":
+                continue
             walk(value)
     elif isinstance(node, list):
         for item in node:
@@ -127,6 +140,7 @@ detects bad-env-claude env_secret
 detects bad-script-macro access_token_anywhere
 detects bad-variable-group variable_group
 detects bad-nested-variable-group variable_group
+detects bad-trusted-step-extra-secret env_secret
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
