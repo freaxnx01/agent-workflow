@@ -70,6 +70,9 @@ def walk(node):
         if "checkout" in node and node.get("persistCredentials"):
             found.append("persist_credentials")
         trusted = TRUSTED_STEP in str(node.get("bash", ""))
+        # CLAUDE.md (CI overlay): no inline bash over 5 lines in a YAML step.
+        if len(str(node.get("bash", "")).rstrip("\n").splitlines()) > 5:
+            found.append("inline_bash_over_5_lines")
         env = node.get("env")
         if isinstance(env, dict):
             for key, value in env.items():

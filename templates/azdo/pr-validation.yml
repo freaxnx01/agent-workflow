@@ -23,14 +23,14 @@ steps:
   # Both are skipped while AWF_NUGET_FEEDS is empty or unset, and neither runs
   # a single line from the PR: this one clones agent-workflow at the pinned
   # AGENT_WORKFLOW_REF, hermetically, because it is what brings in the script
-  # the next step runs.
+  # the next step runs. It stays inline: it cannot run a script from the clone
+  # it is about to make, and any other file in this checkout is the PR's.
   - bash: |
       set -euo pipefail
       /usr/bin/mkdir -p "$AWF_HOME"
-      /usr/bin/env -i PATH="$AWF_PATH" HOME="$AWF_HOME" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
-        /usr/bin/git -c core.hooksPath=/dev/null -c core.fsmonitor=false clone -q --filter=blob:none "$AWF_REPO" "$AWF_DIR"
-      /usr/bin/env -i PATH="$AWF_PATH" HOME="$AWF_HOME" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 \
-        /usr/bin/git -c core.hooksPath=/dev/null -c core.fsmonitor=false -C "$AWF_DIR" checkout -q "$AWF_REF"
+      git=(/usr/bin/env -i PATH="$AWF_PATH" HOME="$AWF_HOME" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 /usr/bin/git -c core.hooksPath=/dev/null -c core.fsmonitor=false)
+      "${git[@]}" clone -q --filter=blob:none "$AWF_REPO" "$AWF_DIR"
+      "${git[@]}" -C "$AWF_DIR" checkout -q "$AWF_REF"
     displayName: fetch agent-workflow (pinned, hermetic)
     condition: and(succeeded(), ne(variables['AWF_NUGET_FEEDS'], ''))
     env:
