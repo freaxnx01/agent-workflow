@@ -131,7 +131,15 @@ assert_eq "template_is_clean: rc" 0 "$RC"
 assert_eq "template_is_clean: output" "" "$OUT"
 
 TEXT="$(cat "$TEMPLATE" 2>/dev/null || true)"
-assert_contains "template_has_pool_placeholder" "pool: <pool>" "$TEXT"
+assert_contains "template_has_validation_pool_placeholder" "pool: <validation-pool>" "$TEXT"
+# A copy-paste of the template must not carry the implement pool anywhere, not
+# even in a comment: that pool admits only the ai-implement pipeline (#703).
+if [[ "$TEXT" == *"pool: <pool>"* ]]; then
+  fail "template_has_no_implement_pool" "template still contains 'pool: <pool>'"
+else
+  pass "template_has_no_implement_pool"
+fi
+assert_contains "template_names_own_pool_section" "Run validation on its own pool" "$TEXT"
 assert_contains "template_header_names_target" "azure-pipelines-pr.yml" "$TEXT"
 assert_contains "template_persist_credentials_false" "persistCredentials: false" "$TEXT"
 

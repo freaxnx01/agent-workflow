@@ -173,7 +173,9 @@ webhook resource trigger is not the CI trigger and is unaffected.
 
 The agent opens a PR; this section makes a **build validation** run gate it
 before a human merges. The pipeline is separate from the `ai-implement` one and
-holds no secrets.
+holds no secrets. It also runs on its own agent pool, so no PR's code ever runs
+on the agent registration that takes `ai-implement` jobs — see *Run validation
+on its own pool* below.
 
 ### 9.1 Add the pipeline file
 
@@ -194,10 +196,12 @@ driver refuses to push or open a PR for agent changes to pipeline files
    default branch is not `main`, `AWF_DEFAULT_BRANCH`.
 3. Turn on *Project settings > Pipelines > Settings > Limit job authorization
    scope to current project*.
-4. Authorize the pipeline on the agent pool: *Project settings > Agent pools >
-   `<pool>` > Security > Pipeline permissions*, or approve the prompt on its
-   first run. Until it is authorized, every validation build stays *not
-   started*, and the policy waits on it indefinitely.
+4. Authorize the pipeline on the **validation** pool: *Project settings > Agent
+   pools > `<validation-pool>` > Security > Pipeline permissions*, or approve
+   the prompt on its first run. Not on `<pool>` — that pool admits only the
+   `ai-implement` pipeline (*Run validation on its own pool*). Until it is
+   authorized, every validation build stays *not started*, and the policy waits
+   on it indefinitely.
 5. *Pipelines > (pipeline) > Edit > ... > Triggers > Continuous integration*:
    tick **Override the YAML continuous integration trigger from here** and
    leave **Enable continuous integration** unticked. Through the REST API this
@@ -358,6 +362,49 @@ again.
 A refusal fails the validation build, so a PR is never merged on the strength
 of a build whose private packages were missing.
 
+### 9.7 Run validation on its own pool
+
+The validation pipeline runs the PR's own YAML, and its build step runs as the
+agent's user. That user owns `/azp/agent`, the volume the unit in section 3
+keeps across jobs, which holds the agent binaries and the registration files
+`.credentials` and `.credentials_rsaparams`. PR code can read those two and
+impersonate the agent from anywhere — the impersonating agent then receives the
+next job on that registration, an `ai-implement` one with its secrets — or
+rewrite the binaries the next job runs.
+
+The section 13 boundary does not cover this. It protects an implement run from
+the agent *it* starts, not from a job that ran earlier on the same
+registration. Nor does the `pool:` value in the PR's YAML: the PR controls that
+file (9.4). The separation has to be enforced by Azure DevOps, which is what
+the pool permissions below do.
+
+**Set up a second agent**, exactly as in 10.1: its own `<name>` (for example
+`<name>-validation`) and so its own `AZP_AGENT_NAME`, container name and
+`<volume>`, its own one-shot registration from section 2 with
+`AZP_POOL=<validation-pool>`, and its own unit from section 3. Never the
+implement agent's volume. Use `<image>-dotnet` if the repo's validation builds
+.NET (section 10).
+
+> **Warning:** as in 10.1, `scripts/azp-agent-start.sh` registers with
+> `--replace`: reusing the implement agent's `<name>` silently replaces it in
+> its pool, and that agent stops connecting.
+
+**Then set the pool permissions.** On *Project settings > Agent pools >
+`<pool>` > Security > Pipeline permissions*: turn **Grant access permission to
+all pipelines** off, and list only the `ai-implement` pipeline. Leaving open
+access on is the trap — authorizing `ai-implement` explicitly changes nothing
+while every other pipeline is admitted too. On `<validation-pool>`, authorize
+the validation pipeline (9.2 step 4).
+
+Check: open a throwaway PR whose `azure-pipelines-pr.yml` says `pool: <pool>`.
+Its validation build gets no agent — it stays *not started*, waiting for pool
+authorization — and the branch policy stays unsatisfied. Abandon the PR.
+
+**What this does not cover.** The validation agent's own registration is still
+readable by the PR's code, and nothing above changes that. Stolen, it yields
+validation jobs only, plus whatever those jobs carry: with private feeds
+(section 14), the feed-read token the restore step maps in.
+
 ## 10. Route .NET jobs to the dotnet agent
 
 Jobs that need the .NET SDK demand it in the pipeline YAML, which lives in the
@@ -373,6 +420,10 @@ pool:
 The agent advertises its environment variables as capabilities, so the
 `dotnet` image (which sets `AWF_TOOLCHAIN=dotnet`) matches this demand and the
 default image does not. There are two ways to run the variant.
+
+The validation agent (9.7, *Run validation on its own pool*) needs the dotnet
+image too when the repo's validation builds .NET — it is a separate agent in a
+separate pool, so routing within `<pool>` does not reach it.
 
 ### 10.1 A second registration
 
@@ -588,6 +639,11 @@ Four things follow for the operator:
    ```
 
    `bug` does not retry (section 11), and nothing is pushed.
+
+This boundary is about the agent an implement run starts. A job that ran
+*earlier* on the same registration — a PR's validation build, which could have
+taken the registration's credentials off `/azp/agent` — is outside it, and is
+kept off this registration by 9.7, *Run validation on its own pool*.
 
 Local runs (`implement-azdo.sh` from a terminal) are unchanged: no boundary, no
 sudo, today's behaviour.

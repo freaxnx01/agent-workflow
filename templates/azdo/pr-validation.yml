@@ -6,11 +6,16 @@
 # This pipeline runs agent-written code. Never link a variable group, never map
 # the job access token into a step, and never pass secrets in `env:`.
 # See docs/AZDO-PIPELINE-SETUP.md section 9.
+#
+# `pool:` must be the validation pool, never the ai-implement pool: the
+# implement pool admits only the ai-implement pipeline, so this pipeline gets
+# no agent there. See "Run validation on its own pool" in section 9.
+#
 # With private feeds see docs/AZDO-PIPELINE-SETUP.md section 9.6.
 trigger: none
 pr: none
 
-pool: <pool>
+pool: <validation-pool>
 
 steps:
   - checkout: self

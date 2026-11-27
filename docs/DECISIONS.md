@@ -2313,3 +2313,63 @@ converter the host does not have.
 + No elision below 1,000,000 characters; above that the run stops.
 
 **Source:** `docs/superpowers/specs/2026-11-23-azdo-markdown-work-items-design.md`
+
+## ADR-026 — PR validation runs on its own agent pool (2026-11-27)
+
+**Status:** accepted; completes ADR-024 for the job before the run.
+
+**Context.** The Azure DevOps PR build validation (`docs/AZDO-PIPELINE-SETUP.md`
+section 9) runs the PR's own `azure-pipelines-pr.yml`, and its build step runs
+as the agent's user (`azp`). With the reference host setup each job gets a fresh
+`--rm` container, but the volume at `/azp/agent` persists across jobs and is
+owned by that user. It holds the agent binaries and the registration files
+`.credentials` and `.credentials_rsaparams` — readable by `azp`, confirmed on a
+sandbox agent on 2026-11-27.
+
+ADR-024's third context bullet already names this: an agent that copies those
+credentials can impersonate the agent, and one that rewrites the binaries
+controls every later job on that registration, secrets included. Its boundary
+answers the inverse case — it protects an implement run from the agent *it*
+starts — and so does not cover a validation job that ran earlier on the same
+registration and then hands the next `ai-implement` job, with its job token and
+its Claude token, to an impersonator.
+
+A `pool:` value in the PR's YAML is no boundary either: the PR controls that
+file (9.4).
+
+**Decision.** PR validation runs on **its own agent pool**, with its own
+registration, its own volume and its own systemd unit — never the implement
+agent's.
+
+1. `templates/azdo/pr-validation.yml` says `pool: <validation-pool>`, and its
+   header says why the implement pool is never a valid value there.
+2. The implement pool's *Pipeline permissions* list only the `ai-implement`
+   pipeline, with **Grant access permission to all pipelines** off. Authorizing
+   `ai-implement` explicitly while open access stays on changes nothing.
+3. The enforcement is Azure DevOps pool authorization, not YAML and not a
+   script: a pipeline the pool does not admit gets no agent, whatever its YAML
+   asks for.
+
+**Rejected.**
+
++ **A `sudo`-to-`awf-agent` wrapper around the validation build step**, as in
+  ADR-024. The PR controls the YAML that would call it, so it can simply not
+  call it.
++ **Mounting `/azp/agent` read-only.** The agent writes `_diag/` while a job
+  runs, so the mount breaks the agent; and reading the credentials — the theft
+  this ADR is about — stays possible either way.
++ **Verifying the agent binaries' integrity at container start.** It covers
+  tampering only. Credential theft leaves the volume byte-identical.
+
+**Consequences.**
+
++ A second agent container per consumer, with its own registration and volume
+  (9.7). The dotnet image is needed for it too when the repo's validation
+  builds .NET.
++ The validation agent's own registration stays readable by the PR's code.
+  Stolen, it yields validation jobs only, plus what those carry — with #699,
+  the feed-read token of the restore step.
++ Operator setup, so nothing enforces it from inside the repo; 9.7 carries the
+  `Check:` that an operator runs once.
+
+**Source:** `docs/superpowers/specs/2026-11-27-azdo-validation-own-pool-design.md`
