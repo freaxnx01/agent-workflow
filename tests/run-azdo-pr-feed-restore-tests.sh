@@ -191,6 +191,54 @@ rm -f "$REPO/.git/info/attributes"
 assert_eq "info_attributes_refused: rc" "1" "$RC"
 assert_contains "info_attributes_refused: names the file" "attributes" "$ERR"
 
+# The other ways an earlier job could make git read or run something else: each
+# case gets a checkout of its own, so no leftover decides a later case.
+REPL="$TMP/repl"
+make_pr_checkout repl >/dev/null
+git -C "$REPL" update-ref "refs/replace/$(git -C "$REPL" rev-parse HEAD^1)" HEAD
+run_restore BUILD_SOURCESDIRECTORY="$REPL"
+assert_eq "loose_replace_ref_refused: rc" "1" "$RC"
+assert_contains "loose_replace_ref_refused: says why" "refs/replace/" "$ERR"
+
+PREPL="$TMP/prepl"
+make_pr_checkout prepl >/dev/null
+git -C "$PREPL" update-ref "refs/replace/$(git -C "$PREPL" rev-parse HEAD^1)" HEAD
+git -C "$PREPL" pack-refs --all
+run_restore BUILD_SOURCESDIRECTORY="$PREPL"
+assert_eq "packed_replace_ref_refused: rc" "1" "$RC"
+assert_contains "packed_replace_ref_refused: says why" "refs/replace/" "$ERR"
+
+GRAFTS="$TMP/grafts"
+make_pr_checkout grafts >/dev/null
+mkdir -p "$GRAFTS/.git/info"
+: > "$GRAFTS/.git/info/grafts"
+run_restore BUILD_SOURCESDIRECTORY="$GRAFTS"
+assert_eq "info_grafts_refused: rc" "1" "$RC"
+assert_contains "info_grafts_refused: names the file" "info/grafts" "$ERR"
+
+ALT="$TMP/alt"
+make_pr_checkout alt >/dev/null
+: > "$ALT/.git/objects/info/alternates"
+run_restore BUILD_SOURCESDIRECTORY="$ALT"
+assert_eq "objects_alternates_refused: rc" "1" "$RC"
+assert_contains "objects_alternates_refused: names the file" "alternates" "$ERR"
+
+WTC="$TMP/wtc"
+make_pr_checkout wtc >/dev/null
+: > "$WTC/.git/config.worktree"
+run_restore BUILD_SOURCESDIRECTORY="$WTC"
+assert_eq "config_worktree_refused: rc" "1" "$RC"
+assert_contains "config_worktree_refused: names the file" "config.worktree" "$ERR"
+
+for key in extensions.worktreeConfig core.attributesFile; do
+  KEYREPO="$TMP/key-${key%%.*}"
+  make_pr_checkout "key-${key%%.*}" >/dev/null
+  git -C "$KEYREPO" config "$key" true
+  run_restore BUILD_SOURCESDIRECTORY="$KEYREPO"
+  assert_eq "tamper_key_${key}_refused: rc" "1" "$RC"
+  assert_contains "tamper_key_${key}_refused: names the key" "${key,,}" "$ERR"
+done
+
 # A manual queue, not a PR build: HEAD has one parent, and HEAD~1 is then not
 # a commit any policy vouched for.
 SINGLE="$TMP/single"
@@ -250,6 +298,8 @@ assert_contains "hermetic_env: the global git config is /dev/null" \
   "GIT_CONFIG_GLOBAL=/dev/null" "$ENVTEXT"
 assert_contains "hermetic_env: no system git config" \
   "GIT_CONFIG_NOSYSTEM=1" "$ENVTEXT"
+assert_contains "hermetic_env: git ignores replace refs" \
+  "GIT_NO_REPLACE_OBJECTS=1" "$ENVTEXT"
 for switch in BeforeMicrosoftCommonProps AfterMicrosoftCommonProps \
   BeforeMicrosoftCommonTargets AfterMicrosoftCommonTargets; do
   assert_contains "hermetic_env: ImportUserLocationsByWildcard$switch is off" \

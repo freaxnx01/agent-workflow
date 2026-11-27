@@ -79,6 +79,7 @@ if [[ "${AWF_PR_RESTORE_HERMETIC:-}" != 1 ]]; then
     "AWF_PR_RESTORE_HOME=$hermetic_home" \
     GIT_CONFIG_GLOBAL=/dev/null \
     GIT_CONFIG_NOSYSTEM=1 \
+    GIT_NO_REPLACE_OBJECTS=1 \
     DOTNET_CLI_TELEMETRY_OPTOUT=1 \
     DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
     ImportUserLocationsByWildcardBeforeMicrosoftCommonProps=false \
@@ -112,7 +113,7 @@ ANCESTOR_IMPORTS=(
 # The .git/config keys that make a plain git command run something or reach
 # somewhere else. `git worktree add` runs with the token in the environment, so
 # a checkout carrying one of these is refused rather than used.
-TAMPER_KEYS='^(filter\.|include\.|includeif\.|core\.hookspath|core\.fsmonitor|core\.sshcommand|core\.gitproxy|uploadpack\.|credential\.)'
+TAMPER_KEYS='^(filter\.|include\.|includeif\.|core\.hookspath|core\.fsmonitor|core\.sshcommand|core\.gitproxy|core\.attributesfile|extensions\.worktreeconfig|uploadpack\.|credential\.)'
 
 WORK_DIR=''
 SOURCES_DIR=''
@@ -185,6 +186,22 @@ guard_checkout_not_tampered() {
   fi
   [[ ! -s "$git_dir/info/attributes" ]] ||
     refuse "the checkout's .git/info/attributes is not empty"
+  guard_object_redirects "$git_dir"
+}
+
+# What would make git read objects or config from somewhere the PR's job did
+# not put there: replace refs (loose or packed; GIT_NO_REPLACE_OBJECTS already
+# ignores them, this refuses them as evidence of tampering), grafts, alternates
+# and a per-worktree config, which .git/config's keys do not cover.
+guard_object_redirects() {
+  local git_dir="$1" path
+  [[ -z "$(bgit for-each-ref --count=1 refs/replace/ 2>/dev/null || true)" ]] ||
+    refuse "the checkout holds refs under refs/replace/"
+  for path in info/grafts objects/info/alternates; do
+    [[ ! -e "$git_dir/$path" ]] || refuse "the checkout has .git/$path"
+  done
+  path="$(find "$git_dir" -maxdepth 3 -name config.worktree -print -quit 2>/dev/null || true)"
+  [[ -z "$path" ]] || refuse "the checkout has $path (config.worktree)"
 }
 
 # A PR build checks out refs/pull/<n>/merge, so HEAD has exactly two parents.
