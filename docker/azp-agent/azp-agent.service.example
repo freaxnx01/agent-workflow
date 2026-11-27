@@ -3,6 +3,12 @@
 # Register the agent ONCE beforehand with the one-shot command in
 # docs/AZDO-PIPELINE-SETUP.md; this unit passes no AZP_* variable and holds no
 # secret. Each start runs one job, then the container exits and is restarted.
+#
+# One unit per agent. The validation agent (docs/AZDO-PIPELINE-SETUP.md 9.7,
+# "Run validation on its own pool") gets its own unit, its own <name> and
+# container name, and its own volume — never the implement agent's volume: a
+# PR's build step can read the registration credentials off the volume it runs
+# with.
 [Unit]
 Description=Azure Pipelines agent (one job per container)
 After=docker.service network-online.target

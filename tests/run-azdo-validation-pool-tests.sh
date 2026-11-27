@@ -13,6 +13,8 @@
 #   - section 9.2 authorizes the validation pipeline on the validation pool,
 #     and no subsection of 9 still says to authorize it on the implement pool;
 #   - sections 10 and 13 point at the subsection;
+#   - the systemd unit example says one unit per agent, own volume;
+#   - an ADR records the decision and what it rejected;
 #   - no organization name leaks into the doc.
 #
 # Usage: tests/run-azdo-validation-pool-tests.sh
@@ -22,6 +24,8 @@ IFS=$'\n\t'
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SETUP_DOC="$ROOT/docs/AZDO-PIPELINE-SETUP.md"
+UNIT_EXAMPLE="$ROOT/docker/azp-agent/azp-agent.service.example"
+DECISIONS="$ROOT/docs/DECISIONS.md"
 
 PASS=0
 FAIL=0
@@ -128,6 +132,38 @@ fi
 
 assert_has "setup_doc_10_PointsToOwnPool" 'Run validation on its own pool' "$(level2 10)"
 assert_has "setup_doc_13_PointsToOwnPool" 'Run validation on its own pool' "$(level2 13)"
+
+printf '\n── the unit example and the ADR ──\n'
+
+UNIT_TEXT="$(cat "$UNIT_EXAMPLE" 2>/dev/null || true)"
+if printf '%s\n' "$UNIT_TEXT" | grep -qF 'validation agent' \
+  && printf '%s\n' "$UNIT_TEXT" | grep -qF 'own volume'; then
+  pass "unit_example_OneUnitPerAgent"
+else
+  fail "unit_example_OneUnitPerAgent" \
+    "$UNIT_EXAMPLE needs both 'validation agent' and 'own volume'"
+fi
+
+if grep -qE '^## ADR-[0-9]+ — PR validation runs on its own agent pool' "$DECISIONS"; then
+  pass "decisions_HasOwnPoolAdr"
+else
+  fail "decisions_HasOwnPoolAdr" \
+    "no '## ADR-NNN — PR validation runs on its own agent pool' in $DECISIONS"
+fi
+
+# The ADR's body: its heading up to the next "## ADR-" heading, or EOF.
+ADR_BODY="$(awk '
+  /^## ADR-[0-9]+ — PR validation runs on its own agent pool/ {on=1; print; next}
+  on && /^## ADR-/{exit}
+  on
+' "$DECISIONS")"
+if printf '%s\n' "$ADR_BODY" | grep -qF 'awf-agent' \
+  && printf '%s\n' "$ADR_BODY" | grep -qF 'read-only'; then
+  pass "decisions_OwnPoolAdr_RejectsWrapper"
+else
+  fail "decisions_OwnPoolAdr_RejectsWrapper" \
+    "the ADR must say why the awf-agent wrapper and the read-only mount were rejected"
+fi
 
 printf '\n── placeholders only ──\n'
 

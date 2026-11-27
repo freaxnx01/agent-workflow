@@ -120,6 +120,16 @@ else
   fail "cutover_doc_MigrateFlags" "step 7 needs --dry-run and --area, and must not use --close"
 fi
 
+# --- step 6 sends PR validation to its own pool (#703) ---------------------
+step6="$(section 6)"
+if printf '%s\n' "$step6" | tr -s '[:space:]' ' ' | grep -qF '<validation-pool>' \
+  && printf '%s\n' "$step6" | tr -s '[:space:]' ' ' | grep -qF 'ai-implement'; then
+  pass "cutover_doc_Step6_ValidationPool"
+else
+  fail "cutover_doc_Step6_ValidationPool" \
+    "step 6 needs '<validation-pool>' and the 'ai-implement' pipeline permission"
+fi
+
 # --- placeholders only -----------------------------------------------------
 # check_host NAME HOST_REGEX ALLOWED_REGEX — every HOST occurrence in the doc
 # must match ALLOWED_REGEX.

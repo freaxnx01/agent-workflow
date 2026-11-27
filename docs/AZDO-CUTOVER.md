@@ -179,7 +179,10 @@ Each item below is a section of `AZDO-PIPELINE-SETUP.md`.
 - [ ] PR build validation equivalent to the GitHub CI (9): the same build, the
       same test filters, the same extra tools, as a separate pipeline with no
       secret variables and no variable group. With private feeds, also 9.6:
-      without it every PR of such a repo is red.
+      without it every PR of such a repo is red. On its own pool
+      `<validation-pool>`, with its own agent, and with `<pool>`'s pipeline
+      permissions listing only the `ai-implement` pipeline (9.7, *Run
+      validation on its own pool*).
 - [ ] `AWF_TOOLCHAIN` routing to the `dotnet` agent (10).
 - [ ] Retry policy, attempt cap and job timeout (11).
 - [ ] AI review, and self-fix if wanted (12).
