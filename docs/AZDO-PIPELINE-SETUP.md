@@ -188,9 +188,10 @@ driver refuses to push or open a PR for agent changes to pipeline files
    `azure-pipelines-pr.yml`.
 2. Create it with **no secret** variables and link **no** variable group. Never
    put `CLAUDE_CODE_OAUTH_TOKEN` here. Variables are per pipeline, so this one
-   inherits nothing from the `ai-implement` pipeline. Exactly three non-secret
+   inherits nothing from the `ai-implement` pipeline. Only these non-secret
    variables belong here, and only for a repo with private feeds (9.6):
-   `AGENT_WORKFLOW_REF`, `AWF_NUGET_FEEDS` and `AWF_NUGET_RESTORE`.
+   `AGENT_WORKFLOW_REF`, `AWF_NUGET_FEEDS`, `AWF_NUGET_RESTORE` and, when the
+   default branch is not `main`, `AWF_DEFAULT_BRANCH`.
 3. Turn on *Project settings > Pipelines > Settings > Limit job authorization
    scope to current project*.
 4. Authorize the pipeline on the agent pool: *Project settings > Agent pools >
@@ -297,6 +298,10 @@ while the token is set. Nothing from the PR is ever evaluated. The template's
 - `AWF_NUGET_FEEDS` — the same value as section 14.1. Leave it unset and both
   steps are skipped, which is the behaviour of a repo without private feeds.
 - `AWF_NUGET_RESTORE` — only if section 14.2 applies.
+- `AWF_DEFAULT_BRANCH` — only if the default branch is not `main`: its short
+  name, for example `master`, not `refs/heads/master`. Azure DevOps does not
+  report the default branch to the job, so without it the restore takes `main`
+  and refuses every PR to any other branch.
 
 **No extra permission.** Both pipelines run as the same project build service,
 so the **Feed Reader** role granted in 14.3 already covers this one.
@@ -337,7 +342,8 @@ again.
   entry that is not a relative solution or project path (14.2), a cache folder
   that is a symlink or not owned by the job user (rebuild the image), a build
   that is not a PR merge commit (someone queued the pipeline by hand), a PR
-  that does not target the default branch, a `dotnet` that this user can write,
+  that does not target the default branch (or a default branch other than
+  `main` without `AWF_DEFAULT_BRANCH`), a `dotnet` that this user can write,
   or an MSBuild/NuGet file above `Agent.TempDirectory` left by an earlier job.
 - `private feed restore: <cause>` — there was nothing to restore, so the Feed
   Reader role is not the cause. Set `AWF_NUGET_RESTORE` (14.2).

@@ -22,9 +22,12 @@
 #   AWF_PR_RESTORE_WORK_DIR       where the seed worktree goes, outside the
 #                                 checkout: $(Agent.TempDirectory)
 #   BUILD_SOURCESDIRECTORY        the PR checkout
-#   SYSTEM_PULLREQUEST_TARGETBRANCH, BUILD_REPOSITORY_DEFAULTBRANCH
-#   AWF_DEFAULT_BRANCH            the default branch when Azure DevOps does not
-#                                 report one (default `main`)
+#   SYSTEM_PULLREQUEST_TARGETBRANCH
+#   BUILD_REPOSITORY_DEFAULTBRANCH  read first when set, but not a predefined
+#                                 Azure Pipelines variable, so usually empty
+#   AWF_DEFAULT_BRANCH            the default branch's short name (default
+#                                 `main`); set it on the validation pipeline
+#                                 when the default branch is not `main`
 #
 # Exit codes: 0 restored, or nothing to restore; 1 refused or the restore
 # failed; 2 usage — feeds are set and SYSTEM_ACCESSTOKEN is not mapped.
@@ -203,7 +206,7 @@ guard_target_is_default() {
   local target="${SYSTEM_PULLREQUEST_TARGETBRANCH:-}"
   local default="${BUILD_REPOSITORY_DEFAULTBRANCH:-refs/heads/${AWF_DEFAULT_BRANCH:-main}}"
   [[ "${target#refs/heads/}" != "${default#refs/heads/}" ]] || return 0
-  refuse "the PR targets $target, not the default branch $default"
+  refuse "the PR targets $target, not the default branch $default; if the default branch is not main, set AWF_DEFAULT_BRANCH on this pipeline (section 9.6)"
 }
 
 # The image's PATH holds a directory the job user can write (`~/.local/bin`), so

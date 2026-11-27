@@ -211,6 +211,18 @@ section "the default branch"
 run_restore BUILD_REPOSITORY_DEFAULTBRANCH=''
 assert_eq "default_branch_falls_back_to_main: rc" "0" "$RC"
 
+# A repo whose default branch is not `main`: Azure DevOps does not report it,
+# so the refusal must name the variable that fixes it.
+run_restore BUILD_REPOSITORY_DEFAULTBRANCH='' \
+  SYSTEM_PULLREQUEST_TARGETBRANCH=refs/heads/master
+assert_eq "non_main_default_refused_without_variable: rc" "1" "$RC"
+assert_contains "non_main_default_refused_without_variable: names the fix" \
+  "AWF_DEFAULT_BRANCH" "$ERR"
+
+run_restore BUILD_REPOSITORY_DEFAULTBRANCH='' AWF_DEFAULT_BRANCH=master \
+  SYSTEM_PULLREQUEST_TARGETBRANCH=refs/heads/master
+assert_eq "awf_default_branch_master_accepted: rc" "0" "$RC"
+
 section "the restore and the handoff"
 
 RLOG="$TMP/dotnet-restore.log"
