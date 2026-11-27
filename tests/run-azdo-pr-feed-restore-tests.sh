@@ -57,6 +57,14 @@ assert_not_contains() {
     fail "$name" "unexpected: $needle"; fi
 }
 
+# The entry point refuses a `dotnet` the current user can write, and root can
+# write every file, so as root there is nothing these cases could prove. The
+# pipeline runs as the unprivileged agent user, which is what they model.
+if [[ "$(id -u)" == 0 ]]; then
+  echo "SKIP: running as root"
+  exit 0
+fi
+
 TMP="$(mktemp -d)"
 # The read-only hermetic bin directory below has to be made writable again
 # before it can be deleted.
@@ -77,15 +85,17 @@ chmod a-w "$BIN/dotnet" "$BIN"
 
 CACHE_ROOT="$TMP/c"
 mkdir -p "$CACHE_ROOT/var/cache/awf-nuget"
+CACHE="$CACHE_ROOT/var/cache/awf-nuget"
 
-# make_pr_checkout <name> — a checkout whose HEAD is what Azure DevOps checks
-# out for a PR build: the merge commit of refs/pull/<n>/merge, whose FIRST
-# parent is the target branch's tip. Echoes that first parent's SHA.
+# make_pr_checkout <name> [root-file] — a checkout whose HEAD is what Azure
+# DevOps checks out for a PR build: the merge commit of refs/pull/<n>/merge,
+# whose FIRST parent is the target branch's tip. <root-file> is what the target
+# commit holds at the root, a solution by default. Echoes that parent's SHA.
 make_pr_checkout() {
-  local dir="$TMP/$1" first
+  local dir="$TMP/$1" root_file="${2:-Sample.sln}" first
   mkdir -p "$dir"
   git init -q -b main "$dir"
-  printf '<Solution/>\n' > "$dir/Sample.sln"
+  printf '<Solution/>\n' > "$dir/$root_file"
   git -C "$dir" add -A
   git -C "$dir" -c user.name=t -c user.email=t@example.invalid commit -q -m target
   first="$(git -C "$dir" rev-parse HEAD)"
@@ -194,16 +204,83 @@ assert_eq "target_not_default_refused: rc" "1" "$RC"
 assert_contains "target_not_default_refused: names both branches" \
   "refs/heads/agent/x" "$ERR"
 
-section "the seed commit"
+section "the default branch"
 
 run_restore BUILD_REPOSITORY_DEFAULTBRANCH=''
 assert_eq "default_branch_falls_back_to_main: rc" "0" "$RC"
 
-SEED_LOG="$TMP/dotnet-seed.log"
-run_restore DOTNET_LOG="$SEED_LOG"
-assert_eq "seed_is_first_parent: rc" "0" "$RC"
-assert_contains "seed_is_first_parent: the first parent is the seed" \
-  "seed $SEED" "$OUT"
+section "the restore and the handoff"
+
+RLOG="$TMP/dotnet-restore.log"
+ELOG="$TMP/dotnet-env.log"
+run_restore DOTNET_LOG="$RLOG" DOTNET_ENV_LOG="$ELOG" CANARY_VAR=canary
+LOGTEXT="$(cat "$RLOG" 2>/dev/null || true)"
+ENVTEXT="$(cat "$ELOG" 2>/dev/null || true)"
+assert_eq "restore_runs_on_seed_worktree: rc" "0" "$RC"
+assert_contains "restore_runs_on_seed_worktree: the seed is the first parent" \
+  "head=$SEED" "$LOGTEXT"
+assert_contains "restore_runs_on_seed_worktree: in a worktree under the work dir" \
+  "pwd=$TMP/w/" "$LOGTEXT"
+assert_not_contains "token_not_in_argv" "$SECRET" "$LOGTEXT"
+assert_eq "temp_config_removed" "" \
+  "$(find "$TMP/w" -name 'feed-config.*' | head -n1)"
+assert_eq "success_emits_setvariable" \
+  "##vso[task.setvariable variable=NUGET_FALLBACK_PACKAGES]$CACHE" "$OUT"
+
+# The environment the restore itself ran in, as the mock saw it. Everything an
+# earlier job on a persistent agent could have left behind — a user HOME, a
+# global git config, an MSBuild user-location import — is out of reach.
+assert_not_contains "hermetic_env: HOME is not the caller's" \
+  "HOME=$TMP/caller-home" "$ENVTEXT"
+assert_contains "hermetic_env: the global git config is /dev/null" \
+  "GIT_CONFIG_GLOBAL=/dev/null" "$ENVTEXT"
+assert_contains "hermetic_env: no system git config" \
+  "GIT_CONFIG_NOSYSTEM=1" "$ENVTEXT"
+for switch in BeforeMicrosoftCommonProps AfterMicrosoftCommonProps \
+  BeforeMicrosoftCommonTargets AfterMicrosoftCommonTargets; do
+  assert_contains "hermetic_env: ImportUserLocationsByWildcard$switch is off" \
+    "ImportUserLocationsByWildcard$switch=false" "$ENVTEXT"
+done
+assert_not_contains "hermetic_env: nothing outside the allowlist" \
+  "CANARY_VAR" "$ENVTEXT"
+
+# A `core.hooksPath` in the caller's HOME would run during the worktree add,
+# with the token in the environment.
+HOOKS="$TMP/hooks"
+mkdir -p "$HOOKS"
+printf '#!/bin/sh\ntouch %s/hook-ran\n' "$TMP" > "$HOOKS/post-checkout"
+chmod 0755 "$HOOKS/post-checkout"
+printf '[core]\n\thooksPath = %s\n' "$HOOKS" > "$TMP/caller-home/.gitconfig"
+run_restore
+rm -f "$TMP/caller-home/.gitconfig"
+assert_eq "planted_global_hook_not_run: rc" "0" "$RC"
+assert_eq "planted_global_hook_not_run: the hook did not run" "0" \
+  "$([[ -e "$TMP/hook-ran" ]] && echo 1 || echo 0)"
+
+# The image's PATH holds a directory the job user can write, so a `dotnet` of
+# an earlier job's making must not be the one that gets the token.
+chmod u+w "$BIN/dotnet"
+run_restore
+chmod a-w "$BIN/dotnet"
+assert_eq "writable_dotnet_refused: rc" "1" "$RC"
+assert_contains "writable_dotnet_refused: says why" "is writable by" "$ERR"
+
+run_restore DOTNET_MOCK_FAIL=1
+assert_eq "restore_failure_message_and_no_setvariable: rc" "1" "$RC"
+assert_contains "restore_failure_message_and_no_setvariable: the Feed Reader message" \
+  "private feed restore failed ($ADO_FEED): check that the build service has the Feed Reader role on the feed" \
+  "$ERR"
+assert_not_contains "restore_failure_message_and_no_setvariable: no handoff" \
+  "task.setvariable" "$OUT"
+assert_eq "restore_failure_message_and_no_setvariable: nothing left behind" "" \
+  "$(find "$TMP/w" -name 'feed-config.*' | head -n1)"
+
+NOSLN="$TMP/nosln"
+make_pr_checkout nosln README.md >/dev/null
+run_restore BUILD_SOURCESDIRECTORY="$NOSLN"
+assert_eq "nothing_to_restore: rc" "1" "$RC"
+assert_contains "nothing_to_restore: names the cause, not the Feed Reader role" \
+  "private feed restore: no solution or project" "$ERR"
 
 section "the token"
 

@@ -21,6 +21,11 @@
 #                       so a test can prove no MSBuild node outlives the call.
 #   DOTNET_CONFIG_COPY  file the `--configfile` is copied to.
 #   DOTNET_MODE_LOG     file a `file=<mode> dir=<mode>` line is appended to.
+#   DOTNET_ENV_LOG      file this call's whole environment is written to, sorted,
+#                       one NAME=value per line, with the token values replaced
+#                       by `<set>`. For the PR-validation restore (#699), which
+#                       re-executes itself under `env -i`: the hermetic
+#                       environment is only provable by reading it from here.
 #   DOTNET_MOCK_FAIL    "1" exits 1 after logging, as a restore against a feed
 #                       the build service cannot read does.
 #
@@ -47,6 +52,11 @@ if [[ -n "${DOTNET_LOG:-}" ]]; then
   argv="$(IFS=' '; printf '%s' "${args[*]}")"
   printf 'argv=%s\npwd=%s\nhead=%s\nnodereuse=%s\n' "$argv" "$PWD" \
     "$(git rev-parse HEAD 2>/dev/null || true)" "${MSBUILDDISABLENODEREUSE:-}" >> "$DOTNET_LOG"
+fi
+
+if [[ -n "${DOTNET_ENV_LOG:-}" ]]; then
+  env | sed -E 's/^(SYSTEM_ACCESSTOKEN|AZURE_DEVOPS_EXT_PAT)=.*/\1=<set>/' | sort \
+    > "$DOTNET_ENV_LOG"
 fi
 
 if [[ -n "$config" && -f "$config" ]]; then

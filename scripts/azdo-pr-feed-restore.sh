@@ -31,6 +31,65 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# The PATH of the hermetic re-exec. AWF_TEST_HERMETIC_PATH replaces it in the
+# tests, which have no SDK and must reach their mocks.
+HERMETIC_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# The hermetic re-exec, before anything else is sourced or read. The validation
+# pipeline has no user boundary: the PR's own build step runs as the same user
+# as this step, so within one job the order protects the token, but across jobs
+# on a persistent agent it does not. Everything an earlier job could have left
+# for this one to pick up — a user HOME, a global or system git config, a NuGet
+# credential plugin, an MSBuild user-location import — is dropped here, and
+# only the variables this script needs survive. Section 9.6 still asks for an
+# agent that is fresh per job; this reduces the damage, it does not remove the
+# precondition.
+if [[ "${AWF_PR_RESTORE_HERMETIC:-}" != 1 ]]; then
+  hermetic_home="$(mktemp -d)"
+  chmod 0700 "$hermetic_home"
+  : > "$hermetic_home/no-plugins"
+  passthrough=(
+    "SYSTEM_ACCESSTOKEN=${SYSTEM_ACCESSTOKEN:-}"
+    "AWF_NUGET_FEEDS=${AWF_NUGET_FEEDS:-}"
+    "AWF_NUGET_RESTORE=${AWF_NUGET_RESTORE:-}"
+    "AWF_PR_RESTORE_WORK_DIR=${AWF_PR_RESTORE_WORK_DIR:-}"
+    "BUILD_SOURCESDIRECTORY=${BUILD_SOURCESDIRECTORY:-}"
+    "SYSTEM_PULLREQUEST_TARGETBRANCH=${SYSTEM_PULLREQUEST_TARGETBRANCH:-}"
+    "BUILD_REPOSITORY_DEFAULTBRANCH=${BUILD_REPOSITORY_DEFAULTBRANCH:-}"
+    "AWF_DEFAULT_BRANCH=${AWF_DEFAULT_BRANCH:-}"
+    "AWF_TEST_CACHE_ROOT=${AWF_TEST_CACHE_ROOT:-}"
+    "AWF_TEST_HERMETIC_PATH=${AWF_TEST_HERMETIC_PATH:-}"
+  )
+  # The mock's own channels, test-only: without a test PATH there is no mock to
+  # talk to, so they cannot reach a real `dotnet` run.
+  if [[ -n "${AWF_TEST_HERMETIC_PATH:-}" ]]; then
+    for mock_var in DOTNET_LOG DOTNET_ENV_LOG DOTNET_CONFIG_COPY \
+      DOTNET_MODE_LOG DOTNET_MOCK_FAIL; do
+      passthrough+=("$mock_var=${!mock_var:-}")
+    done
+  fi
+  exec env -i \
+    "PATH=${AWF_TEST_HERMETIC_PATH:-$HERMETIC_PATH}" \
+    "HOME=$hermetic_home" \
+    "DOTNET_CLI_HOME=$hermetic_home" \
+    "NUGET_PLUGIN_PATHS=$hermetic_home/no-plugins" \
+    "AWF_PR_RESTORE_HOME=$hermetic_home" \
+    GIT_CONFIG_GLOBAL=/dev/null \
+    GIT_CONFIG_NOSYSTEM=1 \
+    DOTNET_CLI_TELEMETRY_OPTOUT=1 \
+    DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1 \
+    ImportUserLocationsByWildcardBeforeMicrosoftCommonProps=false \
+    ImportUserLocationsByWildcardAfterMicrosoftCommonProps=false \
+    ImportUserLocationsByWildcardBeforeMicrosoftCommonTargets=false \
+    ImportUserLocationsByWildcardAfterMicrosoftCommonTargets=false \
+    AWF_PR_RESTORE_HERMETIC=1 \
+    "${passthrough[@]}" \
+    bash "$0"
+fi
+
+# The re-executed process owns the temp HOME it was handed.
+[[ -z "${AWF_PR_RESTORE_HOME:-}" ]] || trap 'rm -rf "$AWF_PR_RESTORE_HOME"' EXIT
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=scripts/lib/agent-boundary.sh
 source "$ROOT/scripts/lib/agent-boundary.sh"
@@ -147,6 +206,43 @@ guard_target_is_default() {
   refuse "the PR targets $target, not the default branch $default"
 }
 
+# The image's PATH holds a directory the job user can write (`~/.local/bin`), so
+# the `dotnet` that gets the token must be one an earlier job could not have
+# replaced: neither the resolved binary nor its directory may be writable here.
+guard_dotnet_trusted() {
+  local dotnet_path
+  dotnet_path="$(command -v dotnet 2>/dev/null || true)"
+  [[ -n "$dotnet_path" ]] ||
+    refuse 'dotnet is not on PATH; rebuild the agent image with --target dotnet'
+  dotnet_path="$(realpath "$dotnet_path")"
+  [[ ! -w "$dotnet_path" && ! -w "$(dirname "$dotnet_path")" ]] ||
+    refuse "dotnet at $dotnet_path is writable by $(id -un)"
+}
+
+# The credentialed restore, on a detached worktree of the seed commit. The
+# cause goes to a file rather than into a command substitution: the job log
+# must keep `dotnet restore`'s own error, which section 9.6 sends the operator
+# to read. Only the first line becomes the message.
+restore_seed() {
+  local cause_file rc=0
+  export AZURE_DEVOPS_EXT_PAT="$SYSTEM_ACCESSTOKEN"
+  mkdir -p "$WORK_DIR" || refuse "could not create the work directory $WORK_DIR"
+  cause_file="$WORK_DIR/pr-feed-restore.err"
+  : > "$cause_file"
+  feed_pre_restore "$SEED_SHA" "$WORK_DIR" 2>"$cause_file" || rc=$?
+  [[ ! -s "$cause_file" ]] || cat "$cause_file" >&2
+  [[ "$rc" -ne 0 ]] || return 0
+  if [[ "$rc" -eq 2 ]]; then
+    # Nothing to restore (#682): the restore never ran, so the Feed Reader role
+    # is not the cause and naming it would send the operator the wrong way.
+    printf 'private feed restore: %s\n' "$(head -n1 "$cause_file")" >&2
+  else
+    printf 'private feed restore failed (%s): check that the build service has the Feed Reader role on the feed\n' \
+      "${FEED_URLS[0]}" >&2
+  fi
+  exit 1
+}
+
 main() {
   guard_feeds
   guard_token
@@ -157,8 +253,12 @@ main() {
   guard_checkout_not_tampered
   guard_merge_head
   guard_target_is_default
+  guard_dotnet_trusted
   SEED_SHA="$(bgit rev-parse HEAD^1)"
-  printf 'pr feed restore: seed %s\n' "$SEED_SHA"
+  restore_seed
+  # Only now, and only for this job: the build step reads private packages from
+  # the folder this job filled, never from one an earlier job left behind.
+  printf '##vso[task.setvariable variable=NUGET_FALLBACK_PACKAGES]%s\n' "$AWF_NUGET_CACHE"
 }
 
 main "$@"
