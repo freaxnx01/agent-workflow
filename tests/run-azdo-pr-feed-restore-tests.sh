@@ -175,6 +175,15 @@ assert_eq "ancestor_directory_build_props_refused: rc" "1" "$RC"
 assert_contains "ancestor_directory_build_props_refused: names the file" \
   "Directory.Build.props" "$ERR"
 
+# MSBuild reads a Directory.Build.rsp above the project as extra command-line
+# switches, which can add a logger or a property of the planter's choosing.
+: > "$TMP/anc/Directory.Build.rsp"
+run_restore AWF_PR_RESTORE_WORK_DIR="$TMP/anc/work"
+rm -f "$TMP/anc/Directory.Build.rsp"
+assert_eq "ancestor_directory_build_rsp_refused: rc" "1" "$RC"
+assert_contains "ancestor_directory_build_rsp_refused: names the file" \
+  "Directory.Build.rsp" "$ERR"
+
 # A `.git` an earlier job tampered with: a filter driver runs during the
 # worktree add, which happens with the token in the environment.
 git -C "$REPO" config filter.x.smudge cat

@@ -110,7 +110,8 @@ source "$ROOT/scripts/lib/private-feed-restore.sh"
 # persistent agent an earlier job could plant one of these and have it
 # evaluated — which is to say executed — with the token in the environment.
 ANCESTOR_IMPORTS=(
-  Directory.Build.props Directory.Build.targets Directory.Packages.props
+  Directory.Build.props Directory.Build.targets Directory.Build.rsp
+  Directory.Packages.props
   Directory.Solution.props Directory.Solution.targets
   nuget.config NuGet.Config NuGet.config global.json
 )
