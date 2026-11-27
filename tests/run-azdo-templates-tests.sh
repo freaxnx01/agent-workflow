@@ -56,16 +56,33 @@ import yaml
 TOKEN = re.compile(r"System\.AccessToken|SYSTEM_ACCESSTOKEN")
 SECRET_VALUE = re.compile(r"System\.AccessToken|SYSTEM_ACCESSTOKEN|CLAUDE", re.I)
 SECRET_KEY = re.compile(r"CLAUDE|SYSTEM_ACCESSTOKEN", re.I)
+# The one step that may hold the job token (#699, section 9.6): it runs
+# agent-workflow's own code at a pinned ref, before any step from the PR, and
+# only on the PR's target-branch commit. The exception is exactly this one
+# mapping in that one step — any other key, value or step still trips. The
+# step is recognised by its exact command, not by a mention of the script, and
+# there may be at most one.
+TRUSTED_STEP = '/usr/bin/bash "$(Agent.TempDirectory)/aw/scripts/azdo-pr-feed-restore.sh"'
+TRUSTED_ENV = {"SYSTEM_ACCESSTOKEN": "$(System.AccessToken)"}
 found = []
+trusted_steps = []
 
 
 def walk(node):
     if isinstance(node, dict):
         if "checkout" in node and node.get("persistCredentials"):
             found.append("persist_credentials")
+        trusted = node.get("bash") == TRUSTED_STEP
+        if trusted:
+            trusted_steps.append(node)
+        # CLAUDE.md (CI overlay): no inline bash over 5 lines in a YAML step.
+        if len(str(node.get("bash", "")).rstrip("\n").splitlines()) > 5:
+            found.append("inline_bash_over_5_lines")
         env = node.get("env")
         if isinstance(env, dict):
             for key, value in env.items():
+                if trusted and TRUSTED_ENV.get(str(key)) == str(value):
+                    continue
                 if SECRET_KEY.search(str(key)) or SECRET_VALUE.search(str(value)):
                     found.append("env_secret")
         variables = node.get("variables")
@@ -73,7 +90,11 @@ def walk(node):
             for item in variables:
                 if isinstance(item, dict) and "group" in item:
                     found.append("variable_group")
-        for value in node.values():
+        for name, value in node.items():
+            # The trusted step's env is judged above; walking into it again
+            # would report its allowed mapping as a bare token string.
+            if trusted and name == "env":
+                continue
             walk(value)
     elif isinstance(node, list):
         for item in node:
@@ -89,6 +110,8 @@ if doc.get("trigger") != "none":
 if doc.get("pr") != "none":
     found.append("pr_not_none")
 walk(doc)
+if len(trusted_steps) > 1:
+    found.append("multiple_trusted_steps")
 for violation in dict.fromkeys(found):
     print(violation)
 sys.exit(1 if found else 0)
@@ -112,6 +135,34 @@ assert_contains "template_has_pool_placeholder" "pool: <pool>" "$TEXT"
 assert_contains "template_header_names_target" "azure-pipelines-pr.yml" "$TEXT"
 assert_contains "template_persist_credentials_false" "persistCredentials: false" "$TEXT"
 
+section "the cleanup step"
+# The always() step runs even when the fetch step failed and the script it
+# calls was never cloned; it must then skip quietly, not add a second error.
+# Its inline bash is run as written, with the agent's temp folder replaced.
+CLEANUP_DIR="$(mktemp -d)"
+trap 'rm -f "$CHECKER"; rm -rf "$CLEANUP_DIR"' EXIT
+CLEANUP_SCRIPT="$CLEANUP_DIR/step.sh"
+python3 -I - "$TEMPLATE" "$CLEANUP_DIR/agent-temp" > "$CLEANUP_SCRIPT" <<'PY2'
+import sys
+import yaml
+with open(sys.argv[1], encoding="utf-8") as handle:
+    steps = yaml.safe_load(handle)["steps"]
+step = next(s for s in steps if "azdo-pr-feed-cleanup.sh" in str(s.get("bash", "")))
+print(step["bash"].replace("$(Agent.TempDirectory)", sys.argv[2]))
+PY2
+RC=0
+ERR_TEXT="$(bash "$CLEANUP_SCRIPT" 2>&1 >/dev/null)" || RC=$?
+assert_eq "cleanup_step_skips_without_fetch: rc" 0 "$RC"
+assert_eq "cleanup_step_skips_without_fetch: no error" "" "$ERR_TEXT"
+mkdir -p "$CLEANUP_DIR/agent-temp/aw/scripts"
+printf '#!/bin/sh\ntouch "%s/ran"\n' "$CLEANUP_DIR" \
+  > "$CLEANUP_DIR/agent-temp/aw/scripts/azdo-pr-feed-cleanup.sh"
+RC=0
+bash "$CLEANUP_SCRIPT" >/dev/null 2>&1 || RC=$?
+assert_eq "cleanup_step_runs_fetched_script: rc" 0 "$RC"
+assert_eq "cleanup_step_runs_fetched_script: ran" 1 \
+  "$([[ -e "$CLEANUP_DIR/ran" ]] && echo 1 || echo 0)"
+
 section "bad fixtures"
 detects() { # <fixture-name> <violation-id>
   check_template "$FIXTURES/$1.yml"
@@ -127,6 +178,9 @@ detects bad-env-claude env_secret
 detects bad-script-macro access_token_anywhere
 detects bad-variable-group variable_group
 detects bad-nested-variable-group variable_group
+detects bad-trusted-step-extra-secret env_secret
+detects bad-trusted-step-in-comment env_secret
+detects bad-two-trusted-steps multiple_trusted_steps
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then

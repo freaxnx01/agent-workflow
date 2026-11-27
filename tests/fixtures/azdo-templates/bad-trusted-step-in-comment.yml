@@ -1,0 +1,18 @@
+# Only the exact §9.6 restore command is the trusted step. A build step that
+# merely mentions the script, here in a comment, must not inherit its right to
+# map the job token.
+trigger: none
+pr: none
+
+pool: <pool>
+
+steps:
+  - checkout: self
+    persistCredentials: false
+
+  - bash: |
+      # not azdo-pr-feed-restore.sh
+      dotnet build
+    displayName: Build and test
+    env:
+      SYSTEM_ACCESSTOKEN: $(System.AccessToken)

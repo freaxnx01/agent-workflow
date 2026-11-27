@@ -447,6 +447,39 @@ assert_contains "feed_cache_clear_Symlink: says why" "symlink" "$ERR"
 assert_eq "feed_cache_clear_Symlink: the target is untouched" "1" \
   "$([[ -f "$LINK_TARGET/keep" ]] && echo 1 || echo 0)"
 
+section "feed_cache_path_check (#699)"
+
+# The fixed path, with the test prefix applied. Both the implement run and the
+# PR validation restore go through this, so the prefix must survive the call:
+# the caller keeps the AWF_NUGET_CACHE it sets.
+pfr 'feed_cache_path_check && printf "%s\n" "$AWF_NUGET_CACHE"' \
+  AWF_NUGET_CACHE=/var/cache/awf-nuget AWF_TEST_CACHE_ROOT="$TMP/croot"
+assert_eq "feed_cache_path_check_DefaultAccepted: rc" "0" "$RC"
+assert_eq "feed_cache_path_check_DefaultAccepted: the prefix is applied" \
+  "$TMP/croot/var/cache/awf-nuget" "$OUT"
+
+pfr 'feed_cache_path_check || printf "cause=%s\n" "$FEED_CACHE_CAUSE"' \
+  AWF_NUGET_CACHE=/tmp/x
+assert_eq "feed_cache_path_check_OtherPathRefused: rc" "0" "$RC"
+assert_contains "feed_cache_path_check_OtherPathRefused: says why" \
+  "AWF_NUGET_CACHE must be /var/cache/awf-nuget in a pipeline, not /tmp/x" "$ERR"
+assert_contains "feed_cache_path_check_OtherPathRefused: the cause is readable without a subshell" \
+  "cause=AWF_NUGET_CACHE must be /var/cache/awf-nuget in a pipeline, not /tmp/x" "$OUT"
+
+pfr 'feed_cache_path_check' \
+  AWF_NUGET_CACHE=/var/cache/awf-nuget AWF_TEST_CACHE_ROOT=rel
+assert_eq "feed_cache_path_check_RelativeTestRootRefused: rc" "1" "$RC"
+assert_contains "feed_cache_path_check_RelativeTestRootRefused: says why" \
+  "must be an absolute path" "$ERR"
+
+mkdir -p "$TMP/croot-link/var/cache" "$TMP/croot-link-target"
+ln -s "$TMP/croot-link-target" "$TMP/croot-link/var/cache/awf-nuget"
+pfr 'feed_cache_path_check' \
+  AWF_NUGET_CACHE=/var/cache/awf-nuget AWF_TEST_CACHE_ROOT="$TMP/croot-link"
+assert_eq "feed_cache_path_check_SymlinkRefused: rc" "1" "$RC"
+assert_contains "feed_cache_path_check_SymlinkRefused: says why" \
+  "is a symlink or not a directory owned by" "$ERR"
+
 section "feed_pre_restore — the failure branches"
 
 WD4="$TMP/wd4"; mkdir -p "$WD4"

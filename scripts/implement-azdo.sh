@@ -204,28 +204,18 @@ preflight_boundary() {
   return 0
 }
 
-# The package cache the driver empties and fills (#641) is fixed in a pipeline:
-# `find -delete` and `chmod -R` act on it, and Azure Pipelines exports pipeline
-# variables into this environment, so AWF_NUGET_CACHE is not the pipeline's to
-# choose. It must also be a real directory this user owns; an absent one is
-# fine until a restore needs it. Only after this check may the EXIT trap empty
-# it. AWF_TEST_CACHE_ROOT is a test-only prefix, so the tests never touch the
-# host's real folder; whatever it is set to, the path still ends in the fixed one.
+# The package cache the driver empties and fills (#641) is fixed in a pipeline.
+# The check itself is feed_cache_path_check in the library, shared with the PR
+# validation restore (#699), so both paths refuse the same values with the same
+# words. It runs in this shell: it sets AWF_NUGET_CACHE, and only after it
+# accepted may the EXIT trap empty that folder. Its stderr is dropped because
+# the refusal travels on the work item, not in the log.
 preflight_cache() {
-  local fixed=/var/cache/awf-nuget refusal=''
-  if [[ "$AWF_NUGET_CACHE" != "$fixed" ]]; then
-    refusal="private feed setup: AWF_NUGET_CACHE must be $fixed in a pipeline, not $AWF_NUGET_CACHE"
-  elif [[ -n "${AWF_TEST_CACHE_ROOT:-}" && "$AWF_TEST_CACHE_ROOT" != /* ]]; then
-    refusal='private feed setup: AWF_TEST_CACHE_ROOT must be an absolute path'
-  else
-    AWF_NUGET_CACHE="${AWF_TEST_CACHE_ROOT:-}$fixed"
-    if [[ -L "$AWF_NUGET_CACHE" ]] ||
-       [[ -e "$AWF_NUGET_CACHE" && ( ! -d "$AWF_NUGET_CACHE" || ! -O "$AWF_NUGET_CACHE" ) ]]; then
-      refusal="private feed setup: the package cache $AWF_NUGET_CACHE is a symlink or not a directory owned by $(id -un)"
-    fi
-  fi
-  if [[ -n "$refusal" ]]; then
-    [[ -n "$BOUNDARY_REFUSAL" ]] || { BOUNDARY_REFUSAL="$refusal"; REFUSAL_SECTION='§14'; }
+  if ! feed_cache_path_check 2>/dev/null; then
+    [[ -n "$BOUNDARY_REFUSAL" ]] || {
+      BOUNDARY_REFUSAL="private feed setup: $FEED_CACHE_CAUSE"
+      REFUSAL_SECTION='§14'
+    }
     return 0
   fi
   FEED_CACHE_CHECKED=1
