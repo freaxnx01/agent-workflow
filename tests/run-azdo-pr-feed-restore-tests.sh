@@ -317,6 +317,15 @@ done
 assert_not_contains "hermetic_env: nothing outside the allowlist" \
   "CANARY_VAR" "$ENVTEXT"
 
+# Every non-secret pipeline variable reaches the step's environment, so the
+# re-exec marker must not be one: an inherited AWF_PR_RESTORE_HERMETIC=1 must
+# not skip the re-exec.
+MLOG="$TMP/dotnet-env-marker.log"
+run_restore AWF_PR_RESTORE_HERMETIC=1 DOTNET_ENV_LOG="$MLOG" CANARY_VAR=canary
+assert_eq "inherited_marker_still_reexecs: rc" "0" "$RC"
+assert_not_contains "inherited_marker_still_reexecs: the environment was reset" \
+  "CANARY_VAR" "$(cat "$MLOG" 2>/dev/null || true)"
+
 # A `core.hooksPath` in the caller's HOME would run during the worktree add,
 # with the token in the environment.
 HOOKS="$TMP/hooks"
@@ -427,6 +436,14 @@ assert_eq "template_feed_steps_conditional" "3" \
   "$(grep -cF "ne(variables['AWF_NUGET_FEEDS'], '')" "$TEMPLATE" || true)"
 assert_contains "template_cleanup_always" "always()" \
   "$(block_from 'azdo-pr-feed-cleanup.sh')"
+# The test hooks are blanked in the steps that act on the cache, so a pipeline
+# variable of the same name cannot point them elsewhere.
+RESTORE_BLOCK="$(block_from 'azdo-pr-feed-restore.sh')"
+for hook in AWF_TEST_HERMETIC_PATH AWF_TEST_CACHE_ROOT; do
+  assert_contains "template_restore_blanks_$hook" "$hook: ''" "$RESTORE_BLOCK"
+done
+assert_contains "template_cleanup_blanks_AWF_TEST_CACHE_ROOT" \
+  "AWF_TEST_CACHE_ROOT: ''" "$(block_from 'azdo-pr-feed-cleanup.sh')"
 BUILD_BLOCK="$(block_from 'BUILD/TEST')"
 assert_not_contains "template_build_step_has_no_env_token: no token" \
   "System.AccessToken" "$BUILD_BLOCK"

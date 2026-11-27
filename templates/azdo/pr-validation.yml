@@ -51,6 +51,10 @@ steps:
     env:
       SYSTEM_ACCESSTOKEN: $(System.AccessToken)
       AWF_PR_RESTORE_WORK_DIR: $(Agent.TempDirectory)
+      # Test-only hooks of the script: blank, so a pipeline variable of the same
+      # name cannot reach it.
+      AWF_TEST_HERMETIC_PATH: ''
+      AWF_TEST_CACHE_ROOT: ''
 
   # --- BUILD/TEST: edit this step only ---
   # Default is .NET. Non-.NET repos replace the script (`true` is the minimal placeholder).
@@ -63,3 +67,6 @@ steps:
   - bash: '"$(Agent.TempDirectory)/aw/scripts/azdo-pr-feed-cleanup.sh"'
     displayName: clear the private package cache
     condition: and(always(), ne(variables['AWF_NUGET_FEEDS'], ''))
+    env:
+      # Blank, as in the restore step, so both act on the same folder.
+      AWF_TEST_CACHE_ROOT: ''

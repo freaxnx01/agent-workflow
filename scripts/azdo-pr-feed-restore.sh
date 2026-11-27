@@ -52,7 +52,11 @@ HERMETIC_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # user can write; every tool this phase runs is therefore named by absolute
 # path. On Debian 13 /bin is a symlink to /usr/bin, so /usr/bin/ always holds
 # them.
-if [[ "${AWF_PR_RESTORE_HERMETIC:-}" != 1 ]]; then
+#
+# The re-exec is marked by an argument, not by an environment variable: every
+# non-secret pipeline variable is exported into this step, so an inherited
+# marker could skip the re-exec.
+if [[ "${1:-}" != --hermetic ]]; then
   hermetic_home="$(/usr/bin/mktemp -d)"
   /usr/bin/chmod 0700 "$hermetic_home"
   : > "$hermetic_home/no-plugins"
@@ -91,10 +95,10 @@ if [[ "${AWF_PR_RESTORE_HERMETIC:-}" != 1 ]]; then
     ImportUserLocationsByWildcardAfterMicrosoftCommonProps=false \
     ImportUserLocationsByWildcardBeforeMicrosoftCommonTargets=false \
     ImportUserLocationsByWildcardAfterMicrosoftCommonTargets=false \
-    AWF_PR_RESTORE_HERMETIC=1 \
     "${passthrough[@]}" \
-    bash "$0"
+    bash "$0" --hermetic
 fi
+shift
 
 # The re-executed process owns the temp HOME it was handed.
 [[ -z "${AWF_PR_RESTORE_HOME:-}" ]] || trap 'rm -rf "$AWF_PR_RESTORE_HOME"' EXIT
