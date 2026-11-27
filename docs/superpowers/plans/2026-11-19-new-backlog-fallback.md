@@ -132,7 +132,7 @@ gh api "repos/$repo/milestones?state=open&per_page=100" \
 ```
 
 The second prints `1` when `backlog` exists and `0` when it does not. The match is
-the exact, case-sensitive title; `next` is an ordinary active milestone.
+the exact, case-sensitive title.
 
 **2 — Zero active milestones.** Assign `backlog` with `-m "backlog"`, silently,
 and report it from the read-back (same discipline as case 3). `/new` no longer

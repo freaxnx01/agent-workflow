@@ -45,8 +45,9 @@ Selection, first match wins (case 1 unchanged):
 issue is filed with no milestone and the report says why; in case 4 the
 `backlog` option is then omitted, because it cannot be assigned.
 
-`next` is an ordinary active milestone (it is a documented exception, not a
-bucket) and is not special-cased in any filter.
+`next` is not special-cased in any filter. It is deprecated (ai-instructions#61,
+merged as #62) and closed in this repo, so it is never listed; anywhere it is
+still open it is just another non-`backlog` milestone.
 
 Mechanics: the GitHub list command filters `backlog` out with jq and a second
 command counts it; the Forgejo python snippet prints `active` rows and a
@@ -69,11 +70,12 @@ hand-edited.
 
 ## Assumptions
 
-- **A1** [confirmed] `general-<month>-<year>` is dropped, `next` kept. Answer:
-  "Drop general-*, keep next": /new no longer offers or auto-creates
+- **A1** [confirmed, revised 2026-11-19] `general-<month>-<year>` is dropped and
+  `next` is deprecated. /new no longer offers or auto-creates
   general-<month>-<year>. With zero active (non-backlog) open milestones it falls
-  back to `backlog`. `next` stays a documented exception and counts as an
-  ordinary active milestone.
+  back to `backlog`. The first answer was "Drop general-*, keep next"; it was
+  revised to match ai-instructions#61 as merged (#62), and `next` in this repo was
+  closed with its open issues moved to `backlog`. /new needs no `next` handling.
 - **A2** [confirmed] `backlog` existence. Answer: "Create in both now": it exists
   in freaxnx01/agent-workflow (#7) and freaxnx01/ai-instructions (#2). In other
   repos where it is missing, /new reports it and points at `/milestone new
