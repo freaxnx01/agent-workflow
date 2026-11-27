@@ -125,6 +125,34 @@ assert_contains "template_has_pool_placeholder" "pool: <pool>" "$TEXT"
 assert_contains "template_header_names_target" "azure-pipelines-pr.yml" "$TEXT"
 assert_contains "template_persist_credentials_false" "persistCredentials: false" "$TEXT"
 
+section "the cleanup step"
+# The always() step runs even when the fetch step failed and the script it
+# calls was never cloned; it must then skip quietly, not add a second error.
+# Its inline bash is run as written, with the agent's temp folder replaced.
+CLEANUP_DIR="$(mktemp -d)"
+trap 'rm -f "$CHECKER"; rm -rf "$CLEANUP_DIR"' EXIT
+CLEANUP_SCRIPT="$CLEANUP_DIR/step.sh"
+python3 -I - "$TEMPLATE" "$CLEANUP_DIR/agent-temp" > "$CLEANUP_SCRIPT" <<'PY2'
+import sys
+import yaml
+with open(sys.argv[1], encoding="utf-8") as handle:
+    steps = yaml.safe_load(handle)["steps"]
+step = next(s for s in steps if "azdo-pr-feed-cleanup.sh" in str(s.get("bash", "")))
+print(step["bash"].replace("$(Agent.TempDirectory)", sys.argv[2]))
+PY2
+RC=0
+ERR_TEXT="$(bash "$CLEANUP_SCRIPT" 2>&1 >/dev/null)" || RC=$?
+assert_eq "cleanup_step_skips_without_fetch: rc" 0 "$RC"
+assert_eq "cleanup_step_skips_without_fetch: no error" "" "$ERR_TEXT"
+mkdir -p "$CLEANUP_DIR/agent-temp/aw/scripts"
+printf '#!/bin/sh\ntouch "%s/ran"\n' "$CLEANUP_DIR" \
+  > "$CLEANUP_DIR/agent-temp/aw/scripts/azdo-pr-feed-cleanup.sh"
+RC=0
+bash "$CLEANUP_SCRIPT" >/dev/null 2>&1 || RC=$?
+assert_eq "cleanup_step_runs_fetched_script: rc" 0 "$RC"
+assert_eq "cleanup_step_runs_fetched_script: ran" 1 \
+  "$([[ -e "$CLEANUP_DIR/ran" ]] && echo 1 || echo 0)"
+
 section "bad fixtures"
 detects() { # <fixture-name> <violation-id>
   check_template "$FIXTURES/$1.yml"

@@ -64,7 +64,12 @@ steps:
     displayName: Build and test
 
   # --- PRIVATE FEEDS (section 9.6): empties the package cache, on every outcome ---
-  - bash: '"$(Agent.TempDirectory)/aw/scripts/azdo-pr-feed-cleanup.sh"'
+  # Without the fetch there was no restore either, so a missing script means
+  # there is nothing to clear.
+  - bash: |
+      cleanup="$(Agent.TempDirectory)/aw/scripts/azdo-pr-feed-cleanup.sh"
+      [[ -f "$cleanup" ]] || { echo 'agent-workflow was not fetched; nothing to clear'; exit 0; }
+      /usr/bin/bash "$cleanup"
     displayName: clear the private package cache
     condition: and(always(), ne(variables['AWF_NUGET_FEEDS'], ''))
     env:

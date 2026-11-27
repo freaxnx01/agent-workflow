@@ -160,6 +160,13 @@ assert_contains "non_ado_feed_refused: prefixed cause" "pr feed restore:" "$ERR"
 assert_contains "non_ado_feed_refused: names the URL" \
   "https://example.com/v3/index.json" "$ERR"
 
+# The implement run and the cleanup step refuse any other cache path, so the
+# restore must see the variable to refuse it too.
+run_restore AWF_NUGET_CACHE="$TMP/elsewhere"
+assert_eq "other_nuget_cache_refused: rc" "1" "$RC"
+assert_contains "other_nuget_cache_refused: says why" \
+  "AWF_NUGET_CACHE must be /var/cache/awf-nuget" "$ERR"
+
 run_restore AWF_PR_RESTORE_WORK_DIR="$REPO/work"
 assert_eq "work_dir_inside_sources_refused: rc" "1" "$RC"
 assert_contains "work_dir_inside_sources_refused: says why" \
