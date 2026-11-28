@@ -1,0 +1,145 @@
+# Optional `ANTHROPIC_API_KEY` for the Claude implement step (#540) — design
+
+## Intent
+
+The Claude lane of the pipeline bills every run against the Max subscription
+(`CLAUDE_CODE_OAUTH_TOKEN`), so implement runs, reviews and enrichment all share
+one 5-hour limit (#456). The subscription also comes with monthly API credit,
+which is only drawn when a request authenticates with an API key from the
+linked Console organization. Today nothing in the pipeline can use it.
+
+The goal: a consumer repo that sets an `ANTHROPIC_API_KEY` secret has its
+Claude **implement** runs billed to that API credit instead of the
+subscription. A repo that does not set it behaves exactly as before.
+
+Decided with the operator (2026-11-28): the switch is **per repo, by the
+presence of the secret** — not per issue (label) and not as a fallback after a
+rate limit.
+
+## Goals
+
+- `agent-implement.yml` accepts an optional `ANTHROPIC_API_KEY` secret.
+- When it is set, the "Run Claude Code" step authenticates with the API key
+  **only**; the OAuth token is not passed to that step.
+- When it is not set, the step authenticates with `CLAUDE_CODE_OAUTH_TOKEN`
+  exactly as today.
+- The review and self-fix steps stay on the subscription in every case.
+- Consumers created by `onboard-consumer.sh` forward the secret, so setting it
+  on the repo is all an operator has to do.
+
+## Non-goals
+
+- Detecting an exhausted API credit. `classify-failure.sh` deliberately reads
+  no message text for credit classification (#521), so an empty Anthropic
+  balance will most likely classify as `bug`. Follow-up issue.
+- Making `CLAUDE_CODE_OAUTH_TOKEN` optional. It stays `required: true`: the
+  review and self-fix steps still need it. Follow-up issue.
+- Per-issue or rate-limit-fallback selection (rejected above).
+- The OpenCode lane and the Azure DevOps path. Azure DevOps already allows
+  `ANTHROPIC_API_KEY` through its boundary (`docker/azp-agent/boundary/awf-agent-run`).
+
+## Design
+
+### Interface — `workflow_call.secrets`
+
+Add to `agent-implement.yml`:
+
+```yaml
+      ANTHROPIC_API_KEY:
+        description: |
+          Anthropic API key from the Console organization linked to the Max
+          subscription (#540). Optional. When set, the Claude implement step
+          authenticates with it instead of CLAUDE_CODE_OAUTH_TOKEN, so the run
+          is billed to the organization's API credit, not the subscription
+          limit. Review and self-fix stay on CLAUDE_CODE_OAUTH_TOKEN.
+        required: false
+```
+
+Add the same key (`required: false`) to the shim `claude-implement.yml`. The
+shim forwards with `secrets: inherit`, but a caller can only pass a secret the
+shim declares.
+
+This is an additive, backwards-compatible change to a public interface:
+`MINOR`, a `CHANGELOG.md` `Added` entry, no migration note.
+
+### Credential selection — "Run Claude Code"
+
+```yaml
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.ANTHROPIC_API_KEY == '' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
+```
+
+The pinned `anthropics/claude-code-base-action@b95ab06…` declares both inputs
+(default `""`) and maps them to `ANTHROPIC_API_KEY` /
+`CLAUDE_CODE_OAUTH_TOKEN` in the CLI's environment. Passing exactly one keeps
+the billing path unambiguous instead of relying on the CLI's precedence rule.
+
+A comment at the step states why both lines exist and points to #540.
+
+### Review and self-fix — unchanged, and guarded
+
+The CLI prefers `ANTHROPIC_API_KEY` whenever it is in its environment
+(`setup/agent-autopilot.service` strips it for that reason). So the guarantee
+"review stays on the subscription" holds only while no review or self-fix step
+puts the key into its `env:`. That is enforced by a structural test, not by
+convention (see Testing).
+
+### Consumer stub and this repo's own caller
+
+- `scripts/onboard-consumer.sh` `build_agent_yml()` always emits
+  `ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}` in the secrets block —
+  same reasoning as `NTFY_*`: the stub does not use `secrets: inherit`, so a
+  secret set on the repo but not listed never reaches the reusable workflow.
+  Unset, it is an empty string and nothing changes.
+- `.github/workflows/agent.yml` (this repo's own caller) forwards it too.
+
+### Documentation
+
+`docs/CONSUMER-SETUP.md`: a short subsection next to the
+`CLAUDE_CODE_OAUTH_TOKEN` setup — what the secret does, that only the
+implement step uses it, that `cost-usd` in the run report is then real spend,
+that an empty credit currently shows up as a failed run, and how to verify
+(the `init` object in the `claude-raw-output` artifact reports
+`apiKeySource`).
+
+## Testing
+
+- **Layer 0:** `actionlint` and `shellcheck` stay green.
+- **Layer 1, new `tests/run-api-key-billing-tests.sh`** (python + yaml, same
+  style as `run-agent-isolation-tests.sh`, each assertion also run against a
+  mutated copy that must fail):
+  1. `agent-implement.yml` declares `ANTHROPIC_API_KEY` with `required: false`.
+  2. The shim declares it with `required: false`.
+  3. The "Run Claude Code" step passes `anthropic_api_key` from the secret and
+     its `claude_code_oauth_token` expression is conditional on the key being
+     empty.
+  4. No step other than "Run Claude Code" references
+     `secrets.ANTHROPIC_API_KEY` — in particular no review or self-fix step.
+- **Layer 1, `tests/run-onboard-stub-tests.sh`:** the generated stub contains
+  the `ANTHROPIC_API_KEY` forwarding line, for both `claude` and `opencode`
+  stubs.
+- **Layer 3 (manual, operator):** in `agent-action-sandbox`, with the secret
+  set, a small issue with `agent:claude`: the `init` object in
+  `claude-raw-output` shows the API key as `apiKeySource`, and the spend
+  appears in the Console. One run without the secret behaves as before. This
+  also settles whether `claude-code-base-action` runs are covered by the
+  subscription's API credit.
+
+## Acceptance criteria
+
+- Without the secret, behaviour is unchanged (existing tests and the stub run
+  stay green).
+- With the secret, the implement step authenticates with the API key only.
+- Review and self-fix never receive `ANTHROPIC_API_KEY`, enforced by a test.
+- Onboarded stubs and this repo's `agent.yml` forward the secret.
+- `docs/CONSUMER-SETUP.md` and `CHANGELOG.md` document it.
+
+## Risks
+
+- **Credit not applied to the action.** Anthropic's docs name `claude -p` and
+  the Agent SDK as covered; the base action runs the CLI, so it should be, but
+  that is unconfirmed until the Layer-3 run. If it is not, the change still
+  works — it just bills normal API usage — and the operator removes the secret.
+- **Silent spend.** Once set, every Claude implement run in that repo spends
+  money. The secret is the opt-in; the docs say so plainly.
