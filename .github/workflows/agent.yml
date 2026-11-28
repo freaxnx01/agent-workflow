@@ -54,6 +54,10 @@ jobs:
       # Optional everywhere: without it the alarm issue is still raised.
       NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
       NTFY_URL: ${{ secrets.NTFY_URL }}
+      # Optional (#540): when set on this repo, the Claude implement step is
+      # billed to the API credit instead of the subscription. Review stays on
+      # CLAUDE_CODE_OAUTH_TOKEN.
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     with:
       issue-number: ${{ github.event.issue.number }}
       runner-labels: '["ubuntu-latest"]'

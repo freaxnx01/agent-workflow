@@ -13,7 +13,10 @@
 #
 # Every assertion is also driven against a deliberately broken copy (the
 # mutations below): a guard that no longer looks at anything must fail here,
-# not pass silently.
+# not pass silently. Each mutation asserts the *delta* — the problem line is
+# absent from the unmutated report and present after the mutation. Matching
+# the mutated report alone would pass on a baseline that is already broken for
+# an unrelated reason, i.e. exactly when the guard has to earn its keep.
 #
 # Usage: tests/run-api-key-billing-tests.sh
 # Exit codes: 0 all pass; 1 at least one assertion failed.
@@ -88,27 +91,40 @@ mutate() {
 import sys, yaml
 kind, wf_in, shim_in, wf_out, shim_out = sys.argv[1:6]
 wf, shim = yaml.safe_load(open(wf_in)), yaml.safe_load(open(shim_in))
-def secrets(doc):
-    return doc.get("on", doc.get(True))["workflow_call"]["secrets"]
-def step(doc, job, pred):
-    return next(s for s in doc["jobs"][job]["steps"] if pred(s))
-run = lambda: step(wf, "implement", lambda s: s.get("name") == "Run Claude Code")
+# A missing anchor means the workflow was restructured, which is a finding, not
+# a crash: exit with a readable message so the caller reports one failed
+# assertion instead of dying mid-loop on a traceback with no summary.
+def secrets(label, doc):
+    on = doc.get("on", doc.get(True)) or {}   # PyYAML reads the key `on` as True
+    block = (on.get("workflow_call") or {}).get("secrets")
+    if block is None:
+        sys.exit(f"{label}: no on.workflow_call.secrets block to mutate")
+    return block
+def step(job, what, pred):
+    for s in ((wf.get("jobs") or {}).get(job) or {}).get("steps") or []:
+        if pred(s):
+            return s
+    sys.exit(f"{job}: no step matching {what} to mutate")
+run = lambda: step("implement", "name 'Run Claude Code'", lambda s: s.get("name") == "Run Claude Code")
 if kind == "drop-wf-secret":
-    secrets(wf).pop("ANTHROPIC_API_KEY", None)
+    secrets("agent-implement.yml", wf).pop("ANTHROPIC_API_KEY", None)
 elif kind == "shim-required-true":
-    secrets(shim)["ANTHROPIC_API_KEY"] = {"required": True}
+    secrets("claude-implement.yml", shim)["ANTHROPIC_API_KEY"] = {"required": True}
 elif kind == "drop-api-key-input":
-    run()["with"].pop("anthropic_api_key", None)
+    (run().get("with") or {}).pop("anthropic_api_key", None)
 elif kind == "unconditional-oauth":
-    run()["with"]["claude_code_oauth_token"] = "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"
+    run().setdefault("with", {})["claude_code_oauth_token"] = "${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}"
 elif kind == "leak-review":
-    s = step(wf, "ai_review_ai_merge", lambda s: s.get("name") == "Run agent review")
+    s = step("ai_review_ai_merge", "name 'Run agent review'", lambda s: s.get("name") == "Run agent review")
     s.setdefault("env", {})["ANTHROPIC_API_KEY"] = "${{ secrets.ANTHROPIC_API_KEY }}"
 elif kind == "leak-selffix":
-    s = step(wf, "ai_review_human_merge", lambda s: "self-fix-loop.sh" in str(s.get("run", "")))
+    s = step("ai_review_human_merge", "a run: of self-fix-loop.sh", lambda s: "self-fix-loop.sh" in str(s.get("run", "")))
     s.setdefault("env", {})["ANTHROPIC_API_KEY"] = "${{ secrets.ANTHROPIC_API_KEY }}"
 elif kind == "leak-job-env":
-    wf["jobs"]["implement"].setdefault("env", {})["ANTHROPIC_API_KEY"] = "${{ secrets.ANTHROPIC_API_KEY }}"
+    job = (wf.get("jobs") or {}).get("implement")
+    if job is None:
+        sys.exit("implement: no such job to mutate")
+    job.setdefault("env", {})["ANTHROPIC_API_KEY"] = "${{ secrets.ANTHROPIC_API_KEY }}"
 else:
     sys.exit(f"unknown mutation {kind}")
 yaml.safe_dump(wf, open(wf_out, "w"), sort_keys=False)
@@ -117,8 +133,14 @@ PY
 }
 
 printf '\n── #540 ANTHROPIC_API_KEY: shipped workflows are clean ──\n'
-out="$(check_workflows "$WF" "$SHIM")"
-if [[ -z "$out" ]]; then pass "agent-implement.yml + shim satisfy #540"; else fail "agent-implement.yml + shim satisfy #540" "$out"; fi
+if ! out="$(check_workflows "$WF" "$SHIM" 2>"$T/err")"; then
+  fail "agent-implement.yml + shim satisfy #540" "the checker itself failed: $(cat "$T/err")"
+  out=''
+elif [[ -n "$out" ]]; then
+  fail "agent-implement.yml + shim satisfy #540" "$out"
+else
+  pass "agent-implement.yml + shim satisfy #540"
+fi
 
 printf '\n── #540 guard catches each broken copy ──\n'
 # kind:expected-substring-in-the-problem-report
@@ -131,9 +153,23 @@ for spec in \
   "leak-selffix:ai_review_human_merge: step 'Self-fix loop" \
   "leak-job-env:implement: job-level keys"; do
   kind="${spec%%:*}"; want="${spec#*:}"
-  mutate "$kind"
-  got="$(check_workflows "$T/wf.yml" "$T/shim.yml")"
-  if [[ "$got" == *"$want"* ]]; then pass "flags $kind"; else fail "flags $kind" "want: $want"$'\n'"got: ${got:-<clean>}"; fi
+  if ! mutate "$kind" 2>"$T/err"; then
+    fail "flags $kind" "the mutation could not be applied: $(cat "$T/err")"
+    continue
+  fi
+  if ! got="$(check_workflows "$T/wf.yml" "$T/shim.yml" 2>"$T/err")"; then
+    fail "flags $kind" "the checker failed on the mutated copy: $(cat "$T/err")"
+    continue
+  fi
+  # The delta, not just the presence: a problem line the clean report already
+  # carries proves nothing about this mutation.
+  if [[ "$out" == *"$want"* ]]; then
+    fail "flags $kind" "not a delta — the unmutated report already contains: $want"
+  elif [[ "$got" == *"$want"* ]]; then
+    pass "flags $kind"
+  else
+    fail "flags $kind" "want: $want"$'\n'"got: ${got:-<clean>}"
+  fi
 done
 
 printf '\n── #540 this repo'\''s own caller forwards the key ──\n'

@@ -338,6 +338,13 @@ build_agent_yml() {
   # Always emitted, same reasoning as NTFY_* (#540). Optional: unset, the value
   # is empty and the implement step stays on CLAUDE_CODE_OAUTH_TOKEN. Set, the
   # Claude implement step bills the API credit; review stays on the OAuth token.
+  #
+  # Like every other line here, this one is only valid against a $REF whose
+  # agent-implement.yml declares the secret: a caller that passes an undeclared
+  # secret fails workflow validation at startup. $REF defaults to the newest
+  # released major, whose moving tag is only advanced when a release is cut, so
+  # a new secret has to be released before onboarding pins repos to it — see
+  # "Release ordering matters" in docs/CONSUMER-SETUP.md.
   secrets_block+=$'\n      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}'
 
   with_block=$'      issue-number: ${{ github.event.issue.number }}'
