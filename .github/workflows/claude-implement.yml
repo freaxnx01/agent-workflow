@@ -99,6 +99,11 @@ on:
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: true
+      # Optional (#540). Declared here too: this shim forwards with
+      # `secrets: inherit`, but a caller can only pass a secret the shim
+      # declares.
+      ANTHROPIC_API_KEY:
+        required: false
       OPENROUTER_API_KEY:
         required: false
       PIPELINE_APP_ID:

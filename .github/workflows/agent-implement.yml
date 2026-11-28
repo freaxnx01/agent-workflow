@@ -321,6 +321,14 @@ on:
       CLAUDE_CODE_OAUTH_TOKEN:
         description: OAuth token for Claude Code (generated via `claude setup-token`).
         required: true
+      ANTHROPIC_API_KEY:
+        description: |
+          Anthropic API key from the Console organization linked to the Max
+          subscription (#540). Optional. When set, the Claude implement step
+          authenticates with it instead of CLAUDE_CODE_OAUTH_TOKEN, so the run
+          is billed to the organization's API credit, not the subscription
+          limit. Review and self-fix stay on CLAUDE_CODE_OAUTH_TOKEN.
+        required: false
       OPENROUTER_API_KEY:
         description: |
           OpenRouter API key. Required only when the active agent
@@ -841,7 +849,15 @@ jobs:
         timeout-minutes: ${{ inputs.claude-timeout-minutes }}
         uses: anthropics/claude-code-base-action@b95ab0675f9b2696ae6c826c15b7a12e1a4a7071  # main @ 2026-09-12, installs CLI 2.1.270
         with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Exactly one credential reaches the CLI (#540). With
+          # ANTHROPIC_API_KEY set the run is billed to the API credit and the
+          # OAuth token is withheld, so billing never depends on the CLI's
+          # precedence rule. Unset, this is the subscription path as before.
+          # Only this step may see the key: the CLI prefers it whenever it is
+          # in its environment, so review and self-fix must never get it —
+          # tests/run-api-key-billing-tests.sh enforces that.
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.ANTHROPIC_API_KEY == '' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
           prompt_file: ${{ steps.issue.outputs.prompt-file }}
           # Everything the agent's behaviour depends on goes through
           # `claude_args`, because the action's main branch replaced the

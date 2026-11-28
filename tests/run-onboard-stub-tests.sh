@@ -138,6 +138,19 @@ section "consumer stub — the ntfy token is forwarded (#517)"
 assert_contains 'NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}' "$out" \
   "the alarm's ntfy token reaches the reusable workflow"
 
+section "consumer stub — the Anthropic API key is forwarded (#540)"
+
+# Same reason as NTFY_TOKEN: no `secrets: inherit`, so a key set on the repo but
+# not listed here never reaches the reusable workflow and the implement step
+# silently stays on the subscription. Emitted for every agent choice, since a
+# per-issue `agent:claude` label can put an opencode-default repo on Claude.
+# shellcheck disable=SC2016  # `${{ }}` is Actions expression syntax, not shell
+assert_contains 'ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}' "$out" \
+  "claude stub forwards the API key"
+# shellcheck disable=SC2016  # as above
+assert_contains 'ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}' "$out_oc" \
+  "opencode stub forwards it too"
+
 section "health stub — the daily budget check (#517)"
 
 health="$(health_stub)"
